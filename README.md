@@ -1,45 +1,62 @@
-# rust-client-docs
+# LPM Rust Client — Documentation
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+Docs site for the [LPM Rust client](https://github.com/lpm-dev/rust-client).
+Deployed to [cli.lpm.dev](https://cli.lpm.dev).
 
-Run development server:
+Built with [Fumadocs](https://fumadocs.dev) on Next.js.
+
+## Development
 
 ```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+npm install
+npm run dev     # http://localhost:3000
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+## Build
 
-## Explore
+```bash
+npm run build
+npm start
+```
 
-In the project, you can see:
+## Deployment
 
-- `lib/source.ts`: Code for content source adapter, [`loader()`](https://fumadocs.dev/docs/headless/source-api) provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
+Pushed to `main` → Coolify auto-deploys via Nixpacks (Next.js auto-detected,
+no `Dockerfile` needed). Same pattern as `a-package-manager`.
 
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
+## Content
 
-### Fumadocs MDX
+Docs live under [content/docs/](./content/docs). Each section is a folder
+with a `meta.json` that controls sidebar ordering and grouping.
 
-A `source.config.ts` config file has been included, you can customise different options like frontmatter schema.
+```
+content/docs/
+├── index.mdx                  Welcome
+├── getting-started/           Installation, first install, migrating
+├── commands/                  Flat reference, grouped via meta.json
+├── features/                  Narrative tour of capabilities
+├── guides/                    Task-oriented walkthroughs
+├── configuration/             package.json, lpm.json, lpm.toml, config.toml
+└── reference/                 Exit codes, file formats, glossary
+```
 
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+Content is intentionally stubbed — written from the live Rust client source
+as development proceeds.
 
-## Learn More
+## Scripts
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+| Script | What |
+|---|---|
+| `npm run dev` | Local dev server |
+| `npm run build` | Production build |
+| `npm start` | Run the production build |
+| `npm run types:check` | Type-check MDX frontmatter and TS source |
+| `npm run lint` | Biome lint (check only) |
+| `npm run lint:fix` | Biome lint + format, writing fixes |
+| `npm run format` | Biome format only |
+| `npm run test:unit` | Run Vitest unit tests |
+| `npm run test:unit:watch` | Run Vitest in watch mode |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.dev) - learn about Fumadocs
+## License
+
+MIT.

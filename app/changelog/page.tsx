@@ -9,7 +9,11 @@ export const metadata: Metadata = {
 
 export default function ChangelogPage() {
   return (
-    <HomeLayout {...baseOptions()}>
+    <HomeLayout
+      {...baseOptions()}
+      nav={{ ...baseOptions().nav, enabled: false }}
+      className="flex-1"
+    >
       <main className="container mx-auto max-w-3xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Changelog</h1>
         <p className="text-fd-muted-foreground mb-10">

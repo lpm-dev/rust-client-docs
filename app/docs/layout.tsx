@@ -1,11 +1,12 @@
 import { source } from '@/lib/source';
-import { DocsLayout } from 'fumadocs-ui/layouts/docs';
-import { baseOptions } from '@/lib/layout.shared';
+import { DocsLayoutClient } from './layout.client';
 
 export default function Layout({ children }: LayoutProps<'/docs'>) {
+  const tree = source.getPageTree();
+
   return (
-    <DocsLayout tree={source.getPageTree()} {...baseOptions()}>
-      {children}
-    </DocsLayout>
+    <div data-site-layout="docs" className="flex-1 flex flex-col">
+      <DocsLayoutClient tree={tree}>{children}</DocsLayoutClient>
+    </div>
   );
 }
