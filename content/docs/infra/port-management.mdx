@@ -1,6 +1,151 @@
 ---
 title: Port management
-description: "Assign and track dev service ports."
+description: "How LPM handles port assignment, conflict detection, and cross-service env injection for dev orchestration."
 ---
 
-Coming soon.
+When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, and tell each service how to reach its peers. This page covers what LPM does behind the scenes — port checks, kill-on-conflict (opt-in), cross-service env injection, and the readiness model.
+
+The CLI surface is [`lpm ports`](/docs/infra/ports). The configuration field is [`lpm.json > services`](/docs/reference/lpm-json#servicesname).
+
+## Port declaration
+
+Services declare their port in `lpm.json`:
+
+```json title="lpm.json"
+{
+  "services": {
+    "db":  { "command": "docker compose up postgres", "readyPort": 5432 },
+    "api": { "command": "node server.js", "port": 4000, "dependsOn": ["db"] },
+    "web": { "command": "next dev", "port": 3000, "primary": true }
+  }
+}
+```
+
+Two related fields:
+
+| Field | Purpose |
+| --- | --- |
+| `port` | Where the service listens. Used for env injection, display, and the readiness fallback. |
+| `readyPort` | TCP port to poll for readiness. Defaults to `port` when absent. |
+
+The split exists for services that listen on a different port than they expose for readiness — uncommon, but real (e.g., Postgres listens on 5432 and that's also its readiness probe; a service behind a sidecar might split them).
+
+## Conflict detection
+
+Before starting any service, `lpm dev` walks every declared port and checks whether it's free:
+
+```rust
+TcpListener::bind(("127.0.0.1", port))
+```
+
+If the bind fails, LPM reports who's holding the port. On macOS / Linux, `lsof -ti :{port}` produces the PID and process name; the conflict message points the user at the offender.
+
+LPM **does not auto-kill** conflicting processes. The reasoning: `lpm dev` is interactive — surfacing the problem is more useful than silently killing whatever was already running on `:3000`. To resolve:
+
+```bash
+lpm ports kill 3000        # kill the process holding the port
+lpm dev                    # retry
+```
+
+`lpm ports kill <port>` includes a TOCTOU mitigation — after finding the PID, it re-checks that the **same PID** still owns the **same port** before sending SIGTERM. If the owner changed in the 50ms gap, the kill is aborted. Defends against PID-reuse races.
+
+## `lpm ports list`
+
+```bash
+lpm ports list
+lpm ports                    # default action
+```
+
+Reads `lpm.json > services` and prints the declared ports. Read-only. Useful for the "what runs where in this project" quick check without scrolling through `lpm.json`.
+
+## `lpm ports reset`
+
+```bash
+lpm ports reset
+```
+
+Clears LPM's port-reservation state. The reservation system is internal — LPM tracks "which session has which port" so concurrent `lpm dev` invocations on different projects can negotiate. `reset` wipes that state.
+
+Useful for the "I have no idea why my dev server won't start" escape hatch. Doesn't kill any processes — just clears LPM's bookkeeping.
+
+## Cross-service env injection
+
+When `lpm dev` starts a multi-service project, each service gets env vars exposing its peers' addresses:
+
+```text
+For service "web":
+  DB_PORT=5432
+  DB_URL=http://localhost:5432
+  API_PORT=4000
+  API_URL=http://localhost:4000
+
+For service "api":
+  DB_PORT=5432
+  DB_URL=http://localhost:5432
+  WEB_PORT=3000
+  WEB_URL=http://localhost:3000
+```
+
+Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Pretty much every service in a typical `lpm.json` ends up with a usable URL for its peers without writing them out manually.
+
+Plus per-service overrides from `lpm.json > services.<name>.env`:
+
+```json
+{
+  "services": {
+    "api": {
+      "command": "node server.js",
+      "port": 4000,
+      "dependsOn": ["db"],
+      "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" }
+    }
+  }
+}
+```
+
+`api` gets `DATABASE_URL` plus the auto-injected `DB_PORT`/`DB_URL`/`WEB_PORT`/`WEB_URL`.
+
+## Readiness checks
+
+A service is "ready" when one of these signals fires:
+
+| Mechanism | Field | What it checks |
+| --- | --- | --- |
+| TCP poll | `readyPort` (default = `port`) | A connection to `localhost:<port>` succeeds |
+| HTTP poll | `readyUrl` | A GET against the URL returns a 2xx |
+
+Polled every ~100ms up to `readyTimeout` (default 30s). Once ready, the next service in the topology can start.
+
+If both `readyPort` and `readyUrl` are set, `readyUrl` wins. If neither is set and the service has no `port`, the service is treated as "ready immediately on launch" — useful for fire-and-forget services like log collectors.
+
+## `dependsOn` ordering
+
+`lpm dev` runs services in topological order — a service with `dependsOn: ["db"]` waits for `db` to report ready before launching. The graph is computed at startup; cycles are an error.
+
+Independent branches start in parallel. If `web` and `api` both depend on `db` (but not on each other), they start concurrently as soon as `db` is ready.
+
+## What `port` is "the dev port"?
+
+The service marked `primary: true` is the one that:
+
+- Receives `--https` / `--tunnel` / `--network` flags from `lpm dev`
+- Gets the browser-open
+- Has its URL printed prominently in the banner
+
+Mark exactly one service as `primary`. If none is marked, `lpm dev`'s flag-routing has no clear target and the browser-open is skipped.
+
+## Auto-restart
+
+```json
+{ "services": { "worker": { "command": "node worker.js", "restart": true } } }
+```
+
+`restart: true` enables auto-restart on crash with exponential backoff. Useful for crash-on-error workers during dev.
+
+The restart loop respects `dependsOn` — if a downstream service crashes and a dep is no longer ready (e.g., the db went down too), the downstream waits for the dep to come back before restarting.
+
+## See also
+
+- [`lpm ports`](/docs/infra/ports) — CLI command reference
+- [`lpm dev`](/docs/dev) — what consumes the service config
+- [`lpm.json` services](/docs/reference/lpm-json#servicesname) — full field reference

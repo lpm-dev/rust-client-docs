@@ -1,6 +1,77 @@
 ---
 title: ~/.lpm/config.toml
-description: "User-level CLI configuration."
+description: "User-level CLI defaults — applies to every project on this machine."
 ---
 
-Coming soon.
+`~/.lpm/config.toml` is the per-user CLI configuration file. It sets defaults that apply to every project on the machine, sitting **below** project-level config (`./lpm.toml`, `package.json > lpm`) and **above** built-in defaults in the precedence chain.
+
+You can edit the file directly, or use [`lpm config`](/docs/reference/config) to manage it from the CLI:
+
+```bash
+lpm config set save-prefix '~'
+lpm config get save-prefix
+lpm config list
+lpm config delete save-prefix
+```
+
+## Known keys
+
+```toml title="~/.lpm/config.toml"
+# Save policy (Phase 33)
+save-prefix = "^"
+save-exact  = false
+
+# Lifecycle scripts (Phase 46)
+script-policy = "deny"
+
+# Recently-published-package cooldown
+minimum-release-age-secs = 86400
+```
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix used when `lpm install <pkg>` writes to `package.json`. `*` is rejected. |
+| `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix`. |
+| `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install` and `lpm rebuild`. |
+| `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. |
+
+Unknown keys are accepted silently — forward-compatible by design.
+
+## String coercion
+
+`lpm config set` writes every value as a TOML string. The reader accepts both native types and the string form:
+
+```toml
+minimum-release-age-secs = 86400      # native integer (hand-edit)
+minimum-release-age-secs = "86400"    # string (lpm config set wrote this)
+```
+
+Both parse to `86400`. Invalid values (non-numeric strings, negative numbers, etc.) error at load time with the file path baked in.
+
+## Precedence
+
+For each setting, the precedence chain is (highest first):
+
+1. **CLI flag** — e.g. `--exact`, `--policy=allow`, `--min-release-age=1h`
+2. **`package.json > lpm`** — for keys that exist there (`scriptPolicy`, `minimumReleaseAge`)
+3. **`./lpm.toml`** — project-level (today: `save-prefix`, `save-exact`)
+4. **`~/.lpm/config.toml`** — this file
+5. **Built-in default**
+
+## File location
+
+| Platform | Path |
+| --- | --- |
+| macOS / Linux | `~/.lpm/config.toml` |
+| Windows | `%USERPROFILE%\.lpm\config.toml` |
+
+Override the entire `~/.lpm/` root with the [`LPM_HOME`](/docs/reference/env-vars#lpm_home) env var (also moves the store, cache, and global install root).
+
+The file is created on demand the first time `lpm config set` writes to it.
+
+## See also
+
+- [`lpm config`](/docs/reference/config) — CLI surface for getting / setting these keys
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level overrides for save policy
+- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — project-shared LPM config
+- [Environment variables](/docs/reference/env-vars) — sits above this file in precedence for many settings

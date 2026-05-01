@@ -1,6 +1,81 @@
 ---
 title: Environment variables
-description: "Environment variables that influence LPM behavior."
+description: "Every LPM_* variable LPM reads, what it does, and when to use it."
 ---
 
-Coming soon.
+LPM reads a number of environment variables to override behavior, route auth, or expose diagnostic knobs. Most users never need to touch these — they exist for CI, debugging, and uncommon workflows.
+
+Variables are grouped by purpose. Anything marked **diagnostic** is a debug-only escape hatch — not a stable, documented user knob.
+
+## Auth and routing
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_TOKEN` | Use this token instead of the OS-keychain-stored token. Equivalent to the global `--token <T>` flag. Useful in CI. |
+| `LPM_REGISTRY_URL` | Override the registry URL. Equivalent to `--registry <URL>`. |
+| `LPM_OIDC_TOKEN` | Pre-supplied OIDC token for `lpm setup --oidc` and `lpm publish --provenance`. Bypasses the live exchange. |
+| `LPM_GITLAB_OIDC_TOKEN` | GitLab-specific OIDC token. Honored by GitLab CI integrations. |
+
+## Filesystem layout
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_HOME` | Override the LPM root (`~/.lpm` by default). Moves the store, cache, global installs, and config. Useful for hermetic CI runs. |
+
+## Install pipeline
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_LINKER` | Set to `hoisted` for npm-style flat `node_modules`. Default behavior is the isolated (pnpm-style) layout. Equivalent to `--linker=hoisted`. |
+| `LPM_CONCURRENT_DOWNLOADS` | Cap the number of concurrent tarball downloads during install. |
+| `LPM_NO_AUTO_INSTALL` | Set to `true` to disable automatic Node-version installation when `lpm.json > runtime.node` is missing locally. |
+| `LPM_AUTO_DOWNLOAD` | Plugin auto-download policy (oxlint, biome, etc.). Default behavior is to auto-download on first use. |
+| `LPM_FORCE_TOOL_INSTALL` | Set to `1` to force re-download a built-in tool even if the binary already exists in the cache. Useful when a downloaded binary has been corrupted. |
+| `LPM_SKIP_SECURITY` | Set to `1` to skip the post-install security summary. Equivalent to `lpm install --no-security-summary`. |
+
+## Resolver (advanced)
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_RESOLVER` | `pubgrub` opts out of the default greedy-fusion resolver and uses the legacy PubGrub-with-split-retry resolver. Both speak npm-compatible semver. |
+| `LPM_GREEDY_FUSION` | `0` disables the fused dispatcher and falls back to the walker-arm orchestration for debugging. |
+| `LPM_WALKER` | Phase 54 walker-dispatch picker. Diagnostic. |
+| `LPM_NPM_FANOUT` | Cap concurrent npm metadata fetches in the resolver. |
+| `LPM_NPM_ROUTE` | `direct` or `proxy`. Debug-only override of the npm package routing decision (default routes `@lpm.dev/*` through the LPM worker, everything else direct to `registry.npmjs.org`). Not a stable user knob. |
+
+## Diagnostic / experimental
+
+These exist for benchmarking and debugging. Don't depend on them in production.
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_HTTP` | `h1-pool` forces an HTTP/1 connection pool instead of the default HTTP/2 path. |
+| `LPM_STREAM_FETCH` | Streaming-fetch mode toggle for the install pipeline. |
+| `LPM_SERIAL_LINK` | Disable parallel linking — useful for reproducing race conditions. |
+| `LPM_MAX_BLOCKING_THREADS` | Cap the tokio blocking-pool size. A/B benching hook for the install hot path. |
+| `LPM_DEEP_FOLLOWUP` | Resolver follow-up depth knob. |
+
+## Internal
+
+These are injected by LPM into subprocesses (lifecycle scripts, plugin runs) — they are not user knobs and should not be set by hand.
+
+| Variable | Set by | Effect |
+| --- | --- | --- |
+| `LPM_DEPS_PACKAGE_NAME` | install pipeline | Tells lifecycle scripts which package they belong to |
+| `LPM_DEPS_REL_PATH` | install pipeline | Relative path to the package's directory |
+| `LPM_SCOPE` | install pipeline | Active scope context |
+| `LPM_VAULT_ID` | secrets layer | Active vault identifier |
+
+## Test-only
+
+`LPM_TEST_*`, `LPM_FORCE_FILE_AUTH`, and `LPM_FORCE_FILE_VAULT` are reserved for the test suite and shouldn't be used outside of it.
+
+## Precedence reminder
+
+For settings that have both a CLI flag and an env var (`--token` / `LPM_TOKEN`, `--registry` / `LPM_REGISTRY_URL`, `--linker` / `LPM_LINKER`), the **CLI flag wins**.
+
+## See also
+
+- [Global flags](/docs/commands#global-flags) — CLI flags equivalent to several of these vars
+- [`lpm config`](/docs/reference/config) — for persistent CLI defaults instead of env vars
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — file-backed config alternative

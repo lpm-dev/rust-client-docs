@@ -1,6 +1,134 @@
 ---
 title: Publishing your first package
-description: "Pack, check, and publish a package to lpm.dev."
+description: "From lpm init to lpm publish, with quality checks and provenance."
 ---
 
-Coming soon.
+This guide walks through publishing a package from scratch. By the end you'll have a package on lpm.dev that anyone you grant access to can `lpm install`. We'll cover quality gates, secret scanning, and provenance — the things you can't see from the command name alone.
+
+## 1. Authenticate
+
+```bash
+lpm login
+```
+
+Opens your browser, you authenticate against lpm.dev, the CLI captures the redirect token and stores it in your OS keychain. You only do this once per machine.
+
+```bash
+lpm whoami
+```
+
+Confirms the identity, plan tier, and any orgs you belong to.
+
+## 2. Create the package
+
+```bash
+mkdir my-pkg && cd my-pkg
+lpm init
+```
+
+`lpm init` walks you through `owner` / `name` / `version` / `description`. The published name will be `@lpm.dev/<owner>.<name>` — pick an `owner` you've claimed on lpm.dev (or one your org owns).
+
+For a non-interactive bootstrap (CI scripts):
+
+```bash
+lpm init -y
+```
+
+## 3. Write your code
+
+Build out the package — `src/` (or wherever), `dist/` (your build output), README, license. The defaults `lpm init` writes to `package.json`:
+
+```json
+{
+  "name": "@lpm.dev/owner.my-pkg",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "license": "MIT",
+  "files": ["dist"]
+}
+```
+
+Tighten `files` to whatever you actually want shipped. Anything not listed (README, LICENSE, package.json) is included by default per npm convention.
+
+## 4. Preview the publish
+
+```bash
+lpm publish --dry-run
+```
+
+Runs every step except the upload: packs the tarball, scans for hardcoded secrets, computes the quality score. If anything's wrong, this is where you find out.
+
+```bash
+lpm publish --check
+```
+
+Even shorter — only runs the quality report. Useful as a pre-commit hook.
+
+## 5. Set a quality floor (optional)
+
+```bash
+lpm publish --min-score 80
+```
+
+Aborts the publish if the quality score is below 80. Pairs well with CI gates — your team can't ship a package missing a README, types, or a license without explicit override.
+
+The score is computed from readme presence/length, license declaration, types coverage, test signals, and maintenance heuristics. See [`lpm quality`](/docs/packages/quality) to preview the same report on any installed package.
+
+## 6. Publish
+
+```bash
+lpm publish
+```
+
+Pack → secret scan → quality report → confirmation prompt → upload. Skip the prompt with `-y` (good in CI).
+
+The package starts in **private** distribution mode — only you (and anyone you grant access to) can install it. To make it discoverable or paid, flip the distribution mode in the lpm.dev dashboard:
+
+| Mode | What it means |
+| --- | --- |
+| **Private** (default) | Only the publisher and granted users can install. Metadata is not public. |
+| **Pool** | Metadata is public. Installs gated to pool subscribers. Publisher earns a share of pool revenue. |
+| **Marketplace** | Installs require a license purchase. |
+
+Mode changes are **irreversible** — going public is a one-way door. See [Distribution mode](/docs/reference/glossary#distribution-mode).
+
+## 7. (Optional) Provenance
+
+In CI with OIDC support (GitHub Actions, GitLab CI, Bitbucket, CircleCI):
+
+```bash
+lpm publish --provenance
+```
+
+Generates a Sigstore-signed attestation that proves which workflow built the tarball and which commit it came from. Consumers can verify it via the audit pipeline or the registry UI. Fails if provenance can't be produced — useful as a hard gate in security-critical packages.
+
+Out-of-band (no OIDC), `--provenance` is a no-op error — Sigstore needs the OIDC issuer to sign.
+
+## 8. Publishing elsewhere
+
+`lpm publish` defaults to lpm.dev. To target other registries:
+
+```bash
+lpm publish --npm                                 # registry.npmjs.org
+lpm publish --github                              # GitHub Packages
+lpm publish --gitlab                              # GitLab Packages
+lpm publish --publish-registry https://r.example.com   # custom npm-compatible
+```
+
+You must `lpm login --npm` / `--github` / `--gitlab` first. For multiple targets in one go, set `lpm.json > publish.registries` — see [`lpm.json`](/docs/reference/lpm-json#publish).
+
+## Common pitfalls
+
+- **`init -y` defaults the owner to `"owner"`.** Update it before publishing — otherwise the published name will be `@lpm.dev/owner.foo`.
+- **Quality score below 80 by default = no readme, no license, no types.** Easy fix; usually a 5-minute task.
+- **Distribution mode is irreversible.** Pool / marketplace are one-way doors. Stay private until you're sure.
+- **Provenance only works in OIDC-capable CI.** Don't pass `--provenance` from a developer laptop.
+
+## See also
+
+- [`lpm publish`](/docs/packages/publish) — full flag reference
+- [`lpm quality`](/docs/packages/quality) — what the score covers
+- [`lpm init`](/docs/reference/init) — manifest scaffolding
+- [Authentication](/docs/reference/authentication) — token management

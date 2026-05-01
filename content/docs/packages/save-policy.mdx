@@ -3,4 +3,137 @@ title: Save policy
 description: "How LPM writes version ranges to package.json — caret default, explicit preservation, prerelease safety."
 ---
 
-Coming soon.
+When `lpm install <pkg>` mutates `package.json`, the **save policy** decides what string lands in `dependencies` (or `devDependencies`). The decision is a pure function of: what you typed, the resolved version, your CLI flags, and your config.
+
+This page is the reference for the rules. For the CLI flag surface, see [`lpm install`](/docs/packages/install). For the file format, see [`lpm.toml`](/docs/reference/lpm-toml) and [`~/.lpm/config.toml`](/docs/reference/config-toml).
+
+## The decision table
+
+| You ran | `package.json` ends up with | Why |
+| --- | --- | --- |
+| `lpm install zod` | `"zod": "^4.3.6"` | Bare install — caret default |
+| `lpm install zod@4.3.6` | `"zod": "4.3.6"` | Explicit exact — preserved verbatim |
+| `lpm install zod@^4.3.0` | `"zod": "^4.3.0"` | Explicit range — preserved verbatim |
+| `lpm install zod@~4.3.6` | `"zod": "~4.3.6"` | Explicit tilde — preserved verbatim |
+| `lpm install zod@latest` | `"zod": "^4.3.6"` | Dist-tag → caret default |
+| `lpm install zod@beta` | `"zod": "4.4.0-beta.2"` | Prerelease — saved exact for safety |
+| `lpm install zod@*` | `"zod": "*"` | Explicit wildcard — preserved (only allowed when explicit) |
+| `lpm install zod@workspace:*` | `"zod": "workspace:*"` | Workspace protocol — preserved verbatim |
+
+The throughline: **what you typed wins**. The default kicks in only when you didn't say anything.
+
+## Precedence
+
+Five layers, highest first:
+
+1. **Explicit user spec in `pkg@spec`.** Exact, range, wildcard, workspace — preserved verbatim, never reinterpreted.
+2. **CLI flag override.** `--exact`, `--tilde`, `--save-prefix '<p>'`. Mutually exclusive (clap enforces).
+3. **Prerelease-exact safety.** If the resolved version is a prerelease and no CLI flag forced something else, save the exact resolved version. Prereleases shouldn't auto-widen under a forgotten `save-prefix` config setting.
+4. **Persistent config.** `save-exact = true`, then `save-prefix = "^|~|"`. Reads from `./lpm.toml` first, then `~/.lpm/config.toml`.
+5. **Default.** `^resolvedVersion`.
+
+Each tier feeds the next only when the higher one is silent. Your `lpm.toml` doesn't override what you typed; your `--exact` flag doesn't override what you typed. **You typed `zod@4.3.6`? You get `"4.3.6"`. Period.**
+
+## CLI flags
+
+```bash
+lpm install zod --exact                 # save the exact resolved version, no prefix
+lpm install zod --tilde                 # save with ~ prefix
+lpm install zod --save-prefix ''        # same as --exact (empty prefix)
+lpm install zod --save-prefix '~'       # same as --tilde
+lpm install zod --save-prefix '^'       # explicit caret (the default)
+```
+
+`--exact`, `--tilde`, and `--save-prefix` are **mutually exclusive**. `*` is **not** a valid `--save-prefix` value — wildcards must be requested per-package via `pkg@*`.
+
+Setting any of these flags forces a rewrite (see [Bare reinstall](#bare-reinstall) below).
+
+## Persistent config
+
+Pin a default for one project:
+
+```toml title="lpm.toml"
+save-prefix = "~"
+save-exact  = false
+```
+
+Or for every project on this machine:
+
+```toml title="~/.lpm/config.toml"
+save-prefix = "^"
+save-exact  = false
+```
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix used when nothing else applies |
+| `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix` |
+
+Manage `~/.lpm/config.toml` via the CLI:
+
+```bash
+lpm config set save-prefix '~'
+lpm config set save-exact true
+```
+
+Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the file.
+
+## Prerelease safety
+
+```bash
+lpm install zod@next          # resolves to e.g. 4.4.0-beta.2
+# package.json now has: "zod": "4.4.0-beta.2"
+```
+
+Prereleases are saved **exact** even when your config says `save-prefix = "^"`. The reasoning: a `^4.4.0-beta.2` range matches `4.4.0-beta.3` (and every other 4.x prerelease + stable), which is almost never what you want. The next prerelease could fix nothing or break everything; you should opt into the bump explicitly.
+
+Override per-invocation if you want the caret behavior anyway:
+
+```bash
+lpm install zod@next --save-prefix '^'   # → "^4.4.0-beta.2"
+```
+
+## Bare reinstall doesn't rewrite
+
+```bash
+lpm install zod         # already in package.json as "~4.3.6"
+# → still "~4.3.6", refresh-only
+```
+
+Re-installing an existing dep without a version or override flag refreshes the lockfile + store entry but **doesn't rewrite the existing range**. Your team's intentional `~4.3.6` pin survives a routine reinstall.
+
+To force a rewrite, set any flag (`--exact`, `--tilde`, `--save-prefix`) — even one that matches the existing prefix.
+
+## Why no `*` default
+
+`*` matches every version, including future major bumps that break your code. There is no save policy under which the default is `"*"`. The only way to get `"*"` is to type it: `lpm install zod@*`. Wildcards are a deliberate per-package opt-in.
+
+This is enforced at every layer:
+
+- `--save-prefix '*'` is rejected at the CLI parser
+- `save-prefix = "*"` is rejected at the TOML config loader
+- The bare-install default never produces `"*"`, regardless of resolved version
+
+## Workspace protocol
+
+```bash
+lpm install @my-co/shared@workspace:*
+# package.json: "@my-co/shared": "workspace:*"
+```
+
+`workspace:*`, `workspace:^`, `workspace:~`, and `workspace:<range>` are always preserved verbatim. Save policy doesn't touch them — workspace protocol semantics are out of scope.
+
+## Why this is in `lpm.toml`, not `package.json`
+
+The save-policy config keys (`save-prefix`, `save-exact`) deliberately don't live under `package.json > lpm`. Reasons:
+
+- **Save policy is tool behavior, not publishable metadata.** It doesn't ship to consumers of your package.
+- **It changes more often.** Tweaking a personal preference shouldn't dirty the manifest.
+- **Teams disagree about whether to commit it.** `lpm.toml` lets each repo decide — commit it for project-shared policy, `.gitignore` it for individual preference.
+
+## See also
+
+- [`lpm install`](/docs/packages/install#save-policy) — CLI flag reference
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level config file
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level config file
+- [`lpm config`](/docs/reference/config) — manage user-level keys from the CLI

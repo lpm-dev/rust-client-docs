@@ -1,6 +1,75 @@
 ---
 title: Exit codes
-description: "Exit codes returned by LPM commands, for CI and scripting."
+description: "What each LPM exit code means and how to handle them in CI."
 ---
 
-Coming soon.
+LPM follows the conventional Unix exit-code convention: `0` for success, non-zero for failure. The CLI is intentionally narrow about which non-zero codes it produces — most failures exit `1`. A few specific scenarios warrant a different code.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. The command completed without error. |
+| `1` | General error. Network failure, registry error, parse failure, validation failure, missing dependency, audit found vulnerabilities, etc. The error message on stderr (or in `--json` output) describes the specific cause. |
+| `2` | Usage error. `lpm` was invoked with no subcommand, or with arguments clap couldn't parse. The CLI's help text is printed before exit. |
+| _passthrough_ | Forwarded subprocess exit code. Commands that wrap external processes (`lpm run`, `lpm exec`, `lpm dlx`, `lpm test`, `lpm bench`, `lpm lint`, `lpm fmt`, `lpm check`) exit with the wrapped command's exit code. |
+
+## Subprocess passthrough
+
+When a wrapped tool exits non-zero — your test suite fails, your script crashes, oxlint reports an error — LPM forwards the exit code so CI gates see the right signal:
+
+```bash
+lpm test
+echo "tests exit code: $?"     # whatever vitest / jest exited with
+```
+
+This is implemented via `LpmError::ExitCode(code)` flowing up to the top of `main`, which calls `std::process::exit(code)`. No code mangling — `lpm test` exiting `1` from vitest looks identical to running vitest directly.
+
+## In `--json` mode
+
+With `--json`, every error path also emits a structured JSON object on stdout before exiting:
+
+```json
+{
+  "success": false,
+  "error": "registry: not found",
+  "error_code": "not_found"
+}
+```
+
+The `error_code` field is the canonical short name for the error variant (e.g. `auth_required`, `not_found`, `forbidden`, `network`, `invalid_package_name`, `store`, `task`, `plugin`). Use it for programmatic dispatch in CI / agents.
+
+For subprocess passthrough commands (`lpm run`, `lpm test`, etc.), `--json` does **not** emit a wrapping JSON envelope on failure — the wrapped command's own output (whatever it was) is the result. This preserves the "single JSON result" contract.
+
+## Common scenarios
+
+| Scenario | Exit code |
+| --- | --- |
+| `lpm install` succeeds | `0` |
+| `lpm install` finds an unresolvable dep | `1` |
+| `lpm audit` finds a vulnerability under the default `--fail-on=all` | `1` |
+| `lpm audit` finds nothing (or a finding excluded by `--fail-on`) | `0` |
+| `lpm doctor` finds an issue | `1` |
+| `lpm doctor` finds nothing | `0` |
+| `lpm test` runs vitest, vitest exits 0 | `0` |
+| `lpm test` runs vitest, vitest exits 1 | `1` (forwarded) |
+| `lpm` (no args) | `2` |
+| `lpm install --frobnicate` (unknown flag) | `2` |
+| `lpm install` blocked by missing auth | `1` (and `error_code: "auth_required"` in `--json` mode) |
+
+## CI gating idioms
+
+```yaml title=".github/workflows/ci.yml (excerpt)"
+- run: lpm install --offline --strict-integrity
+- run: lpm audit --fail-on vuln
+- run: lpm test
+- run: lpm lint
+- run: lpm fmt --check
+- run: lpm check
+```
+
+Each step passes / fails on its own exit code. No special handling required.
+
+## See also
+
+- [`lpm audit --fail-on`](/docs/packages/audit) — gate exit code by finding type
+- [`lpm fmt --check`](/docs/dev/fmt) — exit non-zero on unformatted files
+- [Global flags](/docs/commands#global-flags) — `--json` for structured failure output

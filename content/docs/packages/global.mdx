@@ -1,0 +1,126 @@
+---
+title: lpm global
+description: "Manage globally-installed CLI packages under ~/.lpm/global/."
+---
+
+```bash
+lpm global <subcommand>
+```
+
+CLI surface for the global package store at `~/.lpm/global/`. Globally installed packages — `lpm install -g <pkg>` — get their bins shimmed into `~/.lpm/bin/` and tracked in a manifest LPM owns.
+
+The same install / uninstall surface is reachable via the regular commands with `-g`:
+
+| Equivalent | |
+| --- | --- |
+| `lpm install -g eslint` | `lpm install --global eslint` |
+| `lpm uninstall -g eslint` | `lpm global remove eslint` |
+
+This page documents the `lpm global` subcommands directly. For installing a global package, prefer [`lpm install -g`](/docs/packages/install).
+
+## Examples
+
+```bash
+lpm global list                          # what's installed globally
+lpm global list --outdated               # which globals have updates available
+lpm global list --verbose                # add install date, size, root path
+lpm global bin                           # print ~/.lpm/bin/  (add this to PATH)
+lpm global path eslint                   # print eslint's install root
+lpm global remove eslint                 # uninstall a global package
+lpm global update                        # update every globally-installed package
+lpm global update eslint                 # update one
+lpm global update eslint@^9              # change the saved spec, then update
+lpm global update --dry-run              # show the upgrade plan, change nothing
+```
+
+## Subcommands
+
+### `list`
+
+```bash
+lpm global list [--outdated] [--verbose]
+```
+
+Lists every globally-installed package with its active version and exposed bin commands.
+
+| Flag | Effect |
+| --- | --- |
+| `--outdated` | Resolve each install's saved spec against the registry; flag packages with newer matching versions. Uses batch metadata, so checking dozens of globals doesn't fan out one round-trip per package. |
+| `--verbose` | Add install date, on-disk size, and the absolute install root for each row |
+
+### `bin`
+
+```bash
+lpm global bin
+```
+
+Prints `~/.lpm/bin/` — the directory where global-install shims live. Add this to your `PATH` so installed CLIs resolve.
+
+```bash
+export PATH="$(lpm global bin):$PATH"     # in your shell rc
+```
+
+### `path <package>`
+
+```bash
+lpm global path eslint
+```
+
+Prints the install root for one specific globally-installed package. Useful for tooling that needs to find the package's `node_modules/`, `package.json`, or files.
+
+### `remove <package>`
+
+```bash
+lpm global remove eslint
+```
+
+Uninstalls a globally-installed package. Drops the entry from the global manifest, removes the install root, and unshims any bins it owned. **Equivalent to `lpm uninstall -g eslint`** — both invocations route through the same M3.3 implementation.
+
+### `update [package[@spec]] [--dry-run]`
+
+```bash
+lpm global update                        # update every global
+lpm global update eslint                 # update one, preserving its saved spec
+lpm global update eslint@^9              # rewrite the saved spec, then update
+lpm global update --dry-run              # plan only, no work
+```
+
+Three behaviors based on the argument:
+
+| Argument | Behavior |
+| --- | --- |
+| (none) | Iterate every globally-installed package. Re-resolve each one against its persisted `saved_spec`. Upgrade any that have a newer matching version. |
+| `<pkg>` | Same flow scoped to one package |
+| `<pkg>@<spec>` | Rewrite the saved spec using Phase 33's [save policy](/docs/packages/save-policy) decision logic, then upgrade. Same precedence as `lpm install <pkg>@<spec>` in a project context. |
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print the upgrade plan without changing any state |
+
+## Bin collisions
+
+When two global installs declare a bin with the same name, the second install's shim takes ownership. To resolve a collision deliberately, use the install command's `--replace-bin` flag:
+
+```bash
+lpm install -g foo --replace-bin serve
+```
+
+The previous owner keeps its install but loses `serve` from PATH; the new shim points at `foo`'s `serve` binary. See [`lpm install -g`](/docs/packages/install) for the full collision surface (`--replace-bin`, `--alias <ORIG=ALIAS>`).
+
+## Approving scripts for globals
+
+Globally-installed packages have their own blocked-set for lifecycle scripts. Manage it with:
+
+```bash
+lpm approve-scripts --global             # review the global blocked set
+lpm approve-scripts --global --group     # group by top-level globally-installed package
+```
+
+Approvals write to `~/.lpm/global/trusted-dependencies.json` (separate from any project's `package.json`).
+
+## See also
+
+- [`lpm install -g`](/docs/packages/install) — install into the global root (with `--replace-bin` / `--alias`)
+- [`lpm uninstall -g`](/docs/packages/uninstall) — equivalent to `lpm global remove`
+- [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) — script approval for globals
+- [Save policy](/docs/packages/save-policy) — determines what `update <pkg>@<spec>` writes

@@ -1,6 +1,138 @@
 ---
 title: Authentication
-description: "Log in, log out, check identity, rotate tokens, and configure CI auth with login/logout/whoami/setup/token-rotate."
+description: "Log in, log out, check identity, rotate tokens, and configure CI auth."
 ---
 
-Coming soon.
+LPM stores auth tokens in your **OS keychain** — Keychain on macOS, libsecret / GNOME Keyring on Linux, Credential Manager on Windows. Tokens never land in plain text on disk under `~/.lpm/`. Multi-registry: separate tokens for lpm.dev, npm, GitHub Packages, GitLab Packages, and any custom registries you've added.
+
+This page covers every command in the auth surface: [`login`](#lpm-login), [`logout`](#lpm-logout), [`whoami`](#lpm-whoami), [`token-rotate`](#lpm-token-rotate), [`setup`](#lpm-setup), [`setup-npmrc`](#lpm-setup-npmrc), and [`ci`](#lpm-ci).
+
+## `lpm login`
+
+```bash
+lpm login          # alias: lpm l
+lpm login --npm
+lpm login --github
+lpm login --gitlab
+lpm login --login-registry https://npm.my-co.com --token <T>
+```
+
+Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in the OS keychain. CSRF state is verified end-to-end.
+
+For other registries (npm, GitHub, GitLab, custom), pass `--token <T>` directly — they don't expose a browser flow.
+
+| Flag | Effect |
+| --- | --- |
+| `--npm` | Log in to `registry.npmjs.org` with a granular access token |
+| `--github` | Log in to GitHub Packages with a personal access token |
+| `--gitlab` | Log in to GitLab Packages with a personal/deploy/job token |
+| `--login-registry <URL>` | Log in to a custom npm-compatible registry |
+| `--token <T>` | Provide the token directly (required for non-lpm.dev registries) |
+
+If you're already logged in to the target registry, `lpm login` reports the existing identity and exits without re-authenticating. To force a re-login, run `lpm logout` first.
+
+## `lpm logout`
+
+```bash
+lpm logout                                   # alias: lpm lo — log out of lpm.dev
+lpm logout --revoke                          # also revoke the token on the server
+lpm logout --npm                             # log out of npm
+lpm logout --github
+lpm logout --gitlab
+lpm logout --logout-registry https://npm.my-co.com
+lpm logout --all                             # clear every stored registry token
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--revoke` | Also revoke the token server-side (lpm.dev only) |
+| `--npm` / `--github` / `--gitlab` | Clear that registry's token |
+| `--logout-registry <URL>` | Clear a custom registry's token |
+| `--all` | Clear every stored token |
+
+## `lpm whoami`
+
+```bash
+lpm whoami
+```
+
+Prints the currently logged-in identity for lpm.dev, plus plan tier, MFA status, pool access flag, storage / private-package usage and limits, and any organizations you belong to. `--json` returns the same data structurally.
+
+## `lpm token-rotate`
+
+```bash
+lpm token-rotate
+```
+
+Server-side rotation: creates a new token, invalidates the old one, stores the new one in your keychain. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system.
+
+## `lpm setup`
+
+```bash
+lpm setup                       # generate .npmrc with stored token
+lpm setup --oidc                # exchange a CI OIDC token at runtime
+lpm setup --proxy               # route ALL npm traffic through lpm.dev (Pro/Org)
+lpm setup --scoped              # only @lpm.dev/* through lpm.dev (default)
+lpm setup -r https://lpm.dev    # override the registry URL
+```
+
+Generates an `.npmrc` for CI/CD environments. Other tools (npm, pnpm, yarn) can then install `@lpm.dev/*` packages from CI.
+
+| Flag | Effect |
+| --- | --- |
+| `-r`, `--registry <URL>` | Override the registry URL written to `.npmrc` |
+| `--oidc` | Exchange an OIDC token at runtime instead of using a stored one |
+| `--proxy` | Route ALL npm traffic through lpm.dev (Pro/Org feature for dependency visibility) |
+| `--scoped` | Default — only `@lpm.dev/*` is routed through lpm.dev |
+
+`--proxy` and `--scoped` are mutually exclusive.
+
+When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
+
+## `lpm setup-npmrc`
+
+```bash
+lpm setup-npmrc                # 30-day read-only .npmrc token (default)
+lpm setup-npmrc -d 7           # 7-day token
+lpm setup-npmrc --proxy        # route ALL npm traffic through lpm.dev
+```
+
+Generates a **read-only** `.npmrc` token for local development — narrower scope than the full session token, with a configurable validity window. Useful when you want a teammate or local tool to install LPM packages without granting publish capability.
+
+| Flag | Effect |
+| --- | --- |
+| `-d`, `--days <N>` | Token validity in days (default `30`) |
+| `--proxy` | Route ALL npm traffic through lpm.dev (Pro/Org) |
+| `--scoped` | Default scoped routing |
+
+## `lpm ci`
+
+```bash
+lpm ci env                              # auto-detect CI platform, output env vars
+lpm ci env --env=staging                # use the staging env file
+lpm ci env --output=ci-env.txt          # write to a file
+lpm ci setup github-actions             # generate an OIDC workflow YAML
+```
+
+CI/CD helpers. Auto-detects the platform you're running on (GitHub Actions, GitLab CI, CircleCI, Bitbucket) and emits env-var lines in the right format.
+
+`lpm ci setup github-actions` generates a workflow YAML that wires up OIDC token exchange — run it once, commit the output to `.github/workflows/`.
+
+## Token storage
+
+| Platform | Backend |
+| --- | --- |
+| macOS | Keychain (`security` framework) |
+| Linux | libsecret / GNOME Keyring (D-Bus) |
+| Windows | Credential Manager |
+
+Service name: `lpm`. Account names are scoped per registry — lpm.dev, npm, GitHub, GitLab, and custom registries each get their own keychain entry. `lpm logout --all` walks every stored entry and clears them.
+
+If the keychain is unavailable (sandboxed environment, headless Linux without D-Bus), the CLI surfaces the error rather than silently falling back to plaintext storage.
+
+## See also
+
+- [Registries](/docs/registries) — how the CLI routes between lpm.dev, npm, and private registries
+- [`lpm publish`](/docs/packages/publish) — needs you logged in to the target registry
+- [Environment variables](/docs/reference/env-vars) — `LPM_TOKEN`, `LPM_OIDC_TOKEN`
+- [`.npmrc` format](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) — the file `setup` and `setup-npmrc` write

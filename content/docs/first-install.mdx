@@ -1,6 +1,98 @@
 ---
 title: Your first install
-description: "Install your first package with LPM."
+description: "A two-minute walkthrough — install a package, look around, run a script."
 ---
 
-Coming soon.
+import { Card, Cards } from "fumadocs-ui/components/card";
+
+This page assumes you have [LPM installed](/docs/installation). It will walk through installing a real package and getting a feel for how LPM lays things out.
+
+## A new project from scratch
+
+```bash
+mkdir hello-lpm && cd hello-lpm
+lpm init -y
+```
+
+`lpm init -y` creates a minimal `package.json`. Without `-y` it prompts for name, version, and a few defaults.
+
+## Install a dependency
+
+```bash
+lpm install zod
+```
+
+```text title="Output"
+  ● Resolved  1 dep, 0 transitive  (88 ms)
+  ● Linked    isolated layout       (12 ms)
+
+  + zod  ^4.3.6
+```
+
+Open `package.json` — `zod` is now under `dependencies` with a caret range:
+
+```json
+{
+  "dependencies": {
+    "zod": "^4.3.6"
+  }
+}
+```
+
+LPM's [save policy](/docs/packages/save-policy) writes `^resolvedVersion` by default. To save exact, append `--exact` (or set `save-exact = true` in `~/.lpm/config.toml`).
+
+Two new files appear next to your `package.json`:
+
+- **`lpm.lock`** — human-readable, git-diffable lockfile. Commit this.
+- **`lpm.lockb`** — binary mmap of the same data, for zero-parse warm starts. Commit this too.
+
+`node_modules/` is laid out **isolated by default** (pnpm-style symlinks). If you want a flat npm-style layout, pass `--linker=hoisted`.
+
+## Install everything from a manifest
+
+If you cloned a project that already has a `package.json`:
+
+```bash
+lpm install
+```
+
+Resolves and installs every dep declared in `package.json`. If `lpm.lock` exists and is consistent with the manifest, the install is reproducible — the lockfile pins every transitive version and integrity hash.
+
+## Run a script
+
+Add a script to `package.json`:
+
+```json
+{
+  "scripts": {
+    "hello": "echo 'hi from lpm'"
+  }
+}
+```
+
+```bash
+lpm run hello
+# hi from lpm
+```
+
+Or just `lpm hello` — `lpm` falls through to scripts as a top-level command, like `npm run` shorthand.
+
+## Look around the global store
+
+Every package LPM downloads goes into a single content-addressable store at `~/.lpm/store/`. Subsequent installs across other projects reuse the same on-disk copy via clonefile (macOS) or hardlinks (Linux), so a fresh `lpm install` of the same dep set is essentially free in disk and time.
+
+```bash
+lpm store verify   # checks integrity of every entry
+lpm store gc       # drops entries no project references anymore
+```
+
+See [Content-addressable store](/docs/packages/content-addressable-store) for the design.
+
+## What now
+
+<Cards>
+  <Card title="Project setup" href="/docs/project-setup" description="package.json, lpm.json, and lpm.toml — what each file is for." />
+  <Card title="lpm install" href="/docs/packages/install" description="The full install command, every flag." />
+  <Card title="Migrating" href="/docs/migrating" description="Bring an existing npm/pnpm/yarn/bun project over." />
+  <Card title="Commands" href="/docs/commands" description="One-page index of every LPM command." />
+</Cards>

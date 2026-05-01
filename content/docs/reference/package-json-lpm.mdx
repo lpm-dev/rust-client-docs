@@ -1,6 +1,275 @@
 ---
-title: package.json "lpm" key
-description: "Project-level LPM configuration embedded in package.json."
+title: package.json — "lpm" key
+description: "Reference for the LPM-specific configuration block inside package.json."
 ---
 
-Coming soon.
+LPM reads its project-level configuration from a `"lpm"` block inside the project's `package.json`. Settings here are committed alongside dependencies, so the whole team picks them up automatically.
+
+A few related fields live at the **top level** of `package.json` (not inside `"lpm"`) — `workspaces`, `engines`, `scripts`, `bin`, and `overrides` / `resolutions`. Those follow npm/pnpm/yarn conventions and are listed [at the bottom](#related-top-level-fields).
+
+```json title="package.json (LPM-relevant fields)"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+
+  "engines": { "node": ">=22.0.0" },
+  "workspaces": ["packages/*", "apps/*"],
+
+  "lpm": {
+    "linker": "isolated",
+    "strictDeps": "warn",
+
+    "scriptPolicy": "deny",
+    "trustedDependencies": ["esbuild", "sharp"],
+
+    "minimumReleaseAge": 86400,
+
+    "overrides": {
+      "lodash": "^4.17.21",
+      "react@<18": "18.0.0"
+    },
+
+    "patchedDependencies": {
+      "lodash@4.17.21": {
+        "patchFile": "patches/lodash.patch",
+        "originalIntegrity": "sha512-..."
+      }
+    },
+
+    "scripts": {
+      "autoBuild": false,
+      "denyAll": false,
+      "trustedScopes": ["@myorg/*"],
+      "passEnv": ["GITHUB_TOKEN"],
+      "readProject": "narrow",
+      "sandboxLimits": {
+        "RLIMIT_AS": 4294967296,
+        "RLIMIT_NPROC": 64,
+        "RLIMIT_NOFILE": 1024,
+        "RLIMIT_CPU": 60
+      },
+      "sandboxWriteDirs": ["build/", "dist/"]
+    }
+  }
+}
+```
+
+## Top-level keys under `"lpm"`
+
+### `linker`
+
+```json
+{ "lpm": { "linker": "isolated" } }
+```
+
+`node_modules` materialization style.
+
+| Value | Meaning |
+| --- | --- |
+| `"isolated"` (default) | pnpm-style symlinks into a `.lpm/` virtual store |
+| `"hoisted"` | npm-style flat layout |
+
+CLI flag: `lpm install --linker <isolated\|hoisted>` overrides per-invocation.
+
+### `strictDeps`
+
+```json
+{ "lpm": { "strictDeps": "warn" } }
+```
+
+How strictly LPM enforces declared dependencies (no implicit access to phantom deps).
+
+| Value | Behavior |
+| --- | --- |
+| `"strict"` | Hard error on undeclared imports |
+| `"warn"` | Print a warning, continue |
+| `"loose"` | Permit silently |
+
+### `scriptPolicy`
+
+```json
+{ "lpm": { "scriptPolicy": "deny" } }
+```
+
+Lifecycle-script gate for `lpm install` and `lpm rebuild`. See [`lpm install`](/docs/packages/install#lifecycle-scripts) for the full semantics.
+
+| Value | Behavior |
+| --- | --- |
+| `"deny"` (default) | Scripts blocked. `lpm approve-scripts` required per package. |
+| `"allow"` | Run every lifecycle script during install. Matches npm/pnpm/bun default. |
+| `"triage"` | Four-layer tiered gate: greens auto-run in the sandbox; ambers and reds need manual review. |
+
+Precedence: CLI flag > `package.json > lpm > scriptPolicy` > `~/.lpm/config.toml > script-policy` > default (`deny`).
+
+### `trustedDependencies`
+
+```json
+{ "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
+```
+
+Allowlist of packages permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Two accepted shapes:
+
+**Legacy array form** — names only:
+
+```json
+{ "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
+```
+
+**Rich map form** — bound to integrity + script hash, so any change re-opens the package for review:
+
+```json
+{
+  "lpm": {
+    "trustedDependencies": {
+      "esbuild@0.25.1": {
+        "integrity": "sha512-...",
+        "scriptHash": "sha256-..."
+      }
+    }
+  }
+}
+```
+
+Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`](/docs/packages/approve-scripts).
+
+> The top-level `"trustedDependencies"` field (outside `"lpm"`) is **also** accepted, for compatibility. The two are merged.
+
+### `minimumReleaseAge`
+
+```json
+{ "lpm": { "minimumReleaseAge": 86400 } }
+```
+
+Cooldown in **seconds** before a newly published version is installable. Default `86400` (24h). Bypass per-invocation with `lpm install --allow-new` or override with `lpm install --min-release-age=<DUR>`.
+
+Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > 24h default.
+
+### `overrides`
+
+```json
+{
+  "lpm": {
+    "overrides": {
+      "lodash": "^4.17.21",
+      "react@<18": "18.0.0",
+      "baz>foo@1": "2.0.0"
+    }
+  }
+}
+```
+
+LPM-native dependency overrides — same intent as pnpm's `pnpm.overrides` and npm's top-level `overrides`. Selectors:
+
+| Selector | Matches |
+| --- | --- |
+| `"foo"` | Every instance of `foo` |
+| `"foo@<1.0.0"` | Instances whose natural version satisfies the range |
+| `"baz>foo"` / `"baz>foo@1"` | Instances reached **through** `baz` |
+
+On conflict with the top-level `overrides` / `resolutions` fields, `lpm.overrides` wins. Multi-segment paths (`a>b>c`) are rejected at parse time.
+
+### `patchedDependencies`
+
+```json
+{
+  "lpm": {
+    "patchedDependencies": {
+      "lodash@4.17.21": {
+        "patchFile": "patches/lodash.patch",
+        "originalIntegrity": "sha512-..."
+      }
+    }
+  }
+}
+```
+
+Local-only patches applied after install, `patch-package`-style. Selector format is `"<name>@<exact-version>"`. Generated and registered automatically by [`lpm patch`](/docs/packages/patch) and [`lpm patch-commit`](/docs/packages/patch) — usually you don't edit this block by hand.
+
+The patch engine verifies the store entry's integrity matches `originalIntegrity` on every install. Drift is a hard error.
+
+## The `lpm.scripts` block
+
+Configuration for lifecycle-script execution under `lpm rebuild` and the auto-build flow. Most fields control the sandbox and capability surface granted to scripts.
+
+```json
+{
+  "lpm": {
+    "scripts": {
+      "autoBuild": false,
+      "denyAll": false,
+      "trustedScopes": ["@myorg/*"],
+      "passEnv": ["GITHUB_TOKEN"],
+      "readProject": "narrow",
+      "sandboxLimits": { "RLIMIT_AS": 4294967296 },
+      "sandboxWriteDirs": ["build/"]
+    }
+  }
+}
+```
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `autoBuild` | bool | If `true`, `lpm install` auto-runs `lpm rebuild` for trusted packages. Equivalent to `lpm install --auto-build`. |
+| `denyAll` | bool | Refuse to run any lifecycle scripts, ever — even trusted ones. Hard kill switch. |
+| `trustedScopes` | string[] | Scope globs (e.g. `"@myorg/*"`) whose packages are auto-trusted for script execution |
+| `passEnv` | string[] | Extra env vars to forward into scripts. Each entry widens the capability surface — triggers user review. |
+| `readProject` | `"narrow"` \| `"full"` | Filesystem read scope for scripts. `"full"` widens the capability and triggers review. |
+| `sandboxLimits` | object | Per-resource limits. Keys: `RLIMIT_AS`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`, `RLIMIT_CPU`. Values: non-negative integer. Loosening any beyond the user's ceiling triggers review. |
+| `sandboxWriteDirs` | string[] | Extra directories inside the project the sandbox lets scripts write to (default sandbox blocks writes outside the package's own dir) |
+
+Widening any of `passEnv`, `readProject`, or `sandboxLimits` beyond the user's defaults requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts) — the system does not silently grant elevated capabilities.
+
+## Related top-level fields
+
+These live at the top level of `package.json`, not inside `"lpm"`:
+
+### `workspaces`
+
+```json
+{ "workspaces": ["packages/*", "apps/*"] }
+```
+
+Or the object form:
+
+```json
+{ "workspaces": { "packages": ["packages/*"] } }
+```
+
+Both shapes accepted. See [Workspaces](/docs/packages/workspaces).
+
+### `engines`
+
+```json
+{ "engines": { "node": ">=22.0.0" } }
+```
+
+Runtime version constraints. LPM honors `engines.node`; `lpm.json > runtime.node` takes precedence when both are set.
+
+### `overrides` / `resolutions`
+
+npm-style `overrides` and yarn-style `resolutions` are read for compatibility. `lpm.overrides` (above) takes precedence when there's a conflict.
+
+### `scripts`, `bin`, `dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`
+
+Standard npm fields — LPM reads them as you'd expect.
+
+### `catalogs`
+
+```json
+{
+  "catalogs": {
+    "default": { "react": "^18.2.0", "react-dom": "^18.2.0" },
+    "testing": { "jest": "^29.0.0", "vitest": "^1.0.0" }
+  }
+}
+```
+
+Centralized version catalogs for monorepos. Members reference catalog versions with `"catalog:"` or `"catalog:<name>"`.
+
+## See also
+
+- [`lpm.json`](/docs/reference/lpm-json) — separate file for dev-server, task-runner, and publish config
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults (save policy, etc.)
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults
+- [Save policy](/docs/packages/save-policy) — how install ranges are written
+- [Workspaces](/docs/packages/workspaces) — filter grammar and topology

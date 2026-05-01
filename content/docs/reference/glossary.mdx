@@ -1,6 +1,130 @@
 ---
 title: Glossary
-description: "Terms used in LPM documentation."
+description: "LPM-specific terminology in one place."
 ---
 
-Coming soon.
+A reference for terms that mean something specific in LPM-land. Sorted alphabetically.
+
+### Add (vs. install)
+
+**`lpm add`** is *source delivery* — copies a package's source files into your project, like `shadcn-ui`. **`lpm install`** is *runtime dependency* — resolves and links into `node_modules/`. Not aliases. See [`lpm add`](/docs/packages/add) and [`lpm install`](/docs/packages/install).
+
+### Auto-build
+
+The `lpm.scripts.autoBuild` flag (or `lpm install --auto-build` / `lpm install --yolo`) that triggers `lpm rebuild` for trusted packages immediately after install completes.
+
+### Behavioral tag
+
+A static-analysis flag attached to an installed package by [`lpm audit`](/docs/packages/audit) and queryable via [`lpm query`](/docs/packages/query). Examples: `:eval`, `:network`, `:fs`, `:shell`, `:child-process`, `:obfuscated`. Used to make security gates more precise than blanket version pinning.
+
+### Capability
+
+A widening request a package's lifecycle scripts can declare in `lpm.scripts.{passEnv, readProject, sandboxLimits}`. Beyond the user's defaults, it requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts) — the system never silently grants elevated capabilities.
+
+### Cold install
+
+An install where neither `node_modules` nor the global store has the dep tree yet — everything is downloaded from the registry. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as the slowest steady-state path.
+
+### Config-aware package
+
+A package whose tarball ships an `lpm.config.json` at the root. [`lpm add`](/docs/packages/add#authoring-config-aware-packages-lpmconfigjson) treats it as a configurable installer (interactive prompts, conditional file copy, conditional dep injection). Without `lpm.config.json` it's a plain source copy.
+
+### Distribution mode
+
+A per-package opt-in for how the package is sold or shared on lpm.dev: **private** (default), **pool**, or **marketplace**. Orthogonal to package *type* (normal / source / Swift). All lpm.dev packages start private.
+
+### Greedy-fusion (resolver)
+
+The default resolver since post-Phase-60. Streams metadata fetches into the dispatcher. Faster than the legacy PubGrub-with-split-retry resolver; opt out with `LPM_RESOLVER=pubgrub`.
+
+### Hoisted layout
+
+npm-style flat `node_modules/`. Opt in per-invocation with `lpm install --linker=hoisted` or per-project with `package.json > lpm > linker = "hoisted"`. Default is **isolated**.
+
+### Integrity
+
+The SRI hash (`sha512-…`) recorded in the lockfile against each resolved package. Verified on every install. Drift is a hard error.
+
+### Isolated layout
+
+Default `node_modules/` materialization — pnpm-style symlinks into a `.lpm/` virtual store. Each package gets exactly the deps it declared, no phantom-dependency access.
+
+### Lockfile
+
+`lpm.lock` (TOML, git-diffable) + `lpm.lockb` (binary, mmap). Both written together, both committed. The TOML lockfile is the canonical source; the binary is a read accelerator. See [Lockfile format](/docs/reference/lockfile-format) and [Lockb format](/docs/reference/lockb-format).
+
+### lpm.dev
+
+The LPM monetization registry. Hosts private, pool, and marketplace packages under the `@lpm.dev/` scope. **The CLI is registry-agnostic** — lpm.dev is one of several registries it can talk to. See [Registries](/docs/registries).
+
+### Marketplace package
+
+A distribution mode where installs require a license purchase. Per-package opt-in.
+
+### MCP
+
+[Model Context Protocol](https://modelcontextprotocol.io). LPM ships an MCP server that AI editors can wire up via [`lpm mcp setup`](/docs/reference/mcp-servers).
+
+### Minimum release age
+
+Cooldown (default 24h) before a freshly published version is installable. Defends against version-pinning supply-chain attacks. Tunable via `lpm install --min-release-age` or `package.json > lpm > minimumReleaseAge`.
+
+### npm-alias dep
+
+A dep declared like `"my-react": "npm:react@^19.0.0"`. Local name (`my-react`) diverges from the canonical target (`react`). Tracked in lockfiles via `alias-dependencies` and `root-aliases`. Disables the binary lockfile (TOML-only).
+
+### Pool package
+
+A distribution mode where the package's metadata is public but installs are gated to pool subscribers. Publisher earns a share of the pool's revenue. Per-package opt-in.
+
+### Provenance
+
+Sigstore-signed attestation that proves which CI workflow built a tarball and which commit it came from. Generated at publish time with `lpm publish --provenance`. Verified at install / audit time.
+
+### Provenance drift
+
+A change in a package's publisher identity between a prior approval and a candidate version. Phase 46 P4 blocks installs on drift; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`.
+
+### Quality score
+
+Per-package score (0–100) computed from readme / license / types / tests / maintenance signals. Run [`lpm quality`](/docs/packages/quality) to view; gate publishing with `lpm publish --min-score N`.
+
+### Rebuild
+
+Phase 2 of the install pipeline — running lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`). Default-deny: scripts don't run during `lpm install` and require approval via [`lpm approve-scripts`](/docs/packages/approve-scripts) or a non-default [script policy](/docs/packages/install#lifecycle-scripts).
+
+### Save policy
+
+The rule that decides what range gets saved to `package.json` when `lpm install <pkg>` finishes. Defaults to `^resolvedVersion`. See [Save policy](/docs/packages/save-policy).
+
+### Script policy
+
+`deny` (default) / `allow` / `triage`. Governs whether and how lifecycle scripts run. Set per-invocation with `--policy`, per-project with `package.json > lpm > scriptPolicy`, per-user with `~/.lpm/config.toml > script-policy`.
+
+### Source package
+
+A package whose tarball ships an `lpm.config.json` at the root — `lpm add` treats it as a configurable installer. Status is **content-based** (the file's presence), not naming or registry.
+
+### Store
+
+The global content-addressable package store at `~/.lpm/store/`. One on-disk copy per content hash, shared across every project on the machine. Linked into project `node_modules/` via clonefile (macOS) or hardlinks (Linux). Maintained by [`lpm store`](/docs/infra/store).
+
+### Trusted dependency
+
+A package on the `package.json > lpm > trustedDependencies` allowlist that's permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Two shapes accepted: legacy array of names, and rich map bound to integrity + script hash.
+
+### Tunnel claim
+
+Pro/Org-only — registering a stable tunnel domain so subsequent `lpm dev --tunnel` and `lpm tunnel` runs serve from the same URL. Free users get an ephemeral random domain on every run.
+
+### Up-to-date install
+
+An `lpm install` invocation that detects nothing has changed (mtime fast path) and exits in a few ms without doing any work. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as `~6 ms`.
+
+### Warm install
+
+An install where the global store and lockfile are present but `node_modules` is missing. The install rebuilds `node_modules/` from already-extracted store entries — no downloads, no resolution. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as `~23 ms`.
+
+### Workspace
+
+A monorepo declared via `package.json > workspaces` (npm/yarn array form, or yarn-style object form). LPM walks the globs, builds a topological graph, and exposes member-targeting via `--filter` and `-w`. See [Workspaces](/docs/packages/workspaces).

@@ -1,6 +1,113 @@
 ---
 title: lpm.lock format
-description: "TOML lockfile schema."
+description: "TOML lockfile schema — what every field means and why it's there."
 ---
 
-Coming soon.
+`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, and SRI integrity hash, so the next install — on any machine, with any cache state — produces a byte-identical `node_modules/`.
+
+The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile holds the same data in a mmap-friendly format for zero-parse warm starts. Both files should be committed.
+
+## File location
+
+`<project-root>/lpm.lock`
+
+## Top-level shape
+
+```toml title="lpm.lock"
+[metadata]
+lockfile-version = 1
+resolved-with = "greedy-fusion"
+
+[[packages]]
+name = "react"
+version = "19.0.0"
+source = "registry+https://registry.npmjs.org"
+integrity = "sha512-..."
+dependencies = ["scheduler@0.25.0"]
+tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
+
+[[packages]]
+name = "scheduler"
+version = "0.25.0"
+source = "registry+https://registry.npmjs.org"
+integrity = "sha512-..."
+
+# Phase 40 P2 — only present when at least one root dep uses npm:<target>@<range>
+[root-aliases]
+my-react-alias = "react"
+```
+
+## `[metadata]`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `lockfile-version` | u32 | Schema version. Current: `1`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. |
+| `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
+
+## `[[packages]]`
+
+One entry per resolved package. Sorted by `name` for deterministic diffs and minimal merge conflicts.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Package name (e.g. `react`, `@lpm.dev/owner.pkg`) |
+| `version` | string | Exact resolved version |
+| `source` | string \| absent | Source registry, e.g. `registry+https://registry.npmjs.org`. Absent for packages without a known source. |
+| `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated when the registry provides it. Always trusted on subsequent installs. |
+| `dependencies` | string[] | Direct deps as `<local_name>@<version>` entries. Skipped from output when empty. |
+| `alias-dependencies` | `[string, string][]` | (Phase 40 P2) npm-alias edges as `[local_name, target_canonical_name]` pairs. Only present when the package uses `npm:<target>@<range>` aliases. |
+| `tarball` | string \| absent | (Phase 43) Tarball URL hint cached from resolve time. Speeds up the warm-install fast path. Absent on pre-Phase-43 lockfiles. |
+
+### `dependencies` format
+
+```toml
+dependencies = ["scheduler@0.25.0", "loose-envify@1.4.0"]
+```
+
+`<local_name>@<version>` — the local-name is what the depending package writes in its own `dependencies` map. For non-aliased deps the local name equals the canonical registry name. For npm-alias deps (`npm:react@^19.0.0` masquerading as `react-canary`), the local name diverges from the target — see `alias-dependencies` below.
+
+### `alias-dependencies` format
+
+```toml
+alias-dependencies = [["my-react", "react"]]
+```
+
+Each `[local_name, target_canonical_name]` records that the package depends on `my-react@<version>` (in `dependencies`) but the actual target is `react`. Used to compute the right `.lpm/<target>@<version>/` store path on link.
+
+### `tarball` field
+
+```toml
+tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
+```
+
+A dist-URL hint cache for `Source::Registry` packages. Lets the warm-install fast path skip the per-package metadata round-trip. For non-Registry sources (`Source::Tarball`, `Source::Git`), the URL is part of source identity (lives inside the source variant) — pairing them with this field is rejected at parse time.
+
+## `[root-aliases]`
+
+```toml
+[root-aliases]
+my-alias = "actual-package"
+```
+
+(Phase 40 P2) Maps root-level npm-alias edges so warm installs reproduce the original `node_modules/<local>/` layout without re-resolving. Empty for projects without root-level aliases — and omitted entirely from output in that case (backwards-compatible with pre-P2 lockfiles).
+
+## Determinism
+
+The on-disk file is deterministic by construction:
+
+- `[[packages]]` entries are sorted by name
+- `dependencies` arrays inside each package are sorted
+- Optional fields are omitted when empty / `None` rather than written as null
+
+This makes `git diff lpm.lock` actionable: a new dep adds entries, a version bump rewrites a single package's fields, and you can spot supply-chain surprises without parsing.
+
+## Schema versioning
+
+`lockfile-version` is schema-versioned, not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher `lockfile-version` should refuse with a clear error rather than silently misinterpreting fields.
+
+## See also
+
+- [`lpm.lockb` format](/docs/reference/lockb-format) — companion binary lockfile
+- [Lockfile concept](/docs/packages/lockfile) — design overview, when each file is read
+- [`lpm install --offline`](/docs/packages/install) — installs entirely from the lockfile
+- [`lpm install --strict-integrity`](/docs/packages/install) — disallow trust-on-first-use for tarball-URL deps

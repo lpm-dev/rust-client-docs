@@ -1,0 +1,102 @@
+---
+title: lpm approve-scripts
+description: "Review and approve packages whose lifecycle scripts were blocked by the default-deny policy."
+---
+
+```bash
+lpm approve-scripts [package]
+```
+
+Pairs with [`lpm install`](/docs/packages/install)'s default-deny script policy. After install, packages that wanted to run a `preinstall` / `install` / `postinstall` / `prepare` script and aren't already trusted are queued in a **blocked set**. `lpm approve-scripts` walks that set interactively, lists it, or bulk-approves.
+
+Approvals are bound to **`{name, version, integrity, scriptHash}`** — any change to the package tarball or its scripts re-opens the package for review on the next install. The strict binding is what makes the deny-by-default model usable: you grant trust to a specific build, not to a name.
+
+## Examples
+
+```bash
+lpm approve-scripts                          # interactive walk through every blocked package
+lpm approve-scripts esbuild                  # approve a specific package directly
+lpm approve-scripts esbuild@0.25.1           # approve a specific version
+lpm approve-scripts --list                   # read-only listing
+lpm approve-scripts --yes                    # bulk approve, loud — emits a warning banner
+lpm approve-scripts --dry-run                # preview decisions without writing
+lpm approve-scripts --json                   # structured output for agents
+
+lpm approve-scripts --global                 # review globally-installed blocked set
+lpm approve-scripts --global --group         # group by top-level globally-installed package
+```
+
+## What approval writes
+
+Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map form** (not the legacy array form):
+
+```json
+{
+  "lpm": {
+    "trustedDependencies": {
+      "esbuild@0.25.1": {
+        "integrity": "sha512-...",
+        "scriptHash": "sha256-..."
+      }
+    }
+  }
+}
+```
+
+The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events.)
+
+## Modes
+
+| Mode | Behavior |
+| --- | --- |
+| (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows the package, version, declared scripts, integrity, capabilities requested. Approve / skip / inspect per package. |
+| `--list` | Read-only — print the blocked set, no prompts, no mutations. Mutually exclusive with `--yes`. |
+| `--yes` | Bulk approve everything. Emits a warning banner. Mutually exclusive with `--list`. |
+| `<pkg>` | Approve a specific package directly. Skips the interactive walk. Accepts `name` or `name@version`. |
+| `--dry-run` | Run the review flow normally, but skip every write. JSON envelopes carry `"dry_run": true` so agents can detect the mode. |
+
+`--dry-run` composes with `--yes`, `<pkg>`, the interactive walk, and `--global` / `--json`. It's a no-op when combined with `--list` (already read-only).
+
+## Global vs project
+
+By default, `approve-scripts` operates on the current project's blocked set, and writes approvals into the project's `package.json`.
+
+```bash
+lpm approve-scripts --global
+```
+
+Operates on the **global** blocked set — the union of every `lpm install -g …` install root. Approvals write to `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
+
+```bash
+lpm approve-scripts --global --group
+```
+
+When the global blocked set exceeds 10 entries (auto-enabled at that threshold), `--group` clusters list and review output by top-level globally-installed package. Persisted approvals still record per-dependency-binding rows under the hood.
+
+## JSON output
+
+```bash
+lpm approve-scripts --json
+```
+
+Returns a structured envelope agents can parse — blocked-set inventory, per-package metadata, capability requests, your decisions. Combined with `--dry-run`, lets an automation agent preview an approval plan before any human says yes.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `<package>` | Approve a specific package directly (`name` or `name@version`) |
+| `--yes` | Bulk-approve every blocked package (loud) |
+| `--list` | Read-only listing |
+| `--dry-run` | Preview without writing |
+| `--global` | Operate on the global blocked set |
+| `--group` | (with `--global`) group rows by top-level globally-installed package |
+
+Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful here.
+
+## See also
+
+- [`lpm install`](/docs/packages/install#lifecycle-scripts) — what produces the blocked set
+- [`lpm rebuild`](/docs/packages/rebuild) — runs scripts for already-trusted packages
+- [`lpm trust`](/docs/packages/trust) — diff and prune the trust allowlist
+- [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the underlying file

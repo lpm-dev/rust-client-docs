@@ -1,6 +1,172 @@
 ---
 title: Workspaces
-description: "Monorepo support with workspace:* protocol and --filter."
+description: "Monorepo support — workspace declaration, filter grammar, workspace:* protocol, catalogs, deploy."
 ---
 
-Coming soon.
+LPM treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `deploy`) accepts `--filter`, `--all`, and `--affected` to scope work. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
+
+This page covers the conceptual model. For a step-by-step setup walkthrough, see the [Monorepo setup guide](/docs/guides/monorepo-setup).
+
+## Declaring workspaces
+
+Two equivalent shapes — both accepted in `package.json`:
+
+```json title="package.json (array form)"
+{ "workspaces": ["packages/*", "apps/*"] }
+```
+
+```json title="package.json (object form)"
+{ "workspaces": { "packages": ["packages/*", "apps/*"] } }
+```
+
+Both globs match recursively under the project root. Each match is a workspace **member** — a directory with its own `package.json`, with its own dependencies, scripts, and version.
+
+`pnpm-workspace.yaml` is **not** read. If you're migrating from pnpm and you used that file, copy the globs into `package.json > workspaces`. (See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).)
+
+## Filter grammar
+
+The filter expression — used by `--filter` on every workspace-aware command — has its own small DSL. Filters compose: `--filter web --filter api` unions the two sets.
+
+| Filter | Matches |
+| --- | --- |
+| `web` | The member literally named `web` |
+| `@scope/*` | Every member with a name under a scope |
+| `./apps/*` | Every member under a path glob |
+| `{./apps/web}` | Exact path match (path with literal characters) |
+| `[origin/main]` | Members changed since a git ref |
+| `web...` | `web` and every member that depends on `web` (forward closure) |
+| `web^...` | Same, excluding `web` itself |
+| `...web` | `web` and every member it depends on (reverse closure) |
+| `...^web` | Same, excluding `web` itself |
+| `!web` | Exclusion — remove `web` from the resulting set |
+
+> **The legacy substring matcher is gone.** Phase 32 removed it per design decision D2. `--filter core` does NOT match `@babel/core` anymore — write `--filter '*/core'` for that. This is the most common surprise after a Phase 32 upgrade.
+
+Preview what an expression selects without running anything:
+
+```bash
+lpm filter web...                     # terse name list
+lpm filter web... --explain           # full per-package trace (which filter matched, how)
+lpm filter web --fail-if-no-match     # exit non-zero if empty (useful in CI)
+```
+
+[`lpm filter`](/docs/packages/install) drives the same `FilterEngine` as `lpm run --filter`, so the result is byte-identical.
+
+## `--affected`
+
+```bash
+lpm run test --affected              # default base = main
+lpm run test --affected --base develop
+```
+
+Selects only members affected by changes vs the base branch. Saves CI minutes — a one-line README change in `apps/marketing` doesn't trigger a full-monorepo test run.
+
+Affected-ness is computed by walking the git diff against the base ref, then expanding through dep edges (a change in `packages/shared` triggers everything that imports it).
+
+## `--fail-if-no-match`
+
+A typo'd filter (`--filter we` instead of `--filter web`) produces an empty match set, and most commands silently exit success with no work done. `--fail-if-no-match` makes that exit non-zero — strongly recommended in CI:
+
+```bash
+lpm run test --filter web --fail-if-no-match
+```
+
+Available on `install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `filter`.
+
+## Multi-member confirmation
+
+When `lpm install <pkg> --filter ...` would mutate more than one member's `package.json`, LPM prompts for confirmation. JSON mode and non-TTY stdin already skip the prompt automatically; `-y` covers the interactive-terminal-but-no-manual-review case (scripts, agents).
+
+## `workspace:*` protocol
+
+Cross-member deps:
+
+```json title="packages/web/package.json"
+{
+  "dependencies": {
+    "@my-co/shared": "workspace:*"
+  }
+}
+```
+
+Tells the resolver "use the local workspace member, not a published version." The linker symlinks the member into `node_modules/` (isolated layout) instead of pulling from the registry. Topological order is respected for tasks (`dependsOn: ["^build"]` waits for upstream member's build to finish first).
+
+Variants:
+
+| Spec | Meaning |
+| --- | --- |
+| `"workspace:*"` | Any local version |
+| `"workspace:^"` | Caret range against the local version |
+| `"workspace:~"` | Tilde range against the local version |
+| `"workspace:^1.2"` | Explicit range applied as if local were that version |
+
+All variants are preserved verbatim by [save policy](/docs/packages/save-policy) — they never get rewritten.
+
+## Catalogs
+
+Centralize version pins across members:
+
+```json title="package.json (root)"
+{
+  "catalogs": {
+    "default": { "react": "^18.2.0", "react-dom": "^18.2.0" },
+    "testing": { "jest": "^29.0.0", "vitest": "^1.0.0" }
+  }
+}
+```
+
+Members reference catalog versions:
+
+```json title="packages/web/package.json"
+{
+  "dependencies": {
+    "react": "catalog:",            // → ^18.2.0 (default catalog)
+    "react-dom": "catalog:",
+    "vitest": "catalog:testing"     // → ^1.0.0 (named catalog)
+  }
+}
+```
+
+One pin, every member uses it. Bump the catalog entry in one place to update every member. No more "the API package is on react 18.0 but the web package is on 18.2 because someone forgot."
+
+## `lpm deploy`
+
+For Docker / serverless — materialize one member's production closure into a self-contained directory:
+
+```bash
+lpm deploy /prod/api --filter api
+```
+
+Output dir contains:
+
+- The member's source files (excluding `.env*`, `node_modules`, `.git`, LPM-internal state)
+- A `package.json` with `workspace:*` references rewritten to concrete versions
+- A populated `node_modules/` (install pipeline runs at the output dir)
+- A `lpm.lock` for the deploy tree
+
+In a Dockerfile:
+
+```dockerfile
+FROM workspace as pruned
+RUN lpm deploy /prod/api --filter api
+
+FROM node:22-alpine
+COPY --from=pruned /prod/api /app
+WORKDIR /app
+CMD ["node", "server.js"]
+```
+
+Constraints (Phase 32 Phase 3):
+
+- `--filter` is required and must match exactly one member.
+- The output directory must be outside the workspace tree.
+- Workspace members referenced via `workspace:*` must be **published to the registry** today. The resolver has no local-package handling for the deploy output's tree. Phase 12+ will add unpublished workspace dep injection.
+
+## See also
+
+- [Monorepo setup guide](/docs/guides/monorepo-setup) — step-by-step walkthrough
+- [`lpm install --filter`](/docs/packages/install#workspaces) — install scoped to members
+- [`lpm uninstall --filter`](/docs/packages/uninstall#workspaces) — remove scoped to members
+- [`lpm run --filter --affected`](/docs/dev/run#workspaces) — task running with workspace selection
+- [`lpm filter`](/docs/packages/install) — preview a filter expression
+- [Save policy](/docs/packages/save-policy) — `workspace:*` is preserved verbatim

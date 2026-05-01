@@ -1,6 +1,152 @@
 ---
 title: Built-in tools
-description: "Lazy-downloaded Oxlint, Biome, and TypeScript — no npx resolution overhead."
+description: "How LPM ships Oxlint, Biome, and tsc — lazy-downloaded, version-pinned, checksum-verified."
 ---
 
-Coming soon.
+LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), and a `tsc` wrapper for [`lpm check`](/docs/dev/check). The first two are **lazy-downloaded** on first use, cached, and pinned per-project. `tsc` is **not** lazy-downloaded — it shells out to the project-local TypeScript install.
+
+This page covers the design — how the plugin system works, where binaries land, how versions are resolved, and the security model.
+
+## Why lazy-download
+
+Bundling 50+ MB of toolchains into the LPM binary would bloat every install and waste disk for users who don't lint. Bundling nothing and using `npx` adds 200–250 ms of resolution overhead per invocation. The middle path: download tools on first use, cache them globally, hash-verify, share across every project.
+
+Measured cost: `lpm lint` is **78 ms** (vs `npx oxlint` 250 ms — 3.2× faster). `lpm fmt` is **13 ms** (vs `npx biome` 264 ms — 20× faster). The win is not the tool itself — it's the resolution overhead `npx` pays per invocation.
+
+## What ships as a plugin today
+
+| Plugin | Backs | Source | Format |
+| --- | --- | --- | --- |
+| `oxlint` | [`lpm lint`](/docs/dev/lint) | `oxc-project/oxc` GitHub Releases | `.tar.gz` archive |
+| `biome` | [`lpm fmt`](/docs/dev/fmt) | `biomejs/biome` GitHub Releases | Direct binary |
+
+`lpm check` is **not** a plugin — `tsc` lives in `node_modules/.bin` and the wrapper just shells out via the same PATH-injection mechanism `lpm run` uses. This means TypeScript must be installed in the project (`lpm install -D typescript`) — there's no global `tsc` to fall back to.
+
+## On-disk layout
+
+```text
+~/.lpm/plugins/
+├── oxlint/
+│   └── 1.58.0/
+│       └── oxlint              ← downloaded binary
+├── biome/
+│   └── 2.4.10/
+│       └── biome
+└── .version-cache.json         ← cached "latest version" map (1h TTL)
+```
+
+Each plugin gets a directory keyed by version. Multiple versions can coexist (no auto-cleanup). The `.version-cache.json` is consulted for "what's the latest" lookups when no project-pinned version is set.
+
+## Version resolution
+
+The lookup order, when [`lpm lint`](/docs/dev/lint) or [`lpm fmt`](/docs/dev/fmt) starts:
+
+1. **Pinned version** in `lpm.json > tools.<name>` — exact match.
+2. **`max(hardcoded, cached)`** — whichever is newer, the version baked into the LPM binary or one a previous `lpm plugin update` cached.
+3. **Auto-download** if the resolved version isn't in `~/.lpm/plugins/<name>/<version>/` yet.
+
+Pin a version per-project:
+
+```json title="lpm.json"
+{
+  "tools": {
+    "oxlint": "1.57.0",
+    "biome": "2.4.8"
+  }
+}
+```
+
+Update to the latest (sticky — the new "latest" is cached for future invocations):
+
+```bash
+lpm plugin update                # all plugins
+lpm plugin update oxlint         # one plugin
+```
+
+Force a fresh download of an existing version (useful for corrupted installs):
+
+```bash
+LPM_FORCE_TOOL_INSTALL=1 lpm lint
+```
+
+## Checksum verification
+
+Every plugin definition in the LPM binary ships with **SHA-256 checksums** for the hardcoded `latest_version` across every supported platform:
+
+```rust
+PluginDef {
+    name: "oxlint",
+    latest_version: "1.58.0",
+    // ...
+    checksums: &[
+        ("darwin-arm64", "422756416c840b77212c673ae4aa88c8ef27e0e09b8ae51aeed21a2cef6b7191"),
+        ("darwin-x64",   "f4d49bb4a636c8a0810e4c5a56adb02be9cf448570292a102d8a8835f7ba1980"),
+        // ...
+    ],
+}
+```
+
+On download, the bytes are hashed and compared against the expected SHA-256. Mismatch is a hard error; the partial download is removed.
+
+**For pinned versions or `lpm plugin update` results**, the checksum is **not** verified — the LPM binary only carries hashes for the hardcoded `latest_version`. Pinned versions emit a "verification skipped" warning. This is a known gap (item #13 on the project TODO list) — verifying upstream-supplied checksums on update would close it.
+
+## Supported platforms
+
+Each plugin definition declares which platforms get a binary:
+
+| Plugin | Platforms |
+| --- | --- |
+| `oxlint` | `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win-x64` |
+| `biome` | `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win-x64` |
+
+LPM detects the current platform and downloads the matching asset. Unsupported platforms get an immediate error rather than a download attempt.
+
+## Manage installed plugins
+
+```bash
+lpm plugin list              # installed plugins, current vs latest
+lpm plugin update            # pull latest for every plugin
+lpm plugin update oxlint     # one plugin
+lpm plugin remove biome      # delete cached binaries
+```
+
+See [`lpm plugin`](/docs/dev/plugin) for the full subcommand surface.
+
+## Why hardcode the registry
+
+The `PluginDef` registry is a `static` slice in the LPM binary. Adding a new plugin requires:
+
+1. A new `PluginDef` entry in [`crates/lpm-plugin/src/registry.rs`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-plugin/src/registry.rs).
+2. Computed SHA-256 checksums for every supported platform.
+3. A new LPM release.
+
+This is deliberately conservative. Tool-distribution bugs ship with the LPM binary, not a registry-side config that could change unexpectedly. The cost is that adding a plugin requires shipping an update — but plugins are the kind of thing where the LPM team's own QA matters, not an arbitrary user being able to add one.
+
+If you want to use a tool that isn't a plugin, install it as a normal dep:
+
+```bash
+lpm install -D eslint
+lpm run lint           # runs the package.json `lint` script
+```
+
+## CI behavior
+
+In CI, plugins behave the same way as locally — first invocation downloads, subsequent invocations reuse. Cache `~/.lpm/plugins/` in your CI to skip the download step:
+
+```yaml
+- name: Cache LPM plugins
+  uses: actions/cache@v4
+  with:
+    path: ~/.lpm/plugins
+    key: lpm-plugins-${{ hashFiles('lpm.json') }}
+```
+
+The cache key is the `lpm.json` hash — when `tools` versions change, the cache invalidates and re-downloads.
+
+## See also
+
+- [`lpm lint`](/docs/dev/lint) — backed by oxlint
+- [`lpm fmt`](/docs/dev/fmt) — backed by biome
+- [`lpm check`](/docs/dev/check) — NOT a plugin — uses project-local tsc
+- [`lpm plugin`](/docs/dev/plugin) — manage installed plugins
+- [`lpm.json` tools](/docs/reference/lpm-json#tools) — version pinning per project

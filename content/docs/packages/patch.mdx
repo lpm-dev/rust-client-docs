@@ -1,0 +1,97 @@
+---
+title: lpm patch / patch-commit
+description: "Edit an installed package's source and persist the change as a patch (patch-package style)."
+---
+
+```bash
+lpm patch <name>@<version>            # step 1 — extract for editing
+lpm patch-commit <staging_dir>        # step 2 — finalize as a .patch file
+```
+
+Two-step workflow for fixing a bug in a dependency without forking it. The patch travels with your repo (`patches/<name>.patch`) and re-applies automatically on every subsequent `lpm install`.
+
+Same shape as [`patch-package`](https://www.npmjs.com/package/patch-package) — but bound to the original store integrity, so a silently-republished version of the dep can never substitute for the version the patch was authored against.
+
+## The workflow
+
+```bash
+# 1. Extract a clean copy of the store entry to a staging dir
+lpm patch lodash@4.17.21
+# → /tmp/lpm-patch-XXXXXX/node_modules/lodash/  (path printed)
+
+# 2. Edit files in the staging dir however you want
+vim /tmp/lpm-patch-XXXXXX/node_modules/lodash/index.js
+
+# 3. Produce the patch file and register it in package.json
+lpm patch-commit /tmp/lpm-patch-XXXXXX
+# → patches/lodash.patch
+# → package.json :: lpm.patchedDependencies updated
+```
+
+After `patch-commit`, **commit `patches/` and `package.json`** to your repo. The next `lpm install` (yours, your teammates', CI's) auto-applies the patch after linking.
+
+## `lpm patch <name>@<version>`
+
+```bash
+lpm patch lodash@4.17.21
+```
+
+| Argument | Notes |
+| --- | --- |
+| `<name>@<version>` | Exact-version pin only. Phase 6 doesn't accept range selectors — they're reserved for Phase 6.1. |
+
+Steps:
+
+1. Looks up `<name>@<version>` in the global store. Errors if not present (run `lpm install <name>@<version>` first).
+2. Copies the store entry into a unique staging directory under the OS temp root (`/tmp/lpm-patch-XXXXXX/node_modules/<name>/`).
+3. Writes a breadcrumb file (`.lpm-patch.json`) in the staging root so `patch-commit` can recover `(name, version, store_path)` without re-parsing the path.
+4. Prints the staging path. The dir is intentionally NOT auto-deleted — it must outlive the process so you can edit it.
+
+## `lpm patch-commit <staging_dir>`
+
+```bash
+lpm patch-commit /tmp/lpm-patch-XXXXXX
+```
+
+Steps:
+
+1. Reads the breadcrumb to recover `(name, version, store_path)`.
+2. Generates a unified diff between the staging directory and the original store baseline.
+3. Writes `<project>/patches/<name>.patch`.
+4. Updates `package.json > lpm > patchedDependencies` with an entry recording the patch path and the original SRI integrity hash.
+5. Cleans up the staging directory.
+
+The on-disk `package.json > lpm > patchedDependencies` entry looks like:
+
+```json
+{
+  "lpm": {
+    "patchedDependencies": {
+      "lodash@4.17.21": {
+        "patchFile": "patches/lodash.patch",
+        "originalIntegrity": "sha512-..."
+      }
+    }
+  }
+}
+```
+
+## Drift safety
+
+On every install, the patch engine verifies the store entry's `.integrity` matches `originalIntegrity`. **Drift is a hard error** — your install will refuse to apply the patch if the underlying package's content changed (re-publish under the same version, tampering, etc.). Bump the patched dep, regenerate the patch.
+
+This is the key safety property versus stock `patch-package`: a republished `lodash@4.17.21` with different bytes can't silently slip past your patch.
+
+## When to use
+
+- A dependency has a known bug; the upstream PR isn't merged yet.
+- A peer-dep mismatch needs a one-line fix to make installation work.
+- A vendored package needs a tiny tweak that doesn't justify forking.
+
+For larger or longer-lived divergence, prefer forking + publishing your own scoped variant.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — auto-applies patches after linking
+- [`package.json` "lpm.patchedDependencies"](/docs/reference/package-json-lpm#patcheddependencies) — the file format
+- [Content-addressable store](/docs/packages/content-addressable-store) — what the patch is generated against

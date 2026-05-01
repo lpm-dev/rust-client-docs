@@ -1,6 +1,132 @@
 ---
 title: npm compatibility
-description: "How LPM works with package.json, node_modules, and the npm ecosystem."
+description: "What works the same as npm, what's different, and what LPM adds on top."
 ---
 
-Coming soon.
+LPM is **drop-in compatible** with the npm ecosystem. Reads `package.json`. Resolves npm-flavored semver. Materializes `node_modules/`. Installs from `registry.npmjs.org` by default. Honors `.npmrc` for routing and auth. Forwards subprocess exit codes. Almost any npm-shaped project works without conversion — `lpm install` produces a runnable tree.
+
+This page is the explicit scope: what carries over verbatim, what's different, and what LPM adds.
+
+## Carries over verbatim
+
+| Surface | Status |
+| --- | --- |
+| `package.json > dependencies` / `devDependencies` / `peerDependencies` / `optionalDependencies` | Read identically |
+| `package.json > scripts` | Run via `lpm run <name>` (or bare `lpm <name>` as shorthand) |
+| `package.json > bin` (string or map form) | Both shapes accepted |
+| `package.json > files` | Honored at publish time |
+| `package.json > engines.node` | Honored as a pin source (lower precedence than `lpm.json > runtime.node`) |
+| `package.json > workspaces` (array or object form) | Both shapes accepted |
+| `package.json > overrides` | npm-style overrides honored (lower precedence than `lpm.overrides`) |
+| `package.json > resolutions` | yarn-style resolutions honored |
+| `package.json > catalogs` | Centralized version catalogs |
+| `.npmrc` | Read for `registry=`, `@scope:registry=`, and `//host/:_authToken=` lines |
+| Semver dialect | `^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, dist-tags (`latest`, `beta`, `next`) |
+| Lifecycle script names | `preinstall`, `install`, `postinstall`, `prepare`, `prepublishOnly` (recognized — see [Differences](#differences) for execution semantics) |
+
+If a project's only contract with npm is "I have a `package.json` with deps and scripts," that project works unchanged.
+
+## Differences
+
+The differences are deliberate — LPM defaults differ where npm's defaults aren't safe, and a handful of legacy npm behaviors are simplified.
+
+### Lifecycle scripts: deny by default
+
+npm runs `preinstall` / `install` / `postinstall` for every package by default. LPM **doesn't**.
+
+```bash
+lpm install        # downloads + links, no script execution
+lpm rebuild        # runs scripts for trusted packages (phase 2)
+```
+
+To match npm's behavior:
+
+```bash
+lpm install --policy=allow      # or --yolo
+```
+
+To approve packages for the default deny path: [`lpm approve-scripts`](/docs/packages/approve-scripts) walks the blocked set interactively.
+
+This is the single biggest behavioral difference. See [Security & audit](/docs/packages/security-audit) for why.
+
+### Default `node_modules` layout: isolated
+
+npm uses a flat `node_modules/` (hoisted). LPM defaults to **isolated** (pnpm-style symlinks into `<project>/.lpm/wrappers/`). Hoisted is opt-in:
+
+```bash
+lpm install --linker=hoisted
+```
+
+Or persistent in `package.json > lpm > linker = "hoisted"`.
+
+Code that imports a dep it didn't declare in `dependencies` (phantom-dep access) breaks under isolated. npm's hoisting silently allowed it; LPM's isolated layout doesn't. Add the missing entries to `dependencies` — the fix is one-line per package.
+
+### Lockfile: `lpm.lock` + `lpm.lockb`
+
+npm produces `package-lock.json`. LPM produces `lpm.lock` (TOML, git-diffable) + `lpm.lockb` (binary, mmap). Both are committed.
+
+Convert with:
+
+```bash
+lpm migrate
+```
+
+See [Migrating from npm](/docs/guides/migrating-from-npm).
+
+### Save policy: never `*`
+
+npm's `npm install <pkg>` saves `^resolvedVersion`. LPM does the same — but LPM also enforces that `*` can never become a default. Wildcards must be requested per-package via `pkg@*`. See [Save policy](/docs/packages/save-policy).
+
+### Cooldown on recent versions
+
+LPM blocks installs of versions published less than 24h ago by default. npm doesn't. Override with `lpm install --allow-new`. See [Recently published packages](/docs/packages/install#recently-published-packages).
+
+### `npm publish --otp` → `lpm publish` with `otpRequired`
+
+npm prompts for OTP at publish time when 2FA is enabled. LPM mirrors this; configure via `lpm.json > publish.npm.otpRequired = true` to prompt up-front (saves a round-trip). See [`lpm.json` publish.npm](/docs/reference/lpm-json#publishnpm).
+
+## What LPM adds
+
+Things LPM offers on top of the npm-compatible baseline:
+
+| Feature | Where |
+| --- | --- |
+| Strict trust binding for lifecycle scripts (`{name, version, integrity, scriptHash}`) | [`lpm approve-scripts`](/docs/packages/approve-scripts) |
+| Behavioral analysis tags | [`lpm audit`](/docs/packages/audit), [`lpm query`](/docs/packages/query) |
+| Provenance drift detection | [Security & audit § Layer 4](/docs/packages/security-audit#layer-4-provenance--cooldown) |
+| Triage gate (Phase 46) | [Security & audit § Layer 5](/docs/packages/security-audit#layer-5-triage-phase-46) |
+| Local patches with integrity binding | [`lpm patch`](/docs/packages/patch) |
+| Dual-format lockfile | [Lockfile](/docs/packages/lockfile) |
+| Workspace `--affected` + topology-aware caching | [Workspaces](/docs/packages/workspaces), [Task runner](/docs/dev/task-runner) |
+| `workspace:*` protocol | [Workspaces](/docs/packages/workspaces#workspace-protocol) |
+| Catalog protocol | [Workspaces](/docs/packages/workspaces#catalogs) |
+| Path-selector overrides (`baz>foo`) | [`package.json` lpm.overrides](/docs/reference/package-json-lpm#overrides) |
+| Multi-registry routing via `.npmrc` (lpm.dev + npm + private in one project) | [Registries](/docs/registries) |
+| Source delivery (`lpm add`) | [`lpm add`](/docs/packages/add) |
+| Built-in lazy-downloaded tools (oxlint, biome) | [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt) |
+| Zero-config dev server with HTTPS, tunnel, services | [`lpm dev`](/docs/dev) |
+| SE-0292 Swift Package Registry support | [Swift Package Registry](/docs/packages/swift-package-registry) |
+
+## What LPM does not do
+
+Honest scope:
+
+- **Lockfile-only PR review** — no first-class diff tool yet beyond `git diff lpm.lock`. Use the deterministic format and your PR review tool of choice.
+- **Auto-conversion of `pnpm.overrides` / `pnpm.peerDependencyRules`** — neither is read. Migrate by hand. See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).
+- **`engines.lpm` enforcement** — declared but not currently enforced (npm enforces `engines.npm`).
+- **Yarn berry's `.pnp.cjs`** — no Plug'n'Play support. LPM materializes `node_modules/` (isolated or hoisted).
+- **GUI** — there's no `lpm-vault`-style desktop app shipped today. The CLI is the surface.
+
+## Compatibility with the broader ecosystem
+
+- **Tools that read `package.json`** (TypeScript, ESLint, build tools): work unchanged.
+- **Tools that walk `node_modules/`** (most bundlers, test runners): work under both isolated and hoisted layouts.
+- **Tools that hard-code `package-lock.json`**: don't see LPM's lockfile. Either run `lpm migrate` to add `lpm.lock` alongside, or use `lpm install --linker=hoisted` for a closer-to-npm shape.
+
+## See also
+
+- [`lpm migrate`](/docs/packages/migrate) — convert an npm/pnpm/yarn/bun project
+- [Migrating from npm](/docs/guides/migrating-from-npm) — walkthrough
+- [Registries](/docs/registries) — `.npmrc` routing
+- [Save policy](/docs/packages/save-policy) — npm-compatible defaults with stricter rails
+- [Security & audit](/docs/packages/security-audit) — what's different about LPM's trust model

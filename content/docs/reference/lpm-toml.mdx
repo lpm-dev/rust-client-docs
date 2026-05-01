@@ -1,6 +1,40 @@
 ---
 title: lpm.toml
-description: "Project-level save policy and CLI settings."
+description: "Project-level CLI defaults committed to the repo."
 ---
 
-Coming soon.
+`lpm.toml` is an **optional** TOML file that sits next to `package.json`. It pins per-project defaults for behaviors that aren't part of publishable package metadata — most notably the [save policy](/docs/packages/save-policy).
+
+The file is intentionally separate from `package.json > lpm` because save-policy keys are tool behavior, not publishable metadata. Mixing them into the manifest creates avoidable diff churn whenever someone tweaks a personal preference. Keeping them in `lpm.toml` lets each team decide whether to commit the file or `.gitignore` it.
+
+## Today's keys
+
+```toml title="lpm.toml"
+save-prefix = "^"     # one of "^", "~", or "" (empty for exact, no prefix)
+save-exact  = false   # bool; true forces exact regardless of save-prefix
+```
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix applied when `lpm install <pkg>` saves to `package.json`. `*` is **not** accepted. |
+| `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix`. |
+
+Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the offending file. Unknown keys are accepted silently for forward compatibility.
+
+## Precedence
+
+Save policy resolves in this order, highest first:
+
+1. **CLI flag** — `--exact`, `--tilde`, or `--save-prefix '<p>'` on the install command
+2. **`./lpm.toml`** — this file
+3. **`~/.lpm/config.toml`** — user-level fallback
+4. **Built-in default** — `save-prefix = "^"`, `save-exact = false`
+
+See [Save policy](/docs/packages/save-policy) for the full table of how each combination flows into `package.json`.
+
+## See also
+
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults (broader surface)
+- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — publishable / project-shared LPM config
+- [`lpm.json`](/docs/reference/lpm-json) — dev-server, task-runner, and publish config
+- [Save policy](/docs/packages/save-policy) — full rules and edge cases

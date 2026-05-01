@@ -3,4 +3,157 @@ title: CI/CD setup
 description: "Configure LPM for GitHub Actions, GitLab CI, and other CI systems."
 ---
 
-Coming soon.
+This guide covers the moving parts of running LPM in CI: pinning the binary, authenticating reproducibly, gating on quality and security signals, and producing reliable artifacts. We'll go through GitHub Actions in detail; GitLab CI follows the same shape.
+
+## 1. Install LPM in CI
+
+The fastest path is npm — it works everywhere:
+
+```yaml
+- run: npm install -g @lpm-registry/cli@0.29.0
+```
+
+Pin the version explicitly. Don't `@latest` in CI — reproducible builds depend on a fixed toolchain.
+
+For Linux runners that don't have npm bootstrapped, use the standalone installer:
+
+```yaml
+- run: curl -fsSL https://lpm.dev/install.sh | sh
+- run: echo "$HOME/.lpm/bin" >> $GITHUB_PATH
+```
+
+## 2. Authenticate reproducibly
+
+For private packages on lpm.dev, two approaches:
+
+### OIDC (recommended for GitHub Actions, GitLab CI)
+
+```yaml
+permissions:
+  id-token: write    # required for OIDC
+
+jobs:
+  install:
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @lpm-registry/cli@0.29.0
+      - run: lpm setup --oidc      # exchanges OIDC token at install time
+      - run: lpm install --offline --strict-integrity
+```
+
+`lpm setup --oidc` exchanges the workflow's OIDC token for an LPM session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
+
+### Static token (the universal fallback)
+
+```yaml
+- run: npm install -g @lpm-registry/cli@0.29.0
+- run: lpm setup       # writes .npmrc with ${LPM_TOKEN} placeholder
+  env:
+    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
+- run: lpm install --offline --strict-integrity
+  env:
+    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
+```
+
+Generate the token via `lpm setup-npmrc` locally with a short lifetime:
+
+```bash
+lpm setup-npmrc -d 30        # 30-day read-only token
+```
+
+Store the printed token as `LPM_TOKEN` in your CI's secret store.
+
+For GitLab CI specifically, `LPM_GITLAB_OIDC_TOKEN` is also honored — see [Environment variables](/docs/reference/env-vars#auth-and-routing).
+
+## 3. Generate the workflow with `lpm ci setup`
+
+```bash
+lpm ci setup github-actions       # writes a starter workflow YAML
+lpm ci setup gitlab               # GitLab equivalent
+```
+
+Wires up OIDC, env-var injection, and a starter `lpm install` + test step. Commit the output to `.github/workflows/ci.yml` (or `.gitlab-ci.yml`) and adapt.
+
+## 4. Reproducible installs
+
+```bash
+lpm install --offline --strict-integrity --no-skills --no-editor-setup --no-security-summary
+```
+
+| Flag | What it does in CI |
+| --- | --- |
+| `--offline` | No network. Resolves entirely from `lpm.lock` + the global store. Errors if anything is missing — turns "lockfile drift went unnoticed" into a hard fail. |
+| `--strict-integrity` | Refuse to install tarball-URL deps that don't declare an inline SRI. Disables trust-on-first-use for fresh installs. |
+| `--no-skills` | Skip skills auto-install. Saves time. |
+| `--no-editor-setup` | Skip editor auto-integration. CI has no editor. |
+| `--no-security-summary` | Skip the post-install security report. Pair with `lpm audit` as a separate explicit step. |
+
+If `--offline` fails, the lockfile is out of date. Run `lpm install` locally without `--offline`, commit the updated lockfile.
+
+## 5. Gating
+
+The standard gate sequence:
+
+```yaml
+- run: lpm install --offline --strict-integrity
+- run: lpm trust diff                # fail if trustedDependencies drifted unreviewed
+- run: lpm audit --fail-on vuln      # fail on vulnerabilities (not behavior signals)
+- run: lpm test                      # forwards vitest/jest exit code
+- run: lpm lint                      # forwards oxlint exit code
+- run: lpm fmt --check               # fails if anything is unformatted
+- run: lpm check                     # tsc --noEmit
+```
+
+Each step exits non-zero on failure — no special handling needed. See [Exit codes](/docs/reference/exit-codes).
+
+For finer-grained security gates, use [`lpm query`](/docs/packages/query):
+
+```yaml
+- run: lpm query ":vulnerable:not(:built)" --assert-none
+- run: lpm query ":eval:scripts" --assert-none
+```
+
+## 6. Caching `~/.lpm/`
+
+To avoid re-downloading the global store on every CI run:
+
+```yaml
+- name: Cache LPM store
+  uses: actions/cache@v4
+  with:
+    path: ~/.lpm/store
+    key: lpm-store-${{ hashFiles('lpm.lock') }}
+    restore-keys: lpm-store-
+```
+
+`lpm install --offline` is fast (~6–23 ms in benchmarks) when the store + lockfile match. Caching the store turns a cold CI install into a warm one.
+
+The cache key is the lockfile hash — stale entries get GC'd by `lpm store gc` if you choose to wire that up too, but the typical CI lifecycle is short-lived enough that `gc` isn't needed.
+
+## 7. Publishing from CI
+
+```yaml
+- run: lpm setup --oidc
+- run: lpm publish --provenance --min-score 80 -y
+```
+
+`--provenance` requires OIDC and produces a Sigstore attestation. `--min-score 80` blocks publishing if quality drops. `-y` skips the interactive prompt.
+
+For multi-registry publishing in one job, configure `lpm.json > publish.registries` and pass nothing — `lpm publish` walks every configured target.
+
+## Common pitfalls
+
+- **`@latest` in CI.** Don't pin the binary to floating tags. Reproducible builds need a fixed toolchain.
+- **`lpm install` without `--offline` in CI.** Lets lockfile drift slip through unnoticed.
+- **Forgetting `permissions: id-token: write`** for OIDC in GitHub Actions.
+- **Caching `node_modules/` instead of `~/.lpm/store/`.** The store is the right cache key — `node_modules` is a layout, the store is content.
+- **Skipping `lpm audit` to "save time".** It's a few hundred ms; the time-not-paid is paid back on the next CVE.
+
+## See also
+
+- [`lpm setup`](/docs/reference/authentication#lpm-setup) — generate `.npmrc` for CI
+- [`lpm ci`](/docs/reference/authentication#lpm-ci) — env-var emission, OIDC workflow generation
+- [`lpm install --offline`](/docs/packages/install) — reproducible installs
+- [`lpm audit`](/docs/packages/audit) — security gating
+- [Exit codes](/docs/reference/exit-codes) — what each non-zero code means
+- [Environment variables](/docs/reference/env-vars) — `LPM_TOKEN`, `LPM_OIDC_TOKEN`

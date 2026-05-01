@@ -1,6 +1,105 @@
 ---
-title: run
-description: "Run scripts — parallel, cached, and watchable."
+title: lpm run
+description: "Run package.json scripts — parallel, cached, watchable, workspace-aware."
 ---
 
-Coming soon.
+```bash
+lpm run <scripts...> [-- script-args...]
+```
+
+Runs one or more `scripts` entries from `package.json`. With multiple scripts, runs them sequentially by default; pass `-p` to run in parallel.
+
+## Examples
+
+```bash
+lpm run build
+lpm run lint test                 # sequential
+lpm run -p lint test typecheck    # parallel
+lpm run dev -- --port 4000        # forward args to the script
+lpm run build --filter web        # workspaces: build only the web member
+lpm run build --all               # build every workspace member
+lpm run test --affected           # only members affected by recent changes
+lpm run test --watch              # re-run on file changes
+lpm run --env=staging start       # load .env.staging before running
+```
+
+## Forwarding arguments
+
+Anything after `--` is passed verbatim to the script:
+
+```bash
+lpm run dev -- --port 4000 --host 0.0.0.0
+# runs: <whatever "dev" expands to> --port 4000 --host 0.0.0.0
+```
+
+## Parallel execution
+
+```bash
+lpm run -p lint test typecheck
+```
+
+Runs all three scripts concurrently, respecting any task dependencies declared in `lpm.json`. Output is buffered per task by default — pass `--stream` for live prefixed output. With `--continue-on-error`, the runner keeps going past failed tasks and reports the failures at the end.
+
+## Workspaces
+
+```bash
+lpm run build --all                    # every member, topological order
+lpm run build --filter web             # one member
+lpm run build --filter web --filter api # two members (union)
+lpm run test --affected                # members touched since base branch
+lpm run test --affected --base develop # change base branch (default: main)
+```
+
+`--filter` accepts the [Phase 32 grammar](/docs/packages/workspaces): exact name (`foo`), glob (`@scope/*`), path glob (`./apps/*`), forward closure (`foo...`), reverse closure (`...foo`), exclusion (`!foo`).
+
+`--filter core` does **not** match `@babel/core` (the legacy substring matcher was removed). Use `--filter '*/core'` for that.
+
+`--fail-if-no-match` makes a typo'd filter exit non-zero — recommended in CI.
+
+## Caching
+
+Task results are cached. A cached task with unchanged inputs replays instantly without re-executing. Bypass the cache with `--no-cache`. The cache lives under `~/.lpm/cache/tasks/` — manage with [`lpm cache`](/docs/packages/cache).
+
+## Environment files
+
+```bash
+lpm run start --env=staging
+```
+
+Loads `.env.staging` before running the script. Without `--env`, LPM loads `.env`, then `.env.local` (gitignored override).
+
+`--no-env-check` skips environment-variable schema validation if you've declared a schema.
+
+## Watch mode
+
+```bash
+lpm run dev --watch
+```
+
+Re-runs the script on file changes. Pairs nicely with `--filter` for "rebuild only the affected member."
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `-p`, `--parallel` | Run scripts concurrently (respects task deps from `lpm.json`) |
+| `--continue-on-error` | Keep running remaining tasks after a failure |
+| `--stream` | Live prefixed output instead of buffered per-task |
+| `--all` | Run in every workspace member (topological order) |
+| `--filter <EXPR>` | Filter workspace members (repeatable; unions) |
+| `--fail-if-no-match` | Exit non-zero if `--filter` matches nothing |
+| `--affected` | Only members affected by changes vs `--base` |
+| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+| `--no-cache` | Bypass the task cache |
+| `--no-env-check` | Skip env-var schema validation |
+| `--env=<MODE>` | Load `.env.<MODE>` instead of `.env` |
+| `--watch` | Re-run on file changes |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm exec`](/docs/dev/exec) — run a JS/TS file directly (no script needed)
+- [`lpm dlx`](/docs/dev/dlx) — run a package binary without installing
+- [Task runner](/docs/dev/task-runner) — caching, dependencies, `lpm.json` task graph
+- [Workspaces](/docs/packages/workspaces) — filter grammar

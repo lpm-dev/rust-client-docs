@@ -1,0 +1,79 @@
+---
+title: lpm trust
+description: "Inspect and clean the trustedDependencies allowlist."
+---
+
+```bash
+lpm trust <subcommand>
+```
+
+`trustedDependencies` (in `package.json > lpm`) is the allowlist that decides which packages may run lifecycle scripts under the default `script-policy: deny`. `lpm trust` is the inspection-and-cleanup tool for that list.
+
+To **add** entries, use [`lpm approve-scripts`](/docs/packages/approve-scripts) (the interactive review flow). `lpm trust` is for everything that comes after — auditing the list and pruning stale entries.
+
+## Subcommands
+
+| Subcommand | What it does |
+| --- | --- |
+| [`diff`](#lpm-trust-diff) | Show how the current `trustedDependencies` differs from the last install's snapshot |
+| [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree |
+
+## `lpm trust diff`
+
+```bash
+lpm trust diff
+lpm trust diff --json
+```
+
+Read-only. Compares the current `package.json > lpm > trustedDependencies` against the snapshot LPM took on the last `lpm install`. Surfaces three classes of change:
+
+- **Additions** — entries that weren't there last install. Potential silent PR poisoning vector ("someone added `evil-package` to the trust list — was that reviewed?")
+- **Removals** — entries that were there but are now gone. Usually intentional cleanup, but worth a glance.
+- **Same-key binding changes** — same `name@version` key, but a different `integrity` or `scriptHash`. Indicates the package contents changed without a version bump (re-publish, tampering).
+
+Useful as a CI gate or local pre-merge check — runs in milliseconds, no network.
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Machine-readable output for CI gates |
+
+## `lpm trust prune`
+
+```bash
+lpm trust prune                   # interactive — prompts before writing
+lpm trust prune --dry-run         # preview, don't write
+lpm trust prune -y                # skip the prompt (required on non-TTY / CI)
+lpm trust prune --json
+```
+
+Removes `trustedDependencies` entries whose package isn't in the resolved tree anymore. Entries become stale when:
+
+- A dep was removed from `package.json` but its trust entry stayed
+- A version was bumped, leaving the previous version's pin orphaned
+- A dep was moved (e.g., from `dependencies` to `optionalDependencies` and never reinstalled)
+
+The interactive prompt confirms the removal list before writing. In CI / non-TTY contexts, `-y` is required (the prompt would deadlock).
+
+`--dry-run` runs the analysis normally but doesn't touch `package.json`.
+
+| Flag | Effect |
+| --- | --- |
+| `-y`, `--yes` | Skip the confirmation prompt (required on non-TTY) |
+| `--dry-run` | Preview without writing |
+| `--json` | Machine-readable output |
+
+## CI usage
+
+```yaml
+- run: lpm install --offline
+- run: lpm trust diff           # fails if trustedDependencies drifted unreviewed
+- run: lpm trust prune --dry-run --json  # would prune anything? alert.
+```
+
+`diff` is the better gate — it tells you if the allowlist changed since the last reviewed install. `prune --dry-run` is for hygiene reports, not gating.
+
+## See also
+
+- [`lpm approve-scripts`](/docs/packages/approve-scripts) — add entries to the trust list
+- [`lpm rebuild`](/docs/packages/rebuild) — runs scripts for trusted packages
+- [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the file format

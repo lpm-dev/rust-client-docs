@@ -1,6 +1,96 @@
 ---
 title: Test & bench auto-detection
-description: "Detect and run the project's test and benchmark runners automatically."
+description: "How lpm test and lpm bench pick the right runner — vitest, jest, or mocha."
 ---
 
-Coming soon.
+[`lpm test`](/docs/dev/test) and [`lpm bench`](/docs/dev/bench) both work the same way: scan your installed deps, pick a runner, exec it, forward arguments verbatim. No config, no per-runner subcommand, no `lpm test --vitest` flag.
+
+This page documents the detection rules, what gets executed, and what's NOT in the auto-detection set today.
+
+## Detection order
+
+For [`lpm test`](/docs/dev/test):
+
+1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest run`
+2. **`jest`** in `dependencies` or `devDependencies` → runs `jest`
+3. **`mocha`** in `dependencies` or `devDependencies` → runs `mocha`
+4. **None of the above** → error: "no test runner found. Install vitest/jest/mocha or add a 'test' script to package.json"
+
+First match wins — vitest beats jest, jest beats mocha.
+
+For [`lpm bench`](/docs/dev/bench):
+
+1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest bench`
+2. **None of the above** → error: "no benchmark runner found. Install vitest or add a 'bench' script to package.json"
+
+Today vitest is the only auto-detected bench runner. Other benchmark frameworks (mitata, tinybench standalone, hyperfine) need a `bench` script in `package.json` and `lpm bench` falls back to running it via [`lpm run bench`](/docs/dev/run).
+
+## Argument forwarding
+
+Anything after the command (or after `--`) is forwarded verbatim to the runner:
+
+```bash
+lpm test                              # → vitest run (or jest, or mocha)
+lpm test src/utils.test.ts            # → vitest run src/utils.test.ts
+lpm test -- --reporter=verbose        # → vitest run --reporter=verbose
+lpm test -- --coverage --watch        # → vitest run --coverage --watch
+
+lpm bench
+lpm bench src/parser.bench.ts         # → vitest bench src/parser.bench.ts
+lpm bench -- --reporter=json
+```
+
+`--` is optional but useful for arguments that look like LPM flags (otherwise clap might try to interpret them).
+
+## Why no per-runner subcommand
+
+Other PMs ship `pnpm test` / `npm test` shortcuts that effectively `npm run test`. LPM's `lpm test` is **not** a script alias — it's actually different:
+
+| Command | Behavior |
+| --- | --- |
+| [`lpm run test`](/docs/dev/run) | Runs the `test` script from `package.json` (whatever you wrote there) |
+| `lpm test` | Auto-detects the runner, runs it directly. **Ignores** any `test` script in `package.json`. |
+
+Why two paths: `lpm test` works in projects that don't have a `test` script — newly-bootstrapped repos, monorepo members where the test config is implicit, etc. If your project has a custom `test` script that does setup or env-injection beyond what the runner does on its own, `lpm run test` is what you want.
+
+## Subprocess passthrough
+
+Both commands forward the runner's exit code:
+
+```bash
+lpm test
+echo "exit: $?"      # whatever vitest / jest / mocha exited with
+```
+
+Vitest exits 1 on failed tests; LPM exits 1. Vitest exits 0; LPM exits 0. No mangling. CI gates work the way you expect.
+
+## `--json` mode
+
+Neither command emits a wrapping JSON envelope. The runner's own stdout (whatever shape it has) IS the result. This preserves the "single JSON result" contract — if you piped `lpm test --json` into a parser expecting LPM's JSON shape, you'd get the runner's output instead, which is what you actually want for test results.
+
+## Runtime
+
+Tests run against whatever Node version [the runtime detection](/docs/dev/node-version-pinning) picks. So:
+
+```json title="lpm.json"
+{ "runtime": { "node": ">=22.0.0" } }
+```
+
+Then `lpm test` runs vitest on Node 22, regardless of your system Node. Auto-installs the version if missing (unless `LPM_NO_AUTO_INSTALL=true`).
+
+## Workspaces
+
+`lpm test` doesn't have `--filter` / `--all` / `--affected` today — those are on [`lpm run`](/docs/dev/run). For workspace-scoped test runs:
+
+```bash
+lpm run test --filter web --affected
+```
+
+The `--filter` engine works against the `test` script in each member's `package.json`. Each member typically has `"test": "vitest run"` and the workspace runner walks the topology, forwarding output prefixed with the member name.
+
+## See also
+
+- [`lpm test`](/docs/dev/test) — CLI command reference
+- [`lpm bench`](/docs/dev/bench) — bench equivalent
+- [`lpm run`](/docs/dev/run) — for workspace `--filter` / `--affected`
+- [Node version pinning](/docs/dev/node-version-pinning) — which Node tests run against

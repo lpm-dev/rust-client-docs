@@ -1,6 +1,100 @@
 ---
-title: tunnel
-description: "Expose localhost to the internet, claim domains, replay webhooks."
+title: lpm tunnel
+description: "Expose localhost to the internet, claim stable domains, capture and replay webhooks."
 ---
 
-Coming soon.
+```bash
+lpm tunnel <port-or-action> [domain]
+```
+
+Exposes a local port to the public internet through the LPM tunnel network. Used by [`lpm dev --tunnel`](/docs/dev) under the hood, and directly when you need a public URL outside the dev server (running an MCP server locally, hosting a webhook receiver, sharing a preview).
+
+Webhooks that arrive at the public URL are captured to disk. You can browse, filter, and replay them from the CLI or a browser inspector.
+
+## Examples
+
+```bash
+lpm tunnel                                # default — start on port 3000
+lpm tunnel 4000                           # start on port 4000
+lpm tunnel claim acme-api.lpm.llc         # claim a stable domain (Pro/Org)
+lpm tunnel unclaim acme-api.lpm.llc       # release a claimed domain
+lpm tunnel list                           # your claimed domains
+lpm tunnel domains                        # available base domains
+lpm tunnel inspect                        # captured webhook event log
+lpm tunnel inspect --ui                   # open browser inspector
+lpm tunnel replay 3                       # replay event #3 to localhost
+lpm tunnel log                            # browse event log
+```
+
+## Starting a tunnel
+
+```bash
+lpm tunnel 3000
+```
+
+Returns an `https://` URL that proxies to `localhost:3000`. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
+
+```bash
+lpm tunnel 3000 acme-api.lpm.llc          # use a claimed domain
+lpm tunnel 3000 --tunnel-auth             # require an auth token to access
+lpm tunnel 3000 --auto-ack                # 200 OK while local server is down
+lpm tunnel 3000 --session "stripe-test"   # name the session in the inspector
+```
+
+`--auto-ack` is useful when you're not running a server but need webhook providers to keep their endpoint active — providers typically deactivate endpoints after repeated 5xx responses.
+
+## Claiming a stable domain
+
+```bash
+lpm tunnel claim acme-api.lpm.llc
+lpm tunnel claim acme-api.lpm.llc --org acme    # claim under an org
+lpm tunnel list                                  # show claimed
+lpm tunnel unclaim acme-api.lpm.llc              # release
+```
+
+Claimed domains persist across runs — the same URL keeps working as long as you hold the claim. Discover available base domains with `lpm tunnel domains`.
+
+## Inspecting and replaying webhooks
+
+```bash
+lpm tunnel inspect                # show captured events (terminal table)
+lpm tunnel inspect --ui           # open the inspector at http://localhost:4400
+lpm tunnel inspect --last 10
+lpm tunnel inspect --status 4xx
+lpm tunnel inspect --filter '/webhooks/stripe'
+lpm tunnel log                    # event log browse view
+
+lpm tunnel replay 3               # re-deliver event #3 to the local server
+```
+
+Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Replays POST the original request back at the local port, so you can iterate on a bug without waiting for the upstream provider to fire again.
+
+## Inspector port
+
+The inspector (web UI) starts automatically alongside the tunnel — default port `4400`. Override or disable:
+
+```bash
+lpm tunnel 3000 --inspect-port 4500
+lpm tunnel 3000 --no-inspect
+```
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--org <SLUG>` | Operate against an organization (claim/unclaim/list) |
+| `--tunnel-auth` | Require an auth token to access the tunnel URL (Pro/Org only) |
+| `--auto-ack` | Return 200 OK to webhooks when the local server is down |
+| `--session <NAME>` | Name this tunnel session in the inspector |
+| `--no-inspect` | Disable the auto-started inspector UI |
+| `--inspect-port <N>` | Port for the inspector UI (default: `4400`) |
+
+Trailing arguments are forwarded to inspect / replay / log subcommands (e.g., `--last`, `--filter`, `--status`).
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm dev --tunnel`](/docs/dev) — start a tunnel as part of the dev pipeline
+- [Tunneling](/docs/infra/tunneling) — how the tunnel network and capture system work
+- [`lpm cert`](/docs/infra/cert) — local HTTPS for non-tunnel localhost

@@ -1,0 +1,112 @@
+---
+title: lpm rebuild
+description: "Run lifecycle scripts for installed packages — phase 2 of the install pipeline."
+---
+
+```bash
+lpm rebuild [packages...]
+```
+
+`lpm install` downloads and links packages without running any lifecycle scripts. `lpm rebuild` is **phase 2** — it selectively runs `preinstall`, `install`, `postinstall`, and `prepare` scripts based on the active [script policy](/docs/packages/install#lifecycle-scripts) and the project's `trustedDependencies`.
+
+Matches `npm rebuild` / `pnpm rebuild` semantics.
+
+## Examples
+
+```bash
+lpm rebuild                                  # rebuild every trusted package
+lpm rebuild esbuild                          # rebuild a specific package
+lpm rebuild esbuild sharp                    # multiple
+lpm rebuild --dry-run                        # preview, run nothing
+lpm rebuild --rebuild                        # re-run scripts even for already-built packages
+lpm rebuild --all                            # bypass trust policy — DANGEROUS
+lpm rebuild --policy=allow                   # allow every scripted package this run
+lpm rebuild --triage                         # tiered gate (greens auto, ambers/reds blocked)
+lpm rebuild --timeout 600                    # 10-minute per-script timeout
+```
+
+## Default selection
+
+With no arguments and no `--all`, `lpm rebuild` runs scripts for packages whose name appears in:
+
+- `package.json > lpm > trustedDependencies` (legacy array form), OR
+- `package.json > lpm > trustedDependencies` (rich-map form, with matching integrity + script hash), OR
+- A scope glob in `package.json > lpm > scripts.trustedScopes` (e.g. `@myorg/*`)
+
+Manage that allowlist with [`lpm trust`](/docs/packages/trust) and [`lpm approve-scripts`](/docs/packages/approve-scripts).
+
+## Policy override
+
+The CLI policy flags share semantics with [`lpm install`](/docs/packages/install#lifecycle-scripts) — they govern which scripted packages are eligible to run.
+
+| Flag | Behavior |
+| --- | --- |
+| `--policy=deny` (default) | Filter to `trustedDependencies` only |
+| `--policy=allow` / `--yolo` | Include every scripted package regardless of trust |
+| `--policy=triage` / `--triage` | Filter to trusted-only, but tiered greens are auto-promoted into the rebuild set |
+
+`--all` overrides the filter under every policy.
+
+`--policy`, `--yolo`, and `--triage` are mutually exclusive.
+
+## Sandbox
+
+Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied.
+
+Two escape hatches, both noisy:
+
+```bash
+lpm rebuild --unsafe-full-env --no-sandbox   # full host access — DANGEROUS
+lpm rebuild --sandbox-log                    # macOS only: log accesses, don't enforce
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--unsafe-full-env` | Don't strip credentials before running scripts. Exposes `LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc. |
+| `--no-sandbox` | Disable the sandbox entirely. **Requires** `--unsafe-full-env` (paired by clap). Reserve for debugging a sandbox false-positive that `sandboxWriteDirs` can't express. |
+| `--sandbox-log` | macOS-only diagnostic mode. Rule triggers are **logged** via `sandboxd` but **not enforced**. NOT a safety signal — a clean run does not mean the script would pass under the full sandbox. View accesses via `log show --last 5m --predicate 'senderImagePath CONTAINS "Sandbox"'`. |
+
+`--no-sandbox` and `--sandbox-log` are mutually exclusive. On Linux, `--sandbox-log` errors at sandbox init (landlock has no native observe-only primitive) and points at `--unsafe-full-env --no-sandbox`.
+
+## `--rebuild` flag
+
+```bash
+lpm rebuild --rebuild esbuild
+```
+
+By default, packages whose scripts have already run (and whose `script_hash` hasn't changed) are skipped. `--rebuild` ignores that record and re-runs them. Useful after deleting `node_modules` if you want fresh `postinstall` work without a full reinstall.
+
+Confusingly named — it's the "force rerun" flag, where the command itself is `rebuild`.
+
+## `--deny-all`
+
+```bash
+lpm rebuild --deny-all
+```
+
+Refuses to run **any** scripts, even trusted ones. Useful as a CI smoke test: "would my install want to execute scripts?" Or paired with `package.json > lpm > scripts.denyAll: true` for a project-wide kill switch.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--all` | Rebuild every scripted package (bypasses trust) |
+| `--dry-run` | Preview without executing scripts |
+| `--rebuild` | Re-run scripts even for already-built packages |
+| `--timeout <SECS>` | Per-script timeout (default `300` = 5 min) |
+| `--unsafe-full-env` | Don't strip credentials. **DANGEROUS.** |
+| `--deny-all` | Refuse to run any scripts |
+| `--policy <deny\|allow\|triage>` | Override the policy for this invocation |
+| `--yolo` | Alias for `--policy=allow` |
+| `--triage` | Alias for `--policy=triage` |
+| `--no-sandbox` | Disable filesystem sandbox (requires `--unsafe-full-env`) |
+| `--sandbox-log` | macOS only: observe-only sandbox |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm install`](/docs/packages/install#lifecycle-scripts) — phase 1 of the same pipeline; shares the `--policy` semantics
+- [`lpm approve-scripts`](/docs/packages/approve-scripts) — manage the trust allowlist
+- [`lpm trust`](/docs/packages/trust) — inspect drift in the allowlist
+- [`package.json` "lpm.scripts"](/docs/reference/package-json-lpm#the-lpmscripts-block) — capability and sandbox config

@@ -1,6 +1,65 @@
 ---
 title: AI agent skills
-description: "What skills are, how they are packaged, and how to install them."
+description: "What skills are, how they ship inside packages, and how lpm installs them."
 ---
 
-Coming soon.
+**Agent skills** are markdown files that ship inside a package and tell an AI editor / agent how to use it correctly — usage examples, gotchas, common patterns, integration steps. When you install a skill-shipping package, LPM extracts the skills into `.lpm/skills/<package>/` in your project and (optionally) auto-integrates them with your editor.
+
+Skills are LPM's native answer to the "the AI hallucinates this library's API" problem. The package author writes the skill at publish time; consumers get authoritative usage docs the agent can read directly.
+
+## Status
+
+Skills are currently a **lpm.dev-only** API behavior. Non-lpm.dev packages are skipped (no per-tarball skills declaration yet). Package authors publish skills via the lpm.dev UI; LPM runs LLM security scans on shipped skill content at publish time, so consumed skills are attested.
+
+## On the consumer side
+
+Skills get installed automatically by [`lpm install`](/docs/packages/install) and [`lpm add`](/docs/packages/add) — you don't usually need to touch them by hand.
+
+Manage them explicitly with [`lpm skills`](#lpm-skills):
+
+```bash
+lpm skills list                              # list installed skills
+lpm skills install @lpm.dev/owner.pkg        # install skills for one package
+lpm skills validate                          # check installed skills against the registry
+lpm skills clean                             # remove orphaned / stale skill files
+```
+
+Skip skill installation per-invocation with `--no-skills` on `lpm install` or `lpm add`.
+
+## On-disk layout
+
+```text
+my-project/
+├── .lpm/
+│   └── skills/
+│       └── owner.pkg/
+│           ├── usage.md
+│           ├── gotchas.md
+│           └── …
+└── …
+```
+
+LPM auto-adds `.lpm/skills/` to your project's `.gitignore` (commitable by hand if you want the skills in source control).
+
+## Editor auto-integration
+
+After a successful skill install, LPM detects supported editors and wires the skill files into the editor's local context. Skip with `--no-editor-setup` on `lpm install` / `lpm add`.
+
+## `lpm skills`
+
+```bash
+lpm skills <action> [package]
+```
+
+| Subcommand | Aliases | Effect |
+| --- | --- | --- |
+| `list` | `ls` | Print installed skills, grouped by source package |
+| `install <package>` | — | Install skills for one specific package (uses the registry's `get_skills` endpoint) |
+| `validate` | — | Verify locally installed skills against the registry's current skill list |
+| `clean` | — | Remove skill files for packages no longer installed |
+
+## See also
+
+- [`lpm install --no-skills`](/docs/packages/install) — skip skill installation per-invocation
+- [`lpm add --no-skills`](/docs/packages/add) — same, for source delivery
+- [MCP servers](/docs/reference/mcp-servers) — different mechanism for AI integration (tool calls vs. ambient docs)

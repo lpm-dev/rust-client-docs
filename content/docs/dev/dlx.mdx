@@ -1,6 +1,66 @@
 ---
-title: dlx
-description: "Run a package without installing it."
+title: lpm dlx
+description: "Run a package binary without installing it into the project."
 ---
 
-Coming soon.
+```bash
+lpm dlx <package> [-- args...]
+```
+
+Fetches a package's binary, caches it under `~/.lpm/cache/dlx/`, and runs it without touching your project's `package.json` or `node_modules`. The LPM equivalent of `npx`, `pnpm dlx`, and `bunx`.
+
+## Examples
+
+```bash
+lpm dlx cowsay "hello"
+lpm dlx create-next-app@latest my-app
+lpm dlx prettier --check .
+lpm dlx http-server -p 8080
+lpm dlx --refresh create-next-app   # bypass the dlx cache
+```
+
+## How it works
+
+1. Resolve the spec against the appropriate registry — see [Registries](/docs/registries) for routing. (Bare names like `cowsay` go to `registry.npmjs.org`; `@lpm.dev/*` packages go to lpm.dev.)
+2. Materialize the package into a cache directory under `~/.lpm/cache/dlx/`. Cached by `name@resolved-version` — a second run reuses the same cache entry.
+3. Run the package's primary binary, forwarding everything after the package name verbatim.
+
+`lpm dlx <pkg>@<version>` pins the resolved version; `lpm dlx <pkg>` uses whatever the cache currently has, or fetches the latest.
+
+## Argument forwarding
+
+Anything after the package name is forwarded to the binary:
+
+```bash
+lpm dlx prettier --write src/
+# runs: prettier --write src/
+```
+
+## Cache management
+
+The dlx cache lives at `~/.lpm/cache/dlx/`. Manage it with [`lpm cache`](/docs/packages/cache):
+
+```bash
+lpm cache clean dlx     # drop only the dlx cache
+lpm cache path dlx      # print the cache root
+```
+
+Bypass the cache for one invocation with `--refresh`:
+
+```bash
+lpm dlx --refresh create-next-app
+```
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--refresh` | Force a fresh download, ignoring the dlx cache |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm exec`](/docs/dev/exec) — run a local file
+- [`lpm install -g`](/docs/packages/install) — keep a CLI around permanently instead
+- [`lpm cache`](/docs/packages/cache) — manage the dlx cache

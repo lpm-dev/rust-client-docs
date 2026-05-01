@@ -1,6 +1,213 @@
 ---
 title: Task runner
-description: "Parallel, cached, watchable script execution."
+description: "Parallel, cached, watchable, workspace-aware execution for package.json scripts."
 ---
 
-Coming soon.
+The task runner is what powers [`lpm run`](/docs/dev/run) and the `services` orchestration in [`lpm dev`](/docs/dev). It reads scripts from `package.json` (and per-task config from `lpm.json > tasks`), builds a topological execution graph, runs tasks in parallel where the graph allows, caches results when configured, and re-executes on file changes when `--watch` is set.
+
+This page covers the design — what the cache key includes, how `--affected` is computed, how parallelism interacts with task dependencies, and where state lives. For the CLI surface, see [`lpm run`](/docs/dev/run).
+
+## Execution model
+
+```text
+[scripts] ──┐
+            ├─→ [task graph DAG] ─→ [parallel executor] ─→ [stdout / cache]
+[lpm.json] ─┘                            │
+                                         ↓
+                                   [.bin/ PATH injection]
+                                   [pre/post hooks]
+                                   [env file loading]
+                                   [readiness checks]
+```
+
+The runner is built as a DAG over tasks. Each task's `dependsOn` edges become predecessors; the executor processes tasks level by level, running independent tasks concurrently within each level.
+
+## Task definition
+
+A task can come from two places:
+
+```json title="package.json (the npm-shaped path)"
+{
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  }
+}
+```
+
+```json title="lpm.json (the cached + DAG-aware path)"
+{
+  "tasks": {
+    "build": {
+      "command": "tsup",
+      "dependsOn": ["^build"],
+      "cache": true,
+      "outputs": ["dist/**"],
+      "inputs": ["src/**", "package.json"]
+    }
+  }
+}
+```
+
+`lpm.json > tasks.<name>` overrides `package.json > scripts.<name>`. The `command` field is optional — when absent, the runner falls back to the package.json script.
+
+For full per-task field reference, see [`lpm.json` tasks](/docs/reference/lpm-json#tasksname).
+
+## `dependsOn` semantics
+
+Two flavors of dependency:
+
+| Form | Meaning |
+| --- | --- |
+| `"build"` | Same-package dependency. Wait for *this* package's `build` task to finish first. |
+| `"^build"` | Upstream-workspace dependency. Wait for `build` to finish in **every workspace member that this one depends on**. |
+
+The `^` prefix is read by [`task_graph::has_upstream_deps`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-runner/src/lpm_json.rs). Combined with `workspace:*`, this gives you: "build me only after every internal dep has built."
+
+## Caching
+
+Caching is opt-in per task:
+
+```json
+{
+  "tasks": {
+    "build": {
+      "command": "tsup",
+      "cache": true,
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+`cache: true` requires `outputs` to know what to cache. Without `outputs`, caching is silently disabled (the runner has nothing to record).
+
+### Cache key
+
+The cache key is a SHA-256 hash of:
+
+- The `command` string
+- The full content of every file matching `inputs` globs (default `inputs` covers `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`)
+- The resolved env (matching the task's `env` mode, if any)
+- The lockfile content (so a dep bump invalidates every cache)
+
+Any change to any of those flips the key. Same key = cache hit.
+
+### Cache layout
+
+```text
+~/.lpm/cache/tasks/
+  {sha256-hex-key}/
+    meta.json       ← timing, command, key info, output globs
+    stdout.log      ← captured stdout for replay
+    stderr.log      ← captured stderr for replay
+    outputs.tar.gz  ← archived output files
+```
+
+On hit:
+
+1. Restore `outputs.tar.gz` into the project tree.
+2. Replay `stdout.log` and `stderr.log` to the current invocation's stdout / stderr.
+3. Exit success.
+
+The replay matters — a cached `lpm run build` shows the same logs the real run would have, so you don't end up wondering whether the tool actually ran. The "(cached)" annotation in the runner's progress line tells you why it was instant.
+
+### Bypass
+
+```bash
+lpm run build --no-cache       # bypass for one invocation
+```
+
+Or remove the `cache: true` from `lpm.json` to disable persistently.
+
+### Manage
+
+```bash
+lpm cache path tasks           # print cache root
+lpm cache clean tasks          # drop the task cache
+```
+
+See [`lpm cache`](/docs/packages/cache).
+
+## Parallelism
+
+```bash
+lpm run -p lint test typecheck
+```
+
+`-p` / `--parallel` runs scripts concurrently — the runner enforces `dependsOn` edges but otherwise lets independent tasks proceed in parallel. Output is buffered per-task by default; `--stream` prefixes live output instead.
+
+`--continue-on-error` keeps the runner going past failed tasks and reports the failures at the end. Without it, the first failure stops the run.
+
+## Workspaces
+
+Every workspace-aware command (`run`, `lint`, `fmt`, `check`, `test`) accepts `--filter`, `--all`, and `--affected`. The runner walks the workspace graph and selects matching members in topological order:
+
+```bash
+lpm run build --all                         # every member, deps-first
+lpm run test --filter web                   # one member
+lpm run test --filter './apps/*'            # path glob
+lpm run test --filter web --filter api      # union
+lpm run test --filter '!web-tests'          # exclusion
+```
+
+Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+## `--affected`
+
+```bash
+lpm run test --affected                     # default base = main
+lpm run test --affected --base develop
+```
+
+Computed by:
+
+1. `git diff --name-only $base...HEAD` against the base ref.
+2. Map each changed file to a workspace member (with proper directory boundary checks — `packages/api-client/x.ts` does **not** match the member at `packages/api`).
+3. Root-level changes (files outside any member, e.g. workspace `package.json`, `tsconfig.json`) are treated as affecting **every** member.
+4. Expand the directly-changed set through dep edges to include transitive dependents.
+
+That last step is what gives you "the API package changed, so the web package that imports it also runs." Use `--filter '[origin/main]'` (the git-ref filter atom) for the directly-changed-only set without the dependents expansion — see [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+## Watch mode
+
+```bash
+lpm run dev --watch
+```
+
+The runner sets up a file watcher over the task's effective inputs (same globs as the cache key) and re-runs on change. Pairs nicely with `--filter` for "rebuild only the affected member" loops during development.
+
+## PATH injection
+
+Every script runs with `node_modules/.bin/` prepended to `PATH`, so locally-installed binaries (`tsc`, `vitest`, etc.) resolve. Pre and post hooks (npm convention — `prebuild`, `postbuild`) run automatically when the corresponding scripts exist.
+
+## Env loading
+
+Before each task starts, the runner:
+
+1. Looks up the env file for this task: `lpm.json > tasks.<name>.env` first, then `lpm.json > env.<name>` script-mode mapping, then `.env` / `.env.local` defaults.
+2. Loads the resolved file(s).
+3. Validates against `lpm.json > envSchema` (skip with `--no-env-check`).
+4. Injects into the script's environment.
+
+CLI override: `--env=<mode>` forces a specific mode for one invocation, regardless of the `lpm.json` mappings.
+
+## Multi-service orchestration
+
+When `lpm.json > services` is non-empty, [`lpm dev`](/docs/dev) starts each service via the runner and waits for readiness:
+
+- TCP port poll on `readyPort` (defaults to `port`)
+- HTTP poll on `readyUrl`
+- `readyTimeout` seconds before failure
+
+Services with `dependsOn` start in topological order. The `primary` service receives `--https` / `--tunnel` / `--network` flags from `lpm dev` and the browser-open.
+
+See [`lpm dev`](/docs/dev) and [`lpm.json` services](/docs/reference/lpm-json#servicesname).
+
+## See also
+
+- [`lpm run`](/docs/dev/run) — CLI surface
+- [`lpm dev`](/docs/dev) — services + dev-server orchestration
+- [`lpm cache`](/docs/packages/cache) — task cache management
+- [`lpm.json` tasks](/docs/reference/lpm-json#tasksname) — full task config reference
+- [Workspaces](/docs/packages/workspaces) — `--filter` grammar

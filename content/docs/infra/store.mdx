@@ -1,6 +1,97 @@
 ---
-title: store
-description: "Verify or garbage-collect the global package store."
+title: lpm store
+description: "Verify, list, garbage-collect, or wipe the global content-addressable package store."
 ---
 
-Coming soon.
+```bash
+lpm store <action>
+```
+
+Maintenance commands for the global content-addressable store at `~/.lpm/store/`. Every `lpm install` deduplicates packages into this store and then links them into project `node_modules` trees — so the store is shared across every project on your machine.
+
+## Examples
+
+```bash
+lpm store path                          # print the store root
+lpm store list                          # list every package@version in the store
+lpm store verify                        # check integrity (fast)
+lpm store verify --deep                 # also parse package.json + check name/version match
+lpm store verify --fix                  # auto-fix what it can (e.g., refresh stale caches)
+
+lpm store gc                            # garbage-collect entries no project references
+lpm store gc --dry-run                  # preview what GC would remove
+lpm store gc --older-than 30d           # only entries older than 30 days
+lpm store gc --force                    # GC even with no lockfile in scope (aggressive)
+
+lpm store clean                         # wipe ~/.lpm/store/v1/ entirely (rare)
+```
+
+## Subcommands
+
+| Subcommand | Aliases | Effect |
+| --- | --- | --- |
+| `path` | — | Print the store root path |
+| `list` | `ls` | List every `package@version` currently in the store |
+| `verify` | — | Integrity-check entries against their declared SRI |
+| `gc` | — | Reference-aware garbage collection |
+| `clean` | — | Blunt wipe — removes the entire `v1/` subtree |
+
+`gc` and `clean` take an exclusive lock on the store — concurrent `gc` / `clean` invocations serialize through it. **Concurrent installs against an in-progress `gc` are not yet fully isolated** (M3 deliverable).
+
+## Verify
+
+```bash
+lpm store verify
+```
+
+Walks every store entry and re-hashes it against the recorded SRI. Flags any mismatches (file corruption, manual edits, partial extraction).
+
+Pass `--deep` for a slower but more thorough pass that also parses `package.json` inside each entry and confirms the on-disk name/version match the directory name.
+
+`--fix` refreshes stale derived state (e.g., security caches) without touching package contents.
+
+## Garbage collection
+
+```bash
+lpm store gc
+```
+
+Reference-aware: walks every project lockfile LPM knows about, builds a set of "still-referenced" entries, and removes everything else. Safe to run regularly.
+
+Tunable:
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print what would be removed, change nothing |
+| `--older-than <DUR>` | Only consider entries older than this (`30d`, `7d`, `24h`, etc.) |
+| `--force` | Run even when no lockfile is in scope — removes ALL unreferenced entries (dangerous) |
+
+Without `--force`, `gc` errors if it can't find a lockfile to reference against — protecting you from accidentally wiping the store on a fresh checkout.
+
+## Clean (full wipe)
+
+```bash
+lpm store clean
+```
+
+Removes `~/.lpm/store/v1/` in its entirety. The next install rebuilds whatever it needs.
+
+This is the "I want a from-scratch state" escape hatch — for normal maintenance use `gc`, which is reference-aware and won't evict packages a project still needs.
+
+## Flags
+
+| Flag | Applies to | Effect |
+| --- | --- | --- |
+| `--deep` | `verify` | Also parse package.json, validate name/version |
+| `--fix` | `verify` | Auto-fix issues (e.g., refresh stale caches) |
+| `--dry-run` | `gc` | Preview without deleting |
+| `--older-than <DUR>` | `gc` | Filter by age |
+| `--force` | `gc` | Run with no lockfile in scope |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm cache`](/docs/packages/cache) — ephemeral caches (metadata, tasks, dlx) — different system
+- [Content-addressable store](/docs/packages/content-addressable-store) — design overview
+- [`lpm doctor`](/docs/infra/doctor) — surfaces store-integrity issues alongside other checks
