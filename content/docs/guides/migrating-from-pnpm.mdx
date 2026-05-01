@@ -59,11 +59,16 @@ git rm pnpm-lock.yaml pnpm-lock.yaml.backup .npmrc.backup
 git commit -m "Migrate to LPM"
 ```
 
+## What `lpm migrate` translates from `package.json`
+
+- **`pnpm.overrides`** is auto-translated to `package.json > lpm.overrides` (same selector grammar). The translation runs before any disk mutation: parse errors, unsupported value shapes (object / array / null), and merge conflicts with an existing `lpm.overrides` are surfaced up-front and abort the migration before any file is touched. Successful entries land in `lpm.overrides`; the original `pnpm.overrides` block stays in place so a parallel `pnpm install` keeps working during the transition.
+
+After migration, `lpm install` is silent for projects whose `lpm.overrides` covers every `pnpm.overrides` key. If they drift apart later (you add a new `pnpm.overrides` entry without re-running migrate), `lpm install` emits a stderr warning suggesting `lpm migrate`.
+
 ## pnpm-specific gotchas
 
-- **`pnpm overrides`** in `package.json > pnpm.overrides` aren't read by LPM. Copy them under `package.json > lpm.overrides` (same selector grammar) — see [`package.json` overrides](/docs/reference/package-json-lpm#overrides).
-- **`pnpm-workspace.yaml`** isn't read either. Move workspace globs into `package.json > workspaces`.
-- **`pnpm patch`** patches in `patches/` aren't auto-converted. Re-author them via [`lpm patch`](/docs/packages/patch) — the format is similar but the integrity binding is stricter.
+- **`pnpm-workspace.yaml`** isn't read by LPM. Move workspace globs into `package.json > workspaces`.
+- **`pnpm patch`** patches in `patches/` aren't auto-converted today. Re-author them via [`lpm patch`](/docs/packages/patch) — the format is similar but the integrity binding is stricter.
 - **`pnpm.peerDependencyRules`** has no LPM equivalent today. If you relied on it, you may see peer-dep warnings post-migration.
 - **`shamefully-hoist`** in `.npmrc` is pnpm-specific. LPM's equivalent for the npm-flat layout is `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
 
