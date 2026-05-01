@@ -1,6 +1,132 @@
 ---
 title: Dependency graph
-description: "Visualize the dependency tree as dot, mermaid, or HTML."
+description: "How LPM models the installed dep tree — node identity, duplicates, registry attribution, paths, statistics."
 ---
 
-Coming soon.
+[`lpm graph`](/docs/infra/graph) renders the installed dependency tree in tree, DOT, Mermaid, JSON, stats, or HTML form. Behind it is a small data model — `DepNode` per `(name, version)` pair, with depth, registry attribution, duplicate detection, and path-finding — that several other commands also read from.
+
+This page covers the model — what's a node, what the duplicate detection means, how `--why` works, and what the `stats` output actually counts.
+
+## Source of truth
+
+The graph is built **from `lpm.lock`**, not from a fresh resolver run. This makes the command read-only and offline, but it also means:
+
+- The graph reflects what's pinned, not what could be resolved if you re-ran `lpm install`.
+- A `package.json` change without a corresponding `lpm install` shows up as drift between the graph and your manifest. Run `lpm install` first if you want graphs to match the latest manifest state.
+
+## Node model
+
+```text
+DepNode {
+  name:         "react"
+  version:      "19.0.0"
+  registry:     Lpm | Npm | Unknown    ← parsed from the lockfile's `source` field
+  depth:        0..N                   ← shortest path from a root
+  is_direct:    bool                   ← named in package.json > dependencies
+  is_duplicate: bool                   ← another (name, *) node exists
+  is_root:      bool                   ← the project itself
+  dependencies: ["scheduler@0.25.0", ...]  ← edges (keys into the node map)
+}
+```
+
+Identity is `(name, version)` — two installs of the same package at different versions produce two distinct nodes. The map key is `"name@version"`.
+
+`is_duplicate` is a derived property — set on every node whose name matches any other node's name. Useful for the "do I have multiple versions of X" check.
+
+## Path explosion safety
+
+`MAX_PATHS = 100`. Every path-finding algorithm in the graph (used by `--why`) caps the number of returned paths at 100. Diamond-heavy graphs (many independent ways to reach the same package) would otherwise produce exponentially many paths.
+
+If a `--why <pkg>` query has > 100 distinct paths, the output truncates with a "100+ more paths" notice rather than enumerating all of them.
+
+## `--why <pkg>`
+
+```bash
+lpm graph --why lodash
+```
+
+For each path from the project root to `<pkg>`, prints the chain of intermediate packages. Useful for the "why am I shipping this transitively" investigation:
+
+```text
+my-app@0.1.0
+  └─ express@4.22.1
+       └─ debug@2.6.9
+            └─ ms@2.0.0
+```
+
+Multi-path output for diamond cases:
+
+```text
+my-app
+  ├─ express → ... → lodash
+  └─ winston → ... → lodash
+```
+
+(Capped at 100 distinct paths, then truncated.)
+
+## Output formats
+
+Six formats, each tuned for a different consumer:
+
+| Format | Output destination | Best for |
+| --- | --- | --- |
+| `tree` (default) | stdout — terminal-friendly indented tree | Quick eyeballing |
+| `dot` | stdout — Graphviz DOT source | Pipe into `dot -Tpng > graph.png` |
+| `mermaid` | stdout — Mermaid graph block | Embedding in markdown / docs |
+| `json` | stdout — structured `DepGraph` data | Custom analyses, scripts, agents |
+| `stats` | stdout — counts and aggregates | High-level audits |
+| `html` | writes `<project>/.lpm/graph.html` and auto-opens in browser | Interactive exploration |
+
+The `html` format is the only one that writes to disk — every other format prints to stdout so you can pipe or redirect it.
+
+## What `stats` shows
+
+```bash
+lpm graph --format stats
+```
+
+Returns:
+
+| Field | What it counts |
+| --- | --- |
+| `total_packages` | Distinct `(name, version)` nodes in the graph (including the root) |
+| `lpm_packages` | Nodes with `Registry::Lpm` (sourced from lpm.dev) |
+| `npm_packages` | Nodes with `Registry::Npm` (sourced from registry.npmjs.org) |
+| `max_depth` | Longest shortest-path from any root to any node |
+| `duplicates` | List of `(name, [versions])` pairs where the same canonical has multiple versions installed |
+
+Useful for high-level audits — "how many of my deps are from lpm.dev vs npm", "do I have ten copies of `loose-envify`", "how deep does my tree actually go".
+
+## Filtering
+
+Three filter flags trim the output without changing the underlying graph:
+
+| Flag | Effect |
+| --- | --- |
+| `--depth <N>` | Truncate at depth N (the tree shows up to N levels deep) |
+| `--filter <NAME>` | Only show subtrees that contain `<NAME>` somewhere |
+| `--prod` | Only production dependencies (skip devDependencies and their transitives) |
+| `--dev` | Only devDependencies (mutually exclusive with `--prod`) |
+
+`--filter` is helpful in big trees — `lpm graph --filter react` shows just the parts of your tree that touch react, rather than the whole 200-package output.
+
+## When to use the graph
+
+| You want to... | Use |
+| --- | --- |
+| See what's installed, terminal-style | `lpm graph` (default tree) |
+| Find why a package is in your tree | `lpm graph --why <pkg>` |
+| Render in docs | `lpm graph --format mermaid` |
+| Render as a real graph image | `lpm graph --format dot \| dot -Tpng > graph.png` |
+| Pipe into an analysis script | `lpm graph --format json` |
+| High-level audit | `lpm graph --format stats` |
+| Browse interactively | `lpm graph --format html` |
+
+For selector-based queries against installed packages (find all packages that use eval, etc.), use [`lpm query`](/docs/packages/query) — different system, more precise.
+
+## See also
+
+- [`lpm graph`](/docs/infra/graph) — CLI command reference
+- [`lpm query`](/docs/packages/query) — selector-based queries (different mechanism)
+- [`lpm audit`](/docs/packages/audit) — security report from the same package set
+- [Lockfile](/docs/packages/lockfile) — the source the graph is built from

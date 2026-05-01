@@ -1,0 +1,63 @@
+---
+title: lpm self-update
+description: "Update LPM to the latest release."
+---
+
+```bash
+lpm self-update
+```
+
+Checks GitHub Releases for the latest LPM version, compares against the running version, and runs the appropriate upgrade command for whichever channel you installed from. No flags — the install method is auto-detected from the executable path.
+
+## How it works
+
+1. Fetch the latest release tag from `api.github.com/repos/lpm-dev/rust-client/releases/latest`.
+2. Compare against the current binary's version (`CARGO_PKG_VERSION` baked in at build time).
+3. If newer, detect the install channel from the executable path:
+
+| Detected via | Channel |
+| --- | --- |
+| Path under a Homebrew Cellar | `brew upgrade lpm` |
+| Path under an npm global root | `npm install -g @lpm-registry/cli@latest` |
+| Path under a Cargo install root | `cargo install --git https://github.com/lpm-dev/rust-client lpm-cli --force` |
+| Anything else (standalone curl install) | Re-run the standalone installer |
+
+4. Spawns the upgrade command. The current process continues; the new binary is in place for the next invocation.
+
+If the running version is already the latest, prints `Already on the latest version (<v>)` and exits cleanly.
+
+## Examples
+
+```bash
+lpm self-update
+lpm self-update --json     # structured output (current, latest, channel, action)
+```
+
+## Channel-specific equivalents
+
+If you'd rather drive the upgrade yourself:
+
+| Channel | Manual command |
+| --- | --- |
+| Homebrew | `brew upgrade lpm` |
+| npm | `npm install -g @lpm-registry/cli@latest` |
+| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client lpm-cli --force` |
+| Standalone | `curl -fsSL https://lpm.dev/install.sh \| sh` |
+
+`lpm self-update` is just a convenience wrapper that picks the right one.
+
+## CI
+
+Skip `lpm self-update` in CI. CI pipelines should pin LPM to a specific version (via the npm package or a downloaded standalone binary) and bump that pin deliberately, not in-band during a build. Auto-updating CI's tooling is how reproducible builds become un-reproducible.
+
+For a smoke test that the registry is reachable, use [`lpm health`](/docs/infra/doctor) instead.
+
+## Flags
+
+`lpm self-update` takes no specific flags besides the [global flags](/docs/commands#global-flags) — `--json` returns structured output.
+
+## See also
+
+- [Installation](/docs/installation) — initial install methods (and uninstall)
+- [`lpm doctor`](/docs/infra/doctor) — environment health, separate from version updates
+- [Releases on GitHub](https://github.com/lpm-dev/rust-client/releases) — what's in each version

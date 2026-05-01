@@ -1,6 +1,77 @@
 ---
-title: fmt
-description: "Format the project with Biome."
+title: lpm fmt
+description: "Format the project with Biome — lazy-downloaded, with --check mode for CI."
 ---
 
-Coming soon.
+```bash
+lpm fmt [path...]              # format and write
+lpm fmt --check [path...]      # check only, exit 1 if unformatted
+```
+
+Runs [Biome](https://biomejs.dev) `format` across the project. The binary is downloaded the first time you run `lpm fmt`, cached under `~/.lpm/cache/`, and reused thereafter.
+
+Faster than `npx biome` (`13 ms` vs `264 ms` on the [reference fixture](https://github.com/lpm-dev/rust-client#benchmarks)) because there's no per-invocation `npx` resolution overhead.
+
+## Examples
+
+```bash
+lpm fmt                       # format the whole project, write changes
+lpm fmt src/                  # format one directory
+lpm fmt --check               # check without writing — CI mode
+lpm fmt --check src/          # check one directory
+lpm fmt --all                 # workspace: format every member
+lpm fmt --affected            # workspace: only members affected vs main
+```
+
+## Default vs `--check`
+
+| Mode | What happens |
+| --- | --- |
+| `lpm fmt` (default) | Runs `biome format <path> --write` — actually formats files |
+| `lpm fmt --check` | Runs `biome format <path>` (no `--write`) — exits non-zero if any file is unformatted, useful in CI |
+
+Without an explicit path argument, both modes operate on `.` (the project root).
+
+## Pinning a version
+
+By default, `lpm fmt` uses the version baked into LPM's plugin registry. Override per-project in `lpm.json`:
+
+```json title="lpm.json"
+{
+  "tools": {
+    "biome": "2.4.8"
+  }
+}
+```
+
+Run `lpm plugin update biome` to pull the latest release into the cache.
+
+## Workspaces
+
+```bash
+lpm fmt --all
+lpm fmt --affected
+lpm fmt --affected --base develop
+```
+
+`--all` and `--affected` are mutually exclusive.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--check` | Check only, don't write — exits non-zero on unformatted files |
+| `--all` | Run in every workspace member |
+| `--affected` | Run only in members affected by changes vs `--base` |
+| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+
+Anything after `--` (or trailing path) is forwarded to Biome.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm lint`](/docs/dev/lint) — Oxlint, same lazy-download mechanism
+- [`lpm check`](/docs/dev/check) — TypeScript type-check
+- [`lpm plugin`](/docs/dev/plugin) — manage tool versions and updates
+- [Built-in tools](/docs/dev/builtin-tools) — how the plugin system works

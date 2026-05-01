@@ -1,6 +1,118 @@
 ---
 title: Swift Package Registry (SE-0292)
-description: "Native SPM integration — how LPM implements the Swift Package Registry spec."
+description: "How LPM implements the SE-0292 Swift Package Registry spec — identity mapping, signing, certificates."
 ---
 
-Coming soon.
+LPM implements the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) on its registry side. Once you've run `lpm swift-registry` once, Swift Package Manager (SPM) on your machine can resolve LPM-hosted Swift packages natively — no manual fork-as-git-dep, no shim.
+
+This page is the conceptual reference. For the user-facing setup walkthrough, see [Using LPM with Swift](/docs/guides/using-with-swift).
+
+## What SE-0292 specifies
+
+SE-0292 defines a REST API for Swift package registries that SPM can talk to in lieu of a git URL. It covers:
+
+- Listing versions for a package (`GET /{scope}/{name}`)
+- Fetching a version's source archive (`GET /{scope}/{name}/{version}.zip`)
+- Fetching a version's `Package.swift` manifest (`GET /{scope}/{name}/{version}/Package.swift`)
+- Login (`POST /login`)
+- Optional package signing via [CMS](https://datatracker.ietf.org/doc/html/rfc5652)
+
+LPM implements all of the above plus signature verification metadata. SPM clients see a standard SE-0292 server.
+
+## Identity mapping
+
+LPM packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain `.`, so LPM maps:
+
+| LPM name | SE-0292 identity |
+| --- | --- |
+| `@lpm.dev/owner.pkg-name` | `lpmdev.owner-pkg-name` |
+| `@lpm.dev/myorg.swift-utils` | `lpmdev.myorg-swift-utils` |
+
+Rules:
+
+- The LPM scope `@lpm.dev/` becomes the SE-0292 scope `lpmdev` (no dots, no `@`).
+- The first hyphen in the SE-0292 name **splits the owner from the package**. Package names with hyphens themselves still work (the **first** hyphen is the splitter, the rest are part of the name).
+
+Identity translation is automatic — `lpm install @lpm.dev/owner.swift-pkg` writes the SE-0292 identity into `Package.swift`. You don't deal with the mapping by hand.
+
+## Setup: `lpm swift-registry`
+
+```bash
+lpm swift-registry              # idempotent
+lpm swift-registry --force      # re-download the signing certificate (cert rotation)
+```
+
+Three steps under the hood:
+
+1. **Set the registry for the lpmdev scope.**
+   ```bash
+   swift package-registry set --scope lpmdev https://lpm.dev/api/swift-registry
+   ```
+2. **Log in.** Uses the LPM bearer token resolved through the standard session manager (`LPM_TOKEN` → keychain → OIDC → none).
+3. **Install the signing certificate.** Downloads the LPM signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`.
+
+The certificate is **trust-on-first-install** today — the user implicitly trusts the cert by running `lpm swift-registry`. Re-run with `--force` after a documented cert rotation.
+
+## Installing a Swift package
+
+```bash
+lpm install @lpm.dev/owner.swift-pkg
+lpm install @lpm.dev/owner.swift-pkg@1.2.0
+```
+
+Behind the scenes:
+
+1. LPM resolves the version against the SE-0292 endpoint.
+2. Updates `Package.swift` — appends the dep into `dependencies:`, wires it into the requested target's `targets:` array.
+3. Triggers `swift package resolve` so SPM downloads the source archive, verifies the signature, and writes `Package.resolved`.
+
+> Use [`lpm install`](/docs/packages/install) for Swift, **not** `lpm add`. `lpm add` is source-delivery (copies bytes into your project); `lpm install` is the registry-resolved-dep path. `lpm add` still works for Swift today (with `--target`) but it's the legacy path for that ecosystem.
+
+## Publishing a Swift package
+
+```bash
+lpm publish
+```
+
+Detected as a Swift package when `lpm.config.json` declares `ecosystem: "swift"` and the repo has a `Package.swift` at the root. The publish pipeline does the standard pack + secret scan + quality + upload, plus three Swift-specific steps:
+
+1. **Generate the SE-0292 source archive.** Wraps the pack output into a `{pkgName}-{version}/` top-level directory and creates the `.zip` SPM expects. The wrapper is a hard SE-0292 requirement (SPM uses `stripFirstLevel` semantics on the archive).
+2. **Compute and record the SHA-256 checksum.** SPM verifies this on download. The hex is stored in the release metadata; the base64 form is sent in the `Digest` HTTP response header on download.
+3. **Sign the package.** Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) using the LPM signing key. The signature is base64-encoded into release metadata and surfaced in three places per release:
+   - The release metadata JSON (base64 CMS string)
+   - The `Digest` HTTP response header on download
+   - A comment block in the `Package.swift` manifest response
+
+## Verifying signatures
+
+SPM clients running `lpm swift-registry` install the LPM root cert and trust signatures chained from it. Manual verification is also possible — download the cert from `https://lpm.dev/api/swift-registry/certificate` (DER format) and point SPM at it via `swift package-registry`'s standard trust-store flags.
+
+If the cert ever rotates (planned or emergency), the docs will direct you to re-run `lpm swift-registry --force`. A stale local trust store will refuse new signatures with a clear error rather than silently accepting them.
+
+## Wire format details
+
+For the curious — the things SPM expects from the server side:
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /{scope}/{name}` | List of versions (JSON) |
+| `GET /{scope}/{name}/{version}` | Release metadata (JSON) — signature, checksum, dependencies |
+| `GET /{scope}/{name}/{version}.zip` | Source archive with `{name}-{version}/` top level, `Digest: SHA-256={base64}` header |
+| `GET /{scope}/{name}/{version}/Package.swift` | Manifest with signature in a comment block |
+| `POST /login` | Auth flow (handled by `lpm swift-registry` automatically) |
+| `GET /certificate` | Public cert in DER format |
+
+Implementation lives in the LPM origin server and registry worker. The Rust CLI is a client of this API; it doesn't implement the server side itself.
+
+## Limitations
+
+- Today `lpm swift-registry` configures the `lpmdev` scope only. Custom-scope publishing (e.g., `acme` for a private LPM tenant) isn't surfaced in the CLI yet.
+- Cert rotation is manual — no automatic refresh on schedule. The signing cert is long-lived; rotation events will be communicated via release notes.
+- The SE-0292 `--allow-insecure-http` flag is honored only for `http://` registry URLs (i.e., local dev against `http://localhost`). The hosted lpm.dev endpoint is HTTPS-only.
+
+## See also
+
+- [Using LPM with Swift](/docs/guides/using-with-swift) — setup walkthrough + publish flow
+- [`lpm swift-registry`](/docs/packages/swift-registry) — CLI command reference
+- [`lpm install`](/docs/packages/install) — the right command for SPM deps
+- [SE-0292 spec](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) — the upstream protocol

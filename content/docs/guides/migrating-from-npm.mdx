@@ -1,6 +1,120 @@
 ---
 title: Migrating from npm
-description: "Convert a package-lock.json project to LPM."
+description: "Convert a package-lock.json project to LPM with rollback safety."
 ---
 
-Coming soon.
+`lpm migrate` converts an npm project to LPM in one command. It detects the source package manager, parses `package-lock.json`, writes `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` still pass. Every file it touches is backed up first — `--rollback` restores the original state.
+
+This guide is the migration walkthrough. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
+
+## Prerequisites
+
+- LPM installed — see [Installation](/docs/installation).
+- A working `package-lock.json` in the project root.
+- A reasonably-clean working tree (commit before migrating, just to be safe).
+
+## 1. Preview
+
+```bash
+lpm migrate --dry-run
+```
+
+Detects npm, parses `package-lock.json`, converts to the LPM format, but **writes nothing**. Reports the package count, any packages that couldn't be converted (with reasons), and the workspace member count.
+
+If anything looks wrong, fix it before doing the real run.
+
+## 2. Run the migration
+
+```bash
+lpm migrate
+```
+
+What runs, in order:
+
+1. **Pre-flight** — confirms `package.json` exists, refuses to clobber an existing `lpm.lock`.
+2. **Detect, parse, convert** — reads `package-lock.json`, converts entries to LPM's lockfile shape.
+3. **Write** — emits `lpm.lock` + `lpm.lockb`. Backs up `package-lock.json` to `package-lock.json.backup`.
+4. **`.npmrc`** — adds LPM-aware config to `.npmrc` (or creates one). Backs up the original to `.npmrc.backup`.
+5. **Install** — runs `lpm install` against the new lockfile (lockfile fast-path, no re-resolution).
+6. **Verify** — runs `build` + `test` if those scripts exist, to confirm nothing broke.
+7. **CI hint** — prints a hint pointing at `lpm ci setup github-actions` (or generates a workflow with `--ci`).
+8. **Summary** — what was done, where backups live, and how to roll back.
+
+In a TTY, you'll be prompted before the install + verify steps. Skip the prompts with `-y` (implies `--force`).
+
+## 3. Verify
+
+After migration, run a fresh install + your usual checks:
+
+```bash
+lpm install --offline       # confirm reproducibility from the new lockfile
+lpm test
+lpm lint
+lpm fmt --check
+```
+
+If anything's broken, see [Rollback](#rollback) below.
+
+## 4. Commit
+
+```bash
+git add lpm.lock lpm.lockb .npmrc package.json
+git rm package-lock.json package-lock.json.backup .npmrc.backup     # if you don't want them committed
+git commit -m "Migrate to LPM"
+```
+
+You probably don't want the `.backup` files in the repo. Add them to `.gitignore`:
+
+```text
+*.backup
+```
+
+## Rollback
+
+If anything goes wrong (or the migration was a mistake):
+
+```bash
+lpm migrate --rollback
+```
+
+Walks the backups created by the previous run and restores `package-lock.json`, `.npmrc`, and `package.json` to their pre-migration state. Safe to run repeatedly. Doesn't touch `lpm.lock` / `lpm.lockb` — you can delete those by hand.
+
+## Optional flags
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Parse + convert only, write nothing |
+| `--force` | Overwrite an existing `lpm.lock` without prompting |
+| `-y`, `--yes` | Skip every prompt (implies `--force`) |
+| `--no-install` | Convert lockfile only, skip the install step |
+| `--skip-verify` | Skip the `build` + `test` verification |
+| `--no-npmrc` | Don't touch `.npmrc` |
+| `--ci` | Also generate a CI workflow template for the detected platform |
+| `--no-ci` | Suppress the CI template hint |
+| `--rollback` | Restore from `.backup` files |
+
+## What stays the same
+
+- `package.json` — `dependencies`, `devDependencies`, `scripts`, `workspaces` are read as-is. No renames, no deletions.
+- `node_modules/` — gets rebuilt by the install step. The on-disk shape may change (npm-flat → LPM's isolated layout); your imports continue to work because LPM's resolver respects the same semver semantics npm does.
+- `.npmrc` — if you had `@scope:registry=` lines for private registries, they survive the migration. LPM honors `.npmrc` for routing — see [Registries](/docs/registries).
+
+## What changes
+
+- `package-lock.json` → `lpm.lock` + `lpm.lockb`. Both are committed, both should travel with the repo.
+- `node_modules/` layout switches to **isolated by default** (pnpm-style symlinks). To keep the npm-style flat layout: `lpm install --linker=hoisted` or set `package.json > lpm > linker = "hoisted"`.
+- New `.gitattributes` line: `lpm.lockb binary` (so git doesn't try to text-merge the binary lockfile).
+
+## Common pitfalls
+
+- **The lockfile is now strict.** `lpm install --offline` will fail on any drift between `package.json` and `lpm.lock`. Whichever wins, run `lpm install` (without `--offline`) once after migration to settle them.
+- **Phantom-dep code breaks under isolated layout.** If you imported a package you didn't declare in `dependencies`, npm hoisted it into `node_modules/` and your code worked anyway. LPM's isolated layout doesn't hoist — undeclared imports become hard errors. Add the missing entries to `dependencies`.
+- **Lifecycle scripts don't run on `lpm install` by default.** If your project relies on `postinstall` (esbuild, sharp, etc.), run `lpm rebuild` after install, then approve the script-running packages with [`lpm approve-scripts`](/docs/packages/approve-scripts) so future installs don't need re-approval.
+
+## See also
+
+- [Migrating from pnpm](/docs/guides/migrating-from-pnpm) — same shape, different source lockfile
+- [`lpm migrate`](/docs/packages/migrate) — full flag reference
+- [Registries](/docs/registries) — how `.npmrc` routing works after migration
+- [Lockfile](/docs/packages/lockfile) — what gets committed and why
+- [`lpm install --linker`](/docs/packages/install) — keeping the flat layout if you need to

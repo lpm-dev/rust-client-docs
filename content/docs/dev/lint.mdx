@@ -1,6 +1,67 @@
 ---
-title: lint
-description: "Run Oxlint against the project."
+title: lpm lint
+description: "Lint the project with Oxlint — lazy-downloaded, no npx round-trip."
 ---
 
-Coming soon.
+```bash
+lpm lint [-- args...]
+```
+
+Runs [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) — a fast Rust-based linter — across the project. The binary is downloaded the first time you run `lpm lint`, cached under `~/.lpm/cache/`, and reused thereafter.
+
+Faster than `npx oxlint` (`78 ms` vs `250 ms` on the [reference fixture](https://github.com/lpm-dev/rust-client#benchmarks)) because there's no per-invocation `npx` resolution overhead.
+
+## Examples
+
+```bash
+lpm lint                       # lint the whole project
+lpm lint src/                  # lint a directory
+lpm lint -- --fix              # auto-fix where Oxlint can
+lpm lint -- --rules typescript # forward Oxlint flags
+lpm lint --all                 # workspace: lint every member
+lpm lint --affected            # workspace: only members affected vs main
+lpm lint --affected --base develop
+```
+
+## Pinning a version
+
+By default, `lpm lint` uses the version baked into LPM's plugin registry. Override per-project in `lpm.json`:
+
+```json title="lpm.json"
+{
+  "tools": {
+    "oxlint": "1.57.0"
+  }
+}
+```
+
+Run `lpm plugin update oxlint` to pull the latest release into the cache.
+
+## Workspaces
+
+```bash
+lpm lint --all                       # every member, topological order
+lpm lint --affected                  # only members touched since the base ref
+lpm lint --affected --base main      # change the base (default: main)
+```
+
+`--all` and `--affected` are mutually exclusive.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--all` | Run in every workspace member |
+| `--affected` | Run only in members affected by changes vs `--base` |
+| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+
+Anything after `--` (or trailing) is forwarded to Oxlint.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm fmt`](/docs/dev/fmt) — Biome formatter, same lazy-download mechanism
+- [`lpm check`](/docs/dev/check) — TypeScript type-check
+- [`lpm plugin`](/docs/dev/plugin) — manage tool versions and updates
+- [Built-in tools](/docs/dev/builtin-tools) — how the plugin system works

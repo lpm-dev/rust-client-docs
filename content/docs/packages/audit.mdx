@@ -1,6 +1,72 @@
 ---
-title: audit
-description: "Scan for vulnerabilities, behavioral risks, and quality issues."
+title: lpm audit
+description: "Scan installed packages for vulnerabilities, behavioral risks, and (optionally) hardcoded secrets."
 ---
 
-Coming soon.
+```bash
+lpm audit
+```
+
+Walks every installed package and reports:
+
+1. **Confirmed vulnerabilities** — cross-referenced against [OSV.dev](https://osv.dev) and registry advisories.
+2. **Behavioral flags** — uses static analysis to surface risky behaviors (`eval`, `child_process`, network access, filesystem writes, native code, etc.). See the full tag list under [`lpm query`](/docs/packages/query).
+3. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
+
+Works in any project, not just LPM-published ones. `lpm audit` is registry-agnostic — it audits whatever's in `node_modules`.
+
+## Examples
+
+```bash
+lpm audit
+lpm audit --level high              # only show high-severity findings
+lpm audit --secrets                 # also scan for hardcoded credentials
+lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
+lpm audit --fail-on behavior        # CI: exit non-zero only on critical behaviors
+lpm audit --fail-on all             # CI: exit non-zero on either (default)
+lpm audit --json                    # structured output for tooling
+```
+
+## CI gating
+
+By default, `lpm audit` exits non-zero if **either** a vulnerability or a critical behavioral flag is found. Tighten or loosen with `--fail-on`:
+
+| Policy | Exit code 1 when |
+| --- | --- |
+| `vuln` | A confirmed OSV / registry vulnerability is present |
+| `behavior` | A critical or high behavioral flag is present |
+| `all` (default) | Either of the above |
+
+For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like selectors target individual flags or combinations.
+
+## Severity levels
+
+```bash
+lpm audit --level high
+```
+
+Suppresses anything below the threshold. Levels: `info`, `moderate`, `high`. Default is `info` (show everything).
+
+## Secret scanning
+
+```bash
+lpm audit --secrets
+```
+
+Scans the installed source tree for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--level <info\|moderate\|high>` | Minimum severity to report (default: `info`) |
+| `--fail-on <vuln\|behavior\|all>` | CI exit-code policy (default: `all`) |
+| `--secrets` | Also scan installed source for hardcoded secrets |
+
+Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
+
+## See also
+
+- [`lpm query`](/docs/packages/query) — inspect packages by behavioral tag
+- [Security audit](/docs/packages/security-audit) — concept overview and tag reference
+- [`lpm publish`](/docs/packages/publish) — runs the same secret scanner before upload

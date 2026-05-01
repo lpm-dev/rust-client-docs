@@ -1,6 +1,84 @@
 ---
-title: doctor
-description: "Run the 11-check project health report."
+title: lpm doctor / lpm health
+description: "Project + environment health checks, with auto-fix."
 ---
 
-Coming soon.
+```bash
+lpm doctor [--fix] [-y]
+lpm health
+```
+
+Two complementary diagnostic commands:
+
+- **`lpm doctor`** — checks the **project + environment**: Node version detection, `lpm install` state, sandbox availability, certificate trust, store integrity, and a handful of others. The big "is everything OK here?" command.
+- **`lpm health`** — checks the **registry**: connectivity, latency, the registry's own health endpoint. The "is the service up?" command.
+
+## Examples
+
+```bash
+lpm doctor                       # report — read-only
+lpm doctor --fix                 # auto-fix what it can, prompt where unclear
+lpm doctor --fix -y              # auto-fix, no prompts (CI-friendly)
+lpm doctor --json                # structured for tooling
+
+lpm health                       # registry connectivity check
+lpm health --json
+```
+
+## What `lpm doctor` checks
+
+The check set is intentionally broad — every signal that "this project is in a known-good state to develop in." Highlights:
+
+- Node version detected (`.nvmrc` / `lpm.json > runtime.node`) and installed
+- `node_modules/` matches the lockfile (no drift since the last `lpm install`)
+- Sandbox availability (Seatbelt on macOS, landlock on Linux)
+- Local CA exists and is trusted (for `lpm dev --https`)
+- Store integrity (no missing or corrupted entries)
+- Project-local TypeScript present if `tsconfig.json` is in the tree
+- Auth tokens present and not expired
+
+`--json` returns the full per-check result set with status codes; `--verbose` adds remediation hints inline.
+
+## Auto-fix mode
+
+```bash
+lpm doctor --fix
+```
+
+Walks the failing checks and asks before each remediation. Common fixes include:
+
+- Install the missing Node version
+- Run `lpm install` to reconcile `node_modules/`
+- Run `lpm fmt` to reconcile formatting
+- Install the local CA into the OS trust store
+
+Pass `-y` (which implies `--fix`) to skip every prompt — useful in CI bootstrap scripts.
+
+## What `lpm health` checks
+
+```bash
+lpm health
+```
+
+Hits the registry's health endpoint, measures round-trip latency, and reports up/down + p50/p99. Use as a CI smoke test or when investigating slow installs.
+
+`lpm health` does not check your project — only the registry. For project + environment checks, use `lpm doctor`.
+
+## Flags
+
+### `lpm doctor`
+
+| Flag | Effect |
+| --- | --- |
+| `--fix` | Auto-fix issues with prompts |
+| `-y`, `--yes` | Skip prompts (implies `--fix`) |
+
+### `lpm health`
+
+No specific flags besides the [global flags](/docs/commands#global-flags) — `--json` and `--verbose` are useful.
+
+## See also
+
+- [`lpm store verify`](/docs/infra/store) — deeper store integrity check
+- [`lpm cert status`](/docs/infra/cert) — CA + project cert detail
+- [Project health](/docs/infra/project-health) — design and check inventory

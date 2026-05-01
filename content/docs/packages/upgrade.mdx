@@ -1,6 +1,57 @@
 ---
-title: upgrade
-description: "Upgrade dependencies to latest compatible versions."
+title: lpm upgrade
+description: "Bump dependencies to their latest matching version, with optional major upgrades."
 ---
 
-Coming soon.
+```bash
+lpm upgrade
+```
+
+Walks every dependency in `package.json`, looks up the latest published version that satisfies the declared range, and updates the lockfile + `node_modules` accordingly. By default it stays within your declared semver — pass `--major` to bump across breaking-change boundaries.
+
+In a TTY, `lpm upgrade` shows an interactive multiselect so you can pick which packages to bump. In CI or a non-TTY, it runs non-interactively. Override with `-i` (force interactive) or `-y` (force non-interactive).
+
+## Examples
+
+```bash
+lpm upgrade                # interactive at TTY, all-at-once in CI
+lpm upgrade --dry-run      # show what would change
+lpm upgrade --major        # also offer breaking upgrades
+lpm upgrade -y             # non-interactive (skip prompts)
+lpm upgrade -i             # interactive (even in non-TTY)
+```
+
+## Major upgrades
+
+```bash
+lpm upgrade --major
+```
+
+In **non-interactive** mode, `--major` actually performs the major bump on every dep that has one. In **interactive** mode, major upgrades appear as separate rows in the multiselect — you toggle the ones you want.
+
+After a `--major` run, review the changelog of every bumped package before shipping. LPM never reads release notes for you.
+
+## What changes
+
+- `package.json` — declared ranges are rewritten to match the new resolved versions, respecting your [save policy](/docs/packages/save-policy).
+- `lpm.lock` / `lpm.lockb` — fully refreshed.
+- `node_modules/` — re-linked with the new versions.
+
+If your `package.json` says `"react": "^18.0.0"` and the latest is `18.3.1`, `lpm upgrade` will land `^18.3.1` (caret default). With `--major` and react 19 available, it would also offer `^19.0.0`.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--major` | Allow upgrading to a higher major version |
+| `--dry-run` | Show what would be upgraded without making changes |
+| `-i`, `--interactive` | Force interactive mode even outside a TTY |
+| `-y`, `--yes` | Force non-interactive mode (useful at a TTY) |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm outdated`](/docs/packages/outdated) — see which deps have updates available
+- [`lpm install`](/docs/packages/install) — reinstall after a manual `package.json` edit
+- [Save policy](/docs/packages/save-policy) — how new ranges get saved

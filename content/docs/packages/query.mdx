@@ -1,0 +1,156 @@
+---
+title: lpm query
+description: "CSS-like selector queries against installed packages and behavioral tags."
+---
+
+```bash
+lpm query <selector> [flags]
+```
+
+Selector engine that targets behavioral tags, package state, and dependency relationships across the installed set. Pairs with [`lpm audit`](/docs/packages/audit) — `audit` is the broad report; `query` is the precision tool.
+
+Use it in CI to gate on specific risky combinations, in shells to grep through installed packages by behavior, or in agents to ask structured questions about the dep tree.
+
+## Examples
+
+```bash
+lpm query :eval                                    # any package that uses eval()
+lpm query :network                                 # any package making outbound HTTP
+lpm query :scripts:not(:built)                     # has lifecycle scripts but they haven't run
+lpm query ":root > :network"                       # direct deps that hit the network
+lpm query "#lodash"                                # find lodash in the tree
+lpm query :critical --assert-none                  # CI gate: fail if any critical-tagged pkg
+lpm query --count                                  # tag counts across all packages
+lpm query :eval --format mermaid > eval-graph.mmd  # subgraph diagram
+```
+
+## Selectors
+
+Each selector matches packages by **behavioral tag**, **state**, or **identity**. Tags are computed by the same static analysis pipeline that backs [`lpm audit`](/docs/packages/audit).
+
+### Behavioral tags
+
+| Tag | Matches packages that |
+| --- | --- |
+| `:eval` | Use `eval`, `Function()`, or `vm.runInThisContext` |
+| `:network` | Make outbound HTTP / WS connections |
+| `:fs` | Touch the filesystem outside their own directory |
+| `:shell` | Spawn shells (`spawn`, `exec`, `execSync`) |
+| `:child-process` | Use `child_process` (any form) |
+| `:native` | Ship native modules (`.node`, `.wasm`) |
+| `:crypto` | Use cryptographic primitives |
+| `:dynamic-require` | Use dynamic `require()` (variable arg) |
+| `:env` | Read `process.env` |
+| `:ws` | Use WebSockets |
+| `:obfuscated` | Show signs of code obfuscation |
+| `:high-entropy` | Contain high-entropy string blobs |
+| `:minified` | Ship minified-only source |
+| `:telemetry` | Make telemetry / analytics calls |
+| `:url-strings` | Contain URL string literals |
+| `:trivial` | Tiny — measured by AST node count |
+| `:protestware` | Match a curated list of known protest-license / sabotage packages |
+
+### Dependency state
+
+| Tag | Matches |
+| --- | --- |
+| `:git-dep` | Installed from a git URL |
+| `:http-dep` | Installed from an HTTP tarball URL |
+| `:wildcard-dep` | Declared with `*` or `latest` |
+| `:copyleft` | Copyleft license (GPL family) |
+| `:no-license` | No `license` field |
+| `:scripts` | Declares lifecycle scripts (`preinstall`/`postinstall`/etc.) |
+| `:built` | Lifecycle scripts have been run (the package is in the trust set + executed) |
+| `:vulnerable` | Listed in OSV / registry advisories |
+| `:deprecated` | Marked deprecated by the publisher |
+
+### Origin
+
+| Tag | Matches |
+| --- | --- |
+| `:lpm` | `@lpm.dev/*` packages |
+| `:npm` | npm packages |
+
+### Severity
+
+| Tag | Matches |
+| --- | --- |
+| `:critical` | Tagged critical by the audit pipeline |
+| `:high` | Tagged high |
+| `:medium` | Tagged medium |
+| `:info` | Tagged info |
+
+### Combinators
+
+| Combinator | Meaning |
+| --- | --- |
+| `:a:b` | AND — package matches both tags |
+| `:a, :b` | OR — package matches either tag |
+| `:not(:a)` | NOT — package doesn't match `:a` |
+| `#name` | Identity — match a specific package by name |
+| `:root > :child` | Direct-dep — `:child` is a direct dependency of `:root` |
+
+## CI gating
+
+```bash
+lpm query :critical --assert-none
+```
+
+Exits non-zero if any package matches the selector. Use to fail the build on specific risky combinations:
+
+```bash
+# fail on a vulnerable package that hasn't been patched
+lpm query ":vulnerable:not(:built)" --assert-none
+
+# fail on a transitively-pulled package that uses eval AND has lifecycle scripts
+lpm query ":eval:scripts" --assert-none
+```
+
+`--assert-none` is the canonical CI-gate flag. For broader gating with severity policies, [`lpm audit --fail-on`](/docs/packages/audit) is usually a better fit.
+
+## Counts and details
+
+```bash
+lpm query --count
+```
+
+Tabulates tag counts across every installed package, grouped by severity. Useful for high-level "how risky is my tree right now" surveys.
+
+```bash
+lpm query :network -V
+lpm query :network --query-verbose
+```
+
+`-V` / `--query-verbose` adds per-match tag detail — the full set of tags carried by each matched package, not just the ones in the selector.
+
+## Output formats
+
+```bash
+lpm query :eval --format list      # default — names, one per line
+lpm query :eval --format mermaid   # Mermaid subgraph diagram
+```
+
+| Format | Output |
+| --- | --- |
+| `list` (default) | Package names, one per line — pipeable into shell tools |
+| `mermaid` | Mermaid graph block showing the matched packages as a dependency subgraph |
+
+For broader graph rendering (full tree, DOT, JSON, HTML), use [`lpm graph`](/docs/infra/graph).
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `<selector>` | Optional selector expression. Required unless `--count`. |
+| `--count` | Show tag counts across all packages, grouped by severity |
+| `-V`, `--query-verbose` | Per-match tag details |
+| `--assert-none` | Exit non-zero if any package matches (CI gate) |
+| `--format <list\|mermaid>` | Output format (default `list`) |
+
+Plus the [global flags](/docs/commands#global-flags) — `--json` returns structured matches.
+
+## See also
+
+- [`lpm audit`](/docs/packages/audit) — broader report with vulnerability + behavior data
+- [`lpm graph`](/docs/infra/graph) — render the full dep tree
+- [Security audit](/docs/packages/security-audit) — design overview of the tag system

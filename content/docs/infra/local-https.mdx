@@ -1,6 +1,151 @@
 ---
 title: Local HTTPS
-description: "Local certificate authority with trust store installation."
+description: "How LPM ships zero-config HTTPS for localhost — root CA, project certs, trust store install."
 ---
 
-Coming soon.
+`lpm dev --https` serves your dev server over `https://localhost`. Browsers trust the certificate. No `--insecure` flag, no warnings, no per-project setup beyond a one-time CA install.
+
+This page covers the design — what gets generated, where it lives, how trust-store installation works on each OS, and how the cert is wired into the dev server.
+
+## How it works
+
+```text
+1. Generate a root CA (one time, machine-global)
+   └─ ~/.lpm/certs/rootCA.pem        ← cert
+   └─ ~/.lpm/certs/rootCA-key.pem    ← private key (mode 0o600)
+
+2. Install the CA into the OS trust store
+   └─ macOS:   security add-trusted-cert
+   └─ Linux:   /usr/local/share/ca-certificates/ + update-ca-certificates
+   └─ Windows: certutil -addstore "ROOT"
+
+3. Generate a per-project certificate signed by the root CA
+   └─ <project>/.lpm/certs/cert.pem
+   └─ <project>/.lpm/certs/key.pem (mode 0o600)
+   └─ SAN includes localhost, 127.0.0.1, and any --host arguments
+
+4. Inject env vars into the dev server process
+   └─ HTTPS=true
+   └─ SSL_CRT_FILE=<project>/.lpm/certs/cert.pem
+   └─ SSL_KEY_FILE=<project>/.lpm/certs/key.pem
+   └─ Plus framework-specific vars (Next.js, Vite, etc.)
+
+5. The dev server uses the cert; browsers trust it because the CA is trusted.
+```
+
+You only do steps 1 and 2 once per machine (`lpm cert trust`). Steps 3–5 happen automatically on every `lpm dev --https` (or any project where `lpm.json > https: true`).
+
+## File layout
+
+```text
+~/.lpm/certs/                         ← global, one per machine
+├── rootCA.pem                        ← root CA certificate
+└── rootCA-key.pem                    ← private key, mode 0o600
+
+<project>/.lpm/certs/                 ← per-project
+├── cert.pem                          ← server certificate
+└── key.pem                           ← private key, mode 0o600
+```
+
+Project certs live under `.lpm/certs/` next to `package.json`. Add `.lpm/` to `.gitignore` if you don't already — generated certs are environment-specific and shouldn't be committed.
+
+## Key file safety
+
+Private keys are written with **mode `0o600` from creation** (`create_new` + `OpenOptionsExt::mode()`), not chmod-after-write. This eliminates the TOCTOU window where the file would briefly be world-readable.
+
+If a key file already exists, it's removed first so the `create_new` succeeds on regeneration. This means `lpm cert generate` always produces a fresh key — there's no "preserve existing key" path.
+
+## Trust store install
+
+`lpm cert trust` installs `rootCA.pem` into the OS trust store. Per-OS:
+
+| OS | Mechanism | Sudo? |
+| --- | --- | --- |
+| macOS | `security add-trusted-cert -d -k /Library/Keychains/System.keychain rootCA.pem` | Yes (System keychain). User keychain variant uses `-k ~/Library/Keychains/login.keychain-db` (no sudo). |
+| Linux | Copy to `/usr/local/share/ca-certificates/lpm-ca.crt`, then `update-ca-certificates` | Yes |
+| Windows | `certutil -addstore "ROOT" rootCA.pem` | Yes (admin) |
+
+Untrust:
+
+```bash
+lpm cert uninstall
+```
+
+Removes the CA from the trust store. Doesn't delete the on-disk CA — re-install with `lpm cert trust`. To wipe the CA itself: `rm -rf ~/.lpm/certs/`.
+
+## Browser support
+
+Once the CA is trusted at the OS level, browsers that use the system trust store (Chrome, Edge, Safari, most Linux browsers) accept LPM-signed certs without warnings.
+
+**Firefox uses its own trust store** by default. To trust the LPM CA in Firefox, either:
+
+- Set `security.enterprise_roots.enabled = true` in `about:config` (Firefox then reads the system trust store), or
+- Manually import `~/.lpm/certs/rootCA.pem` via Settings → Privacy → Certificates → View Certificates → Authorities → Import.
+
+## Adding hostnames
+
+By default, the project cert's Subject Alternative Name (SAN) includes `localhost` and `127.0.0.1`. To serve under a custom hostname:
+
+```bash
+lpm cert generate --host my-app.local
+lpm cert generate --host a.local --host b.local      # repeatable
+```
+
+Pair with a `/etc/hosts` entry:
+
+```text title="/etc/hosts"
+127.0.0.1 my-app.local
+```
+
+Now `https://my-app.local:3000` works in any browser. Useful for projects that need a real hostname (cookies scoped to a domain, OAuth callbacks, etc.).
+
+`lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. If you need both `my-app.local` and `localhost`, list both in the same `--host` invocation.
+
+## Framework integration
+
+LPM detects which framework `lpm dev` is starting and injects the right env vars:
+
+| Framework | Env vars |
+| --- | --- |
+| Next.js | `HTTPS=true`, `SSL_CRT_FILE`, `SSL_KEY_FILE` |
+| Vite | `VITE_HTTPS=true`, `VITE_SSL_CERT`, `VITE_SSL_KEY` (or via Vite's `https` config object) |
+| Generic | `SSL_CRT_FILE`, `SSL_KEY_FILE`, `HTTPS=true` |
+
+If your framework needs different vars, you can read the cert paths yourself from the env LPM injects and configure the server manually.
+
+## Status check
+
+```bash
+lpm cert status
+```
+
+Reports:
+
+- **Root CA** — exists / trusted, subject, expiry
+- **Project cert** — exists, expiry, hostnames in SAN, whether renewal is recommended
+
+`--json` returns the same structurally.
+
+## Renewal
+
+Project certs have a long-ish but bounded lifetime. `lpm cert status` flags `needs_renewal: true` when expiry is within ~30 days. Regenerate:
+
+```bash
+lpm cert generate
+```
+
+The CA itself has a much longer lifetime — once you `lpm cert trust`, it lasts years. Re-running `lpm cert trust` is safe (idempotent — installs are deduped on cert serial).
+
+## Why a per-machine root CA
+
+LPM doesn't ship a baked-in CA. Every machine generates its own root CA on first `lpm cert trust`. Reasons:
+
+- The private key never leaves the machine. A compromised LPM-distributed CA would be a supply-chain attack against every user.
+- Removing trust is a local operation — `lpm cert uninstall` doesn't have to coordinate with anything.
+- Project certs are signed by your local CA, so they're only trusted on machines that have run `lpm cert trust`. Sharing a project cert across machines doesn't accidentally trust its issuer everywhere.
+
+## See also
+
+- [`lpm cert`](/docs/infra/cert) — CLI command reference
+- [`lpm dev --https`](/docs/dev) — most common consumer
+- [`lpm.json` https](/docs/reference/lpm-json#https) — persistent config

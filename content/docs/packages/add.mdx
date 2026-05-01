@@ -1,6 +1,199 @@
 ---
-title: add
-description: "Add a package — registry mode for Swift, source delivery for JS."
+title: lpm add
+description: "Copy source files from a package into your project (shadcn-style)."
 ---
 
-Coming soon.
+```bash
+lpm add <package>
+```
+
+`lpm add` extracts a package's source files into your project rather than installing it as a runtime dependency. Think `shadcn-ui` style: the code lands in your repo, you own it, you edit it.
+
+`lpm install` is the runtime-dependency command. `lpm add` is the source-delivery command. The two are not aliases.
+
+Works with **any registry** the resolver can reach — lpm.dev, npmjs.org, or a `.npmrc`-declared private registry. Anything that ships a tarball is fair game.
+
+## Examples
+
+```bash
+lpm add @lpm.dev/owner.ui-kit                      # add an lpm.dev package
+lpm add @lpm.dev/owner.ui-kit@1.2.0                # add a specific version
+lpm add @lpm.dev/owner.ui-kit?component=dialog     # add only one component
+lpm add lodash.merge                               # add an npm package's source
+lpm add @my-co/internal --path ./src/vendor        # custom destination
+lpm add my-pkg --dry-run                           # preview without writing
+```
+
+## How it works
+
+1. Resolves the spec against the appropriate registry.
+2. Downloads the tarball into the global store (same store as `lpm install`).
+3. Asks where to put the files — interactively in a TTY, or honors `--path`. In non-interactive mode without `--path`, the command exits with an error.
+4. Copies the source into the destination, prompting on conflicts.
+5. If the package declares an `lpm.config.json`, runs the package's configured install steps (component selection, alias rewrites, dep installation). If not, it's a plain source copy and you handle dependencies yourself.
+
+`lpm add` does **not** auto-install bare imports it discovers in the copied source. It will surface them at the end of the run so you can add them yourself.
+
+## Config-aware vs simple copy
+
+A package becomes "config-aware" by shipping an `lpm.config.json` at the tarball root. That file declares components, dependencies to auto-install, import aliases, and editor integration hints. Without it, `lpm add` is a plain source copy — useful for any tarball, not just lpm.dev packages.
+
+## Swift packages
+
+For Swift packages, prefer **[`lpm install`](/docs/packages/install)** — it's the right command for SPM dependencies (resolves through the [SE-0292 registry](/docs/packages/swift-registry) and edits `Package.swift`). `lpm add` still works for Swift sources today and respects `--target` for Xcode-target wiring, but consider it the legacy path for that ecosystem.
+
+## Authoring config-aware packages: `lpm.config.json`
+
+Ship `lpm.config.json` at the root of your tarball to control how `lpm add` extracts your package. With the file present, `lpm add` becomes a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting, and per-ecosystem target detection. Without it, the command falls back to the simple "copy everything" path.
+
+```json title="lpm.config.json (full surface)"
+{
+  "ecosystem": "js",
+  "importAlias": "@/",
+
+  "configSchema": {
+    "component": {
+      "type": "select",
+      "label": "Which component?",
+      "options": [
+        { "value": "dialog", "label": "Dialog" },
+        { "value": "popover", "label": "Popover" }
+      ],
+      "default": "dialog",
+      "required": true
+    },
+    "styling": {
+      "type": "select",
+      "label": "Styling system",
+      "options": ["panda", "tailwind", "vanilla"],
+      "multiSelect": false,
+      "default": "panda"
+    },
+    "withTests": {
+      "type": "boolean",
+      "label": "Include tests?",
+      "default": "false"
+    }
+  },
+
+  "defaultConfig": { "styling": "tailwind" },
+
+  "files": [
+    { "src": "src/dialog/**",  "dest": "dialog",  "include": "when",
+      "condition": { "component": "dialog" } },
+    { "src": "src/popover/**", "dest": "popover", "include": "when",
+      "condition": { "component": "popover" } },
+    { "src": "src/styles/panda.css", "dest": "styles.css", "include": "when",
+      "condition": { "styling": "panda" } },
+    { "src": "src/types.ts", "dest": "types.ts" },
+    { "src": "tests/**", "dest": "__tests__", "include": "when",
+      "condition": { "withTests": "true" } }
+  ],
+
+  "dependencies": {
+    "styling": {
+      "panda":    ["@pandacss/dev"],
+      "tailwind": ["tailwindcss"]
+    },
+    "withTests": {
+      "true": ["vitest"]
+    }
+  }
+}
+```
+
+### Top-level fields
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `ecosystem` | `"js"` (default) \| `"swift"` | Picks the default install directory and whether to apply import-rewriting |
+| `importAlias` | string | Author's path alias (e.g., `"@/"`). Used by the import rewriter to translate internal imports to the buyer's alias. |
+| `configSchema` | object | Interactive prompt fields — see below |
+| `defaultConfig` | object | `{ key: defaultValue }` overrides for `configSchema.<field>.default`. Project-level "I always want X" pinning. |
+| `files` | array | File-copy rules — see below |
+| `dependencies` | object | Conditional dependency injection — see below |
+
+### `configSchema.<key>`
+
+Each entry declares one prompt. Values from the prompt feed into both `files[].condition` and `dependencies` matching.
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `type` | `"string"` \| `"boolean"` \| `"select"` | Prompt kind |
+| `label` | string | Human-readable prompt label (defaults to the key) |
+| `default` | string | Default value (booleans use `"true"` / `"false"`) |
+| `required` | bool | Under `--yes`, required fields are auto-filled with their default |
+| `options` | array | For `select`: array of strings, or `[{ "value": ..., "label": ... }, …]` |
+| `multiSelect` | bool | For `select`: allow choosing multiple. Stored as comma-separated values. |
+
+Prompts can be pre-answered from the CLI by appending `?key=value&key=value` to the package spec:
+
+```bash
+lpm add @lpm.dev/owner.ui-kit?component=dialog&styling=panda
+```
+
+Inline values bypass the prompt entirely. With `--yes`, prompts are skipped and `defaultConfig` / `field.default` are used for required fields.
+
+### `files[]`
+
+Each rule maps one source pattern to one destination, with an optional `include` condition.
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `src` | string | Source pattern (glob), relative to the package root |
+| `dest` | string | Destination subpath, relative to the install target |
+| `include` | `"always"` (default) \| `"never"` \| `"when"` | Inclusion mode |
+| `condition` | object | For `include: "when"`: `{ configKey: expectedValue }` — all keys must match |
+
+If a rule's `condition` references a `configKey` that the user did not provide and that has no default, the file is included by default (all-by-default semantics).
+
+### `dependencies`
+
+Conditional dependency injection. Keys are `configSchema` keys; values map each chosen option to a list of npm packages to install.
+
+```json
+"dependencies": {
+  "styling": {
+    "panda":    ["@pandacss/dev"],
+    "tailwind": ["tailwindcss", "tailwindcss-animate"]
+  }
+}
+```
+
+If the user picked `styling: "panda"`, `@pandacss/dev` gets installed via `--pm` (default `lpm`). Multi-select values are split on `,` and unioned.
+
+`@lpm.dev/*` entries in this list are filtered out of auto-install — those are recursive `lpm add` candidates, not runtime deps.
+
+`--no-install-deps` skips the entire dependency step.
+
+### Behavior matrix
+
+| State | What `lpm add` does |
+| --- | --- |
+| No `lpm.config.json` | Plain copy of the package's source. No prompts. No auto-install. Surfaces bare imports for you to install yourself. |
+| `lpm.config.json` present, TTY | Prompts for every `configSchema` key not already inlined; copies per `files[]` rules; installs `dependencies` matching the chosen values. |
+| `lpm.config.json` present, `--yes` / `--json` / non-TTY | Skips prompts; uses defaults for `required` fields; copies per matching rules; installs deps. |
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--path <DIR>` | Target directory (overrides interactive prompt and auto-detection) |
+| `-y`, `--yes` | Skip interactive prompts, use defaults |
+| `--force` | Overwrite existing files without prompting |
+| `--dry-run` | Show what would be done without writing anything |
+| `--no-install-deps` | Skip dependency installation after copy (for config-aware packages) |
+| `--no-skills` | Skip skills auto-install |
+| `--no-editor-setup` | Skip editor auto-integration |
+| `--pm <NAME>` | Package manager for dep installation (`lpm`, `npm`, `pnpm`, `yarn`, `bun`, `auto`; default `lpm`) |
+| `--alias <ALIAS>` | Import alias prefix (e.g., `@/components`) — overrides auto-detection |
+| `--target <NAME>` | Swift SPM target name (Swift packages only) |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm remove`](/docs/packages/remove) — undo an `lpm add`
+- [`lpm install`](/docs/packages/install) — install runtime dependencies
+- [Registries](/docs/registries) — how packages route
+- [Swift Package Registry](/docs/packages/swift-registry) — `lpm add` with Swift

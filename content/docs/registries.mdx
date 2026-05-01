@@ -1,0 +1,100 @@
+---
+title: Registries
+description: "LPM works with npm, private registries, and lpm.dev. Here is how it routes."
+---
+
+The LPM CLI is registry-agnostic. It is **not** a client only for lpm.dev — it is a general-purpose package manager that happens to also speak the lpm.dev protocol.
+
+If you have an existing `package.json` full of `react`, `lodash`, `typescript`, and friends, LPM installs them from `registry.npmjs.org` exactly like npm, pnpm, yarn, or bun would. Nothing has to change.
+
+## Default routing
+
+LPM resolves each package by name and routes accordingly:
+
+| Package | Goes to |
+| --- | --- |
+| `react`, `lodash`, `typescript`, … | `registry.npmjs.org` |
+| `@scope/anything` (any scope except `@lpm.dev`) | `registry.npmjs.org`, unless `.npmrc` overrides the scope |
+| `@lpm.dev/*` | `https://lpm.dev` (auth + monetization layer) |
+| Anything that matches a registry mapping in `.npmrc` | The registry you mapped |
+
+The `@lpm.dev/*` scope is the **only** scope that always goes to lpm.dev. Everything else is npm by default.
+
+## Pointing at a private registry
+
+LPM reads `.npmrc` exactly the way npm does — project-local first, then user-level (`~/.npmrc`).
+
+```ini title=".npmrc"
+# A private registry for one scope
+@my-company:registry=https://npm.my-company.com
+//npm.my-company.com/:_authToken=${NPM_TOKEN}
+
+# Override the default registry for everything else (optional)
+registry=https://my-mirror.example.com
+//my-mirror.example.com/:_authToken=${MIRROR_TOKEN}
+```
+
+`@my-company/internal-tool` will be fetched from `npm.my-company.com` with the configured auth token. Public packages still flow through the default registry. No LPM-specific config is required.
+
+For per-environment tokens, prefer `${VAR}` expansion (above) over hardcoded secrets — LPM and npm both support it.
+
+## When does lpm.dev come in
+
+lpm.dev is a registry **plus** an auth and monetization layer. Use it when:
+
+- You want **private packages** without standing up your own registry. Every published package starts private — only the publisher can install it. (Same shape as npm private packages.)
+- You publish under your scope and want to flip a package to **pool** distribution. Metadata becomes public, but installs are gated to pool subscribers — you earn a share of the pool's revenue.
+- You publish a paid package via **marketplace** distribution. Installs require a license purchase.
+
+Setting `distribution` is a per-package opt-in on the publisher's side. As an installer, you simply `lpm install @lpm.dev/owner.package` — LPM handles the auth, license, and download.
+
+If you're not publishing, ignore lpm.dev entirely — LPM is a strict superset of npm-the-client and will never send your `react` install through it.
+
+## Private packages on lpm.dev
+
+```bash
+lpm login
+lpm install @lpm.dev/acme.internal
+```
+
+`lpm login` stores a token in your OS keychain (Keychain on macOS, libsecret on Linux, Credential Manager on Windows). The token is scoped to lpm.dev — no other registry sees it.
+
+To use lpm.dev tokens from CI without `lpm login`:
+
+```bash
+lpm setup        # generates an .npmrc with a CI-scoped token
+lpm npmrc        # prints the read-only .npmrc you can commit/share
+```
+
+## Mixing registries in one project
+
+A `package.json` can pull from npm, lpm.dev, and a private registry simultaneously — LPM resolves each dep against the correct origin and writes the resolution to the lockfile.
+
+```json title="package.json"
+{
+  "dependencies": {
+    "react": "^19.0.0",
+    "@my-company/internal-tool": "^2.1.0",
+    "@lpm.dev/acme.private-utils": "^1.0.0"
+  }
+}
+```
+
+```ini title=".npmrc"
+@my-company:registry=https://npm.my-company.com
+//npm.my-company.com/:_authToken=${NPM_TOKEN}
+```
+
+```bash
+lpm install
+# react                          → registry.npmjs.org
+# @my-company/internal-tool      → npm.my-company.com  (via .npmrc)
+# @lpm.dev/acme.private-utils    → lpm.dev             (via stored token)
+```
+
+## See also
+
+- [Installation](/docs/installation) — get the CLI on your machine
+- [Authentication](/docs/reference/authentication) — token storage, scopes, rotation
+- [`lpm install`](/docs/packages/install) — the install command
+- [`lpm publish`](/docs/packages/publish) — publishing to lpm.dev or npm

@@ -1,6 +1,102 @@
 ---
 title: Migrating from pnpm
-description: "Convert a pnpm-lock.yaml project to LPM."
+description: "Convert a pnpm-lock.yaml project to LPM, isolated layout preserved."
 ---
 
-Coming soon.
+`lpm migrate` converts a pnpm project to LPM in one command. It detects pnpm, parses `pnpm-lock.yaml`, writes `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install`, and (optionally) verifies that `build` + `test` still pass. Backups are taken first, so `--rollback` restores the original state.
+
+The migration shape is the same as [migrating from npm](/docs/guides/migrating-from-npm). This page covers the pnpm-specific differences.
+
+## What carries over cleanly
+
+- **Isolated `node_modules` layout.** Both pnpm and LPM-default use isolated layout (symlinks into a virtual store). Your imports keep working unchanged. No phantom-dep cleanup needed.
+- **`.pnpmfile.cjs` is unaffected.** LPM doesn't use it, but doesn't delete it either. If you have one, decide whether you still need it.
+- **Workspaces.** `pnpm-workspace.yaml` works alongside `package.json > workspaces` — LPM reads `package.json > workspaces`. If your project relies on `pnpm-workspace.yaml` only, copy the globs into `package.json > workspaces` before migrating.
+- **`.npmrc`-declared private registries** carry over verbatim. LPM honors `.npmrc` for routing.
+
+## Run the migration
+
+```bash
+lpm migrate --dry-run   # preview
+lpm migrate             # do it
+```
+
+Same flow as the npm path:
+
+1. Detect pnpm, parse `pnpm-lock.yaml`, convert.
+2. Write `lpm.lock` + `lpm.lockb`. Back up `pnpm-lock.yaml` to `pnpm-lock.yaml.backup`.
+3. Touch `.npmrc` (with `--no-npmrc` to skip), backing up the original.
+4. Run `lpm install` against the new lockfile.
+5. Run `build` + `test` to verify (skip with `--skip-verify`).
+6. Print summary + CI hint.
+
+## Optional flags
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Parse + convert only, write nothing |
+| `--force` | Overwrite an existing `lpm.lock` without prompting |
+| `-y`, `--yes` | Skip every prompt (implies `--force`) |
+| `--no-install` | Convert lockfile only, skip install |
+| `--skip-verify` | Skip `build` + `test` verification |
+| `--no-npmrc` | Don't touch `.npmrc` |
+| `--ci` | Generate a CI workflow template |
+| `--no-ci` | Suppress CI hint |
+| `--rollback` | Restore from `.backup` files |
+
+## Verify and commit
+
+```bash
+lpm install --offline       # confirm reproducibility
+lpm test
+lpm lint
+lpm fmt --check
+```
+
+```bash
+git add lpm.lock lpm.lockb .npmrc package.json
+git rm pnpm-lock.yaml pnpm-lock.yaml.backup .npmrc.backup
+git commit -m "Migrate to LPM"
+```
+
+## pnpm-specific gotchas
+
+- **`pnpm overrides`** in `package.json > pnpm.overrides` aren't read by LPM. Copy them under `package.json > lpm.overrides` (same selector grammar) — see [`package.json` overrides](/docs/reference/package-json-lpm#overrides).
+- **`pnpm-workspace.yaml`** isn't read either. Move workspace globs into `package.json > workspaces`.
+- **`pnpm patch`** patches in `patches/` aren't auto-converted. Re-author them via [`lpm patch`](/docs/packages/patch) — the format is similar but the integrity binding is stricter.
+- **`pnpm.peerDependencyRules`** has no LPM equivalent today. If you relied on it, you may see peer-dep warnings post-migration.
+- **`shamefully-hoist`** in `.npmrc` is pnpm-specific. LPM's equivalent for the npm-flat layout is `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
+
+## Rollback
+
+```bash
+lpm migrate --rollback
+```
+
+Restores `pnpm-lock.yaml`, `.npmrc`, and `package.json` to pre-migration state. Doesn't touch the LPM lockfile files — delete them by hand.
+
+## Lifecycle scripts
+
+LPM defaults to `script-policy: deny` — lifecycle scripts (`postinstall`, etc.) don't run during install. After the migration's `lpm install` step, run:
+
+```bash
+lpm rebuild
+```
+
+For packages that pnpm allowed to run scripts but LPM hasn't trusted yet, [`lpm approve-scripts`](/docs/packages/approve-scripts) walks the blocked set interactively.
+
+If your project depends on `postinstall` for a tight inner loop and you're confident about the trust set:
+
+```bash
+lpm install --auto-build
+```
+
+Auto-runs `lpm rebuild` for trusted packages right after install. Or set `package.json > lpm > scripts.autoBuild: true` to make it sticky.
+
+## See also
+
+- [Migrating from npm](/docs/guides/migrating-from-npm) — same shape, different source lockfile
+- [`lpm migrate`](/docs/packages/migrate) — full flag reference
+- [Registries](/docs/registries) — `.npmrc` routing
+- [`lpm install --linker`](/docs/packages/install) — keeping a flat npm-style layout if you need it
+- [`lpm approve-scripts`](/docs/packages/approve-scripts) — review blocked lifecycle scripts after first install

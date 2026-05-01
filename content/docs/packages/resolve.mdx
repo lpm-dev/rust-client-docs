@@ -1,0 +1,63 @@
+---
+title: lpm resolve
+description: "Print the resolved dependency tree for one or more package specs — without installing."
+---
+
+```bash
+lpm resolve <packages...>
+```
+
+Runs the resolver against the given specs and prints the dependency tree it would install. **Read-only** — no filesystem changes, no lockfile, no downloads, no `package.json` mutation.
+
+Useful for previewing the impact of a candidate dep, debugging unexpected transitive selections, or scripting dep-graph analysis (`--json` makes the output structured).
+
+## Examples
+
+```bash
+lpm resolve react                            # latest, full tree
+lpm resolve react@^19                        # a specific range
+lpm resolve react vue zod                    # multiple at once
+lpm resolve @lpm.dev/owner.pkg               # works against any registry
+lpm resolve react --json | jq '.tree'        # structured output for scripts
+```
+
+## Spec format
+
+Each spec is `<name>` or `<name>@<range>`. Bare names default to `*` (latest matching anything). Scoped names work as expected — the parser handles the leading `@` correctly so `@lpm.dev/owner.pkg@^1.0.0` parses as `(name=@lpm.dev/owner.pkg, range=^1.0.0)`.
+
+| Spec | Resolves to |
+| --- | --- |
+| `react` | Latest react |
+| `react@^19` | Latest react matching `^19` |
+| `react@19.0.0` | Exact `19.0.0` |
+| `react@beta` | Latest tag `beta` |
+| `@lpm.dev/owner.pkg@^1` | Latest `^1` from lpm.dev |
+| `@my-co/internal` | Resolves via `.npmrc` mapping |
+
+## How it works
+
+1. Parses each spec into `(name, range)`.
+2. Calls the resolver with the combined dep map. The resolver hits the appropriate registry for each name (lpm.dev for `@lpm.dev/*`, `.npmrc`-declared registries for matching scopes, `registry.npmjs.org` for everything else — see [Registries](/docs/registries)).
+3. Prints the resolved tree with versions and integrity hashes for every transitive dep.
+
+No tarballs are downloaded. The resolver only needs metadata.
+
+## When to reach for this
+
+- Preview the transitive impact of adding a new dep before touching `package.json`.
+- Investigate why a specific transitive version got picked. Pair with `--json` and `jq` for ad-hoc analysis.
+- Generate dep-graph fixtures for testing.
+- Check whether a candidate version has unexpected peer-dep conflicts.
+
+For installing the result, run `lpm install <spec>`. For just downloading the tarball, use [`lpm download`](/docs/packages/download).
+
+## Flags
+
+`lpm resolve` takes no specific flags. Use the [global flags](/docs/commands#global-flags) — `--json` is especially useful here, and `--registry` / `--token` route the lookup against a specific endpoint or session.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — installs the resolved tree
+- [`lpm download`](/docs/packages/download) — fetch + extract the tarball without installing
+- [`lpm graph`](/docs/infra/graph) — visualize the dep tree of an already-installed project
+- [Resolver](/docs/packages/resolver) — design overview

@@ -1,6 +1,138 @@
 ---
 title: Content-addressable store
-description: "Global store at ~/.lpm/store with per-file deduplication and clonefile on macOS."
+description: "How LPM stores packages once on disk and links them into every project — clonefile on macOS, hardlink on Linux."
 ---
 
-Coming soon.
+Every package LPM downloads goes into a **single global store** at `~/.lpm/store/`. Every project that depends on the same `(name, version)` shares the same on-disk copy. The result: installing the same dep set across 50 projects costs disk-space and time once, not 50 times.
+
+This page covers the design — what the store is, how packages get into it, how projects reach into it from `node_modules/`, and the maintenance surface.
+
+## On-disk layout
+
+```text
+~/.lpm/store/
+└── v1/                              ← store wire-format version
+    ├── react@19.2.4/                ← extracted package directory
+    │   ├── package.json
+    │   ├── index.js
+    │   ├── ...
+    ├── express@4.22.1/
+    │   └── ...
+    └── tarball/                     ← Phase 59 — non-Registry sources
+        └── sha512-...../            ← keyed by SRI integrity hash
+            ├── package.json
+            └── ...
+```
+
+Two arms under `v1/`:
+
+- **Registry packages** — keyed by `(name, version)`, e.g. `~/.lpm/store/v1/react@19.2.4/`. The common case.
+- **Tarball-URL packages** (Phase 59) — keyed by SRI integrity hash, e.g. `~/.lpm/store/v1/tarball/sha512-aabb..../`. Used when a dep is pulled from a raw `https://...tgz` URL with no registry context. Hex (not base64) for filesystem-safety on every platform.
+
+The `STORE_VERSION = "v1"` directory is the unit of removal for blunt wipes (`lpm store clean`). The outer `store/` dir holds control files (`.gc.lock`, etc.) that survive.
+
+## How packages enter the store
+
+`lpm install` extracts a package into the store exactly once across the lifetime of the machine.
+
+1. **Existence check** — if `~/.lpm/store/v1/<name>@<version>/` exists, skip extraction entirely. Package-level dedup, not just file-level.
+2. **Extract** — gzip-decompress + tar-walk the tarball into a staging dir (a temp dir under `~/.lpm/store/v1/`).
+3. **Security scan** — run [behavioral analysis](/docs/packages/security-audit) against the extracted source. Persist results into `.lpm-security.json` next to the package files so future installs don't re-scan.
+4. **Finalize** — write the `.integrity` file (the verified SRI), atomic-rename the staging dir into its final `<name>@<version>/` location.
+
+The atomic rename is the visibility boundary. A concurrent install racing for the same `(name, version)` either sees the package or doesn't — never a partially-extracted state.
+
+## How projects reach into the store
+
+Once a package is in the store, projects link to it without copying:
+
+| OS | Linking mechanism |
+| --- | --- |
+| macOS (APFS) | `clonefile(2)` — copy-on-write reflinks. Free until something writes. |
+| Linux (Btrfs, XFS, OverlayFS) | reflink via `ioctl(FICLONERANGE)` when the FS supports it; hardlink fallback. |
+| Linux (ext4) | hardlink. |
+| Linux (other) | hardlink. |
+| Windows | hardlink. |
+
+This is what makes warm install fast. After `lpm install`, the project's `node_modules/` (or the isolated wrapper at `<project>/.lpm/wrappers/`) is a tree of links pointing into `~/.lpm/store/v1/`. Subsequent `lpm install` invocations on other projects with overlapping deps reuse the same on-disk bytes.
+
+## Isolated vs hoisted layout
+
+The linker has two materialization modes — both reach into the same global store:
+
+```text
+# Isolated (default — pnpm-style)
+<project>/.lpm/wrappers/express@4.22.1/node_modules/
+  express/  → <global-store>/v1/express@4.22.1/      ← link
+  debug/    → ../../debug@2.6.9/node_modules/debug   ← symlink to sibling wrapper
+
+<project>/node_modules/
+  express/  → ../.lpm/wrappers/express@4.22.1/node_modules/express
+  .bin/
+    express → ../../.lpm/wrappers/express@4.22.1/node_modules/express/bin/express
+```
+
+```text
+# Hoisted (--linker=hoisted)
+<project>/node_modules/
+  express/      ← link from store
+  debug/        ← link from store (hoisted)
+  ms/           ← link from store (hoisted)
+  .bin/
+    express → ../express/bin/express
+```
+
+Both layouts are content-equivalent — the same on-disk store entry sits behind every link. Isolated gives you strict-deps enforcement (no phantom-dep access); hoisted gives you the npm-flat layout for tools that walk `node_modules/` recursively.
+
+## Where the store lives
+
+| Path | Override with |
+| --- | --- |
+| `~/.lpm/store/` (default) | `LPM_HOME=<path>` (moves the entire LPM root) |
+
+`LPM_HOME` is useful in CI for hermetic runs — point it at a workspace-local directory and the store survives only as long as the runner does.
+
+If `LPM_HOME` ends up on a network filesystem, LPM emits a one-time warning at startup pointing at performance issues — clonefile and hardlinks degrade badly across NFS.
+
+## Maintenance
+
+[`lpm store`](/docs/infra/store) is the maintenance surface:
+
+```bash
+lpm store path                   # print ~/.lpm/store/
+lpm store list                   # every (name, version) currently stored
+lpm store verify                 # re-hash entries, report integrity drift
+lpm store verify --deep --fix    # parse package.json + auto-fix stale caches
+lpm store gc                     # reference-aware garbage collection
+lpm store gc --older-than 30d
+lpm store clean                  # wipe v1/ entirely (rare)
+```
+
+Reference-aware GC walks every project lockfile LPM has seen and removes everything **not** referenced. Safe to run regularly. Without `--force`, GC errors when no lockfile is in scope (a fresh checkout's first install would otherwise wipe everything you just downloaded).
+
+## Concurrency
+
+The store is reads-mostly under normal operation. Two scenarios need coordination:
+
+- **Concurrent extract for the same `(name, version)`.** The atomic rename + the existence check race-handle this: whichever install wins the rename publishes the entry; the other install's existence check on the next iteration sees the win and skips.
+- **Concurrent `lpm store gc` invocations.** They serialize through `~/.lpm/store/.gc.lock`.
+
+The third scenario — **concurrent install vs. in-progress `gc`** — is **not yet fully isolated**. M3 will close it via a shared lock the install pipeline takes during extraction. Until then, don't run `lpm store gc` while a teammate is mid-install on the same machine.
+
+## Security caches
+
+After the security scan finishes, results are persisted alongside the package as `.lpm-security.json`. [`lpm audit`](/docs/packages/audit) reads from these caches; a second `lpm audit` run on an unchanged tree is essentially free. `lpm store verify --fix` refreshes stale security caches without re-extracting.
+
+## When does this matter?
+
+- **Disk usage on a multi-project machine** — without the global store, every project's `node_modules/` would be a full extracted copy. With the store, every project is mostly links into one shared tree.
+- **Cold install speed across projects** — the second project to need a given dep just makes links, no extraction work.
+- **Audit speed** — security analysis runs once per `(name, version)`, not per project.
+
+## See also
+
+- [`lpm store`](/docs/infra/store) — CLI maintenance commands
+- [Lockfile](/docs/packages/lockfile) — what records the integrity hash the store verifies against
+- [`lpm install --linker`](/docs/packages/install) — picks isolated vs hoisted layout
+- [Environment variables](/docs/reference/env-vars#filesystem-layout) — `LPM_HOME` to relocate the store
+- [Security audit](/docs/packages/security-audit) — the analysis pipeline that writes `.lpm-security.json`

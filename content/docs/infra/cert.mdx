@@ -1,6 +1,74 @@
 ---
-title: cert
-description: "Local HTTPS certificates and trust store management."
+title: lpm cert
+description: "Manage local HTTPS certificates and the LPM root CA."
 ---
 
-Coming soon.
+```bash
+lpm cert <action>
+```
+
+Manages the local certificate authority (CA) and per-project HTTPS certificates that back [`lpm dev --https`](/docs/dev). One-time `lpm cert trust` installs LPM's CA into your OS trust store; everything else is automated.
+
+## Examples
+
+```bash
+lpm cert status                         # CA + project cert overview
+lpm cert trust                          # install the CA into the OS trust store
+lpm cert uninstall                      # remove the CA from the trust store
+lpm cert generate                       # (re-)generate a project cert
+lpm cert generate --host alt.local      # add SAN entries
+lpm cert generate --host a.local --host b.local
+```
+
+## First-time setup
+
+```bash
+lpm cert trust
+```
+
+Generates the LPM root CA (if not already present at `~/.lpm/certs/`) and installs it into your OS trust store — Keychain on macOS, the system store on Linux, the Windows certificate store on Windows. Browsers will trust certificates signed by this CA from then on.
+
+You only need to run this **once per machine**. After that, `lpm dev --https` and `lpm cert generate` mint per-project certs that browsers accept without warnings.
+
+## Subcommands
+
+| Subcommand | Effect |
+| --- | --- |
+| `status` | Show CA presence/trust/expiry, plus the project cert's expiry, hostnames, and renewal need |
+| `trust` | Generate the CA (if missing) and install it into the OS trust store |
+| `uninstall` | Remove the CA from the trust store. Does not delete the on-disk CA. |
+| `generate` | Generate or renew the project's cert, with the hostnames in `--host` |
+
+## Status output
+
+```bash
+lpm cert status
+```
+
+Reports two blocks:
+
+- **Root CA** — exists / trusted, subject, expiry
+- **Project cert** — exists, expiry, hostnames in the SAN, whether renewal is recommended
+
+`--json` returns the same data structurally for tooling.
+
+## Adding hostnames
+
+```bash
+lpm cert generate --host my-app.local --host api.my-app.local
+```
+
+Generates a fresh project certificate whose SAN includes `localhost`, `127.0.0.1`, and every hostname passed via `--host`. Pair with a hosts-file entry to develop against a custom name.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--host <NAME>` | Extra hostname for the certificate's SAN (repeatable, only meaningful for `generate`) |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm dev --https`](/docs/dev) — the most common consumer
+- [Local HTTPS](/docs/infra/local-https) — design overview, file locations, OS specifics

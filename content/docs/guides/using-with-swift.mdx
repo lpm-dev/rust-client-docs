@@ -1,6 +1,94 @@
 ---
 title: Using LPM with Swift
-description: "Set up SPM integration and publish a Swift package."
+description: "SPM integration via SE-0292 — login, install, publish."
 ---
 
-Coming soon.
+LPM speaks the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md), so Swift Package Manager (SPM) can resolve LPM-hosted Swift packages natively. This guide walks through the full setup: installing a Swift package, and (for authors) publishing one.
+
+## Prerequisites
+
+- LPM installed — see [Installation](/docs/installation).
+- Swift toolchain installed.
+- An lpm.dev account, logged in (`lpm login`).
+
+## One-time SPM integration
+
+```bash
+lpm swift-registry
+```
+
+This runs an idempotent setup:
+
+1. Logs SPM into the LPM registry (writes the `swift package-registry` config).
+2. Downloads LPM's Swift package signing certificate and installs it into SPM's trust store.
+3. Configures SPM to trust the LPM scope.
+
+Re-run with `--force` to refresh the certificate (during cert rotation, etc.).
+
+## Installing a Swift package
+
+Use [`lpm install`](/docs/packages/install) for Swift packages — it edits `Package.swift` and triggers `swift package resolve`:
+
+```bash
+lpm install @lpm.dev/owner.swift-pkg
+lpm install @lpm.dev/owner.swift-pkg@1.2.0      # specific version
+```
+
+Behind the scenes, `Package.swift`'s `dependencies:` and `targets:` arrays get updated with the new package. Cross-target wiring is handled.
+
+> `lpm add` also supports Swift packages today (with `--target` for SPM-target wiring), but **`lpm install` is the right command** for SPM dependencies — `lpm add` is source-delivery, while Swift packages want registry-resolved deps.
+
+## Publishing a Swift package
+
+The flow is the same as any other LPM package, plus two Swift-specific requirements:
+
+1. Your project must declare `ecosystem: "swift"` in `lpm.config.json`.
+2. The repo must have a valid `Package.swift` at the root.
+
+```bash
+lpm publish
+```
+
+The publish pipeline:
+
+- Packs the repo into a tarball.
+- Generates a `.zip` source archive with the SE-0292-required `{pkgName}-{version}/` top-level wrapper.
+- Computes the SHA-256 checksum that SPM expects.
+- Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) with the LPM signing cert.
+- Uploads tarball + zip + signature to lpm.dev.
+
+After publish, SPM clients on any machine that's run `lpm swift-registry` can resolve the package by its LPM identity.
+
+## Identity mapping
+
+LPM packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain dots, so LPM maps them when surfacing to SPM:
+
+| LPM name | SPM identity |
+| --- | --- |
+| `@lpm.dev/owner.pkg-name` | `lpmdev.owner-pkg-name` |
+
+The first hyphen splits owner from package. You don't need to deal with the SPM identity by hand — `lpm install` and `lpm swift-registry` handle the translation.
+
+## Verifying signatures
+
+LPM ships a public certificate at `https://lpm.dev/api/swift-registry/certificate` (DER format). SPM clients running `lpm swift-registry` install this cert into their trust store automatically; manual verification is also possible by downloading the cert and pointing SPM at it.
+
+Signatures are surfaced in three places per release:
+
+- The release metadata JSON (base64 CMS).
+- The `Digest` HTTP response header on tarball download.
+- A comment block in the `Package.swift` manifest response.
+
+If the cert ever rotates, re-run `lpm swift-registry --force`.
+
+## Common pitfalls
+
+- **`lpm add` for Swift is the legacy path.** Use `lpm install` — `add` is source-delivery, not what you want for a runtime SPM dep.
+- **`Package.swift` must use the SE-0292 identity** (`lpmdev.owner-pkg-name`), not the LPM-native form. `lpm install` writes it correctly; if you hand-edit, mind the format.
+- **Re-run `lpm swift-registry --force` after cert rotation.** A stale local trust store will refuse new signatures.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — runtime dependency installer (works for Swift)
+- [`lpm swift-registry`](/docs/packages/swift-registry) — SPM setup command
+- [SE-0292](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) — the upstream protocol spec

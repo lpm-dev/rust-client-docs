@@ -1,6 +1,86 @@
 ---
 title: lpm.lockb format
-description: "Binary lockfile format for zero-parse reads."
+description: "Binary lockfile companion to lpm.lock — mmap-friendly, zero-parse reads."
 ---
 
-Coming soon.
+`lpm.lockb` is a binary mirror of [`lpm.lock`](/docs/reference/lockfile-format) optimized for reads. The install pipeline `mmap`s it, binary-searches the entry table by package name, and reads UTF-8 strings out of a packed string table — no parser, no allocation per package. On a typical project this is `~0.1 ms` vs `~10 ms` to parse the TOML.
+
+The binary lockfile is **always written alongside** the TOML file. On read, the binary is preferred when it exists and is at least as new as the TOML.
+
+Both files should be committed. Mark `lpm.lockb` as binary in `.gitattributes` — `lpm init` does this automatically:
+
+```text title=".gitattributes"
+lpm.lockb binary
+```
+
+## File location
+
+`<project-root>/lpm.lockb`
+
+## Layout (v2)
+
+```text
+[Header: 16 bytes]
+  magic              [u8; 4]  = b"LPMB"
+  version            u32 LE   = 2
+  package_count      u32 LE
+  string_table_off   u32 LE   — byte offset where the string table starts
+
+[PackageEntry × N: 36 bytes each, sorted by name]
+  name_off           u32 LE   — offset into the string table
+  name_len           u16 LE
+  version_off        u32 LE
+  version_len        u16 LE
+  source_off         u32 LE   — 0 = None
+  source_len         u16 LE
+  integrity_off      u32 LE   — 0 = None
+  integrity_len      u16 LE
+  deps_off           u32 LE   — offset into the deps table
+  deps_count         u16 LE
+  tarball_off        u32 LE   — 0 = None  (v2+)
+  tarball_len        u16 LE                (v2+)
+
+[DepsEntry × total_deps: 6 bytes each]
+  str_off            u32 LE   — offset into the string table
+  str_len            u16 LE
+
+[String table]
+  packed UTF-8, no NUL terminators
+```
+
+All numeric fields are little-endian. Packages are sorted by name so reads can binary-search the entry table.
+
+## Wire-format version
+
+Current: `v2` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). Phase 43 bumped `1 → 2` to append `(tarball_off, tarball_len)` to every `PackageEntry`.
+
+The reader rejects any file whose header `version` is not exactly `BINARY_VERSION` — strict by design. Per-entry layout differs across versions, so a v2 reader interpreting v1 30-byte entries as 36-byte entries would slip a half-package every time and produce garbage. On rejection, `read_fast` falls back to parsing the TOML lockfile and the next `write_all` rewrites `lpm.lockb` as the current version, completing the migration transparently.
+
+## Sentinel for optional fields
+
+Optional string fields (`source`, `integrity`, `tarball`) use `(off=0, len=0)` to mean `None`.
+
+To keep this sentinel unambiguous, the writer **rejects empty strings at insert time**: an empty source URL, integrity hash, or tarball URL is nonsensical input regardless. Failing loud is correct.
+
+## What's NOT stored in the binary lockfile
+
+The binary format is intentionally smaller than the TOML format. A few rare fields are not represented:
+
+- **`alias-dependencies`** (Phase 40 P2 npm-alias edges)
+- **`root-aliases`** (Phase 40 P2 root-level npm-alias map)
+
+Lockfiles that use **any** alias edges are written as TOML-only — the binary file is skipped entirely. Reads fall through to the TOML lockfile in that case. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping alias info would produce a binary lockfile that disagrees with the TOML lockfile and a warm install that materializes `node_modules/<target>/` instead of `node_modules/<local>/`.
+
+If your project uses `npm:<target>@<range>` aliases, you'll see only `lpm.lock` (no `lpm.lockb`) — that's correct.
+
+## Reading the file
+
+The reader [`BinaryLockfileReader`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs) `mmap`s the file once, parses the header, validates the magic + version, and exposes by-name lookup via binary search over the entry table. No allocation per entry; string slices borrow directly from the mmap.
+
+For projects with thousands of packages, this is the difference between a `~0` and a `~10–50 ms` warm-start cost.
+
+## See also
+
+- [`lpm.lock` format](/docs/reference/lockfile-format) — the canonical TOML lockfile
+- [Lockfile concept](/docs/packages/lockfile) — design overview
+- [`lpm install`](/docs/packages/install) — what reads each file

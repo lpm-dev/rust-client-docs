@@ -1,6 +1,246 @@
 ---
 title: Tunneling
-description: "Expose localhost with stable domains and webhook replay."
+description: "How LPM exposes localhost — Cloudflare Worker relay, base domains, plan limits, claim model, webhook capture."
 ---
 
-Coming soon.
+`lpm tunnel` exposes a local port to the public internet through LPM's tunnel relay. This is the conceptual deep-dive — the relay architecture, the per-plan limits matrix, how domains work for free vs Pro/Org, the wire protocol, the webhook capture/replay model, and the free-tier interstitial. For the CLI flag reference, see [`lpm tunnel`](/docs/infra/tunnel).
+
+## Architecture
+
+```text
+[your machine]                 [LPM relay — Cloudflare]              [internet]
+                                                                          ▼
+  lpm tunnel 3000 ──WebSocket──▶  Worker → Durable Object  ◀──HTTPS──── public users
+       │                                  │                              │
+       ▼                          one DO per tunnel domain               │
+  localhost:3000                  routes by Host header                  │
+                                                                          │
+       ▲                                  │                              │
+       └─── HTTP responses through the same WebSocket ───────────────────┘
+```
+
+The relay runs as a **Cloudflare Worker with Durable Objects**. Each tunnel domain (e.g., `acme-api.lpm.llc`) maps to its own Durable Object instance — that DO holds the WebSocket connection from your CLI and proxies HTTP requests through it.
+
+The DO model gives the relay strong consistency for the "which session owns which domain" question without round-tripping to a central service. KV caches token validation (60s TTL) and domain ownership (5-min TTL).
+
+The relay URL is `wss://relay.lpm.fyi/connect`. You don't need to configure it — it's the default the CLI uses.
+
+## Per-plan limits
+
+Tunnels are gated by plan tier across **seven** dimensions:
+
+| Dimension | Free | Pro | Org |
+| --- | --- | --- | --- |
+| Concurrent tunnels | **1** | **3** | **10** |
+| Rate limit | **100 req/min** | unlimited | unlimited |
+| Max body size | **10 MB** | 100 MB | 100 MB |
+| Max session length | **2 hours** | unlimited | unlimited |
+| Custom subdomain claims | **0** | 3 total | 10 total |
+| Reconnect grace | none — new random domain | **5 min** | **5 min** |
+| `--tunnel-auth` flag | not available | available | available |
+
+Limits are enforced at the relay (the Cloudflare Worker), not the CLI. They're documented in [`workers/tunnel/src/limits.js`](https://github.com/lpm-dev/a-package-manager/blob/main/workers/tunnel/src/limits.js).
+
+The reconnect-grace window is what makes claimed domains feel "always there" — when your tunnel disconnects (laptop sleep, network blip), the URL stays reserved for 5 minutes before another instance can grab it. Free-tier tunnels lose their random domain immediately and get a new one on reconnect.
+
+## Base domains
+
+LPM operates two base domains today:
+
+| Domain | Default plan required | Notes |
+| --- | --- | --- |
+| `lpm.fyi` | `free` | The default base. Free random subdomains live here. |
+| `lpm.llc` | `pro` | Available for claimed Pro/Org domains. |
+
+Adding a new base domain (e.g. `lpm.run`) is **one DB insert + DNS + a Wrangler route** — no code deploy. The list lives in `tunnel_base_domains` on the lpm.dev side.
+
+List what's available right now:
+
+```bash
+lpm tunnel domains       # show every enabled base domain + the plan tier required
+```
+
+Pro/Org claims sit inside one shared pool — your 3 (Pro) or 10 (Org) claims can be distributed across `lpm.fyi` and `lpm.llc` however you want. The namespace is **per base domain**, so `tolga.lpm.fyi` and `tolga.lpm.llc` are two independent claims that consume two slots from your pool.
+
+## Free random subdomains
+
+Free-tier tunnels get an **8-character lowercase alphanumeric** subdomain on `lpm.fyi`, like:
+
+```text
+k8f2m9x1.lpm.fyi
+9j3vq2bp.lpm.fyi
+```
+
+Generated cryptographically per session via `crypto.getRandomValues(8 bytes) % 36`. Different on every reconnect — the free tier has no reconnect-grace window, so each restart hands you a fresh URL.
+
+These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (max 2 hours under the free session cap) and then they're gone.
+
+## Subdomain rules (claimed domains)
+
+Claimed subdomains must match this regex (enforced at the claim API):
+
+```text
+^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$
+```
+
+- Lowercase ASCII letters, digits, hyphens
+- 3–32 characters total (must start AND end with an alphanumeric)
+- No dots, underscores, uppercase, or special characters
+
+Examples that work: `acme-api`, `staging-1`, `team-shared`. Examples that don't: `Acme_API`, `--leading-hyphen`, `staging.preview`, `xy` (too short).
+
+The relay-side validator is broader — it accepts any RFC 1123 hostname label (1–63 chars). The 3–32 cap exists at the claim API to keep human-typed subdomains short and consistent. Random free-tier subdomains use the relay's looser rules and land at exactly 8 chars.
+
+## Free-tier interstitial
+
+The first browser visit to a free random tunnel URL sees a **"Visit Site" interstitial page** — anti-phishing measure, same shape as ngrok's:
+
+```text
+First request:
+  Browser → k8f2m9x1.lpm.fyi/foo  →  HTML interstitial with "Visit Site" button
+                                      (because Accept: text/html)
+
+After click:
+  /__lpm_pass?to=/foo  →  sets HttpOnly cookie  →  302 redirect to /foo
+                                                    (Worker now lets requests pass)
+```
+
+Skipped automatically for:
+
+- **API/webhook requests** (no `Accept: text/html` header) — these hit your local server directly.
+- **Pro/Org tunnels** — your domain is claimed, you've authenticated, no interstitial.
+
+Without it, anyone could spin up a free tunnel and aim it at a phishing site that looks like a major brand (the random URL provides no signal of trust either way). The interstitial forces an explicit "yes I want to visit this URL" click.
+
+## Claiming a domain
+
+```bash
+lpm tunnel claim acme-api.lpm.llc
+lpm tunnel claim staging.lpm.fyi --org acme    # claim under an org
+lpm tunnel list                                 # show your claims
+lpm tunnel unclaim acme-api.lpm.llc
+```
+
+Claims are scoped:
+
+- **Personal claims** — owned by the authenticated user. Counted against the user's per-plan claim pool (Pro=3, Org members=10 inherited from any of their orgs, plus their own Pro pool if they have one).
+- **Org claims** — owned by an org. Counted against the org's pool. Anyone in the org can use the domain; permissions to claim/unclaim depend on the org role.
+
+Race-safe: the underlying `claimPersonalDomain` / `claimOrgDomain` queries use `INSERT … ON CONFLICT DO NOTHING` against a unique index on `domain`, so two simultaneous claims for the same domain produce one win and one no-op.
+
+After claiming:
+
+```json title="lpm.json"
+{ "tunnel": { "domain": "acme-api.lpm.llc" } }
+```
+
+Or pass `--domain` per invocation. Every `lpm tunnel 3000` (and `lpm dev --tunnel`) routes through that domain.
+
+## Wire protocol
+
+The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discriminating `type` field:
+
+| Direction | Type | Purpose |
+| --- | --- | --- |
+| Client → relay | `hello` | Initial handshake — token, requested domain, local port |
+| Relay → client | `http_request` | Incoming HTTP request to proxy |
+| Client → relay | `http_response` | The local server's response |
+| Relay → client | `ws_open` | Incoming WebSocket connection |
+| Both | `ws_frame` | WebSocket frames in either direction |
+
+Bodies are base64-encoded for binary safety. The CLI maintains a request-ID map so concurrent requests don't conflict.
+
+The protocol is purposely simple. There's no streaming-body support today; large requests are buffered up to the per-plan body cap (10 MB free / 100 MB Pro+Org) before forwarding. Most webhook payloads are small enough that this is fine; large file uploads are the edge case.
+
+## Token validation
+
+When the CLI's WebSocket connects to the relay, the `hello` message includes the LPM auth token. The relay:
+
+1. Hashes the token (so it can be cached safely).
+2. Looks up `tunnel_auth:{tokenHash}` in KV (60s TTL).
+3. On miss: calls back to the lpm.dev origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, plan tier, and org memberships.
+4. Caches the result for 60s.
+
+Plan tier from `whoami` is what selects the right `PLAN_LIMITS` row.
+
+## Domain ownership verification
+
+For claimed domains, the relay checks that the claim's `userId` (or one of `orgId`s your user belongs to) matches the connecting user. Cached at `tunnel:{fullDomain}` in KV (5-min TTL). On miss, falls back to `GET /api/tunnel/domains/{domain}` on the origin.
+
+Org ownership is matched by **UUID**, not slug — the cache stores the org's UUID, the user's `whoami` returns their org memberships with UUIDs, and the relay compares them with a `Set` lookup. This is correct across slug renames.
+
+## Webhook capture (client side)
+
+Every request the relay forwards to your local server is captured to disk on **your** machine — the relay doesn't store request bodies:
+
+```text
+<project>/.lpm/tunnel/
+├── events/
+│   ├── 0001.json         ← request + response metadata
+│   ├── 0001.body         ← request body bytes
+│   ├── 0001.response     ← response body bytes
+│   └── ...
+└── sessions/             ← session-level metadata
+```
+
+Browse:
+
+```bash
+lpm tunnel inspect             # terminal table
+lpm tunnel inspect --last 10
+lpm tunnel inspect --filter '/webhooks/stripe'
+lpm tunnel inspect --status 4xx
+lpm tunnel log                 # full event log
+lpm tunnel inspect --ui        # browser inspector at http://localhost:4400
+```
+
+Replay a captured event back to your local server:
+
+```bash
+lpm tunnel replay 3
+```
+
+Replays are useful for iterating on webhook handlers — fix the bug, replay the failed event, see if it lands. No need to wait for the upstream provider to fire again.
+
+## `--auto-ack`
+
+```bash
+lpm tunnel 3000 --auto-ack
+```
+
+If your local server is down (or you're not running one yet), the **CLI** returns a 200 OK to incoming requests automatically. Useful for keeping webhook providers from deactivating your endpoint after repeated 5xx errors.
+
+The captured events still land on disk; `lpm tunnel inspect` shows them as auto-acked. Replay them when your server is back up.
+
+## `--tunnel-auth` (Pro/Org)
+
+```bash
+lpm tunnel 3000 --tunnel-auth
+```
+
+Requires every incoming request to carry an auth token (generated per-session, printed in the tunnel banner). The relay enforces the check before forwarding.
+
+Free tier doesn't have `--tunnel-auth` (per the plan-limits matrix above). Useful for in-progress demos where you don't want random people who guess the URL to hit your server.
+
+## The inspector
+
+`lpm tunnel inspect --ui` starts a small web UI at `http://localhost:4400` (override with `--inspect-port`). It shows captured events with full headers, body, response status, and replay controls. Same data as the terminal `inspect`, just easier to navigate for big captures.
+
+The inspector is auto-started alongside the tunnel by default. Disable with `--no-inspect`.
+
+## Sessions
+
+Each `lpm tunnel` invocation is a session. With `--session <name>`, the inspector groups events by session name — useful for "stripe-test" vs "github-test" iteration loops.
+
+Sessions persist on disk under `<project>/.lpm/tunnel/sessions/`. Old sessions stay around until you clean them up by hand.
+
+## CI / scripted
+
+Tunnels aren't a CI primitive — they need an interactive process to hold the WebSocket open, and the per-session timeout (2h on free, unlimited on Pro/Org) doesn't fit a typical CI lifecycle. For CI integrations that need to receive webhooks, look at provider-side options (Stripe webhook signing + delivery logs, GitHub webhook delivery logs, etc.) rather than tunneling.
+
+## See also
+
+- [`lpm tunnel`](/docs/infra/tunnel) — CLI command reference
+- [`lpm dev --tunnel`](/docs/dev) — start a tunnel as part of the dev pipeline
+- [`lpm.json` tunnel](/docs/reference/lpm-json#tunnel) — domain config field
+- [`lpm cert`](/docs/infra/cert) — local HTTPS for non-tunnel localhost

@@ -1,6 +1,168 @@
 ---
-title: install
-description: "Install dependencies from package.json and lockfile."
+title: lpm install
+description: "Install dependencies from package.json, or add new ones."
 ---
 
-Coming soon.
+```bash
+lpm install [packages...]   # alias: lpm i
+```
+
+With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
+
+## Examples
+
+```bash
+lpm install                   # install everything in package.json
+lpm install zod               # add latest, save as ^x.y.z
+lpm install zod@4.3.6         # add exact, save as 4.3.6
+lpm install zod@^4.3.0        # add with explicit range
+lpm install -D vitest         # save under devDependencies
+lpm install -g typescript     # install into ~/.lpm/global/
+lpm install --offline         # never touch the network
+lpm install --force           # full re-install, bypass every fast path
+```
+
+## How it works
+
+1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
+2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
+3. **Link.** `node_modules/` is materialized in **isolated** layout by default (pnpm-style — symlinks into a `.lpm/` virtual store). Pass `--linker=hoisted` for npm-style flat layout.
+4. **Skip scripts.** Lifecycle scripts (`preinstall`, `postinstall`, `prepare`, `install`) do **not** run by default. See [lifecycle scripts](#lifecycle-scripts) below.
+
+## Save policy
+
+When you run `lpm install <pkg>` without an explicit version, LPM saves `^resolvedVersion` to `package.json`. If you typed an explicit version or range, LPM preserves what you typed. Prereleases are saved exact for safety.
+
+| You ran | `package.json` ends up with |
+| --- | --- |
+| `lpm install zod` | `"zod": "^4.3.6"` (caret default) |
+| `lpm install zod@4.3.6` | `"zod": "4.3.6"` (preserved) |
+| `lpm install zod@^4.3.0` | `"zod": "^4.3.0"` (preserved) |
+| `lpm install zod@~4.3.6` | `"zod": "~4.3.6"` (preserved) |
+| `lpm install zod@latest` | `"zod": "^4.3.6"` (caret default) |
+| `lpm install zod@beta` | `"zod": "4.4.0-beta.2"` (prerelease → exact) |
+| `lpm install zod@*` | `"zod": "*"` (explicit wildcard) |
+
+Override per-invocation with `--exact`, `--tilde`, or `--save-prefix '<p>'`. Set persistent defaults in `./lpm.toml` (project) or `~/.lpm/config.toml` (global):
+
+```toml title="~/.lpm/config.toml"
+save-prefix = "^"   # one of "^", "~", or "" (exact, no prefix)
+save-exact = false  # bool; true forces exact regardless of prefix
+```
+
+Re-installing an existing dep without a version or override flag refreshes the lockfile and store but **does not** rewrite the existing range — `"zod": "~4.3.6"` stays put.
+
+Full details in [Save policy](/docs/packages/save-policy).
+
+## Lifecycle scripts
+
+LPM does not execute lifecycle scripts during `lpm install` by default — the install pipeline materializes the closure, then stops. To run scripts, choose a policy:
+
+| Policy | Behavior |
+| --- | --- |
+| `deny` (default) | Scripts blocked. `lpm install` lists what wanted to run; approve them with `lpm approve-scripts` |
+| `allow` (`--yolo`) | Run every lifecycle script during install — matches npm/pnpm/bun default |
+| `triage` (`--triage`) | Tiered gate: greens auto-run in a sandbox; ambers and reds require manual review |
+
+Set per-invocation:
+
+```bash
+lpm install --policy=allow      # equivalent to --yolo
+lpm install --yolo              # alias for --policy=allow
+lpm install --triage            # alias for --policy=triage
+```
+
+Or pin in `package.json`:
+
+```json
+{ "lpm": { "scriptPolicy": "allow" } }
+```
+
+Or globally in `~/.lpm/config.toml`:
+
+```toml
+script-policy = "deny"
+```
+
+Precedence: CLI flag > `package.json` > `~/.lpm/config.toml` > default (`deny`).
+
+See [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for the manual-approval flow.
+
+## Workspaces
+
+In a monorepo, target a specific member or the workspace root:
+
+```bash
+lpm install react --filter web    # add react to packages/web/
+lpm install -w typescript -D      # add to the root package.json
+lpm install --filter './apps/*'   # any glob the workspace filter accepts
+```
+
+`--filter` and `-w` are mutually exclusive. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM prompts for confirmation; pass `-y` to skip the prompt.
+
+See [Workspaces](/docs/packages/workspaces) for filter grammar.
+
+## Reproducible installs (CI)
+
+```bash
+lpm install --offline --strict-integrity
+```
+
+- `--offline` — never touches the network. Resolves entirely from the lockfile + global store. Errors out if anything is missing.
+- `--strict-integrity` — fail on tarball-URL deps that don't declare an inline SRI hash. Disables trust-on-first-use for fresh installs.
+- `--no-skills`, `--no-editor-setup`, `--no-security-summary` — skip the soft-side-effects to shave CI time.
+
+## Recently published packages
+
+LPM blocks installs of packages published in the last **24 hours** by default — the [minimum release age](/docs/reference/env-vars) gate.
+
+```bash
+lpm install foo --allow-new                # bypass the cooldown for this command
+lpm install foo --min-release-age=1h       # tighten or loosen the window
+lpm install foo --min-release-age=0        # disable the cooldown for this command
+```
+
+Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`).
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `-D`, `--save-dev` | Save under `devDependencies` |
+| `-g`, `--global` | Install into `~/.lpm/global/` instead of the project (exposes bins on PATH) |
+| `--offline` | Never touch the network |
+| `--force` | Bypass fast-exit hash check, skip the lockfile, re-download, re-link from scratch |
+| `--allow-new` | Skip the minimum-release-age cooldown |
+| `--min-release-age <DUR>` | Override the cooldown (`<N>h`, `<N>d`, or seconds; `0` disables) |
+| `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
+| `--linker <isolated\|hoisted>` | Linking layout (default: `isolated`) |
+| `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
+| `--yolo` | Alias for `--policy=allow` |
+| `--triage` | Alias for `--policy=triage` |
+| `--auto-build` | Auto-run `lpm rebuild` for trusted packages after install |
+| `--exact` | Save exact version (no prefix) |
+| `--tilde` | Save with `~` prefix |
+| `--save-prefix <P>` | Override save prefix (`^`, `~`, or `""`) |
+| `--filter <EXPR>` | Workspace filter (mutually exclusive with `-w`) |
+| `-w`, `--workspace-root` | Target the root `package.json` |
+| `--fail-if-no-match` | Exit non-zero if `--filter` matches nothing |
+| `-y`, `--yes` | Skip the interactive multi-member confirm |
+| `--no-skills` | Skip skills auto-install |
+| `--no-editor-setup` | Skip editor auto-integration |
+| `--no-security-summary` | Skip the post-install security report (faster CI) |
+| `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
+| `--ignore-provenance-drift-all` | Skip the check for every package |
+| `--replace-bin <CMD>` | (`-g` only) Take ownership of a colliding bin name (repeatable) |
+| `--alias <ORIG=ALIAS>` | (`-g` only) Install a declared bin under a different PATH name |
+
+Plus the [global flags](/docs/commands#global-flags): `--token`, `--registry`, `--json`, `--verbose`, `--insecure`.
+
+## See also
+
+- [`lpm uninstall`](/docs/packages/uninstall) — remove a dependency
+- [`lpm upgrade`](/docs/packages/upgrade) — bump existing deps to their latest matching range
+- [`lpm rebuild`](/docs/packages/rebuild) — run lifecycle scripts after install
+- [`lpm approve-scripts`](/docs/packages/approve-scripts) — approve packages to run scripts
+- [Save policy](/docs/packages/save-policy) — full details of the save-prefix system
+- [Resolver](/docs/packages/resolver) — how versions are picked
+- [Lockfile](/docs/packages/lockfile) — `lpm.lock` and `lpm.lockb`

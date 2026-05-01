@@ -1,6 +1,248 @@
 ---
-title: Dev
-description: "Zero-config dev server, task runner, test + bench auto-detection, built-in tools."
+title: lpm dev
+description: "Zero-config dev server with HTTPS, tunnel, env loading, and multi-service orchestration."
 ---
 
-Coming soon.
+import { Card, Cards } from "fumadocs-ui/components/card";
+
+```bash
+lpm dev
+```
+
+`lpm dev` is the marquee command of the Dev section. One command, no config: it picks up the right Node version, syncs dependencies if stale, loads `.env`, optionally serves over HTTPS, optionally exposes a public tunnel, and orchestrates multi-service projects from `lpm.json`.
+
+```text
+$ lpm dev
+
+  ● Node     22.12.0 (from .nvmrc)
+  ● Deps     up to date (2ms)
+  ● Env      .env loaded
+  ● HTTPS    certificate valid
+  ● Tunnel   https://acme-api.lpm.llc
+
+  [db]  ✔ ready (0.8s)
+  [web] ✔ ready (1.2s)
+  [api] ✔ ready (3.4s)
+
+  ⌘ Opening https://localhost:3000
+```
+
+## What it does, in order
+
+1. **Node version** — uses the version pinned in `lpm.json`, falling back to `.nvmrc`. Auto-installs if missing (see [`lpm use`](/docs/dev/use)).
+2. **Dependencies** — re-runs the install pipeline if `package.json` / lockfile / install hash drift. Skip with `--no-install`.
+3. **Env** — loads `.env`, then `.env.local`. Override with `--env=<MODE>` to load `.env.<MODE>`.
+4. **HTTPS** — if `lpm.json` has `dev.https: true` or you pass `--https`, serves over `https://localhost` using the local CA. See [`lpm cert`](/docs/infra/cert) for the trust store install.
+5. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the dev server through an LPM tunnel.
+6. **Services** — if `lpm.json` declares `services`, starts each one with prefixed log output and ready-check waits. Otherwise runs the `dev` script from `package.json`.
+7. **Browser** — opens the primary service URL when ready. Skip with `--no-open`.
+
+## Examples
+
+```bash
+lpm dev                                # auto-detect everything
+lpm dev --https                        # force HTTPS this run
+lpm dev --tunnel                       # expose to the public internet
+lpm dev --network                      # show LAN URLs + QR for mobile
+lpm dev --port 4000                    # override default port
+lpm dev --env=staging                  # load .env.staging
+lpm dev --dashboard                    # TUI dashboard for multi-service
+lpm dev -- --inspect                   # forward args to the dev script
+```
+
+## HTTPS
+
+```bash
+lpm dev --https
+```
+
+Serves over `https://localhost` (or whichever host you pass with `--host`) using a certificate signed by LPM's local CA. First-time setup needs `lpm cert trust` to install the CA into your OS trust store. See [Local HTTPS](/docs/infra/local-https).
+
+`--no-https` disables HTTPS even if it's enabled in `lpm.json`.
+
+## Tunnel
+
+```bash
+lpm dev --tunnel --domain my-api.lpm.llc
+```
+
+Exposes the dev server through the LPM tunnel network. Webhooks land on the public URL, get logged to disk, and are visible via `lpm tunnel inspect` / `lpm tunnel replay`. See [Tunneling](/docs/infra/tunneling).
+
+`--tunnel-auth` requires a per-session auth token to access the tunnel URL (Pro/Org feature).
+
+`--no-tunnel` disables the tunnel even if configured in `lpm.json`.
+
+## Multi-service orchestration
+
+If `lpm.json` declares services (`db`, `api`, `web`, …), `lpm dev` starts each one, waits for ready-check, and prefixes logs with the service name. Failed services exit the run.
+
+`--dashboard` swaps the prefixed-log output for a TUI dashboard with per-service log panels and webhook inspection. `--no-dashboard` forces the prefixed-log output even if the dashboard is configured.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--https` / `--no-https` | Force-on or force-off HTTPS for this run |
+| `--tunnel` / `--no-tunnel` | Force-on or force-off the tunnel |
+| `--tunnel-auth` | Require an auth token to access the tunnel URL (Pro/Org) |
+| `--network` | Show LAN URLs and a QR code for mobile testing |
+| `--port <N>` | Override the dev server port |
+| `--host <NAME>` | Custom hostname for the HTTPS certificate |
+| `--domain <NAME>` | Tunnel domain (overrides `lpm.json > tunnel.domain`) |
+| `--env=<MODE>` | Load `.env.<MODE>` instead of `.env` |
+| `--no-open` | Skip auto-opening the browser |
+| `--no-install` | Skip dependency auto-install even if stale |
+| `--no-env-check` | Skip env-var schema validation |
+| `-q`, `--quiet` | Suppress inline webhook output (still logged to disk) |
+| `--dashboard` | Launch the TUI dashboard |
+| `--no-dashboard` | Force prefixed log output |
+
+Anything after `--` is forwarded verbatim to the dev script.
+
+## Configuration: `lpm.json`
+
+`lpm.json` sits next to `package.json` and is where the dev server, task runner, and publish pipeline pick up their config. The file is optional — every field has a sensible default and falls back to `package.json` semantics when absent.
+
+```json title="lpm.json (full surface)"
+{
+  "runtime": { "node": ">=22.0.0" },
+  "tools": { "oxlint": "1.57.0", "biome": "2.4.8" },
+
+  "https": true,
+  "tunnel": { "domain": "acme-api.lpm.llc" },
+
+  "env": {
+    "dev": ".env.development",
+    "staging": ".env.staging",
+    "prod": ".env.production"
+  },
+
+  "envSchema": {
+    "vars": {
+      "DATABASE_URL": { "required": true, "format": "url" }
+    }
+  },
+
+  "environments": {
+    "staging": { "extends": "base", "file": ".env.staging" }
+  },
+
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "cache": true,
+      "outputs": ["dist/**"],
+      "inputs": ["src/**", "package.json"]
+    },
+    "test": { "cache": true },
+    "dev":  { "command": "vite dev", "env": "development" }
+  },
+
+  "services": {
+    "db":  { "command": "docker compose up postgres", "readyPort": 5432, "readyTimeout": 60 },
+    "api": { "command": "node server.js", "port": 4000, "dependsOn": ["db"],
+             "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" } },
+    "web": { "command": "next dev", "port": 3000, "primary": true }
+  },
+
+  "publish": {
+    "registries": ["lpm", "npm"],
+    "lpm":    { "name": "@lpm.dev/owner.pkg" },
+    "npm":    { "name": "@scope/pkg", "access": "public", "tag": "latest", "otpRequired": true },
+    "github": { "name": "@owner/pkg", "access": "public" },
+    "gitlab": { "name": "pkg", "access": "public", "projectId": "12345" }
+  }
+}
+```
+
+### Top-level fields
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `runtime` | object | Pinned runtime versions, e.g. `{"node": ">=22.0.0"}`. Auto-installed if missing — see [`lpm use`](/docs/dev/use). |
+| `tools` | object | Pinned built-in tool versions: `{"oxlint": "1.57.0", "biome": "2.4.8"}`. Honored by `lpm lint`, `lpm fmt`, etc. |
+| `https` | bool | If `true`, `lpm dev` serves over HTTPS by default. CLI `--no-https` overrides. |
+| `tunnel` | object | Tunnel config — see below. |
+| `env` | object | Map of script name → env file. `{"dev": ".env.development"}` makes `lpm run dev` load `.env.development`. |
+| `envSchema` | object | Required-var declarations + format / pattern / default / secret flags. Drives env validation; `--no-env-check` skips it. |
+| `environments` | object | Named environments with `extends` inheritance — useful when you have many `.env.*` variants. |
+| `tasks` | object | Task config — see below. Drives caching, dep ordering, watched inputs. |
+| `services` | object | Multi-service orchestration for `lpm dev` — see below. |
+| `publish` | object | Multi-registry publish settings — see below. |
+
+### `tunnel`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `domain` | string | — | Stable tunnel domain (e.g., `acme-api.lpm.llc`). Pro/Org only — free users get an ephemeral random domain on every run. |
+
+### `tasks.<name>`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `command` | string | (uses `package.json > scripts`) | Override the script body |
+| `dependsOn` | string[] | `[]` | Other tasks that must finish first. `"build"` = same package; `"^build"` = the same task in upstream workspace deps. |
+| `cache` | bool | `false` | Enable task caching. Requires `outputs` to define what to cache. |
+| `outputs` | string[] | `[]` | Globs of files this task produces (e.g., `["dist/**"]`). Required when `cache: true`. |
+| `inputs` | string[] | sensible defaults\* | Globs that invalidate the cache. |
+| `env` | string | — | Env mode for this task — `"development"` loads `.env.development`. |
+
+\*Default inputs include `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`.
+
+### `services.<name>`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `command` | string | **required** | Shell command to run |
+| `port` | number | — | Port the service listens on (used for env injection, display, and the readiness fallback) |
+| `dependsOn` | string[] | `[]` | Services that must be ready before this one starts |
+| `readyPort` | number | falls back to `port` | TCP port to poll for readiness |
+| `readyUrl` | string | — | HTTP URL to poll for readiness — first 2xx wins |
+| `readyTimeout` | number | `30` | Seconds to wait before failing |
+| `env` | object | `{}` | Extra env vars injected into this service only |
+| `restart` | bool | `false` | Auto-restart on crash, exponential backoff |
+| `primary` | bool | `false` | Primary service receives `--https` / `--tunnel` / `--network` flags and the browser-open |
+| `cwd` | string | project root | Working directory, relative to project root |
+
+### `publish`
+
+```json
+"publish": {
+  "registries": ["lpm", "npm"],
+  "lpm":    { "name": "@lpm.dev/owner.pkg" },
+  "npm":    { "name": "@scope/pkg", "access": "public", "tag": "latest", "otpRequired": true },
+  "github": { "name": "@owner/pkg", "access": "public" },
+  "gitlab": { "name": "pkg", "access": "public", "projectId": "12345", "registry": "https://gitlab.com" }
+}
+```
+
+| Block | Fields |
+| --- | --- |
+| (top) | `registries` (string[]) — defaults to `["lpm"]` |
+| `lpm` | `name` (must be `@lpm.dev/owner.pkg`) |
+| `npm` | `name`, `access` (`"public"` / `"restricted"`), `tag` (default `"latest"`), `registry`, `otpRequired` (prompt for OTP up front) |
+| `github` | `name` (`@owner/pkg`), `access` |
+| `gitlab` | `name`, `access`, `projectId` (required), `registry` (default `https://gitlab.com`) |
+
+CLI flags on `lpm publish` (`--npm`, `--lpm`, `--github`, `--gitlab`, `--publish-registry`) override the `registries` list.
+
+## More in this section
+
+<Cards>
+  <Card title="lpm run" href="/docs/dev/run" description="Run package.json scripts. Parallel, cached, watchable, workspace-aware." />
+  <Card title="lpm exec" href="/docs/dev/exec" description="Run a JS/TS file directly — no scripts entry needed." />
+  <Card title="lpm dlx" href="/docs/dev/dlx" description="Run a package binary without installing it into the project." />
+  <Card title="lpm test" href="/docs/dev/test" description="Auto-detect and run vitest / jest / mocha." />
+  <Card title="lpm bench" href="/docs/dev/bench" description="Auto-detect and run vitest bench." />
+  <Card title="lpm lint" href="/docs/dev/lint" description="Built-in Oxlint, lazy-downloaded, no npx round-trip." />
+  <Card title="lpm fmt" href="/docs/dev/fmt" description="Built-in Biome formatter." />
+  <Card title="lpm check" href="/docs/dev/check" description="TypeScript check (tsc --noEmit)." />
+  <Card title="lpm use" href="/docs/dev/use" description="Pin a Node.js version, with auto-install on use." />
+  <Card title="lpm plugin" href="/docs/dev/plugin" description="Manage built-in tool plugins (list, update)." />
+</Cards>
+
+## See also
+
+- [Tunneling](/docs/infra/tunneling) — how the tunnel works, claim a stable domain
+- [Local HTTPS](/docs/infra/local-https) — CA install, custom hostnames
+- [Task runner](/docs/dev/task-runner) — what the runner does behind `run` and `dev`

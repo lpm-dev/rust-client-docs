@@ -1,6 +1,260 @@
 ---
 title: lpm.json
-description: "Dev orchestrator configuration for multi-service projects."
+description: "Canonical schema reference for the lpm.json project file."
 ---
 
-Coming soon.
+`lpm.json` sits next to `package.json` and provides LPM-specific configuration that doesn't fit npm's manifest shape — runtime pinning, task graph, dev services, tunnel domain, env-file mapping, env-var schema, and multi-registry publish settings.
+
+The file is **optional**. Every field has a default. When `lpm.json` is missing, LPM falls back to `package.json` semantics (scripts, engines, etc.).
+
+This page is the schema-by-field reference. For a usage-oriented overview of what `lpm dev` reads from `lpm.json`, see [`lpm dev`](/docs/dev#configuration-lpmjson).
+
+## Top-level shape
+
+```json title="lpm.json"
+{
+  "runtime":      { "<runtime>": "<semver>" },
+  "tools":        { "<tool>": "<version>" },
+  "https":        true,
+  "tunnel":       { "domain": "<full-domain>" },
+  "env":          { "<script>": "<.env-file>" },
+  "envSchema":    { "vars": { "<NAME>": { "required": true, "format": "url" } } },
+  "environments": { "<name>": { "extends": "<base>", "file": "<.env-file>" } },
+  "tasks":        { "<name>": { /* TaskConfig */ } },
+  "services":     { "<name>": { /* ServiceConfig */ } },
+  "publish":      { /* PublishConfig */ }
+}
+```
+
+Every top-level field is optional and defaults to empty / `null`.
+
+## `runtime`
+
+```json
+{ "runtime": { "node": ">=22.0.0" } }
+```
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `<runtime>` | string | — | Semver constraint. Today only `node` is honored — other runtimes (`deno`, `bun`) are reserved for future versions. |
+
+`runtime.node` takes precedence over `package.json > engines.node` and `.nvmrc`. Auto-installed via [`lpm use`](/docs/dev/use).
+
+## `tools`
+
+```json
+{ "tools": { "oxlint": "1.57.0", "biome": "2.4.8" } }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `<tool>` | string | Pin a built-in tool to a specific version. Honored by [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), and friends. |
+
+When the pinned version isn't already in `~/.lpm/cache/`, the next invocation of the tool downloads it. Pinned versions don't have shipped checksums — verification is skipped with a warning.
+
+## `https`
+
+```json
+{ "https": true }
+```
+
+| Type | Default | Notes |
+| --- | --- | --- |
+| `bool` | `null` (unset) | When `true`, [`lpm dev`](/docs/dev) serves over HTTPS by default. CLI `--no-https` overrides. |
+
+## `tunnel`
+
+```json
+{ "tunnel": { "domain": "acme-api.lpm.llc" } }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `domain` | string | Stable tunnel domain (must already be claimed via [`lpm tunnel claim`](/docs/infra/tunnel)). Pro/Org only — free users get an ephemeral random domain. |
+
+CLI flags: `lpm dev --tunnel`, `lpm dev --domain <NAME>`, `lpm tunnel <port> <domain>`.
+
+## `env`
+
+```json
+{
+  "env": {
+    "dev":     ".env.development",
+    "staging": ".env.staging",
+    "prod":    ".env.production"
+  }
+}
+```
+
+Map of script name → env file. `lpm run dev` loads `.env.development`; `lpm run staging` loads `.env.staging`. CLI `--env=<MODE>` overrides per-invocation (and applies to [`lpm dev`](/docs/dev) too).
+
+## `envSchema`
+
+```json
+{
+  "envSchema": {
+    "vars": {
+      "DATABASE_URL": { "required": true, "format": "url" },
+      "API_KEY":      { "required": true, "secret": true },
+      "LOG_LEVEL":    { "default": "info", "pattern": "^(trace|debug|info|warn|error)$" }
+    }
+  }
+}
+```
+
+Schema for env-var validation. Drives the env check that runs before `lpm run`, `lpm dev`, and `lpm exec`. Per-var fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `required` | bool | Fail if not set |
+| `format` | string | Validator name (e.g., `url`, `email`, `port`) |
+| `pattern` | string | Regex the value must match |
+| `default` | string | Default value if unset |
+| `secret` | bool | Treat as sensitive — masked in logs and `lpm use vars list` |
+
+Skip the check per-invocation with `--no-env-check`.
+
+## `environments`
+
+```json
+{
+  "environments": {
+    "base":    { "file": ".env" },
+    "staging": { "extends": "base", "file": ".env.staging" },
+    "preview": { "extends": "staging", "file": ".env.preview" }
+  }
+}
+```
+
+Named environment definitions with inheritance. Useful when you have many `.env.*` variants and want to avoid duplicating shared keys. `extends` chains resolve transitively.
+
+## `tasks.<name>`
+
+```json
+{
+  "tasks": {
+    "build": {
+      "command": "tsup",
+      "dependsOn": ["^build"],
+      "cache": true,
+      "outputs": ["dist/**"],
+      "inputs": ["src/**", "package.json"],
+      "env": "production"
+    }
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `command` | string | falls back to `package.json > scripts.<name>` | Override the script body |
+| `dependsOn` | string[] | `[]` | Other tasks that must finish first. `"build"` = same package; `"^build"` = the same task in upstream workspace deps. |
+| `cache` | bool | `false` | Enable task caching. Requires `outputs`. |
+| `outputs` | string[] | `[]` | Globs of files this task produces (e.g. `["dist/**"]`). Required when `cache: true`. |
+| `inputs` | string[] | sensible defaults\* | Globs that invalidate the cache. |
+| `env` | string | — | Env mode for this task (`"production"` loads `.env.production`). |
+
+\*Default `inputs`: `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`.
+
+## `services.<name>`
+
+```json
+{
+  "services": {
+    "db":  { "command": "docker compose up postgres", "readyPort": 5432, "readyTimeout": 60 },
+    "api": {
+      "command": "node server.js",
+      "port": 4000,
+      "dependsOn": ["db"],
+      "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" }
+    },
+    "web": { "command": "next dev", "port": 3000, "primary": true }
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `command` | string | **required** | Shell command to run |
+| `port` | number | — | Port the service listens on (used for env injection, display, and the readiness fallback) |
+| `dependsOn` | string[] | `[]` | Services that must be ready before this one starts |
+| `readyPort` | number | falls back to `port` | TCP port to poll for readiness |
+| `readyUrl` | string | — | HTTP URL to poll for readiness — first 2xx wins |
+| `readyTimeout` | number | `30` | Seconds to wait before failing |
+| `env` | object | `{}` | Extra env vars injected into this service only |
+| `restart` | bool | `false` | Auto-restart on crash with exponential backoff |
+| `primary` | bool | `false` | Receives `--https` / `--tunnel` / `--network` flags from `lpm dev`, plus the browser-open |
+| `cwd` | string | project root | Working directory, relative to project root |
+
+## `publish`
+
+```json
+{
+  "publish": {
+    "registries": ["lpm", "npm"],
+    "lpm":    { "name": "@lpm.dev/owner.pkg" },
+    "npm":    { "name": "@scope/pkg", "access": "public", "tag": "latest", "otpRequired": true },
+    "github": { "name": "@owner/pkg", "access": "public" },
+    "gitlab": { "name": "pkg", "access": "public", "projectId": "12345", "registry": "https://gitlab.com" }
+  }
+}
+```
+
+### Top-level
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `registries` | string[] | `["lpm"]` | Targets a single `lpm publish` invocation hits. CLI flags (`--lpm`, `--npm`, `--github`, `--gitlab`, `--publish-registry`) override. |
+
+### `publish.lpm`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Override the lpm.dev package name. Must match `@lpm.dev/owner.pkg`. |
+
+### `publish.npm`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `name` | string | `package.json > name` | Override the npm package name (e.g., `"@scope/pkg"`). Required if `package.json > name` starts with `@lpm.dev/`. |
+| `access` | `"public"` \| `"restricted"` | scope-based\* | Visibility |
+| `tag` | string | `"latest"` | dist-tag for the published version |
+| `registry` | string | `https://registry.npmjs.org` | Custom npm-compatible registry URL |
+| `otpRequired` | bool | `false` | Prompt for OTP before the first publish attempt (saves a round-trip) |
+
+\*Scoped packages default to `"restricted"`, unscoped to `"public"`.
+
+### `publish.github`
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | string | Override the GitHub Packages name. Must be scoped (`@owner/pkg`). |
+| `access` | `"public"` \| `"restricted"` | Visibility |
+
+### `publish.gitlab`
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `name` | string | — | Override the GitLab Packages name |
+| `access` | `"public"` \| `"restricted"` | — | Visibility |
+| `projectId` | string | **required** | GitLab project ID — needed to construct the registry URL |
+| `registry` | string | `https://gitlab.com` | GitLab instance URL |
+
+## Precedence with other config
+
+For fields with multiple sources, the precedence chain is:
+
+1. **CLI flag** (highest)
+2. **`lpm.json`**
+3. **`package.json`** (where applicable — `engines`, `scripts`)
+4. **`~/.lpm/config.toml`** (user-level, where applicable)
+5. **Built-in default** (lowest)
+
+## See also
+
+- [`lpm dev`](/docs/dev) — the most common consumer, with usage-oriented examples
+- [`lpm run`](/docs/dev/run) — reads `tasks` and `env`
+- [`lpm publish`](/docs/packages/publish) — reads `publish`
+- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — sibling config block
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults

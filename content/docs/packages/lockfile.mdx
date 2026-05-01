@@ -1,6 +1,114 @@
 ---
 title: Lockfile
-description: "Dual-format lockfile — lpm.lock (TOML, git-diffable) and lpm.lockb (binary mmap)."
+description: "Why LPM ships two lockfile files, when each is read, and how the warm-install fast path works."
 ---
 
-Coming soon.
+LPM's lockfile is **two files**: `lpm.lock` (TOML) and `lpm.lockb` (binary). Both are written together on every install, both should be committed, and the install pipeline picks whichever lets it skip more work.
+
+This page is the conceptual overview — when each file gets read, what the dual format buys you, and how the warm-install fast paths work. For the on-disk schema, see [`lpm.lock` format](/docs/reference/lockfile-format) and [`lpm.lockb` format](/docs/reference/lockb-format).
+
+## Why two files
+
+| File | Optimized for | When it's read |
+| --- | --- | --- |
+| `lpm.lock` | Humans, git diffs, fallback parsing | Always when `lpm.lockb` is missing or stale; canonical source of truth |
+| `lpm.lockb` | Cold-cache reads (no parser, no allocation per package) | Preferred when present and at least as new as `lpm.lock` |
+
+The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary lockfile is a read accelerator — same data, mmap'd directly into a fixed-size header + entry table + string table layout. On a typical project, `lpm.lockb` reads in ~0.1 ms versus ~10 ms to parse the TOML.
+
+Both are produced by the same writer on every install. You don't choose between them — they coexist. Edit `lpm.lock` by hand if you ever need to (humans do that sometimes); the next install regenerates `lpm.lockb` to match.
+
+## What's pinned
+
+Each entry in the lockfile records:
+
+- **Exact resolved version** — never a range
+- **Source registry** (e.g. `registry+https://registry.npmjs.org`)
+- **SRI integrity hash** (`sha512-…`) — verified on every install
+- **Direct dep names + versions** — for transitive walking
+- **Tarball URL hint** — Phase 43 cache that lets warm installs skip the per-package metadata round-trip
+- **(if any)** npm-alias edges — `local_name → target_canonical_name` pairs
+
+After `lpm install`, two further files exist:
+
+- `lpm.lock` — commit it
+- `lpm.lockb` — commit it (mark it as binary in `.gitattributes` — `lpm init` does this automatically)
+
+## Install fast paths
+
+The install pipeline has a tiered fast-path hierarchy. Each tier skips more work than the next.
+
+### Tier 1: Up-to-date install (~6 ms)
+
+If the install-hash file (`.lpm/install-hash`) matches the current state of `package.json` + `lpm.lock` + `lpm.lockb`, install exits immediately. Nothing to do.
+
+This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in single-digit milliseconds.
+
+### Tier 2: Warm install (~23 ms)
+
+If `lpm.lockb` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the global content-addressable store.
+
+No metadata fetches. No tarball downloads. Just symlinks (isolated layout) or hardlinks (hoisted layout) into already-extracted store entries. Phase 61 moved the wrapper tree out of `node_modules/.lpm/` into `.lpm/wrappers/`, so `rm -rf node_modules` between iterations doesn't destroy the wrapper tree — warm install becomes a symlink rebuild from already-materialized wrappers.
+
+### Tier 3: Lockfile-only install (offline-able)
+
+`lpm install --offline` forces this path. The resolver is skipped entirely; every dep is resolved from `lpm.lock`'s pinned versions, fetched from the global store (or errored if missing). No network. No re-resolution.
+
+This is the CI-recommended path:
+
+```bash
+lpm install --offline --strict-integrity
+```
+
+`--strict-integrity` tightens the contract further: tarball-URL deps must declare their SRI inline. Trust-on-first-use is disabled.
+
+### Tier 4: Resolve-and-install (cold)
+
+If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, writes a fresh lockfile.
+
+This is the slow path, but "slow" is relative — cold install on a 266-package fixture is **880 ms** in our benchmarks (vs npm 6,784 ms / pnpm 1,532 ms).
+
+## Lockfile-version
+
+The TOML lockfile is **schema-versioned** (current: `1`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage.
+
+The binary lockfile has its own wire-format version (current: `2`). On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
+
+## When the binary lockfile is skipped
+
+`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — npm-alias metadata (`alias-dependencies`, `root-aliases`) lives only in TOML. Projects with any alias edges write **only `lpm.lock`**.
+
+Why: silently dropping alias info would produce a binary lockfile that disagrees with the TOML lockfile and a warm install that materializes `node_modules/<target>/` instead of `node_modules/<local>/` — a real bug. Skipping the write loud is correct.
+
+If your project uses `npm:<target>@<range>` aliases and you only see `lpm.lock`, that's expected.
+
+## Determinism
+
+The lockfile is deterministic by construction:
+
+- Entries sorted by name
+- Per-entry `dependencies` arrays sorted
+- Optional fields omitted (never written as `null`)
+- Schema-versioned
+
+This is what makes `git diff lpm.lock` actionable. A new dep adds entries. A version bump rewrites a single package's fields. Supply-chain surprises (a transitive integrity change without a version bump, a new package appearing without a corresponding `package.json` change) are visible without parsing.
+
+## Should I commit `lpm.lockb`?
+
+Yes. Both files are reproducible, both belong in the repo, both need to travel together for the warm-install fast path to engage on a fresh checkout.
+
+The only special handling: mark `lpm.lockb` as binary in `.gitattributes`:
+
+```text
+lpm.lockb binary
+```
+
+`lpm init` adds this line for you.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — what reads the lockfile, and how `--offline` / `--strict-integrity` work
+- [`lpm.lock` format](/docs/reference/lockfile-format) — full TOML schema reference
+- [`lpm.lockb` format](/docs/reference/lockb-format) — binary format wire spec
+- [Resolver](/docs/packages/resolver) — what produces a lockfile
+- [Content-addressable store](/docs/packages/content-addressable-store) — where the bytes the lockfile points at live

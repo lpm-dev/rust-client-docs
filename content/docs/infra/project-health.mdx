@@ -1,6 +1,134 @@
 ---
 title: Project health
-description: "Health checks and store integrity verification."
+description: "How lpm doctor structures its checks — pass / warn / fail, parallel network probes, and the auto-fix loop."
 ---
 
-Coming soon.
+[`lpm doctor`](/docs/infra/doctor) is a structured environment check. Each check produces a `(name, severity, detail)` row; the run finishes with a summary and an exit code (0 if every fail is green, 1 otherwise). This page covers the design — what severity levels mean, how `--fix` decides what to repair, and how the parallel probe layer keeps a full doctor run under a second on a healthy project.
+
+For the CLI flags, see [`lpm doctor`](/docs/infra/doctor).
+
+## Severity model
+
+Three levels:
+
+| Severity | Meaning | Affects exit code? |
+| --- | --- | --- |
+| `pass` (green) | The check succeeded | No |
+| `warn` (yellow) | Suboptimal but not broken — e.g., outdated tool, expired-but-renewable cert | No |
+| `fail` (red) | Broken — e.g., missing required dep, unreachable registry, corrupted store entry | Yes (exit 1) |
+
+A `warn` is informational — `lpm doctor` exits 0 even if every check warns. A `fail` exits 1, which is what CI gates on.
+
+## Parallel network probes
+
+Two infrastructure checks run **concurrently** at the start of the doctor run:
+
+- **Registry health** — `client.health_check()` against the configured registry URL.
+- **Auth check** — `client.whoami()` if a token exists in the keychain.
+
+Both are network round-trips. Running them in parallel via `tokio::join!` keeps the worst case to a single round-trip rather than two.
+
+After those two land, the rest of the checks run inline (they're filesystem-bound and fast).
+
+## Check inventory (representative)
+
+The full list is in [`crates/lpm-cli/src/commands/doctor.rs`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-cli/src/commands/doctor.rs) (~3400 lines). Highlights:
+
+| Group | Checks |
+| --- | --- |
+| **Registry** | Reachable from this network? Latency reasonable? |
+| **Auth** | Token present? Token valid (via `whoami`)? Expiry within warning threshold? |
+| **Runtime** | Node version detected? Detected version installed? PATH includes the right `bin/`? |
+| **Project state** | `package.json` present and parseable? `lpm.lock` matches `package.json`? `node_modules/` matches lockfile? |
+| **Store** | `~/.lpm/store/` exists and accessible? Lockfile-referenced entries present? Any integrity drift? |
+| **Sandbox** | Seatbelt available (macOS) or landlock available (Linux)? |
+| **Local HTTPS** | If `lpm.json > https: true` or a project cert exists — CA installed? Cert valid? |
+| **Tools** | If `lpm.json > tools` declares pins — those plugin versions present? |
+| **TypeScript** | If `tsconfig.json` exists — is `typescript` in deps so `lpm check` works? |
+
+Each check produces one `Check` row. Use `--json` to get the full structured set (every check ID, severity, detail, remediation hint).
+
+## Auto-fix mode
+
+```bash
+lpm doctor --fix              # prompt before each remediation
+lpm doctor --fix -y           # skip prompts (CI-friendly)
+lpm doctor -y                 # implies --fix
+```
+
+For each `fail` (and some `warn`s), the remediator either has a known fix or doesn't. Examples of fixable checks:
+
+| Check fail | Fix action |
+| --- | --- |
+| Detected Node version not installed | Run [`lpm use node@<version>`](/docs/dev/use) |
+| `node_modules/` doesn't match lockfile | Run `lpm install` |
+| Local CA not installed in trust store | Run [`lpm cert trust`](/docs/infra/cert) |
+| Store integrity issue | Run [`lpm store verify --fix`](/docs/infra/store) |
+| Project formatting drifted | Run [`lpm fmt`](/docs/dev/fmt) |
+| Plugin version pinned but not present | Run [`lpm plugin update <name>`](/docs/dev/plugin) |
+
+Examples of unfixable checks:
+
+| Check fail | Why unfixable |
+| --- | --- |
+| Registry unreachable | Network problem — outside doctor's scope |
+| Token expired | User has to log in (`lpm login`) — interactive |
+| Sandbox unavailable on this OS | OS-level limitation; nothing doctor can install |
+| TypeScript not installed | Doctor doesn't auto-install random packages — `lpm install -D typescript` is the user's call |
+
+Unfixable failures are reported with the recommended next step but no auto-action.
+
+## `lpm doctor` vs `lpm health`
+
+```bash
+lpm doctor          # project + environment health (this page)
+lpm health          # registry connectivity check (different command)
+```
+
+| | `lpm doctor` | `lpm health` |
+| --- | --- | --- |
+| Scope | Project + environment | Just the registry |
+| Reads `package.json`? | Yes | No |
+| Hits the network? | Yes (1–2 calls) | Yes (1 call) |
+| Auto-fix? | Yes (`--fix`) | No |
+| Use case | "Is my project in a good state?" | "Is the registry reachable from this CI runner?" |
+
+`lpm health` is the lighter-weight CI smoke test — no project context needed.
+
+## JSON output
+
+```bash
+lpm doctor --json
+```
+
+Structured array of check results:
+
+```json
+{
+  "success": true,
+  "checks": [
+    { "name": "Registry reachable", "severity": "pass", "detail": "lpm.dev OK (87ms)" },
+    { "name": "Node version", "severity": "pass", "detail": "22.12.0 from lpm.json" },
+    { "name": "node_modules sync", "severity": "fail", "detail": "drifted from lpm.lock — run `lpm install`" },
+    ...
+  ],
+  "fixes_applied": ["lpm install"]
+}
+```
+
+Useful for CI dashboards or agents that want to dispatch on specific failures rather than parse human output.
+
+## When to run
+
+- **In CI**: as a pre-test step. Fast, catches "the lockfile is stale because the PR forgot to commit it" before the test suite spends 10 minutes failing for a downstream reason.
+- **After upgrading LPM**: confirms nothing in the new version broke your local state.
+- **When something's wrong and you don't know what**: doctor's broad-strokes inventory often surfaces it.
+- **In onboarding scripts**: bundle `lpm install && lpm doctor --fix -y && lpm dev` for a "clone-to-running" experience.
+
+## See also
+
+- [`lpm doctor`](/docs/infra/doctor) — CLI command reference
+- [`lpm health`](/docs/infra/doctor) — registry-only health check
+- [`lpm store verify`](/docs/infra/store) — deeper store integrity check
+- [`lpm cert status`](/docs/infra/cert) — CA + project cert detail
+- [Exit codes](/docs/reference/exit-codes) — what doctor's exit codes mean for CI gates

@@ -1,6 +1,153 @@
 ---
 title: Monorepo setup
-description: "Configure a workspace and use --filter for partial installs."
+description: "Workspaces, --filter grammar, --affected, lpm deploy."
 ---
 
-Coming soon.
+LPM treats workspaces as a first-class concept — declare them in `package.json`, then every command that operates on the dep graph (`install`, `uninstall`, `run`, `lint`, `fmt`, `check`) accepts `--filter`, `--all`, and `--affected` to scope work. This guide covers a real monorepo from scratch.
+
+## 1. Declare workspaces
+
+```json title="package.json"
+{
+  "name": "my-repo",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"]
+}
+```
+
+Or the object form (yarn-style):
+
+```json
+{ "workspaces": { "packages": ["packages/*", "apps/*"] } }
+```
+
+LPM accepts both. Add member packages under those globs — each member has its own `package.json`. Run:
+
+```bash
+lpm install
+```
+
+LPM walks the workspace, builds a topological graph, and links every member's deps (including cross-member `workspace:*` references) into the right `node_modules/`.
+
+## 2. Add a dep to one member
+
+```bash
+lpm install react --filter web
+```
+
+Adds `react` to `packages/web/package.json` and runs the install pipeline scoped to `packages/web/`. The other members are untouched.
+
+For a tooling dep that lives at the workspace root:
+
+```bash
+lpm install -D typescript -w
+```
+
+`-w` / `--workspace-root` writes to the root `package.json > devDependencies` instead of any member.
+
+## 3. The filter grammar
+
+`--filter` is the most-used flag in monorepo workflows. Same grammar across `install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `deploy`, and the standalone [`lpm filter`](/docs/packages/workspaces) preview command.
+
+| Filter | Matches |
+| --- | --- |
+| `web` | The member literally named `web` |
+| `@scope/*` | Every member with a name under a scope |
+| `./apps/*` | Every member under a path glob |
+| `{./apps/web}` | Exact path match (path with literal characters) |
+| `[origin/main]` | Members changed since a git ref |
+| `web...` | `web` and every member that depends on `web` (forward closure) |
+| `web^...` | Same, but excluding `web` itself |
+| `...web` | `web` and every member it depends on (reverse closure) |
+| `...^web` | Same, but excluding `web` itself |
+| `!web` | Exclusion — remove `web` from the resulting set |
+
+Filters compose: `--filter web --filter api` unions the two sets. `--filter web --filter '!web-tests'` selects `web` minus `web-tests`.
+
+> **Phase 32 removed the legacy substring matcher.** `--filter core` does NOT match `@babel/core` anymore. Write `--filter '*/core'` for that.
+
+Preview what a filter expression would select without running anything:
+
+```bash
+lpm filter web...
+lpm filter web... --explain      # full per-package trace (which filter matched, how)
+```
+
+## 4. `--affected` for CI
+
+```bash
+lpm run test --affected
+```
+
+Selects only members affected by changes vs the base branch (default `main`). Pair with `--base develop` to change the branch:
+
+```bash
+lpm run test --affected --base develop
+```
+
+Saves CI minutes — a one-line README change in `apps/marketing` doesn't trigger a full-monorepo test run.
+
+`--fail-if-no-match` makes a typo'd filter exit non-zero. Recommended in CI:
+
+```bash
+lpm run test --filter web --fail-if-no-match
+```
+
+## 5. Cross-member deps
+
+```json title="packages/web/package.json"
+{
+  "dependencies": {
+    "@my-co/shared": "workspace:*"
+  }
+}
+```
+
+`workspace:*` tells the resolver "use the local workspace member, not a published version." LPM links the two via symlink (in isolated layout) and respects topological order in tasks (`dependsOn: ["^build"]` waits for upstream member's `build` task to finish first).
+
+## 6. Production builds with `lpm deploy`
+
+For Docker / serverless deploys, you don't want to ship the entire monorepo. [`lpm deploy`](/docs/packages/workspaces) materializes one member's production closure into a self-contained directory:
+
+```bash
+lpm deploy /prod/api --filter api
+```
+
+The output dir has:
+
+- The targeted member's source files (excluding `.env*`, `node_modules`, `.git`, etc.)
+- A `package.json` with `workspace:*` references rewritten to concrete versions
+- A populated `node_modules/`
+- A `lpm.lock` for the deploy tree
+
+In a Dockerfile:
+
+```dockerfile
+FROM workspace as pruned
+RUN lpm deploy /prod/api --filter api
+
+FROM node:22-alpine
+COPY --from=pruned /prod/api /app
+WORKDIR /app
+CMD ["node", "server.js"]
+```
+
+Constraints (Phase 32 Phase 3):
+
+- `--filter` is required and must match exactly one member.
+- The output directory must be outside the workspace tree.
+- Workspace members referenced via `workspace:*` must be published to the registry. Local-only deps in deploy outputs are queued for Phase 12+.
+
+## Common pitfalls
+
+- **`--filter core` doesn't match `@babel/core`** anymore (Phase 32 removed the substring matcher). Use `--filter '*/core'`.
+- **Multi-member install prompts you for confirmation by default.** If a `--filter` expression would mutate more than one member's `package.json`, `lpm install` asks before writing. Use `-y` in scripts.
+- **`workspace:*` deps in `lpm deploy` output must be published.** Phase 12 will add unpublished workspace dep injection; until then, the pre-deploy build needs to publish internal members first.
+
+## See also
+
+- [Workspaces](/docs/packages/workspaces) — full filter grammar reference
+- [`lpm filter`](/docs/packages/workspaces) — preview what a filter selects
+- [`lpm install --filter`](/docs/packages/install#workspaces) — install scoped to members
+- [`lpm run --filter --affected`](/docs/dev/run#workspaces) — task running with workspace selection
+- [`lpm deploy`](/docs/packages/workspaces) — production-closure materialization

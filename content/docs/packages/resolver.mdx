@@ -1,6 +1,103 @@
 ---
 title: Resolver
-description: "PubGrub-based dependency resolution with npm-compatible semver."
+description: "How LPM picks versions — greedy-fusion by default, with PubGrub as the documented fallback."
 ---
 
-Coming soon.
+The resolver decides which version of every transitive dependency lands in your `node_modules/`. It walks `package.json`, talks to the appropriate registry for each canonical package, and computes a `(name, version)` set that satisfies every declared semver range. This page is the conceptual deep-dive.
+
+## Two resolvers
+
+LPM ships two resolvers in the same binary. Both speak the same npm-compatible semver dialect (`^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, `latest`/`beta`/`next` dist-tags) and produce the same lockfile shape. They differ in how they pick versions when multiple ranges target the same canonical package.
+
+| Resolver | Default? | Algorithm | Notes |
+| --- | --- | --- | --- |
+| **Greedy-fusion** | **Yes** (post-Phase-60) | First-match version pick, reuse-on-compatible / allocate-on-incompatible | Faster. Bun-style. The fused dispatcher IS the metadata fetch dispatcher — no separate walker spawn. |
+| **PubGrub-with-split-retry** | No (opt-in) | Conflict-driven backtracking | Slower but exhaustive. Was the default pre-Phase-60. |
+
+Pick the alternative for one invocation:
+
+```bash
+LPM_RESOLVER=pubgrub lpm install
+```
+
+For deeper debugging of the dispatcher, force the walker-arm orchestration:
+
+```bash
+LPM_GREEDY_FUSION=0 lpm install
+```
+
+Both are stable. The default is greedy-fusion because it's faster and matches bun/npm/pnpm semantics for the multi-version case below.
+
+## How greedy-fusion picks versions
+
+The resolver maintains a graph keyed by `(canonical, version)`. When it processes an edge:
+
+1. **Reuse-on-compatible.** If the canonical already has a node and that node's version satisfies the new edge's range, the new edge points at the existing node. First-version-wins inside any single satisfying range bucket — same as bun, npm, and pnpm.
+2. **Allocate-on-incompatible.** If no existing node satisfies the new range, the resolver picks the best available version for the new range and allocates a new `(canonical, version)` node. Both versions live independently in the resolved tree.
+
+Example: edge A wants `lodash@^4`. The resolver picks `lodash@4.17.21` and allocates one node. Edge B then wants `lodash@^4` — same range bucket, reuses A's node. Edge C wants `lodash@^3` — `4.17.21` doesn't satisfy `^3`, so the resolver allocates a new `lodash@3.10.1` node. The tree now has two `lodash` versions, each shared by everyone whose range pointed at it.
+
+This is the "multi-version per canonical" property. npm has it. pnpm has it. Yarn-classic (with hoisting) approximated it. LPM follows the bun-shaped recipe.
+
+## Streaming dispatch
+
+The resolver loop is single-threaded — bun's PackageManager event loop runs on one thread, and parallelism comes from I/O fan-out. Each iteration:
+
+1. Pop a pending edge off the task queue.
+2. Resolve the canonical's manifest. Fast path: the shared cache hit — the BFS walker has been prefetching concurrently. Slow path: wait on the per-canonical `Notify` for an in-flight fetch to complete.
+3. Pick a version per the rules above.
+4. Enqueue the chosen version's deps for the next iteration.
+
+The dispatcher and metadata fetcher are **fused** in the default resolver — the same loop drives both, so the resolver sees in-flight metadata land as it streams in rather than waiting for level-step batch fetches.
+
+## peerDependencies and optionalDependencies
+
+- **Peer deps** are recorded but not eagerly installed. After the main pass, `check_unmet_peers` surfaces missing peer warnings. Future work will add bun's "queue peer edge, drain after main pass" semantics for tighter peer satisfaction.
+- **Optional deps** are tried; failure to resolve or download is logged but doesn't fail the install.
+
+## Overrides and resolutions
+
+The resolver consumes three sources of override declarations, with `lpm.overrides` winning on conflict:
+
+| Source | Priority |
+| --- | --- |
+| `package.json > lpm > overrides` | Highest |
+| `package.json > overrides` (npm-style) | Middle |
+| `package.json > resolutions` (yarn-style) | Lowest |
+
+Selectors:
+
+- `"foo"` — every instance of `foo`
+- `"foo@<1.0.0"` — instances whose natural version satisfies a range
+- `"baz>foo"` / `"baz>foo@1"` — path-selector: instances reached **through** `baz`
+
+Multi-segment paths (`a>b>c`) are rejected at parse time. See [`package.json` overrides](/docs/reference/package-json-lpm#overrides).
+
+## npm aliases
+
+Deps declared as `"my-pkg": "npm:other-pkg@^1.0.0"` (npm-alias edges) are passed through the resolver verbatim. The cache populates an `aliases` map; the resolved tree records each alias edge. The lockfile's `alias-dependencies` and `root-aliases` blocks preserve the metadata for warm installs.
+
+Projects with any alias edges write **only `lpm.lock`** — the binary lockfile (`lpm.lockb`) is skipped because its v2 wire format has no slot for alias info. See [`lpm.lockb` format](/docs/reference/lockb-format#whats-not-stored-in-the-binary-lockfile).
+
+## Tunables
+
+| Env var | Effect |
+| --- | --- |
+| `LPM_RESOLVER=pubgrub` | Use PubGrub-with-split-retry instead of greedy-fusion |
+| `LPM_GREEDY_FUSION=0` | Force walker-arm orchestration (debug) |
+| `LPM_NPM_FANOUT=N` | Concurrent npm metadata fetches (default `50`) |
+| `LPM_WALKER=stream` | Use the continuous-stream walker (Phase 54 W2 path); default is the level-step BFS |
+
+## When to look at the resolver
+
+- An install picked a transitive version you didn't expect → use [`lpm graph --why <pkg>`](/docs/infra/graph) to trace the path, then add an `lpm.overrides` entry.
+- Resolution is slow → check whether your tree exercises the multi-version path repeatedly, or try `LPM_NPM_FANOUT` higher.
+- A new release breaks a peer dep → check `lpm install` output for unmet peer warnings; add the peer to `dependencies` to opt into the resolver's allocation.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — runs the resolver as part of the install pipeline
+- [`lpm resolve`](/docs/packages/resolve) — runs the resolver standalone, prints the tree, no install
+- [Lockfile](/docs/packages/lockfile) — what gets persisted after resolution
+- [`package.json` overrides](/docs/reference/package-json-lpm#overrides) — selector grammar
+- [Environment variables](/docs/reference/env-vars#resolver-advanced) — every tunable

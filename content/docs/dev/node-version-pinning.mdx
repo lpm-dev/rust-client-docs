@@ -1,6 +1,117 @@
 ---
 title: Node version pinning
-description: "Install and pin Node.js versions — no nvm needed."
+description: "How LPM detects, installs, and pins Node.js versions — no nvm needed."
 ---
 
-Coming soon.
+LPM manages Node.js versions itself. It detects the version your project needs from any of four config sources, downloads it on demand, installs it under `~/.lpm/runtimes/`, and prepends the right `bin/` to `PATH` for every script you run. No `nvm`, no per-shell hooks, no manual `nvm use` between projects.
+
+This page covers the design — what gets read in what order, what auto-install does, where versions live, and how the runtime is chosen for each script invocation.
+
+## Detection order
+
+When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev), [`lpm exec`](/docs/dev/exec), [`lpm test`](/docs/dev/test), or [`lpm bench`](/docs/dev/bench) starts, it walks four config sources in priority order. **First match wins:**
+
+| Priority | Source | Format |
+| --- | --- | --- |
+| 1 | `lpm.json > runtime.node` | Semver: `">=22.0.0"`, `"22.5.0"`, `"22"` |
+| 2 | `package.json > engines.node` | Semver |
+| 3 | `.nvmrc` | Plain version: `22.5.0`, `lts/iron`, `v22` |
+| 4 | `.node-version` | Plain version |
+| (fallback) | None of the above | Use the system `node` from `PATH` — no managed runtime |
+
+`.nvmrc` lives in this list intentionally — projects migrating from `nvm` get version pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` (richer semver, sits next to other LPM config).
+
+## What "auto-install" means
+
+If the detected version isn't already in `~/.lpm/runtimes/node/`, LPM downloads it before running the script:
+
+```text
+$ lpm dev
+
+  ● Node     22.12.0 (auto-installed from lpm.json)
+  ● Deps     up to date (2ms)
+  ...
+```
+
+The Node release index is fetched from `nodejs.org/dist`, cached for 1 hour at `~/.lpm/runtimes/index-cache.json`. Version specs (`">=22"`, `"22"`, `"22.5.0"`) get resolved against the index — `">=22"` picks the latest 22.x.
+
+Disable auto-install:
+
+```bash
+LPM_NO_AUTO_INSTALL=true lpm dev
+```
+
+If auto-install is off and the version isn't installed, LPM errors out with a "version X required, not installed" message rather than silently falling back to system Node. That's deliberate — silent fallback would let scripts run against the wrong runtime without you noticing.
+
+## Storage layout
+
+```text
+~/.lpm/runtimes/
+├── node/
+│   ├── 22.12.0/
+│   │   └── bin/
+│   │       ├── node
+│   │       ├── npm
+│   │       └── npx
+│   └── 20.18.0/
+│       └── bin/...
+└── index-cache.json    ← cached Node release index (1h TTL)
+```
+
+Each version is a complete Node distribution unpacked under its version directory. Install once, every project on the machine uses the same install. Remove with `rm -rf ~/.lpm/runtimes/node/<version>/`.
+
+`LPM_HOME=<path>` moves the entire `~/.lpm/` root including `runtimes/`. Useful for hermetic CI.
+
+## How scripts find the right Node
+
+When a script runs, LPM builds the script's `PATH` from:
+
+1. **Project-local `node_modules/.bin/`** — first, so locally-installed CLIs win.
+2. **The detected runtime's `bin/`** — `~/.lpm/runtimes/node/<resolved-version>/bin/`.
+3. **The inherited `PATH`** — system Node, system tools, etc.
+
+Result: `node`, `npm`, `npx` inside the script all resolve to the pinned runtime. No env-var dance, no shell-hook setup.
+
+If detection returned `NoRequirement` (no config source matched), the runtime layer doesn't prepend anything — system Node is used.
+
+## `lpm use` — install + pin in one step
+
+```bash
+lpm use node@22                 # install the latest 22.x, pin in lpm.json
+lpm use node@lts                # install latest LTS
+lpm use node@22.12.0            # install + pin an exact version
+lpm use node@22 --pin           # pin only (no install if already present)
+lpm use --list                  # list installed Node versions
+```
+
+`lpm use node@<spec>` writes the resolved version into `lpm.json > runtime.node`:
+
+```json
+{ "runtime": { "node": "22.12.0" } }
+```
+
+After `lpm use`, every contributor's first `lpm install` / `lpm dev` auto-installs the pinned Node — no per-machine setup required.
+
+## Compatibility with `nvm` / `fnm`
+
+LPM's runtime management is independent. If you have `nvm` or `fnm` installed:
+
+- They modify `PATH` in your shell, affecting `node` lookup outside LPM.
+- LPM's detection respects `.nvmrc` (priority 3 above), so a project pinned via `nvm` works under LPM without converting.
+- When LPM runs a script with a pinned runtime, **LPM's runtime takes precedence** over whatever `nvm` set in the shell. No conflict — they coexist; LPM scripts use LPM's pin.
+
+You don't have to remove `nvm` to adopt LPM. If a project has both `.nvmrc` and `lpm.json > runtime.node`, the `lpm.json` value wins.
+
+## What about other runtimes?
+
+Today, **only `node`** is supported as a managed runtime. The clap surface accepts a `<runtime>@<version>` spec but errors out on anything other than `node` — Deno, Bun, and other runtimes are reserved for future versions.
+
+The `lpm.json > runtime` map allows multiple keys (`{"node": "22", "deno": "2.0"}`), but only the `node` entry is honored at install time. If you set `runtime.deno`, it's silently ignored today.
+
+## See also
+
+- [`lpm use`](/docs/dev/use) — install + pin command
+- [`lpm.json` runtime](/docs/reference/lpm-json#runtime) — config field reference
+- [Environment variables](/docs/reference/env-vars#install-pipeline) — `LPM_NO_AUTO_INSTALL`
+- [`lpm dev`](/docs/dev) — picks up the pin automatically
+- [`lpm doctor`](/docs/infra/doctor) — checks Node detection state

@@ -1,6 +1,70 @@
 ---
-title: migrate
-description: "Migrate a project from npm, pnpm, yarn, or bun."
+title: lpm migrate
+description: "Convert a project from npm, pnpm, yarn, or bun to LPM."
 ---
 
-Coming soon.
+```bash
+lpm migrate
+```
+
+Detects which package manager a project currently uses, parses the foreign lockfile, converts it to `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` scripts still pass.
+
+`lpm migrate` is non-destructive: every file it touches is backed up first (`package-lock.json.backup`, `.npmrc.backup`, etc.), and `--rollback` restores them.
+
+## Examples
+
+```bash
+lpm migrate                  # interactive walk
+lpm migrate --dry-run        # parse + convert, write nothing
+lpm migrate -y               # non-interactive (implies --force)
+lpm migrate --force          # overwrite an existing lpm.lock
+lpm migrate --no-install     # convert lockfile only, don't install
+lpm migrate --skip-verify    # skip the build/test verification step
+lpm migrate --no-npmrc       # don't touch .npmrc
+lpm migrate --ci             # also generate a CI workflow template
+lpm migrate --rollback       # restore from .backup files
+```
+
+## What runs, in order
+
+1. **Pre-flight** — confirm `package.json` exists; refuse if `lpm.lock` already exists (unless `--force` or `--dry-run`).
+2. **Detect + parse + convert** — identify source PM (npm / pnpm / yarn / bun), read its lockfile, convert to LPM format.
+3. **Write** — emit `lpm.lock` + `lpm.lockb`. Back up the source lockfile and `.npmrc`.
+4. **`.npmrc`** — optionally configure `.npmrc` for LPM-aware tooling. Skip with `--no-npmrc`.
+5. **Install** — run `lpm install` against the new lockfile (lockfile fast-path, no re-resolution). Skip with `--no-install`.
+6. **Verify** — run `build` + `test` scripts to confirm nothing broke. Skip with `--skip-verify`.
+7. **CI template** — print a hint pointing at a CI workflow template, or generate one with `--ci`. Suppress with `--no-ci`.
+8. **Summary** — print what was done, where backups live, and how to roll back.
+
+## Rollback
+
+If anything goes wrong (or the migration was a mistake), restore in one command:
+
+```bash
+lpm migrate --rollback
+```
+
+Walks the backups created by the previous migration and restores them in place. Safe to run repeatedly.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Parse and convert only — write nothing |
+| `--force` | Overwrite an existing `lpm.lock` without prompting |
+| `-y`, `--yes` | Skip confirmation prompts (implies `--force`) |
+| `--no-install` | Don't run `lpm install` after conversion |
+| `--skip-verify` | Skip the build/test verification step |
+| `--no-npmrc` | Don't touch `.npmrc` |
+| `--ci` | Generate a CI workflow template for the detected platform |
+| `--no-ci` | Suppress the CI template hint |
+| `--rollback` | Restore files from `.backup` copies created by a previous migration |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [Migrating from npm](/docs/guides/migrating-from-npm)
+- [Migrating from pnpm](/docs/guides/migrating-from-pnpm)
+- [`lpm install`](/docs/packages/install) — runs after conversion to materialize `node_modules`
+- [Lockfile](/docs/packages/lockfile) — `lpm.lock` and `lpm.lockb` formats

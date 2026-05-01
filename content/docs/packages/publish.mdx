@@ -1,6 +1,81 @@
 ---
-title: publish
-description: "Publish a package to lpm.dev."
+title: lpm publish
+description: "Publish a package to lpm.dev, npm, GitHub Packages, or a custom registry."
 ---
 
-Coming soon.
+```bash
+lpm publish   # alias: lpm p
+```
+
+Packs the current directory and uploads it to a registry. By default, the target is **lpm.dev** (where every package is private until you flip distribution to pool or marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
+
+`lpm publish` runs the same quality and security checks regardless of target — it scans for hardcoded secrets, computes a quality score, and refuses to publish if `--min-score` is not met.
+
+## Examples
+
+```bash
+lpm publish                                  # publish to lpm.dev
+lpm publish --dry-run                        # pack + check, don't upload
+lpm publish --check                          # quality report only
+lpm publish --npm                            # publish to registry.npmjs.org
+lpm publish --github                         # publish to GitHub Packages
+lpm publish --publish-registry https://r.example.com   # custom npm-compatible
+lpm publish --provenance                     # require Sigstore provenance (CI)
+lpm publish --min-score 80                   # gate on quality score
+```
+
+## What runs before upload
+
+In order:
+
+1. **Pack** — assemble the tarball from `files`, `main`, `bin`, etc.
+2. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
+3. **Quality score** — compute readme/license/types/tests/maintenance signals. Print the report. With `--min-score N`, abort if the score is below the threshold.
+4. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
+5. **Upload** — push the tarball to the chosen registry with the appropriate auth.
+
+`--check` runs steps 1–3 and stops. `--dry-run` runs through step 4 and stops.
+
+## Provenance
+
+```bash
+lpm publish --provenance
+```
+
+Generates a Sigstore-signed attestation that proves which CI workflow built the tarball and which commit it came from. Requires OIDC credentials — only works in CI environments with OIDC token exchange (GitHub Actions, GitLab CI, Bitbucket, CircleCI). Fails if provenance cannot be produced.
+
+Consumers can later verify provenance via the audit pipeline or registry UI.
+
+## Targets
+
+| Flag | Registry |
+| --- | --- |
+| (default) / `--lpm` | lpm.dev |
+| `--npm` | `registry.npmjs.org` |
+| `--github` | GitHub Packages (requires `publish.github.repository` in `lpm.json`) |
+| `--gitlab` | GitLab Packages (requires `publish.gitlab.projectId` in `lpm.json`) |
+| `--publish-registry <URL>` | Any npm-compatible registry |
+
+You must be logged in to the chosen target — see [Authentication](/docs/reference/authentication) for `lpm login --npm`, `--github`, `--gitlab`, etc.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Pack and check, don't upload |
+| `--check` | Run quality report only |
+| `-y`, `--yes` | Skip interactive confirmation |
+| `--provenance` | Require Sigstore provenance (CI with OIDC only) |
+| `--min-score <N>` | Minimum quality score required (0–100) |
+| `--allow-secrets` | Skip pre-publish secret scanning (not recommended) |
+| `--npm` / `--lpm` / `--github` / `--gitlab` | Target a specific registry |
+| `--publish-registry <URL>` | Custom npm-compatible registry |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [Authentication](/docs/reference/authentication) — login, tokens, CI setup
+- [Save policy](/docs/packages/save-policy) — how versions get saved on the consumer side
+- [`lpm quality`](/docs/packages/quality) — preview the quality report
+- [Pool](/docs/packages/pool) — flipping a published package to pool distribution
