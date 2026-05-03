@@ -28,22 +28,32 @@ Measured cost: `lpm lint` is **78 ms** (vs `npx oxlint` 250 ms — 3.2× faster)
 ~/.lpm/plugins/
 ├── oxlint/
 │   └── 1.58.0/
-│       └── oxlint              ← downloaded binary
+│       └── darwin-arm64/
+│           ├── oxlint              ← downloaded binary
+│           └── .lpm-plugin.json    ← sidecar (verification metadata)
 ├── biome/
 │   └── 2.4.10/
-│       └── biome
-└── .version-cache.json         ← cached "latest version" map (1h TTL)
+│       └── linux-x64/
+│           ├── biome
+│           └── .lpm-plugin.json
+└── .version-cache.json             ← cached "latest version" map
 ```
 
-Each plugin gets a directory keyed by version. Multiple versions can coexist (no auto-cleanup). The `.version-cache.json` is consulted for "what's the latest" lookups when no project-pinned version is set.
+Each plugin gets a directory keyed by `{version}/{platform}`. The platform segment is required: a `$LPM_HOME` shared across architectures (cross-arch CI runners, NFS, Docker bind mounts) would otherwise let one host install a binary the next host can't exec.
+
+Multiple versions can coexist; multiple platforms within a version can coexist too. The `.version-cache.json` is the **install-selection cache**: each entry is the highest version that has been successfully verified-and-installed via `lpm plugin update`. Sticky by design — entries never expire by time, and the file is only written after a successful verified install (so a transient missing upstream `.sha256`, parse failure, or download failure cannot poison it and route every future invocation down a permanently-failing install path).
+
+The `.lpm-plugin.json` sidecar records the plugin name, version, platform, asset URL, asset and on-disk binary checksums, and how the install was verified (`bundled`, `upstream`, or `unverified-override`). It is the source of truth for whether a cached binary may be reused — a bare binary with no sidecar, or a sidecar that fails any check, is treated as a cache miss and re-verified.
 
 ## Version resolution
 
 The lookup order, when [`lpm lint`](/docs/dev/lint) or [`lpm fmt`](/docs/dev/fmt) starts:
 
 1. **Pinned version** in `lpm.json > tools.<name>` — exact match.
-2. **`max(hardcoded, cached)`** — whichever is newer, the version baked into the LPM binary or one a previous `lpm plugin update` cached.
-3. **Auto-download** if the resolved version isn't in `~/.lpm/plugins/<name>/<version>/` yet.
+2. **`max(hardcoded, approved-cache)`** — whichever is newer, the version baked into the LPM binary or one a previous successful `lpm plugin update` approved.
+3. **Auto-download** if the resolved version isn't installed for the current platform yet.
+
+`ensure_plugin` never touches the network for version discovery — it only reads the install-selection cache. To check upstream for a newer release, run `lpm plugin update`; that command runs the discovery probe, downloads, verifies, and only then approves the new version into the cache.
 
 Pin a version per-project:
 
@@ -71,7 +81,25 @@ LPM_FORCE_TOOL_INSTALL=1 lpm lint
 
 ## Checksum verification
 
-Every plugin definition in the LPM binary ships with **SHA-256 checksums** for the hardcoded `latest_version` across every supported platform:
+Every install — whether the registry's pinned `latest_version`, a `lpm.json`-pinned version, or a freshly-fetched `lpm plugin update` result — must pass a SHA-256 checksum gate. The gate tries three sources in order:
+
+1. **Bundled checksum** — SHA-256 baked into the LPM binary at build time. Used when the requested version equals the registry's hardcoded `latest_version`. The fast path; no network round-trip.
+2. **Upstream sidecar** — SHA-256 fetched from `<asset_url>.sha256` (oxlint via cargo-dist, biome publishes per-asset sidecars). Used for pinned versions and `lpm plugin update` results.
+3. **Unverified override** — only if `LPM_ALLOW_UNVERIFIED_PLUGINS=1` is set. Records `verification-source: unverified-override` in the sidecar; reuse requires the same env var on every subsequent invocation.
+
+A mismatch at any stage is a hard error and the partial download is removed.
+
+If neither bundled nor upstream verification is available — typically when the upstream sidecar is unreachable for an old or yanked release — and `LPM_ALLOW_UNVERIFIED_PLUGINS` is not set, the install fails with an actionable message:
+
+```text
+refusing to install oxlint 1.42.0 for darwin-arm64: no bundled checksum and
+upstream sidecar https://.../oxlint-aarch64-apple-darwin.tar.gz.sha256 is
+unavailable. Update LPM (newer releases ship pinned checksums for newer plugin
+versions), pin a different version, or set LPM_ALLOW_UNVERIFIED_PLUGINS=1
+to install without verification.
+```
+
+The bundled-checksum table is declared inline in the registry:
 
 ```rust
 PluginDef {
@@ -86,9 +114,17 @@ PluginDef {
 }
 ```
 
-On download, the bytes are hashed and compared against the expected SHA-256. Mismatch is a hard error; the partial download is removed.
+### Reuse from cache
 
-**For pinned versions or `lpm plugin update` results**, the checksum is **not** verified — the LPM binary only carries hashes for the hardcoded `latest_version`. Pinned versions emit a "verification skipped" warning. This is a known gap (item #13 on the project TODO list) — verifying upstream-supplied checksums on update would close it.
+The sidecar — not bare file existence — gates reuse. Every cache hit re-validates:
+
+- `schema_version` matches the current LPM binary,
+- `plugin_name` and `version` match the request,
+- `platform` matches the current host,
+- `verification_source` is compatible with the current trust posture (`unverified-override` is only honored when `LPM_ALLOW_UNVERIFIED_PLUGINS=1` is set in the consuming process),
+- the binary's on-disk SHA-256 matches `binary_sha256` recorded at install time (tamper detection).
+
+Anything that fails gets treated as a cache miss and re-verified through the full download pipeline.
 
 ## Supported platforms
 
@@ -117,8 +153,9 @@ See [`lpm plugin`](/docs/dev/plugin) for the full subcommand surface.
 The `PluginDef` registry is a `static` slice in the LPM binary. Adding a new plugin requires:
 
 1. A new `PluginDef` entry in [`crates/lpm-plugin/src/registry.rs`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-plugin/src/registry.rs).
-2. Computed SHA-256 checksums for every supported platform.
-3. A new LPM release.
+2. Computed SHA-256 checksums for every supported platform (the bundled-checksum fast path).
+3. The upstream release publishes a per-asset `<asset_url>.sha256` sidecar so user-pinned versions can verify too.
+4. A new LPM release.
 
 This is deliberately conservative. Tool-distribution bugs ship with the LPM binary, not a registry-side config that could change unexpectedly. The cost is that adding a plugin requires shipping an update — but plugins are the kind of thing where the LPM team's own QA matters, not an arbitrary user being able to add one.
 
