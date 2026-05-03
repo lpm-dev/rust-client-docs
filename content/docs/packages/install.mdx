@@ -124,6 +124,38 @@ lpm install foo --min-release-age=0        # disable the cooldown for this comma
 
 Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`).
 
+## Engines enforcement
+
+`lpm install` reads the workspace root `package.json > engines` block and aborts when a constraint isn't satisfied. Two keys are checked:
+
+| Key | Compared against |
+| --- | --- |
+| `engines.lpm` | The running CLI version (`env!("CARGO_PKG_VERSION")`) |
+| `engines.node` | The effective Node version — managed runtime under `~/.lpm/runtimes/node/` if one matches the project's pin, else system `node --version` |
+
+```text
+$ lpm install
+Error: lpm::engine_mismatch
+  × lpm version 0.32.0 does not satisfy required >=0.40.0 (from package.json
+  │ > engines.lpm)
+```
+
+Other `engines.<pm>` keys (`npm`, `pnpm`, `yarn`, `bun`) are recognized and surfaced as a one-line warning that LPM doesn't enforce them — use `engines.lpm` for the LPM CLI version.
+
+The check runs before any resolver work, so failures exit cheaply.
+
+```bash
+lpm install --no-engine-strict            # skip enforcement for this invocation
+```
+
+Persistent opt-out:
+- `package.json > lpm > engineStrict = false` (per-project)
+- `~/.lpm/config.toml > engine-strict = false` (per-user)
+
+Precedence: CLI flag > `package.json > lpm.engineStrict` > `~/.lpm/config.toml` > default (`true`). Under `engineStrict = false` the constraints are still parsed and any mismatches print as stderr warnings (suppressed under `--json`).
+
+The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/docs/packages/add) (preflight, before any manifest mutation).
+
 ## Flags
 
 | Flag | Effect |
@@ -152,6 +184,7 @@ Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/
 | `--no-security-summary` | Skip the post-install security report (faster CI) |
 | `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
 | `--ignore-provenance-drift-all` | Skip the check for every package |
+| `--no-engine-strict` | Skip `engines.lpm` / `engines.node` enforcement |
 | `--replace-bin <CMD>` | (`-g` only) Take ownership of a colliding bin name (repeatable) |
 | `--alias <ORIG=ALIAS>` | (`-g` only) Install a declared bin under a different PATH name |
 
