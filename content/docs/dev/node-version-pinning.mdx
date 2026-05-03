@@ -62,6 +62,21 @@ Each version is a complete Node distribution unpacked under its version director
 
 `LPM_HOME=<path>` moves the entire `~/.lpm/` root including `runtimes/`. Useful for hermetic CI.
 
+## `engines.node` enforcement at install time
+
+`engines.node` plays two roles. As a **detection source** (priority 2 above) it tells LPM which managed runtime to install for `lpm dev` / `lpm run`. As an **enforcement constraint** it gates `lpm install` / `lpm rebuild` / `lpm add` — the pipeline aborts with a structured error if the effective Node version (managed runtime if installed, system Node otherwise) doesn't satisfy the range.
+
+```text
+$ lpm install
+Error: lpm::engine_mismatch
+  × node version 18.20.4 does not satisfy required >=22.0.0 (from package.json
+  │ > engines.node (compared against system PATH))
+```
+
+Resolution: install the matching managed runtime first (`lpm use node@22`), or relax the constraint.
+
+The same enforcement runs for `engines.lpm` against the running CLI version. Opt out per-invocation with `lpm install --no-engine-strict`, per-project via `package.json > lpm > engineStrict = false`, or per-user via `~/.lpm/config.toml > engine-strict = false`. See [`lpm install` § engines enforcement](/docs/packages/install#engines-enforcement).
+
 ## How scripts find the right Node
 
 When a script runs, LPM builds the script's `PATH` from:

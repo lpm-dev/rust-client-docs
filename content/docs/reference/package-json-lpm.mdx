@@ -12,7 +12,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
   "name": "my-app",
   "version": "1.0.0",
 
-  "engines": { "node": ">=22.0.0" },
+  "engines": { "node": ">=22.0.0", "lpm": ">=0.32.0" },
   "workspaces": ["packages/*", "apps/*"],
 
   "lpm": {
@@ -23,6 +23,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
     "trustedDependencies": ["esbuild", "sharp"],
 
     "minimumReleaseAge": 86400,
+    "engineStrict": true,
 
     "overrides": {
       "lodash": "^4.17.21",
@@ -144,6 +145,18 @@ Cooldown in **seconds** before a newly published version is installable. Default
 
 Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > 24h default.
 
+### `engineStrict`
+
+```json
+{ "lpm": { "engineStrict": true } }
+```
+
+Whether `engines.lpm` and `engines.node` constraints from the workspace root `package.json` are enforced. Default `true` — install / rebuild / add abort when the running CLI version doesn't satisfy `engines.lpm`, or the effective Node version doesn't satisfy `engines.node`.
+
+Precedence: `lpm install --no-engine-strict` (CLI) > `package.json > lpm.engineStrict` > `~/.lpm/config.toml > engine-strict` > `true` default.
+
+Set to `false` per-project to fall back to npm's behavior (read but don't enforce). The unsatisfied constraints still print as warnings on stderr (suppressed under `--json`).
+
 ### `overrides`
 
 ```json
@@ -240,10 +253,14 @@ Both shapes accepted. See [Workspaces](/docs/packages/workspaces).
 ### `engines`
 
 ```json
-{ "engines": { "node": ">=22.0.0" } }
+{ "engines": { "node": ">=22.0.0", "lpm": ">=0.32.0" } }
 ```
 
-Runtime version constraints. LPM honors `engines.node`; `lpm.json > runtime.node` takes precedence when both are set.
+Runtime / CLI version constraints. LPM enforces both `engines.node` (against the effective Node version) and `engines.lpm` (against the running CLI version) by default — install / rebuild / add abort on mismatch. `lpm.json > runtime.node` takes precedence over `engines.node` as a **pin source** for runtime auto-install; the **enforcement** check still runs against the resolved Node version.
+
+Other keys (`engines.npm`, `engines.pnpm`, `engines.yarn`, `engines.bun`) are recognized and surfaced as a one-line stderr warning that LPM doesn't enforce them — use `engines.lpm` for the LPM CLI version.
+
+Opt out via `lpm install --no-engine-strict`, `package.json > lpm > engineStrict = false`, or `~/.lpm/config.toml > engine-strict = false`.
 
 ### `overrides` / `resolutions`
 
