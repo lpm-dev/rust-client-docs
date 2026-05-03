@@ -44,87 +44,38 @@ For Swift packages, prefer **[`lpm install`](/docs/packages/install)** — it's 
 
 ## Authoring config-aware packages: `lpm.config.json`
 
-Ship `lpm.config.json` at the root of your tarball to control how `lpm add` extracts your package. With the file present, `lpm add` becomes a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting, and per-ecosystem target detection. Without it, the command falls back to the simple "copy everything" path.
+Ship `lpm.config.json` at the root of your tarball to control how `lpm add` extracts your package. With the file present, `lpm add` becomes a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting.
 
-```json title="lpm.config.json (full surface)"
+```json title="lpm.config.json (sketch)"
 {
+  "$schema": "https://lpm.dev/schemas/lpm.config.json",
   "ecosystem": "js",
   "importAlias": "@/",
-
   "configSchema": {
     "component": {
       "type": "select",
       "label": "Which component?",
-      "options": [
-        { "value": "dialog", "label": "Dialog" },
-        { "value": "popover", "label": "Popover" }
-      ],
+      "options": ["dialog", "popover"],
       "default": "dialog",
       "required": true
     },
-    "styling": {
-      "type": "select",
-      "label": "Styling system",
-      "options": ["panda", "tailwind", "vanilla"],
-      "multiSelect": false,
-      "default": "panda"
-    },
-    "withTests": {
-      "type": "boolean",
-      "label": "Include tests?",
-      "default": "false"
-    }
+    "withTests": { "type": "boolean", "label": "Include tests?", "default": false }
   },
-
-  "defaultConfig": { "styling": "tailwind" },
-
   "files": [
-    { "src": "src/dialog/**",  "dest": "dialog",  "include": "when",
+    { "src": "src/dialog/**", "dest": "dialog", "include": "when",
       "condition": { "component": "dialog" } },
-    { "src": "src/popover/**", "dest": "popover", "include": "when",
-      "condition": { "component": "popover" } },
-    { "src": "src/styles/panda.css", "dest": "styles.css", "include": "when",
-      "condition": { "styling": "panda" } },
-    { "src": "src/types.ts", "dest": "types.ts" },
     { "src": "tests/**", "dest": "__tests__", "include": "when",
-      "condition": { "withTests": "true" } }
+      "condition": { "withTests": true } }
   ],
-
   "dependencies": {
-    "styling": {
-      "panda":    ["@pandacss/dev"],
-      "tailwind": ["tailwindcss"]
-    },
-    "withTests": {
-      "true": ["vitest"]
-    }
+    "withTests": { "true": ["vitest"] }
   }
 }
 ```
 
-### Top-level fields
+The full schema reference — every field, every value type, every default — lives at [`lpm.config.json`](/docs/reference/lpm-config-json). The published JSON Schema at [`https://lpm.dev/schemas/lpm.config.json`](https://lpm.dev/schemas/lpm.config.json) drives editor autocomplete (add `$schema` as shown above).
 
-| Field | Type | Purpose |
-| --- | --- | --- |
-| `ecosystem` | `"js"` (default) \| `"swift"` | Picks the default install directory and whether to apply import-rewriting |
-| `importAlias` | string | Author's path alias (e.g., `"@/"`). Used by the import rewriter to translate internal imports to the buyer's alias. |
-| `configSchema` | object | Interactive prompt fields — see below |
-| `defaultConfig` | object | `{ key: defaultValue }` overrides for `configSchema.<field>.default`. Project-level "I always want X" pinning. |
-| `files` | array | File-copy rules — see below |
-| `dependencies` | object | Conditional dependency injection — see below |
-
-### `configSchema.<key>`
-
-Each entry declares one prompt. Values from the prompt feed into both `files[].condition` and `dependencies` matching.
-
-| Field | Type | Purpose |
-| --- | --- | --- |
-| `type` | `"string"` \| `"boolean"` \| `"select"` | Prompt kind |
-| `label` | string | Human-readable prompt label (defaults to the key) |
-| `default` | string | Default value (booleans use `"true"` / `"false"`) |
-| `required` | bool | Under `--yes`, required fields are auto-filled with their default |
-| `options` | array | For `select`: array of strings, or `[{ "value": ..., "label": ... }, …]` |
-| `multiSelect` | bool | For `select`: allow choosing multiple. Stored as comma-separated values. |
+### Pre-answering prompts
 
 Prompts can be pre-answered from the CLI by appending `?key=value&key=value` to the package spec:
 
@@ -132,39 +83,7 @@ Prompts can be pre-answered from the CLI by appending `?key=value&key=value` to 
 lpm add @lpm.dev/owner.ui-kit?component=dialog&styling=panda
 ```
 
-Inline values bypass the prompt entirely. With `--yes`, prompts are skipped and `defaultConfig` / `field.default` are used for required fields.
-
-### `files[]`
-
-Each rule maps one source pattern to one destination, with an optional `include` condition.
-
-| Field | Type | Purpose |
-| --- | --- | --- |
-| `src` | string | Source pattern (glob), relative to the package root |
-| `dest` | string | Destination subpath, relative to the install target |
-| `include` | `"always"` (default) \| `"never"` \| `"when"` | Inclusion mode |
-| `condition` | object | For `include: "when"`: `{ configKey: expectedValue }` — all keys must match |
-
-If a rule's `condition` references a `configKey` that the user did not provide and that has no default, the file is included by default (all-by-default semantics).
-
-### `dependencies`
-
-Conditional dependency injection. Keys are `configSchema` keys; values map each chosen option to a list of npm packages to install.
-
-```json
-"dependencies": {
-  "styling": {
-    "panda":    ["@pandacss/dev"],
-    "tailwind": ["tailwindcss", "tailwindcss-animate"]
-  }
-}
-```
-
-If the user picked `styling: "panda"`, `@pandacss/dev` gets installed via `--pm` (default `lpm`). Multi-select values are split on `,` and unioned.
-
-`@lpm.dev/*` entries in this list are filtered out of auto-install — those are recursive `lpm add` candidates, not runtime deps.
-
-`--no-install-deps` skips the entire dependency step.
+Inline values bypass the prompt entirely. With `--yes`, prompts are skipped and `defaultConfig` / `configSchema.<field>.default` fill in any `required` fields the user didn't supply.
 
 ### Behavior matrix
 

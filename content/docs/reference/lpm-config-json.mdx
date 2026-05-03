@@ -1,0 +1,161 @@
+---
+title: lpm.config.json
+description: "Schema reference for the lpm.config.json file shipped at a tarball root to control `lpm add`."
+---
+
+`lpm.config.json` is the **package author's** declaration of what `lpm add` should do when delivering this package's source into a consumer project. It lives at the tarball root and turns `lpm add` from a plain copy into a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting.
+
+The file is **optional**. Without it, `lpm add` is a plain source copy of every file in the tarball. With it, `lpm add` becomes the installer the package author designed.
+
+This page is the schema-by-field reference. For the `lpm add` consumer flow, see [`lpm add`](/docs/packages/add).
+
+## Editor autocomplete
+
+LPM publishes a JSON Schema for `lpm.config.json` at [`https://lpm.dev/schemas/lpm.config.json`](https://lpm.dev/schemas/lpm.config.json). Add a `$schema` line to get inline validation and field completion in any editor that supports JSON Schema:
+
+```json title="lpm.config.json"
+{
+  "$schema": "https://lpm.dev/schemas/lpm.config.json",
+  "ecosystem": "js"
+}
+```
+
+Or emit the schema yourself:
+
+```bash
+lpm schema lpm.config.json                       # to stdout
+lpm schema lpm.config.json -o config.schema.json # to a file
+```
+
+The schema is hand-authored against the consumer code in the CLI (since the file's surface is partly dynamic — packages declare their own configurable fields). A corpus of real-world fixtures is validated against it on every CLI build, so the schema can't silently drift from the runtime.
+
+## Top-level shape
+
+```json title="lpm.config.json"
+{
+  "$schema":      "https://lpm.dev/schemas/lpm.config.json",
+  "ecosystem":    "js",
+  "importAlias":  "@/components",
+  "configSchema": { "<field>": { /* ConfigField */ } },
+  "defaultConfig": { "<field>": "<value>" },
+  "files": [ { "src": "...", "dest": "...", "include": "always" } ],
+  "dependencies": { "<configKey>": { "<value>": ["dep1", "dep2"] } }
+}
+```
+
+Every top-level field is optional. The minimal valid file is `{}`.
+
+## `ecosystem`
+
+```json
+{ "ecosystem": "js" }
+```
+
+| Value | Meaning |
+| --- | --- |
+| `"js"` (default) | JavaScript / TypeScript source. Default install dir resolves via framework detection (Next.js → `components/`, Vite → `src/components/`, etc.). |
+| `"swift"` | Swift source. Default install dir is `Sources/<target>/` for SPM projects, or `Packages/LPMComponents/Sources/<target>/` when an Xcode project is detected. |
+
+Drives the default install-dir resolution. Override via `lpm add --path <dir>`.
+
+## `importAlias`
+
+```json
+{ "importAlias": "@/components" }
+```
+
+The author's import alias prefix used in the source files. `lpm add` rewrites occurrences in the copied source to match the consumer project's `tsconfig.json > paths` or the explicit `--alias` flag. Without this field no rewriting happens; imports are copied verbatim.
+
+## `configSchema`
+
+```json
+{
+  "configSchema": {
+    "component": {
+      "type": "select",
+      "label": "Which component?",
+      "options": ["dialog", "popover", "menu"],
+      "default": "dialog",
+      "required": true
+    },
+    "withTests": {
+      "type": "boolean",
+      "label": "Include tests?",
+      "default": true
+    }
+  }
+}
+```
+
+Map of configurable field name → field specification. Each entry drives an interactive prompt during `lpm add` and feeds the inline-config map used by `files[].condition` and `dependencies` lookups.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `type` | `"string" \| "boolean" \| "select"` | Default `"string"`. `boolean` produces a confirm prompt; `select` produces a single- or multi-choice list. |
+| `label` | string | Prompt label. Defaults to the field name. |
+| `default` | string \| boolean \| number | Initial value. Native JSON types are accepted; legacy stringified values (`"true"`, `"false"`) are still honored for back-compat. |
+| `required` | boolean | When `true`, `lpm add --yes` fills the field with its `default` instead of skipping it. |
+| `multiSelect` | boolean | Only meaningful when `type` is `select`. When `true`, the prompt accepts multiple values; the resolved inline-config value is comma-joined. |
+| `options` | array | Selectable options. Plain strings (`["dialog", "menu"]`) are shorthand for `{value, label}` pairs where both equal the string. Object form: `[{"value": "dialog", "label": "Dialog component"}]`. |
+
+## `defaultConfig`
+
+```json
+{ "defaultConfig": { "withTests": true, "component": "dialog" } }
+```
+
+Map of configurable field name → default value, overriding any `default` declared in the matching `configSchema` entry. Useful for sharing common defaults across packages without duplicating the field spec. Same value-type rules as `configSchema.<field>.default` (native booleans, numbers, and strings; legacy stringified values still accepted).
+
+## `files`
+
+```json
+{
+  "files": [
+    { "src": "src/index.ts" },
+    { "src": "src/styles.css", "dest": "styles/" },
+    {
+      "src": "src/test.ts",
+      "include": "when",
+      "condition": { "withTests": true }
+    },
+    { "src": "src/private/internal.ts", "include": "never" }
+  ]
+}
+```
+
+Ordered list of file copy rules. When `files` is omitted, `lpm add` copies every file in the tarball.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `src` | string (required) | Source path or glob (relative to the tarball root). Trailing `/**` and `/*` are supported. |
+| `dest` | string | Destination path (relative to the consumer project's resolved install dir). Trailing `/` treats the value as a directory; the source filename is preserved. Omit to keep the source-relative path. |
+| `include` | `"always" \| "when" \| "never"` | Default `"always"`. `"when"` requires every entry in `condition` to match. `"never"` skips. |
+| `condition` | object | Required when `include` is `"when"`. Map of config field name → expected value. Native booleans and numbers are accepted alongside strings. Comma-separated multi-select values match if any element equals the expected value. Missing keys default to "include" (all-by-default). |
+
+## `dependencies`
+
+```json
+{
+  "dependencies": {
+    "icons": {
+      "lucide": ["lucide-react"],
+      "heroicons": ["@heroicons/react"]
+    },
+    "withMotion": {
+      "true": ["framer-motion"]
+    }
+  }
+}
+```
+
+Conditional dependency injection map. Outer keys match `configSchema` field names; inner keys match the user's selected value(s) for that field; values are arrays of npm dependency specs to add to the consumer's `package.json`.
+
+`@lpm.dev/*` entries are filtered out — those are delivered via recursive `lpm add`, not installed as runtime deps.
+
+When `dependencies` is omitted, `lpm add` falls back to reading `dependencies` + `peerDependencies` from the package's own `package.json` (legacy path).
+
+## See also
+
+- [`lpm add`](/docs/packages/add) — the consumer-side flow
+- [`lpm.json`](./lpm-json) — runtime / task / publish config
+- [`lpm schema`](/docs/commands#project-health) — emit either schema to stdout or a file
