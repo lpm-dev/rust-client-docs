@@ -36,7 +36,24 @@ lpm store clean                         # wipe ~/.lpm/store/v1/ entirely (rare)
 | `gc` | — | Reference-aware garbage collection |
 | `clean` | — | Blunt wipe — removes the entire `v1/` subtree |
 
-`gc` and `clean` take an exclusive lock on the store — concurrent `gc` / `clean` invocations serialize through it. **Concurrent installs against an in-progress `gc` are not yet fully isolated** (M3 deliverable).
+## Locking model
+
+Store operations coordinate through a writer-preference reader/writer protocol built on three advisory lock files:
+
+- **Data lock** at `~/.lpm/store/.gc.lock` — the access lock. Shared by readers in the body, exclusive by writers in the body.
+- **Writer-intent gate** at `~/.lpm/store/.gc.lock.writer-intent` — derived automatically. Held exclusive by the writer that's currently running, so new readers admitted at the gate are blocked until the writer finishes.
+- **Writer-queue baton** at `~/.lpm/store/.gc.lock.writer-queue` — derived automatically. Held shared by every queued writer (including the one in the body). Readers probe it with a non-blocking exclusive try before attempting the gate; if the probe `WouldBlock`s, at least one writer is queued and the reader backs off. This closes the multi-writer leapfrog hole the gate alone leaves open — between writer W1 releasing the gate and writer W2 polling for it, the kernel could otherwise let queued readers grab gate-shared first and starve W2.
+
+Surface:
+
+- **Shared (multi-reader):** `lpm install`, `lpm patch`, `lpm rebuild`, `lpm approve-scripts`, and `lpm store list` / `lpm store verify` always acquire the shared lock for the duration of the command. `lpm audit` and `lpm query` acquire it only when the project has LPM-store-backed packages, and they narrow the lock to just the store-touching slice (audit's behavioral-analysis pass; query's inventory load + lifecycle/build-state loop) — discovery, registry calls, and OSV calls run unlocked. Multiple readers run concurrently — two `lpm install` invocations in different shells share without contention.
+- **Exclusive (single-writer):** `lpm store gc` and `lpm store clean`. They take the queue baton shared (signaling "writer queued"), then the gate exclusive (blocking new reader admissions), then wait for in-flight readers to release the data lock.
+
+**Writer preference.** Once any `lpm store gc` is queued, no new reader is admitted until every queued writer has run. The protocol holds even with multiple writers in line — W2 stays at the head of the queue across W1's release boundary because W2's queue-shared keeps the readers' probes blocked. Bias is intentional: gc/clean is rare; install/query is common.
+
+If contention lasts longer than one second, the blocked command emits a single `Waiting for another lpm store operation to finish...` line on stderr — no PID claim (the lock primitive doesn't expose owner introspection), but enough to confirm you aren't stuck. The hint fires once per acquisition, not on every poll iteration.
+
+Locks release on normal exit and on panic — there's no stale-lock recovery to run by hand.
 
 ## Verify
 
