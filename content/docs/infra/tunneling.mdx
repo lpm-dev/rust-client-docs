@@ -25,6 +25,25 @@ The DO model gives the relay strong consistency for the "which session owns whic
 
 The relay URL is `wss://relay.lpm.fyi/connect`. You don't need to configure it — it's the default the CLI uses.
 
+### Overriding the relay URL
+
+For local development against a custom worker, staging, or any future regional endpoint, point the CLI at a different relay without rebuilding:
+
+```bash
+LPM_TUNNEL_RELAY=ws://localhost:8787/connect lpm tunnel 3000
+```
+
+Or persistently in `~/.lpm/config.toml`:
+
+```toml
+[tunnel]
+relay-url = "wss://relay-eu.lpm.fyi/connect"
+```
+
+Precedence is `LPM_TUNNEL_RELAY` env > `~/.lpm/config.toml` > built-in default. Empty / whitespace values fall through to the next tier — accidentally `export LPM_TUNNEL_RELAY=""` won't break the tunnel.
+
+The CLI pins each relay's certificate independently — see [Certificate pinning](#certificate-pinning) below.
+
 ## Per-plan limits
 
 Tunnels are gated by plan tier across **seven** dimensions:
@@ -64,16 +83,28 @@ Pro/Org claims sit inside one shared pool — your 3 (Pro) or 10 (Org) claims ca
 
 ## Free random subdomains
 
-Free-tier tunnels get an **8-character lowercase alphanumeric** subdomain on `lpm.fyi`, like:
+Free-tier tunnels get a **10-character lowercase alphanumeric** subdomain on `lpm.fyi`, like:
 
 ```text
-k8f2m9x1.lpm.fyi
-9j3vq2bp.lpm.fyi
+k8f2m9x1ab.lpm.fyi
+9j3vq2bpqr.lpm.fyi
 ```
 
-Generated cryptographically per session via `crypto.getRandomValues(8 bytes) % 36`. Different on every reconnect — the free tier has no reconnect-grace window, so each restart hands you a fresh URL.
+Generated cryptographically per session with rejection sampling over a 36-symbol alphabet, so the distribution is uniform. Different on every reconnect — the free tier has no reconnect-grace window, so each restart hands you a fresh URL.
 
-These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (max 2 hours under the free session cap) and then they're gone.
+These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (capped at 2 hours under the free session cap) and then they're gone.
+
+## Free-tier session cap
+
+Free tunnels are capped at **2 hours per session**. The relay enforces this by scheduling a Cloudflare Durable Object alarm when the WebSocket opens; once the alarm fires, the relay closes the WebSocket with reason `session time limit reached` and any in-flight HTTP request gets a `503 Service Unavailable` with a `Retry-After: 5` header.
+
+When this happens:
+
+- The CLI surfaces the close reason in its retry/backoff log.
+- Reconnecting starts a fresh session with a new random subdomain (free tier has no reconnect-grace window).
+- The relay tracks `session_expires_at` and sends it in the WebSocket `hello` frame, so future CLI versions can show a countdown.
+
+Pro and Org tunnels are uncapped.
 
 ## Subdomain rules (claimed domains)
 
@@ -89,7 +120,7 @@ Claimed subdomains must match this regex (enforced at the claim API):
 
 Examples that work: `acme-api`, `staging-1`, `team-shared`. Examples that don't: `Acme_API`, `--leading-hyphen`, `staging.preview`, `xy` (too short).
 
-The relay-side validator is broader — it accepts any RFC 1123 hostname label (1–63 chars). The 3–32 cap exists at the claim API to keep human-typed subdomains short and consistent. Random free-tier subdomains use the relay's looser rules and land at exactly 8 chars.
+The relay-side validator is broader — it accepts any RFC 1123 hostname label (1–63 chars). The 3–32 cap exists at the claim API to keep human-typed subdomains short and consistent. Random free-tier subdomains use the relay's looser rules and land at exactly 10 chars.
 
 ## Free-tier interstitial
 
@@ -97,8 +128,8 @@ The first browser visit to a free random tunnel URL sees a **"Visit Site" inters
 
 ```text
 First request:
-  Browser → k8f2m9x1.lpm.fyi/foo  →  HTML interstitial with "Visit Site" button
-                                      (because Accept: text/html)
+  Browser → k8f2m9x1ab.lpm.fyi/foo  →  HTML interstitial with "Visit Site" button
+                                        (because Accept: text/html)
 
 After click:
   /__lpm_pass?to=/foo  →  sets HttpOnly cookie  →  302 redirect to /foo
@@ -111,6 +142,15 @@ Skipped automatically for:
 - **Pro/Org tunnels** — your domain is claimed, you've authenticated, no interstitial.
 
 Without it, anyone could spin up a free tunnel and aim it at a phishing site that looks like a major brand (the random URL provides no signal of trust either way). The interstitial forces an explicit "yes I want to visit this URL" click.
+
+### Cookie scope, TTL, and rotation
+
+`/__lpm_pass` sets `lpm_tunnel_pass=<nonce>` with these properties:
+
+- **Host-only.** No `Domain=` attribute — the cookie is keyed to the exact subdomain that set it. Trusting `acme.lpm.fyi` does NOT propagate to `bravo.lpm.fyi` or any other free tunnel.
+- **Session-bound nonce.** The cookie value is a per-session UUID minted in the relay when the WebSocket opens, not the static `=1` of older versions. When the session ends (clean disconnect or session-cap alarm), the relay clears its nonce; any cookie a previous visitor still holds is no longer valid against a new session, even if the random subdomain happens to repeat.
+- **TTL clamped to session length.** The cookie's `Max-Age` is set to the remaining session time (free tier: ≤ 2 hours, capped at 4 hours hard ceiling), with a 60-second floor so a visit seconds before expiry doesn't waste the cookie.
+- `SameSite=Lax`, `Secure`, `HttpOnly`.
 
 ## Claiming a domain
 
@@ -191,7 +231,7 @@ lpm tunnel inspect --last 10
 lpm tunnel inspect --filter '/webhooks/stripe'
 lpm tunnel inspect --status 4xx
 lpm tunnel log                 # full event log
-lpm tunnel inspect --ui        # browser inspector at http://localhost:4400
+lpm tunnel inspect --ui        # browser inspector (URL printed on startup)
 ```
 
 Replay a captured event back to your local server:
@@ -224,9 +264,32 @@ Free tier doesn't have `--tunnel-auth` (per the plan-limits matrix above). Usefu
 
 ## The inspector
 
-`lpm tunnel inspect --ui` starts a small web UI at `http://localhost:4400` (override with `--inspect-port`). It shows captured events with full headers, body, response status, and replay controls. Same data as the terminal `inspect`, just easier to navigate for big captures.
+`lpm tunnel inspect --ui` starts a small web UI on a free ephemeral port (the URL is printed on startup) — pass `--inspect-port N` for a stable bookmark. It shows captured events with full headers, body, response status, and replay controls. Same data as the terminal `inspect`, just easier to navigate for big captures.
 
-The inspector is auto-started alongside the tunnel by default. Disable with `--no-inspect`.
+The inspector is auto-started alongside the tunnel by default and binds to a free port chosen by the OS — race-free against the dev server's own port. Pass `--inspect-port N` to bind a specific port (strict — fails loudly if `N` is in use), or `--no-inspect` to skip it entirely. Both `lpm tunnel` and `lpm dev --tunnel` accept the same flags.
+
+When `lpm dev --tunnel` runs alongside the TUI dashboard, the dashboard's `o` key opens the inspector in a browser. The same URL is also printed in the startup banner.
+
+## Certificate pinning
+
+The CLI verifies the relay's TLS certificate against a stored Trust-On-First-Use (TOFU) pin so a hijacked or MITM-substituted certificate is rejected even if the attacker's chain is signed by a public CA. Pins are stored per relay host:
+
+```text
+~/.lpm/relay-pins/relay.lpm.fyi
+~/.lpm/relay-pins/<other-host>     # one file per relay you've connected to
+```
+
+The first connection to a host stores its certificate's SPKI hash; subsequent connections to that same host must present the same SPKI or the CLI refuses to connect. Each host is independent — overriding the relay URL never silently inherits a pin meant for a different server.
+
+If a relay legitimately rotates its certificate, delete the matching pin file and reconnect:
+
+```bash
+rm ~/.lpm/relay-pins/relay.lpm.fyi
+```
+
+The pin error message names the exact path to remove.
+
+> **Backward compatibility.** Earlier versions stored a single pin at `~/.lpm/relay-pin` (no `s`, no subdirectory). The CLI still reads that file on the canonical default relay so existing installs keep working; the next successful verification migrates the pin to the per-host layout. The legacy file is read but never written — it can be deleted any time after the migration takes effect.
 
 ## Sessions
 
