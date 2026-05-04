@@ -29,9 +29,55 @@ Anything after the command (or after `--`) is forwarded to the runner:
 lpm bench -- --reporter=json --outputFile=bench.json
 ```
 
+## Workspaces
+
+```bash
+lpm bench --all                            # every member
+lpm bench --filter web                     # exact name
+lpm bench --filter '@scope/*'              # glob
+lpm bench --affected --base develop
+```
+
+Detection runs per member. A workspace member with no installed bench runner and no `scripts.bench` becomes a per-member detection failure in the JSON envelope rather than aborting the whole run. `--all` is mutually exclusive with `--filter` and `--affected`.
+
+### Forwarding runner flags with the same names
+
+The five workspace flags (`--all`, `--filter`, `--affected`, `--base`, `--fail-if-no-match`) are claimed by LPM. To pass any of them through to the bench runner itself, put them after `--`:
+
+```bash
+lpm bench -- --filter pattern             # forwards --filter to vitest bench
+lpm bench --filter web -- --reporter=json # workspace + forwarded args
+```
+
+### Watch with a workspace selector
+
+Same gating as `lpm test`: watch is allowed when the selection resolves to exactly one member, rejected when it resolves to two or more (would start N watchers) or zero (nothing to watch).
+
+```bash
+lpm bench --filter web --watch            # ✓ one member, one watcher
+lpm bench --all --watch                   # ✗ rejected: N watchers
+lpm bench --filter typo --watch           # ✗ rejected: nothing to watch
+```
+
+When the filter resolves to exactly one member, `lpm bench` runs against that member's directory as if you'd `cd`-ed in.
+
 ## Flags
 
-`lpm bench` has no LPM-specific flags. Use the [global flags](/docs/commands#global-flags) for output formatting.
+| Flag                 | Effect                                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--all`              | Run in every workspace member                                                                         |
+| `--filter <expr>`    | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable) |
+| `--affected`         | Run only in members affected by changes vs `--base`                                                   |
+| `--base <REF>`       | Git base ref for `--affected` (default: `main`)                                                       |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set                                                     |
+
+Anything after `--` (or trailing) is forwarded to the bench runner.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode (`lpm bench`) preserves the runner's stdout. Workspace mode emits a single LPM envelope on stdout; per-member stdout/stderr is captured and surfaced inside the envelope only on failure. See [`lpm lint`](/docs/dev/lint#json-in-workspace-mode) for the exact envelope shape.
 
 ## See also
 

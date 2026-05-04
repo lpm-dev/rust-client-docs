@@ -98,13 +98,48 @@ Then `lpm test` runs vitest on Node 22, regardless of your system Node. Auto-ins
 
 ## Workspaces
 
-`lpm test` doesn't have `--filter` / `--all` / `--affected` today — those are on [`lpm run`](/docs/dev/run). For workspace-scoped test runs:
+`lpm test` and `lpm bench` accept `--all`, `--filter`, `--affected`, `--base`, and `--fail-if-no-match` — same grammar as [`lpm run`](/docs/dev/run) and the lint/fmt/check tools.
 
 ```bash
-lpm run test --filter web --affected
+lpm test --all
+lpm test --filter web --filter api
+lpm test --filter './apps/*' --fail-if-no-match
+lpm bench --affected --base develop
 ```
 
-The `--filter` engine works against the `test` script in each member's `package.json`. Each member typically has `"test": "vitest run"` and the workspace runner walks the topology, forwarding output prefixed with the member name.
+Detection runs per member, so a workspace can mix runners (vitest in one member, jest in another) and each gets the right command. A member with no installed runner becomes a per-member detection failure in the JSON envelope rather than aborting the run.
+
+`--all` is mutually exclusive with `--filter` and `--affected`. `--filter` composes with `--affected`.
+
+### Forwarding the same flag names to the runner
+
+Bun's `bun test --filter` and a few other runner flags share names with the LPM workspace flags. To forward them to the runner instead of having LPM claim them, put them after `--`:
+
+```bash
+lpm test -- --filter pattern        # → bun test --filter pattern (or vitest, jest)
+lpm test -- --all                   # → runner --all (e.g. jest's git-mode flag)
+lpm test --filter web -- --filter pattern   # workspace + runner filter compose
+```
+
+Anything after `--` is forwarded verbatim regardless of name.
+
+### Watch mode in workspaces
+
+`--watch` interaction with workspace selectors is gated by selection size, not by whether a workspace flag was used at all:
+
+| Selection resolves to | `--watch` behavior |
+| --- | --- |
+| Exactly one member | Hands off to single-package mode against that member's directory. The vitest `run` → bare `vitest` rewrite documented above kicks in. |
+| Two or more members | Rejected with the actual count, to prevent N parallel watchers. |
+| Zero members | Rejected with "nothing to watch." |
+
+```bash
+lpm test --filter web --watch             # ✓ exactly one member matches
+lpm test --all --watch                    # ✗ rejected: N watchers
+lpm bench --filter '@scope/*' --watch     # ✓ if exactly one member matches; ✗ otherwise
+```
+
+If you want to watch a member from outside the workspace selection grammar, `cd <member> && lpm test --watch` works the same as the one-member-filter handoff.
 
 ## See also
 
