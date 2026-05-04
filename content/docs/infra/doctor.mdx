@@ -37,7 +37,54 @@ The check set is intentionally broad — every signal that "this project is in a
 - Project-local TypeScript present if `tsconfig.json` is in the tree
 - Auth tokens present and not expired
 
-`--json` returns the full per-check result set with status codes; `--verbose` adds remediation hints inline.
+`--json` returns the full per-check result set; `--verbose` adds remediation hints inline.
+
+## Machine-readable output (`--json`)
+
+`lpm doctor --json` is the structured surface every CI pipeline, MCP server, or scripting tool should consume — it's a contract, not a debug aid. The shape is stable; consumers should match on `code`, never on the human-readable `check` or `detail` strings.
+
+```json
+{
+  "success": true,
+  "no_failures": false,
+  "clean": false,
+  "has_warnings": true,
+  "passed": 12,
+  "failed": 1,
+  "warnings": 2,
+  "fixes_applied": [],
+  "checks": [
+    {
+      "code": "registry_reachable",
+      "check": "Registry",
+      "passed": true,
+      "severity": "pass",
+      "detail": "https://lpm.dev"
+    },
+    {
+      "code": "auth_invalid",
+      "check": "Authentication",
+      "passed": false,
+      "severity": "fail",
+      "detail": "token exists but invalid — run: lpm login"
+    }
+  ]
+}
+```
+
+Per-check fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `code` | `string` | Stable snake_case identifier. Examples: `registry_unreachable`, `node_modules_missing`, `pnpm_overrides_drift`. **Match on this.** |
+| `check` | `string` | Human-readable label. Wording can change. |
+| `passed` | `bool` | `true` for `pass` and `warn`; `false` for `fail`. |
+| `severity` | `string` | One of `pass` \| `fail` \| `warn`. |
+| `detail` | `string` | Human-readable detail with remediation. May be empty. |
+
+`severity = "warn"` carries `passed = true` so that warning-only runs don't trip strict CI gates that key off `no_failures`. Use `has_warnings` (top-level) or filter `checks[].severity == "warn"` if you want to surface warnings explicitly.
+
+Exit code: `0` when no `severity = "fail"` checks fired (warnings are tolerated), `1` otherwise.
 
 ## Auto-fix mode
 
