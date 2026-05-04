@@ -34,7 +34,9 @@ In order:
 4. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
 5. **Upload** — push the tarball to the chosen registry with the appropriate auth.
 
-`--check` runs steps 1–3 and stops. `--dry-run` runs through step 4 and stops.
+`--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
+
+`--dry-run` runs everything `--check` does, plus an LPM-side preflight: OIDC exchange (when LPM is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM-trust misconfiguration — it won't tell you whether the upload itself would land.
 
 ## Provenance
 
@@ -42,7 +44,12 @@ In order:
 lpm publish --provenance
 ```
 
-Generates a Sigstore-signed attestation that proves which CI workflow built the tarball and which commit it came from. Requires OIDC credentials — only works in CI environments with OIDC token exchange (GitHub Actions, GitLab CI, Bitbucket, CircleCI). Fails if provenance cannot be produced.
+Generates a Sigstore-signed attestation that proves which CI workflow built the tarball and which commit it came from. Requires an audience-`sigstore` OIDC token from a supported CI environment:
+
+- **GitHub Actions** — enable `permissions: id-token: write` on the job; the runtime mints the JWT.
+- **GitLab CI** — mint `SIGSTORE_ID_TOKEN` via the `id_tokens` block with `aud: sigstore` (the legacy `LPM_GITLAB_OIDC_TOKEN` env var is also accepted).
+
+Other platforms aren't supported — Sigstore needs the OIDC issuer to sign. The flag fails loud (non-zero exit) if no usable token is found or if Sigstore signing/Rekor recording fails; it never silently falls back to publishing without provenance.
 
 Consumers can later verify provenance via the audit pipeline or registry UI.
 
