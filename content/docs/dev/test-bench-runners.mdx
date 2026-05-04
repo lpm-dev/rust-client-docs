@@ -14,16 +14,18 @@ For [`lpm test`](/docs/dev/test):
 1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest run`
 2. **`jest`** in `dependencies` or `devDependencies` → runs `jest`
 3. **`mocha`** in `dependencies` or `devDependencies` → runs `mocha`
-4. **None of the above** → error: "no test runner found. Install vitest/jest/mocha or add a 'test' script to package.json"
+4. **`scripts.test` in `package.json`** → runs the user-defined script via `sh -c`
+5. **None of the above** → error: "no test runner found. Install vitest/jest/mocha or add a 'test' script to package.json"
 
-First match wins — vitest beats jest, jest beats mocha.
+First match wins — vitest beats jest, jest beats mocha, and any installed runner takes precedence over `scripts.test`. The script fallback only fires for projects with no recognized runner installed.
 
 For [`lpm bench`](/docs/dev/bench):
 
 1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest bench`
-2. **None of the above** → error: "no benchmark runner found. Install vitest or add a 'bench' script to package.json"
+2. **`scripts.bench` in `package.json`** → runs the user-defined script via `sh -c`
+3. **None of the above** → error: "no benchmark runner found. Install vitest or add a 'bench' script to package.json"
 
-Today vitest is the only auto-detected bench runner. Other benchmark frameworks (mitata, tinybench standalone, hyperfine) need a `bench` script in `package.json` and `lpm bench` falls back to running it via [`lpm run bench`](/docs/dev/run).
+Vitest is the only auto-detected bench runner today. For other frameworks (mitata, tinybench standalone, hyperfine), define a `bench` script in `package.json` — `lpm bench` runs it directly via the script fallback above.
 
 ## Argument forwarding
 
@@ -33,7 +35,7 @@ Anything after the command (or after `--`) is forwarded verbatim to the runner:
 lpm test                              # → vitest run (or jest, or mocha)
 lpm test src/utils.test.ts            # → vitest run src/utils.test.ts
 lpm test -- --reporter=verbose        # → vitest run --reporter=verbose
-lpm test -- --coverage --watch        # → vitest run --coverage --watch
+lpm test -- --coverage --watch        # → vitest --coverage --watch     (see Watch mode)
 
 lpm bench
 lpm bench src/parser.bench.ts         # → vitest bench src/parser.bench.ts
@@ -42,16 +44,32 @@ lpm bench -- --reporter=json
 
 `--` is optional but useful for arguments that look like LPM flags (otherwise clap might try to interpret them).
 
+## Watch mode
+
+Vitest's `run` subcommand forces single-pass execution — passing `--watch` after `run` is silently dropped. To make `lpm test --watch` actually enter watch mode, LPM rewrites the base command from `vitest run` to `vitest` whenever the forwarded args contain `--watch` (or the `-w` short form).
+
+```bash
+lpm test --watch                      # → vitest --watch
+lpm test -- -w src/utils.test.ts      # → vitest -w src/utils.test.ts
+```
+
+Other runners are unaffected:
+
+- `jest` and `mocha` accept `--watch` natively against their bare command, so the rewrite is vitest-specific.
+- `lpm bench --watch` works as-is — vitest's `bench` subcommand respects `--watch` directly.
+
+If your project's `package.json` has a custom `"test"` script (the [scripts.test fallback](#why-no-per-runner-subcommand)), LPM forwards `--watch` to that script verbatim without rewriting; the watch contract is whatever your script defines.
+
 ## Why no per-runner subcommand
 
-Other PMs ship `pnpm test` / `npm test` shortcuts that effectively `npm run test`. LPM's `lpm test` is **not** a script alias — it's actually different:
+Other PMs ship `pnpm test` / `npm test` shortcuts that effectively `npm run test`. LPM's `lpm test` is **not** a script alias — it prefers the runner over the script:
 
 | Command | Behavior |
 | --- | --- |
 | [`lpm run test`](/docs/dev/run) | Runs the `test` script from `package.json` (whatever you wrote there) |
-| `lpm test` | Auto-detects the runner, runs it directly. **Ignores** any `test` script in `package.json`. |
+| `lpm test` | Auto-detects vitest / jest / mocha and runs it directly. Falls back to `scripts.test` only when no runner is installed. |
 
-Why two paths: `lpm test` works in projects that don't have a `test` script — newly-bootstrapped repos, monorepo members where the test config is implicit, etc. If your project has a custom `test` script that does setup or env-injection beyond what the runner does on its own, `lpm run test` is what you want.
+Why this shape: `lpm test` works in projects that don't have a `test` script — newly-bootstrapped repos, monorepo members where the test config is implicit, etc. If your `test` script does setup or env-injection beyond what the runner does on its own, reach for `lpm run test` explicitly so the script always wins; with `lpm test`, the installed runner wins over your script.
 
 ## Subprocess passthrough
 

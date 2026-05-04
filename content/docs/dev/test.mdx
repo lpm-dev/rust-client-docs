@@ -12,10 +12,10 @@ Detects which test runner is installed in the project (vitest → jest → mocha
 ## Examples
 
 ```bash
-lpm test                              # run the whole suite
+lpm test                              # run the whole suite (single-pass)
 lpm test src/utils.test.ts            # run one file
-lpm test -- --run                     # vitest: single-pass mode
-lpm test -- --watch                   # forward --watch
+lpm test --watch                      # vitest: enter watch mode (see below)
+lpm test -- -w                        # short form, same effect
 lpm test -- --reporter=verbose
 ```
 
@@ -24,8 +24,9 @@ lpm test -- --reporter=verbose
 1. `vitest` (in `dependencies` or `devDependencies`)
 2. `jest`
 3. `mocha`
+4. `scripts.test` in `package.json` (only consulted when no runner above is installed)
 
-Whichever is found first wins. If none is installed, `lpm test` reports it.
+Whichever is found first wins. If none of the runners is installed and no `test` script exists, `lpm test` reports it.
 
 ## Argument forwarding
 
@@ -33,9 +34,23 @@ Anything after the command (or after `--`) is forwarded to the runner:
 
 ```bash
 lpm test -- --coverage --reporter=html
-# vitest: vitest --coverage --reporter=html
-# jest:   jest   --coverage --reporter=html
+# vitest: vitest run --coverage --reporter=html
+# jest:   jest       --coverage --reporter=html
 ```
+
+The vitest base command is `vitest run` (single-pass), except in [Watch mode](#watch-mode) below.
+
+## Watch mode
+
+`lpm test --watch` (or `-w`) enters watch mode. For vitest specifically, LPM rewrites the base command from `vitest run` to `vitest` so the `--watch` flag is honored — `vitest run` would silently force single-pass and drop the flag. jest and mocha accept `--watch` natively against their bare command, so the rewrite is vitest-only.
+
+```bash
+lpm test --watch                # vitest: → vitest --watch
+                                # jest:   → jest --watch
+                                # mocha:  → mocha --watch
+```
+
+See [Test & bench runners](/docs/dev/test-bench-runners#watch-mode) for the full rewrite rules.
 
 ## Flags
 

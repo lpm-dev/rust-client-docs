@@ -148,11 +148,67 @@ Ordered list of file copy rules. When `files` is omitted, `lpm add` copies every
 }
 ```
 
-Conditional dependency injection map. Outer keys match `configSchema` field names; inner keys match the user's selected value(s) for that field; values are arrays of npm dependency specs to add to the consumer's `package.json`.
+Conditional dependency injection map. Outer keys match `configSchema` field names; inner keys match the user's selected value(s) for that field; values are arrays of **dependency entries** added to the consumer's `package.json`. Each entry is either a bare name or a `name@range` spec:
 
-`@lpm.dev/*` entries are filtered out — those are delivered via recursive `lpm add`, not installed as runtime deps.
+```json
+{
+  "dependencies": {
+    "icons": {
+      "lucide": [
+        "lucide-react",                  // bare → ^resolvedLatest
+        "lucide-react@^0.400.0",         // explicit range, preserved verbatim
+        "lodash@4.17.21",                // explicit exact, preserved verbatim
+        "react@latest",                  // dist-tag → resolved + saved per policy
+        "@lpm.dev/owner.helpers@^1"      // any registry, range preserved
+      ]
+    }
+  }
+}
+```
 
-When `dependencies` is omitted, `lpm add` falls back to reading `dependencies` + `peerDependencies` from the package's own `package.json` (legacy path).
+The save-spec policy mirrors `lpm install <pkg>` (Phase 33):
+
+| Entry shape | What lands in consumer's `package.json` |
+| --- | --- |
+| Bare name (e.g., `"react"`) | `^resolvedLatest` (e.g., `"^18.3.1"`), respecting the consumer's `~/.lpm/config.toml > save-prefix|save-exact` |
+| `name@^range` / `name@~range` etc. | Preserved verbatim |
+| `name@1.2.3` (exact) | Preserved verbatim |
+| `name@latest` / `name@beta` (dist-tag) | Stable resolved → caret default; prerelease resolved → exact (no caret widening) |
+| `name@*` (explicit wildcard) | Preserved as `"*"` (the only path that lands `*` — never the default) |
+
+### Registry agnostic
+
+Names from any registry are accepted — npm-published, private-registry (declared in `.npmrc`), and `@lpm.dev/*` packages all flow through the same path. The package manager `lpm add` was invoked with (`--pm <lpm|npm|pnpm|yarn|bun|auto>`, where `auto` detects the project's existing package manager; default `lpm`) runs the install.
+
+### Resolve-then-write, with rollback
+
+`lpm add` resolves every bare/dist-tag entry against the registry **before** mutating `package.json`. Auth or access errors (a private package the user lacks a token for, an `@lpm.dev` marketplace package without a seat, a misspelled name) abort the whole `lpm add` cleanly — the manifest stays untouched. Without this fail-fast posture, an unresolvable entry would leave a stranded `*` range that the trailing install can't recover.
+
+If resolution succeeds but a later step fails — file copy, manifest mutation, or trailing install (any `--pm`) — `lpm add` rolls back atomically and exits with the underlying error. The transaction snapshots:
+
+| Path | Rollback behavior |
+| --- | --- |
+| Project `package.json` | Bytes restored to pre-`lpm add` state |
+| `lpm.lock`, `lpm.lockb` | Bytes restored, or removed if absent before |
+| Selected PM's lockfile (`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock` + `bun.lockb`) | Bytes restored, or removed if absent before |
+| Every source file `lpm add` copied into the project | Pre-existing files restored to original bytes; newly-created files deleted |
+| `.lpm/install-hash` | Always invalidated so the next `lpm install` re-derives clean state |
+
+What's outside the rollback surface, by design:
+
+- **The install directory itself**, plus any parent directories materialized to host the copied source files. `lpm add` resolves `target_dir` and creates it (and any canonical parents on the resolution chain) before the transaction opens — that mkdir is what lets the transaction snapshot canonical-pinned dest paths in the first place. A rolled-back failure leaves these directories on disk; the files inside them were rolled back, so the directories may end up empty.
+- **Recursive Swift `lpm add`** for SE-0292 source-package dependencies. Each recursive call owns its own transaction; the outer `lpm add` commits before triggering recursion so a Swift-dep failure doesn't roll back the root package's already-applied mutations.
+- **Agent skills** installed under `.lpm/skills/<package>/`. Skills are intentionally non-fatal (best-effort writes, swallowed errors) and run after the main transaction commits.
+
+If `lpm add` fails inside the rollback boundary, every file and lockfile under the transaction snaps back to its pre-`lpm add` state. The remaining residue is empty directories under the install target (cheap to clean up; `rm -rf` the directory if you don't want it). Re-run `lpm add` after fixing the underlying error to converge.
+
+### Author opt-out of legacy fallback
+
+Declaring `dependencies` — even with conditional branches that don't match the consumer's config — opts out of the legacy fallback below. An empty match is the author's deliberate signal "no deps for this configuration," not a request to fall back.
+
+### Legacy fallback
+
+When `dependencies` is omitted entirely, `lpm add` falls back to reading `dependencies` + `peerDependencies` from the package's own `package.json` (legacy path). Each entry's declared range carries through and is preserved verbatim. The same registry-agnostic policy applies — every entry, including `@lpm.dev/*`, is installed.
 
 ## See also
 

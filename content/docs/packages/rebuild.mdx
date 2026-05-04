@@ -7,9 +7,19 @@ description: "Run lifecycle scripts for installed packages — phase 2 of the in
 lpm rebuild [packages...]
 ```
 
-`lpm install` downloads and links packages without running any lifecycle scripts. `lpm rebuild` is **phase 2** — it selectively runs `preinstall`, `install`, `postinstall`, and `prepare` scripts based on the active [script policy](/docs/packages/install#lifecycle-scripts) and the project's `trustedDependencies`.
+`lpm install` downloads and links packages without running any lifecycle scripts. `lpm rebuild` is **phase 2** — it selectively runs lifecycle scripts based on the active [script policy](/docs/packages/install#lifecycle-scripts) and the project's `trustedDependencies`.
 
 Matches `npm rebuild` / `pnpm rebuild` semantics.
+
+## What runs
+
+`lpm rebuild` executes exactly three phases, in order:
+
+1. `preinstall`
+2. `install`
+3. `postinstall`
+
+Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/security-audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
 
 ## Examples
 
@@ -53,20 +63,35 @@ The CLI policy flags share semantics with [`lpm install`](/docs/packages/install
 
 Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied.
 
-Two escape hatches, both noisy:
+### Disabling the sandbox
+
+There is **no flag that disables the sandbox alone**. Disabling containment requires explicitly opting into credential exposure as well:
 
 ```bash
-lpm rebuild --unsafe-full-env --no-sandbox   # full host access — DANGEROUS
-lpm rebuild --sandbox-log                    # macOS only: log accesses, don't enforce
+lpm rebuild --unsafe-full-env --no-sandbox
 ```
+
+`--no-sandbox` without `--unsafe-full-env` is rejected at parse time. The pairing is deliberate — disabling the sandbox is high-impact, and the partner flag (which also exposes `LPM_TOKEN` / `NPM_TOKEN` / `GITHUB_TOKEN` to the script's environment) makes the consequences hard to miss. Reserve the combo for debugging a sandbox false-positive that `sandboxWriteDirs` can't express.
+
+### Diagnostic mode
+
+```bash
+lpm rebuild --sandbox-log
+```
+
+macOS-only. Rule triggers are **logged** via `sandboxd` but **not enforced**. View accesses via `log show --last 5m --predicate 'senderImagePath CONTAINS "Sandbox"'` and grep for the script's pid. **Not a safety signal** — a clean run under `--sandbox-log` does not mean the script would pass under the full sandbox; it only means the logged accesses were visible for review.
+
+On Linux, `--sandbox-log` errors at sandbox init (landlock has no native observe-only primitive) and points at `--unsafe-full-env --no-sandbox`.
+
+`--no-sandbox` and `--sandbox-log` are mutually exclusive.
+
+### Flag summary
 
 | Flag | Effect |
 | --- | --- |
-| `--unsafe-full-env` | Don't strip credentials before running scripts. Exposes `LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc. |
-| `--no-sandbox` | Disable the sandbox entirely. **Requires** `--unsafe-full-env` (paired by clap). Reserve for debugging a sandbox false-positive that `sandboxWriteDirs` can't express. |
-| `--sandbox-log` | macOS-only diagnostic mode. Rule triggers are **logged** via `sandboxd` but **not enforced**. NOT a safety signal — a clean run does not mean the script would pass under the full sandbox. View accesses via `log show --last 5m --predicate 'senderImagePath CONTAINS "Sandbox"'`. |
-
-`--no-sandbox` and `--sandbox-log` are mutually exclusive. On Linux, `--sandbox-log` errors at sandbox init (landlock has no native observe-only primitive) and points at `--unsafe-full-env --no-sandbox`.
+| `--unsafe-full-env` | Don't strip credentials before running scripts. Exposes `LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc. Also required to pair with `--no-sandbox`. |
+| `--no-sandbox` | Disable the sandbox entirely. Requires `--unsafe-full-env`. |
+| `--sandbox-log` | macOS-only diagnostic mode. Logged but not enforced. |
 
 ## `--force` flag
 
