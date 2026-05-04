@@ -19,6 +19,8 @@ lpm lint src/                  # lint a directory
 lpm lint -- --fix              # auto-fix where Oxlint can
 lpm lint -- --rules typescript # forward Oxlint flags
 lpm lint --all                 # workspace: lint every member
+lpm lint --filter web          # workspace: lint one member
+lpm lint --filter './apps/*'   # workspace: lint a path glob
 lpm lint --affected            # workspace: only members affected vs main
 lpm lint --affected --base develop
 ```
@@ -40,24 +42,55 @@ Run `lpm plugin update oxlint` to pull the latest release into the cache.
 ## Workspaces
 
 ```bash
-lpm lint --all                       # every member, topological order
-lpm lint --affected                  # only members touched since the base ref
-lpm lint --affected --base main      # change the base (default: main)
+lpm lint --all                            # every member
+lpm lint --filter web                     # exact name
+lpm lint --filter '@scope/*'              # glob
+lpm lint --filter './apps/*'              # path glob
+lpm lint --filter web --filter api        # union
+lpm lint --filter '!web-tests'            # exclusion
+lpm lint --affected                       # only members touched since the base ref
+lpm lint --affected --base main           # change the base (default: main)
+lpm lint --filter web --fail-if-no-match  # exit non-zero on typo'd filter
 ```
 
-`--all` and `--affected` are mutually exclusive.
+Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. The Oxlint binary is resolved once at the workspace root before fan-out, so the homogeneous-version case never races on cold-cache install.
+
+Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+`--all` and `--affected` are mutually exclusive; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
 | `--all` | Run in every workspace member |
+| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
 | `--affected` | Run only in members affected by changes vs `--base` |
 | `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
 
 Anything after `--` (or trailing) is forwarded to Oxlint.
 
 Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode (`lpm lint`) preserves Oxlint's stdout — LPM does not wrap it. Workspace mode (`--all` / `--filter` / `--affected`) emits a single LPM envelope on stdout, with each member's stdout/stderr captured per-member and surfaced inside the envelope only on failure:
+
+```json
+{
+  "success": false,
+  "packages": 5, "succeeded": 4, "failed": 1,
+  "duration_ms": 12340,
+  "members": [
+    { "name": "web", "success": true,  "exit_code": 0, "duration_ms": 2100 },
+    { "name": "api", "success": false, "exit_code": 1, "duration_ms": 800,
+      "stdout": "...", "stderr": "..." }
+  ]
+}
+```
+
+Spawn / config / plugin failures surface as `exit_code: null` paired with an `error` string, distinguishing "ran and exited non-zero" from "couldn't even launch."
 
 ## See also
 

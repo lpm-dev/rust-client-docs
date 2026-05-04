@@ -37,7 +37,12 @@ With `--json`, every error path also emits a structured JSON object on stdout be
 
 The `error_code` field is the canonical short name for the error variant (e.g. `auth_required`, `not_found`, `forbidden`, `network`, `invalid_package_name`, `store`, `task`, `plugin`). Use it for programmatic dispatch in CI / agents.
 
-For subprocess passthrough commands (`lpm run`, `lpm test`, etc.), `--json` does **not** emit a wrapping JSON envelope on failure — the wrapped command's own output (whatever it was) is the result. This preserves the "single JSON result" contract.
+For single-package subprocess passthrough (`lpm run script`, `lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON.
+
+Workspace and multi-task aggregation DOES emit an LPM envelope on stdout, but the envelope shape varies by command:
+
+- **`lpm lint --all` / `--filter` / `--affected`** (and the same for `fmt` / `check`) capture each member's subprocess stdout/stderr and surface them inside the envelope only on failure (truncated at 10 MB). Spawn / config / plugin failures appear as `exit_code: null` paired with an `error` string, distinguishing "ran and exited non-zero" from "couldn't even launch."
+- **`lpm run --all` / `--filter` / `--affected`** and **`lpm run` with multiple scripts** emit a metadata-only envelope — each member's status, exit code, duration, cache hit, skip reason — but never the captured subprocess stdout/stderr. To debug a failing member, re-run that member without `--json`.
 
 ## Common scenarios
 

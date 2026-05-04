@@ -18,6 +18,8 @@ lpm check                          # type-check the whole project
 lpm check -- --pretty              # forward tsc flags
 lpm check -- -p tsconfig.test.json # type-check a different tsconfig
 lpm check --all                    # workspace: every member
+lpm check --filter web             # workspace: one member
+lpm check --filter './apps/*'      # workspace: path glob
 lpm check --affected               # workspace: only affected members
 ```
 
@@ -32,24 +34,37 @@ If `tsc` isn't found, `lpm check` exits with a "command not found" error. Instal
 ## Workspaces
 
 ```bash
-lpm check --all
-lpm check --affected
-lpm check --affected --base develop
+lpm check --all                              # every member
+lpm check --filter web                       # exact name
+lpm check --filter '@scope/*'                # glob
+lpm check --filter './apps/*'                # path glob
+lpm check --affected --base develop          # affected vs a non-main branch
+lpm check --filter web --fail-if-no-match    # exit non-zero on typo'd filter
 ```
 
-`--all` and `--affected` are mutually exclusive.
+Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count.
+
+Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+`--all` and `--affected` are mutually exclusive; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
 | `--all` | Run in every workspace member |
+| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
 | `--affected` | Run only in members affected by changes vs `--base` |
 | `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
 
 Anything after `--` (or trailing) is forwarded to `tsc`. `--noEmit` is always passed.
 
 Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode (`lpm check`) preserves tsc's stdout — LPM does not wrap it. Workspace mode emits a single LPM envelope on stdout; per-member stdout/stderr is captured and surfaced inside the envelope only on failure. See [`lpm lint`](/docs/dev/lint#json-in-workspace-mode) for the exact envelope shape.
 
 ## See also
 
