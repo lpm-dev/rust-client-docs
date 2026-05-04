@@ -57,9 +57,9 @@ For full per-task field reference, see [`lpm.json` tasks](/docs/reference/lpm-js
 
 Two flavors of dependency:
 
-| Form | Meaning |
-| --- | --- |
-| `"build"` | Same-package dependency. Wait for *this* package's `build` task to finish first. |
+| Form       | Meaning                                                                                                           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `"build"`  | Same-package dependency. Wait for _this_ package's `build` task to finish first.                                  |
 | `"^build"` | Upstream-workspace dependency. Wait for `build` to finish in **every workspace member that this one depends on**. |
 
 The `^` prefix is read by [`task_graph::has_upstream_deps`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-runner/src/lpm_json.rs). Combined with `workspace:*`, this gives you: "build me only after every internal dep has built."
@@ -141,7 +141,21 @@ lpm run -p lint test typecheck
 
 ## Workspaces
 
-Every workspace-aware command (`run`, `lint`, `fmt`, `check`, `test`) accepts `--filter`, `--all`, and `--affected`. The runner walks the workspace graph and selects matching members in topological order:
+Workspace-aware commands accept `--filter`, `--all`, and `--affected`. The set today:
+
+| Command                        | `--all`          | `--filter`       | `--affected`     |
+| ------------------------------ | ---------------- | ---------------- | ---------------- |
+| [`lpm run`](/docs/dev/run)     | ✓                | ✓                | ✓                |
+| [`lpm lint`](/docs/dev/lint)   | ✓                | ✓                | ✓                |
+| [`lpm fmt`](/docs/dev/fmt)     | ✓                | ✓                | ✓                |
+| [`lpm check`](/docs/dev/check) | ✓                | ✓                | ✓                |
+| `lpm test` / `lpm bench`       | passthrough only | passthrough only | passthrough only |
+
+For `lpm test` and `lpm bench`, workspace-scoped runs go through [`lpm run`](/docs/dev/run) today: `lpm run test --filter web --affected`.
+
+Across workspace-aware commands, `--all` is the broad selector and is mutually exclusive with `--filter` and `--affected`. `--filter` may compose with `--affected`.
+
+The runner walks the workspace graph and selects matching members in topological order:
 
 ```bash
 lpm run build --all                         # every member, deps-first
@@ -149,7 +163,13 @@ lpm run test --filter web                   # one member
 lpm run test --filter './apps/*'            # path glob
 lpm run test --filter web --filter api      # union
 lpm run test --filter '!web-tests'          # exclusion
+
+lpm lint --filter './apps/*' --fail-if-no-match
+lpm fmt --filter '@scope/*' --check
+lpm check --affected --base develop
 ```
+
+`lpm lint`, `lpm fmt`, and `lpm check` add `--fail-if-no-match` for CI pipelines that want to catch typo'd filters early. They don't expose `--parallel` or `--continue-on-error` — workspace fan-out is parallel by default within each topological level. The run continues across all levels even if individual members fail; the overall command exits non-zero after aggregation when any member failed.
 
 Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
 
