@@ -200,6 +200,49 @@ Local-only patches applied after install, `patch-package`-style. Selector format
 
 The patch engine verifies the store entry's integrity matches `originalIntegrity` on every install. Drift is a hard error.
 
+### `peerDependencyRules`
+
+```json
+{
+  "lpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": ["@types/react", "fsevents"],
+      "allowedVersions": {
+        "react": "16 || 17 || 18",
+        "card>react": "17",
+        "@scope/foo@^2>react": "17",
+        "typescript": "5"
+      },
+      "allowAny": ["@babel/*"]
+    }
+  }
+}
+```
+
+Tunes the post-resolution peer-dependency warning loop. Three independent sub-keys; each addresses a different complaint:
+
+| Sub-key | Effect | Key shape |
+| --- | --- | --- |
+| `ignoreMissing` | Suppress missing-peer warnings for the listed names. Use when a peer is intentionally optional (something else installs it; your code handles absence). | Names + glob patterns (`*`, `@scope/*`, `*-suffix`, etc.) |
+| `allowedVersions` | Widen the accepted range. When the resolved peer's version doesn't satisfy the package's declared range, this widened range is tested as a fallback. If either matches, no warning fires. | Structured selectors (see below) |
+| `allowAny` | Accept any version when the peer is in the tree. Suppresses version-mismatch warnings for matched names. **Does not** suppress missing-peer warnings (combine with `ignoreMissing` for that). | Names + glob patterns |
+
+#### `allowedVersions` selector grammar
+
+The same grammar as [`lpm.overrides`](#overrides). The selector decides which `(consumer, peer)` pair the rule applies to:
+
+| Selector | Matches |
+| --- | --- |
+| `"react"` | any peer named `react`, regardless of consumer |
+| `"@scope/foo"` | scoped peer, any consumer |
+| `"foo>react"` | `react` peer of `foo` (any version of foo) |
+| `"foo@^2>react"` | `react` peer of `foo` whose installed version satisfies `^2` |
+| `"@scope/foo@^2>react"` | scoped parent + version range |
+
+Multi-segment paths (`"a>b>c"`) and standalone version qualifiers on a bare peer name (`"foo@2"` without `>`) are rejected at install time. Glob patterns are **not** accepted in `allowedVersions` — use the structured selector grammar above.
+
+Same shape as pnpm's `pnpm.peerDependencyRules` — `lpm migrate` translates the pnpm side verbatim, validating selector keys with the same parser the resolver uses at install time. Hand-authored typos in `lpm.peerDependencyRules.allowedVersions` (bad selector, unparseable widened range) abort the install with a named error — same fail-closed posture as `lpm.overrides`. Drift between the pnpm and LPM sides post-migration is surfaced as the `pnpm_peer_rules_drift` code on `lpm doctor --json`.
+
 ## The `lpm.scripts` block
 
 Configuration for lifecycle-script execution under `lpm rebuild` and the auto-build flow. Most fields control the sandbox and capability surface granted to scripts.
