@@ -52,9 +52,67 @@ lpm test --watch                # vitest: → vitest --watch
 
 See [Test & bench runners](/docs/dev/test-bench-runners#watch-mode) for the full rewrite rules.
 
+## Workspaces
+
+```bash
+lpm test --all                            # every member
+lpm test --filter web                     # exact name
+lpm test --filter '@scope/*'              # glob
+lpm test --filter './apps/*'              # path glob
+lpm test --filter web --filter api        # union
+lpm test --affected                       # only members touched since main
+lpm test --affected --base develop
+lpm test --filter web --fail-if-no-match  # exit non-zero on typo'd filter
+```
+
+Detection runs per member, so a workspace can mix runners (one member uses vitest, another uses jest) and each gets the right command. A member with no installed runner and no `scripts.test` becomes a per-member detection failure in the JSON envelope rather than aborting the whole run.
+
+`--all` is mutually exclusive with `--filter` and `--affected`. `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+
+### Forwarding runner flags with the same names
+
+The five workspace flags (`--all`, `--filter`, `--affected`, `--base`, `--fail-if-no-match`) are claimed by LPM. To pass any of them through to the underlying runner (e.g. bun's `--filter`, jest's `--all`), put them after `--`:
+
+```bash
+lpm test -- --filter pattern              # forwards --filter to bun/vitest/etc
+lpm test -- --all                         # forwards --all to the runner
+lpm test --filter web -- --reporter=verbose  # workspace + forwarded args
+```
+
+Anything after `--` is forwarded verbatim regardless of name.
+
+### Watch with a workspace selector
+
+`lpm test --all --watch` would start one watcher per workspace member — almost always a mistake. So watch mode is gated by selection size:
+
+```bash
+lpm test --filter web --watch             # ✓ one member, one watcher (hands off
+                                          #   to single-package mode in web/)
+lpm test --all --watch                    # ✗ rejected: would start N watchers
+lpm test --filter '@scope/*' --watch      # ✓ allowed only if exactly one member matches
+                                          # ✗ rejected with the actual count if more
+lpm test --filter typo --watch            # ✗ rejected: nothing to watch
+```
+
+When the filter resolves to exactly one member, `lpm test` runs against that member's directory as if you'd `cd`-ed in — the existing vitest `run` → bare `vitest` rewrite kicks in, so `--watch` is honored.
+
 ## Flags
 
-`lpm test` has no LPM-specific flags — everything is forwarded to the underlying runner. Use the [global flags](/docs/commands#global-flags) for output formatting (`--json`, `--verbose`).
+| Flag                 | Effect                                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--all`              | Run in every workspace member                                                                         |
+| `--filter <expr>`    | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable) |
+| `--affected`         | Run only in members affected by changes vs `--base`                                                   |
+| `--base <REF>`       | Git base ref for `--affected` (default: `main`)                                                       |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set                                                     |
+
+Anything after `--` (or trailing) is forwarded to the runner.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode (`lpm test`) preserves the runner's stdout — LPM does not wrap it. Workspace mode emits a single LPM envelope on stdout; per-member stdout/stderr is captured and surfaced inside the envelope only on failure. See [`lpm lint`](/docs/dev/lint#json-in-workspace-mode) for the exact envelope shape. Per-member detection failures (no runner installed) appear as `exit_code: null` paired with an `error` string.
 
 ## See also
 
