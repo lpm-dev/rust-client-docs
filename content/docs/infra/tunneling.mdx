@@ -46,7 +46,7 @@ The CLI pins each relay's certificate independently — see [Certificate pinning
 
 ## Per-plan limits
 
-Tunnels are gated by plan tier across **seven** dimensions:
+Tunnels are gated by plan tier across **six** dimensions:
 
 | Dimension | Free | Pro | Org |
 | --- | --- | --- | --- |
@@ -55,12 +55,17 @@ Tunnels are gated by plan tier across **seven** dimensions:
 | Max body size | **10 MB** | 100 MB | 100 MB |
 | Max session length | **2 hours** | unlimited | unlimited |
 | Custom subdomain claims | **0** | 3 total | 10 total |
-| Reconnect grace | none — new random domain | **5 min** | **5 min** |
 | `--tunnel-auth` flag | not available | available | available |
 
 Limits are enforced at the relay (the Cloudflare Worker), not the CLI. They're documented in [`workers/tunnel/src/limits.js`](https://github.com/lpm-dev/a-package-manager/blob/main/workers/tunnel/src/limits.js).
 
-The reconnect-grace window is what makes claimed domains feel "always there" — when your tunnel disconnects (laptop sleep, network blip), the URL stays reserved for 5 minutes before another instance can grab it. Free-tier tunnels lose their random domain immediately and get a new one on reconnect.
+### Reconnecting to your own domain
+
+Concurrent caps are enforced atomically by a per-user quota DO. Slots are keyed by domain, so a **same-domain reconnect is a 0-net replacement** — never a +1 against your cap, regardless of plan. Concretely: if you're a Pro user with three live tunnels and one of them disconnects (laptop sleep, network blip), reconnecting it doesn't temporarily inflate your count to 4-and-then-deny. The slot stays reserved for that domain across the disconnect/reconnect cycle.
+
+The URL itself stays the same across reconnects whenever it's deterministic from your identity. That covers explicitly claimed Pro/Org subdomains (held by your database claim) and the implicit Pro default of `<username>.lpm.fyi` (held by your username). Continuity comes from the deterministic source, not from a transient grace timer.
+
+Free-tier random subdomains are different: they're freshly minted each connect with no claim and no implicit binding, so every restart hands you a new 10-character subdomain.
 
 ## Base domains
 
@@ -90,7 +95,7 @@ k8f2m9x1ab.lpm.fyi
 9j3vq2bpqr.lpm.fyi
 ```
 
-Generated cryptographically per session with rejection sampling over a 36-symbol alphabet, so the distribution is uniform. Different on every reconnect — the free tier has no reconnect-grace window, so each restart hands you a fresh URL.
+Generated cryptographically per session with rejection sampling over a 36-symbol alphabet, so the distribution is uniform. Different on every reconnect — free random subdomains are not claimed and aren't preserved across restarts, so each one hands you a fresh URL.
 
 These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (capped at 2 hours under the free session cap) and then they're gone.
 
