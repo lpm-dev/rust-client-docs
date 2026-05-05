@@ -42,16 +42,34 @@ lpm swift-registry              # idempotent
 lpm swift-registry --force      # re-download the signing certificate (cert rotation)
 ```
 
-Three steps under the hood:
+Four steps under the hood. Every step is **fail-loud** — if any one of them returns a non-success exit, the command aborts instead of completing with broken signing:
 
-1. **Set the registry for the lpmdev scope.**
+1. **Set the registry for the `lpmdev` scope.**
    ```bash
    swift package-registry set --scope lpmdev https://lpm.dev/api/swift-registry
    ```
 2. **Log in.** Uses the LPM bearer token resolved through the standard session manager (`LPM_TOKEN` → keychain → OIDC → none).
-3. **Install the signing certificate.** Downloads the LPM signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`.
+3. **Install the signing certificate.** Downloads the CMS signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`. The DER body is size-checked before being written; an empty / truncated / HTML-error response aborts instead of leaving a broken cert on disk.
+4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with a default `signing.onUnsigned = "warn"` policy and a scope-specific override pinning `lpmdev` to `signing.onUntrustedCertificate = "silentAllow"` — see [Trust model](#trust-model) for the rationale.
 
-The certificate is **trust-on-first-install** today — the user implicitly trusts the cert by running `lpm swift-registry`. Re-run with `--force` after a documented cert rotation.
+`--force` re-downloads the cert even when a valid one is on disk. A failed re-download with `--force` is fatal even if a stale cert is still on disk — silently keeping the stale cert would defeat the explicit rotation the user asked for.
+
+When `lpm install` first encounters a Swift package in a project that hasn't been set up, it runs the same four-step path (in `ensure_configured` mode) before resolving the dep. Same fail-loud contract applies, so a one-shot `lpm install @lpm.dev/owner.swift-pkg` cannot finish "successfully" with signing broken.
+
+## Trust model
+
+What the signature buys you, and what it doesn't — be precise about both:
+
+**Current posture: detached package integrity + HTTPS transport authenticity.**
+
+- **Detached package integrity.** SPM verifies the CMS signature against the source archive bytes on every install. A tampered tarball fails the integrity check before any code runs.
+- **Transport authenticity via HTTPS.** The lpm.dev origin is the trust anchor for "this came from LPM" — the system CA chain authenticates the connection that carried both the signing cert and the tarballs themselves.
+
+**Not current posture: trusted signer identity verification.**
+
+LPM's signing cert is self-signed, non-CA, and code-signing-only. SPM's root trust store rejects it (root certs must have basicConstraints `CA=true`). The `silentAllow` scope override in step 4 tells SPM to accept the signature without a chain to a system trust root for the `lpmdev` scope. The cryptographic CMS check still runs; what's bypassed is the "is this signer in my trust chain?" gate.
+
+The signer today is the LPM registry, not the package author — the signature attests "this came from LPM," not "this came from author X." Per-author attribution (Sigstore, transparency log, whatever shape it takes) is a deliberately separate, future track. This page will be updated when that lands; until then, treat any "signed by author X" mental model as not implemented.
 
 ## Installing a Swift package
 
@@ -85,9 +103,14 @@ Detected as a Swift package when `lpm.config.json` declares `ecosystem: "swift"`
 
 ## Verifying signatures
 
-SPM clients running `lpm swift-registry` install the LPM root cert and trust signatures chained from it. Manual verification is also possible — download the cert from `https://lpm.dev/api/swift-registry/certificate` (DER format) and point SPM at it via `swift package-registry`'s standard trust-store flags.
+SPM verifies the CMS detached signature on every package archive at install time. With `lpm swift-registry` configured (or `--force` after a documented cert rotation), the verifier path runs cleanly without prompting.
 
-If the cert ever rotates (planned or emergency), the docs will direct you to re-run `lpm swift-registry --force`. A stale local trust store will refuse new signatures with a clear error rather than silently accepting them.
+Two failure shapes a user can run into:
+
+- **`onUnsigned: warn`** — a Swift package without a signature surfaces as a warning, not a hard error. LPM-published packages are always signed, so this typically only appears for non-LPM packages SPM resolves alongside.
+- **Cert missing or out of date** — SPM emits a "signer is not trusted" error. Re-run `lpm swift-registry` (or `lpm swift-registry --force` if you suspect a stale cert) to refresh both the cert file and the registries.json scope override.
+
+If the cert rotates server-side, re-run `lpm swift-registry --force`. A failed `--force` re-download is fatal — `lpm` will not silently keep using the stale cert.
 
 ## Wire format details
 
