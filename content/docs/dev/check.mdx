@@ -29,7 +29,31 @@ lpm check --affected               # workspace: only affected members
 lpm install -D typescript
 ```
 
-If `tsc` isn't found, `lpm check` exits with a "command not found" error. Install TypeScript as a project dev dependency.
+`lpm check` resolves `tsc` from `node_modules/.bin` first and falls back to the system `PATH`. The project-local install is the right answer — editor IntelliSense (`tsserver` from `node_modules/typescript`) and CI run the same version, and your `tsconfig.json` references resolve against the same `@types/*` packages.
+
+### Preflight
+
+Before spawning `tsc`, `lpm check` verifies setup and surfaces specific errors:
+
+| Condition | Error |
+| --- | --- |
+| `tsconfig.json` is missing | `no tsconfig.json found in <dir>. Add one (or pass -p <path>) to use a different one.` |
+| `typescript` declared in `package.json` but not installed | `typescript declared in package.json but not installed. Run: lpm install` |
+| `typescript` not declared and no `tsc` on `PATH` | `typescript not installed. Run: lpm install -D typescript` |
+
+The preflight is **argument-aware**: when you pass `-p <path>`, `--project <path>`, or a positional file argument, the tsconfig check is skipped and `tsc` decides — `lpm check -- -p tsconfig.test.json` and `lpm check src/foo.ts` both work without a root `tsconfig.json`.
+
+### `lpm doctor` reports the same signal
+
+`lpm doctor` emits one TypeScript check per `tsconfig.json` in the workspace, with stable codes:
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `typescript_healthy` | pass | `tsc` resolves through the project-local `node_modules/.bin` chain. Editor + CI parity holds. |
+| `typescript_missing_for_tsconfig` | warn | `tsc` runs only via the system `PATH`. The project lacks a local install — editor and CI may use a different version. Run `lpm install -D typescript` to converge. |
+| `typescript_unavailable` | fail | `tsc` cannot run at all. Run `lpm install` if `typescript` is already declared, or `lpm install -D typescript` to add it. |
+
+Doctor performs only the cheap reachability + dep-declaration check; the type-check itself belongs to `lpm check`.
 
 ## Workspaces
 
