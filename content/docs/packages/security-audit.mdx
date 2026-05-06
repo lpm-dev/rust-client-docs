@@ -31,54 +31,54 @@ Approvals are **strict**: bound to `{name, version, integrity, scriptHash}`. A r
 
 The lifecycle phases that actually run during `lpm install`'s build pipeline are `preinstall`, `install`, `postinstall`. The broader BLOCKED set (which detection scans for) also includes `preuninstall`, `uninstall`, `postuninstall`, `prepare`, and `prepublishOnly` — packages that declare any of these get flagged even if the current pipeline doesn't execute them.
 
-## Layer 2: Behavioral analysis (22 tags)
+## Layer 2: Behavioral analysis
 
 The `lpm-security` crate's `behavioral` module performs static analysis on every extracted package. Results are cached in `.lpm-security.json` next to the package files — computed once per `(name, version)`, forever.
 
-Three groups of tags:
+Three groups of tags — source behavior (what the code does), supply-chain signals (what the artifact looks like), and manifest declarations (what `package.json` declares):
 
-**Source tags (10)** — what the source code does:
-
-| Tag | Detects |
-| --- | --- |
-| `:eval` | `eval`, `Function()`, `vm.runInThisContext` |
-| `:network` | Outbound HTTP/WS clients |
-| `:fs` | Filesystem writes outside the package's own dir |
-| `:shell` | `spawn`/`exec`/`execSync` shell calls |
-| `:child-process` | Use of the `child_process` module |
-| `:native` | Native modules (`.node`, `.wasm`) |
-| `:crypto` | Cryptographic primitives |
-| `:dynamic-require` | Dynamic `require()` (variable arg) |
-| `:env` | Reads `process.env` |
-| `:ws` | WebSocket clients |
-
-**Supply-chain tags (7)** — what the artifact looks like:
+**Source tags** — what the source code does:
 
 | Tag | Detects |
 | --- | --- |
-| `:obfuscated` | Obfuscation patterns (renamed identifiers, packed expressions) |
-| `:high-entropy` | High-entropy string blobs (likely keys / encoded payloads) |
-| `:minified` | Minified-only source (no source maps, no comments) |
-| `:telemetry` | Calls to common analytics/telemetry endpoints |
-| `:url-strings` | Inline URL string literals (with domain extraction in `meta`) |
-| `:trivial` | Tiny by AST node count (one-liner packages, common attack surface) |
-| `:protestware` | Match against a curated list of known sabotage / protest-license packages |
+| `:eval` | Use `eval`, `Function()`, or `vm.runInThisContext` |
+| `:network` | Make outbound HTTP / WS connections |
+| `:fs` | Touch the filesystem outside their own directory |
+| `:shell` | Spawn shells (`spawn`, `exec`, `execSync`) |
+| `:child-process` | Use `child_process` (any form) |
+| `:native` | Ship native modules (`.node`, `.wasm`) |
+| `:crypto` | Use cryptographic primitives |
+| `:dynamic-require` | Use dynamic `require()` (variable arg) |
+| `:env` | Read `process.env` |
+| `:ws` | Use WebSockets |
 
-**Manifest tags (5)** — what the `package.json` declares:
+**Supply-chain tags** — what the artifact looks like:
+
+| Tag | Detects |
+| --- | --- |
+| `:obfuscated` | Show signs of code obfuscation |
+| `:high-entropy` | Contain high-entropy string blobs |
+| `:minified` | Ship minified-only source |
+| `:telemetry` | Make telemetry / analytics calls |
+| `:url-strings` | Contain URL string literals |
+| `:trivial` | Tiny — measured by AST node count |
+| `:protestware` | Match a curated list of known protest-license / sabotage packages |
+
+**Manifest tags** — what the `package.json` declares:
 
 | Tag | Detects |
 | --- | --- |
 | `:git-dep` | Installed from a git URL |
-| `:http-dep` | Installed from a raw HTTP tarball |
+| `:http-dep` | Installed from an HTTP tarball URL |
 | `:wildcard-dep` | Declared with `*` or `latest` |
 | `:copyleft` | Copyleft license (GPL family) |
-| `:no-license` | Missing `license` field |
+| `:no-license` | No `license` field |
 
 Plus state tags driven by other layers (`:scripts`, `:built`, `:vulnerable`, `:deprecated`, `:lpm`, `:npm`, `:critical`/`:high`/`:medium`/`:info`).
 
 ### Performance design
 
-- `RegexSet` + `OnceLock` for compile-once, single-pass matching across 22 patterns.
+- `RegexSet` + `OnceLock` for compile-once, single-pass matching across all behavioral patterns.
 - All regex uses Rust's `regex` crate (Thompson NFA, **linear-time guarantees**). The `fancy-regex` crate is **banned** for security analysis — backtracking against untrusted input is a ReDoS vector.
 - File extension filter before I/O (skip non-source files).
 - Per-file size cap: 2MB. Per-package total: 50MB scanned. Per-package file count: 5,000.
