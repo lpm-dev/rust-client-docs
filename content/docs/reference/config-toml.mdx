@@ -3,7 +3,7 @@ title: ~/.lpm/config.toml
 description: "User-level CLI defaults — applies to every project on this machine."
 ---
 
-`~/.lpm/config.toml` is the per-user CLI configuration file. It sets defaults that apply to every project on the machine, sitting **below** project-level config (`./lpm.toml`, `package.json > lpm`) and **above** built-in defaults in the precedence chain.
+`~/.lpm/config.toml` is the per-user CLI configuration file. It sets defaults that apply to every project on the machine, sitting **below** project-level config (`./lpm.toml`, `package.json > lpm`) and **above** built-in defaults in the precedence chain — except for `linker`, where the user-level value beats `package.json > lpm > linker`. See [Precedence](#precedence) for details.
 
 You can edit the file directly, or use [`lpm config`](/docs/reference/config) to manage it from the CLI:
 
@@ -30,6 +30,9 @@ minimum-release-age-secs = 86400
 # Engine constraints (engines.lpm + engines.node)
 engine-strict = true
 
+# node_modules layout (overrides package.json > lpm > linker)
+linker = "isolated"
+
 # Tunnel relay (override per-process with LPM_TUNNEL_RELAY)
 [tunnel]
 relay-url = "wss://relay.lpm.fyi/connect"
@@ -42,6 +45,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install` and `lpm rebuild`. |
 | `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
+| `linker` | `"isolated"` \| `"hoisted"` | `"isolated"` | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
 | `tunnel.relay-url` | string | `"wss://relay.lpm.fyi/connect"` | WebSocket URL for the LPM tunnel relay. Per-process override: `LPM_TUNNEL_RELAY`. Each host gets its own TOFU pin under `~/.lpm/relay-pins/<host>`. |
 
 Unknown keys are accepted silently — forward-compatible by design.
@@ -59,13 +63,25 @@ Both parse to `86400`. Invalid values (non-numeric strings, negative numbers, et
 
 ## Precedence
 
-For each setting, the precedence chain is (highest first):
+For most settings, the precedence chain is (highest first):
 
 1. **CLI flag** — e.g. `--exact`, `--policy=allow`, `--min-release-age=1h`, `--no-engine-strict`
 2. **`package.json > lpm`** — for keys that exist there (`scriptPolicy`, `minimumReleaseAge`, `engineStrict`)
 3. **`./lpm.toml`** — project-level (today: `save-prefix`, `save-exact`)
 4. **`~/.lpm/config.toml`** — this file
 5. **Built-in default**
+
+### Exception — `linker`
+
+The `linker` key inverts the user-vs-project order. Per-user preference (this file) wins over `package.json > lpm > linker`, because the layout choice is an environmental decision (which `node_modules` shape this developer's tools and editor expect) that shouldn't be overridden by every cloned repo:
+
+1. `lpm install --linker <isolated|hoisted>` — per-invocation
+2. `~/.lpm/config.toml > linker` — this file
+3. `LPM_LINKER` — per-process env var
+4. `package.json > lpm > linker` — project-declared default
+5. Built-in default `"isolated"`
+
+The resolved mode is folded into `.lpm/install-hash` so a post-install flip of any of these surfaces invalidates the "up to date" cache and triggers a re-link on the next `lpm install`.
 
 ## File location
 
