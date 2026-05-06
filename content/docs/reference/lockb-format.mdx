@@ -52,7 +52,7 @@ All numeric fields are little-endian. Packages are sorted by name so reads can b
 
 ## Wire-format version
 
-Current: `v2` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). Phase 43 bumped `1 → 2` to append `(tarball_off, tarball_len)` to every `PackageEntry`.
+Current: `v2` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`.
 
 The reader rejects any file whose header `version` is not exactly `BINARY_VERSION` — strict by design. Per-entry layout differs across versions, so a v2 reader interpreting v1 30-byte entries as 36-byte entries would slip a half-package every time and produce garbage. On rejection, `read_fast` falls back to parsing the TOML lockfile and the next `write_all` rewrites `lpm.lockb` as the current version, completing the migration transparently.
 
@@ -66,8 +66,8 @@ To keep this sentinel unambiguous, the writer **rejects empty strings at insert 
 
 The binary format is intentionally smaller than the TOML format. A few rare fields are not represented:
 
-- **`alias-dependencies`** (Phase 40 P2 npm-alias edges)
-- **`root-aliases`** (Phase 40 P2 root-level npm-alias map)
+- **`alias-dependencies`** — npm-alias edges
+- **`root-aliases`** — root-level npm-alias map
 
 Lockfiles that use **any** alias edges are written as TOML-only — the binary file is skipped entirely. Reads fall through to the TOML lockfile in that case. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping alias info would produce a binary lockfile that disagrees with the TOML lockfile and a warm install that materializes `node_modules/<target>/` instead of `node_modules/<local>/`.
 
