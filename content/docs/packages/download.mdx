@@ -4,7 +4,7 @@ description: "Download and extract a package tarball — no install side-effects
 ---
 
 ```bash
-lpm download <package> [--version <V>] [--out <DIR>]
+lpm download <package> [--version <V>] [--output <DIR>]
 ```
 
 Fetches a package tarball from the appropriate registry and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
@@ -14,9 +14,9 @@ Useful for inspecting a package's contents before you trust it, archiving a snap
 ## Examples
 
 ```bash
-lpm download zod                                 # latest, into ./zod-<version>/
+lpm download zod                                 # latest, extracted into the current directory
 lpm download zod --version 4.3.6                 # a specific version
-lpm download zod --out /tmp/inspect              # extract into /tmp/inspect/
+lpm download zod --output /tmp/inspect           # extract into /tmp/inspect/ (or `-o`)
 lpm download @lpm.dev/owner.pkg --version 2.1.0  # works against any registry
 lpm download react --json                        # structured output (URL, integrity, paths)
 ```
@@ -46,9 +46,36 @@ For a real install, use [`lpm install`](/docs/packages/install). For source deli
 | Flag | Effect |
 | --- | --- |
 | `--version <V>` | Specific version to download (default: latest) |
-| `--out <DIR>` | Output directory (default: current working directory) |
+| `--output <DIR>`, `-o` | Output directory (default: current working directory). The `output_dir` field in `--json` mode is canonicalized to an absolute path regardless of how the flag was passed. |
 
-Plus the [global flags](/docs/commands#global-flags). `--json` returns structured output including the resolved tarball URL, integrity hash, version, and the absolute extraction path.
+Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` envelope
+
+```json
+{
+  "success": true,
+  "package": "react",
+  "version": "18.3.1",
+  "tarball_url": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+  "integrity": "sha512-...",
+  "integrity_verified": true,
+  "size_bytes": 87654,
+  "output_dir": "/abs/path/to/output",
+  "files_extracted": 42,
+  "elapsed_secs": 0.412
+}
+```
+
+Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `tarball_url` | Resolved tarball URL the bytes came from. Useful for mirroring or audit logs. |
+| `integrity` | SRI string the registry advertised for this version (e.g. `sha512-…`), or `null` if the registry didn't ship one. |
+| `integrity_verified` | `true` when the SRI was present and verified, `false` when the registry didn't ship one (verification was skipped, not failed — a verification failure aborts the run). |
+| `output_dir` | Absolute path where files were extracted (canonicalized). |
+| `files_extracted` | Count of files written from the tarball, after the `package/` prefix is stripped. |
 
 ## See also
 
