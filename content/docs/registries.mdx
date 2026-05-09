@@ -38,6 +38,98 @@ registry=https://my-mirror.example.com
 
 For per-environment tokens, prefer `${VAR}` expansion (above) over hardcoded secrets — LPM and npm both support it.
 
+## TLS, custom CAs, and mTLS
+
+LPM honors the same `.npmrc` TLS keys npm does. All settings can be set globally or per-origin (`//host/:key=value`); per-origin scoping wins for the matching host.
+
+### Trusting a corporate CA
+
+```ini title=".npmrc"
+# Add a CA to the trust store (file path or inline PEM).
+cafile=/etc/ssl/corp-ca.pem
+ca="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# Per-origin form: only this host trusts the extra CA.
+//npm.internal/:cafile=/etc/ssl/corp-ca.pem
+```
+
+`cafile` and `ca` are **additive** — they extend the system trust store, never replace it. A globally-trusted CA still validates `registry.npmjs.org` normally.
+
+### Disabling cert verification (escape hatch)
+
+```ini title=".npmrc"
+strict-ssl=false
+```
+
+Disables hostname, expiry, and CA validation **process-wide**. LPM logs a loud warning at install start whenever `strict-ssl=false` is in effect — this is the kind of setting that should never accidentally land in CI.
+
+Per-origin `//host/:strict-ssl=false` is **not** supported in v1; the parser warns and ignores it. Use `cafile` to scope a custom-CA trust addition instead.
+
+### Mutual TLS (client certificates)
+
+For private registries that require client-cert authentication, point LPM at a PEM cert and key:
+
+```ini title=".npmrc"
+# Global mTLS identity — applies to every request from the default client.
+certfile=/etc/ssl/client.pem
+keyfile=/etc/ssl/client.key
+
+# Per-origin mTLS — only this host gets the client cert.
+//npm.internal/:certfile=/etc/ssl/client.pem
+//npm.internal/:keyfile=/etc/ssl/client.key
+```
+
+`certfile` and `keyfile` must always be set together — half-configured global identities abort the install with a cited error. Per-origin half-configurations only fail when that origin is actually used.
+
+#### Path resolution
+
+Relative paths in `certfile=` / `keyfile=` / `cafile=` resolve against the `.npmrc` file that contained them, not against the working directory you ran `lpm install` from. So in `~/.npmrc`:
+
+```ini title="~/.npmrc"
+certfile=client.pem      # → ~/client.pem
+keyfile=client.key       # → ~/client.key
+```
+
+You can drop secrets next to the `.npmrc` and reference them with bare names.
+
+#### Encrypted private keys
+
+LPM accepts encrypted PKCS#8 keys. The passphrase is resolved in this order:
+
+1. `LPM_KEY_PASSPHRASE` environment variable (the CI-friendly path).
+2. Interactive TTY prompt — only when both stdin AND stdout are a terminal.
+3. Otherwise, hard error citing the keyfile line.
+
+```bash
+LPM_KEY_PASSPHRASE='hunter2' lpm install
+```
+
+The passphrase is cached in memory for the lifetime of the install — multiple per-origin clients sharing the same key file prompt at most once.
+
+If your key uses the legacy PKCS#1 `Proc-Type: 4,ENCRYPTED` format, convert it first:
+
+```bash
+openssl pkcs8 -topk8 -in legacy.key -out key.pem
+```
+
+#### PKCS#12 (.p12 / .pfx) is not supported
+
+LPM uses rustls, which doesn't ingest PKCS#12 archives directly. Convert with openssl and point `certfile=` / `keyfile=` at the resulting PEMs:
+
+```bash
+openssl pkcs12 -in identity.pfx -clcerts -nokeys -out cert.pem
+openssl pkcs12 -in identity.pfx -nocerts  -nodes  -out key.pem
+```
+
+Then:
+
+```ini title=".npmrc"
+certfile=/path/to/cert.pem
+keyfile=/path/to/key.pem
+```
+
+If you point `certfile=` or `keyfile=` directly at a `.p12`/`.pfx` file, LPM emits a cited error with this recipe inline.
+
 ## When does lpm.dev come in
 
 lpm.dev is a registry **plus** an auth and monetization layer. Use it when:
