@@ -23,9 +23,9 @@ Each layer is independent — a package can pass one and fail another. Most atta
 
 `lpm install` does **not** run lifecycle scripts (`preinstall`, `install`, `postinstall`) by default. The pipeline materializes the dep closure, then stops. To execute scripts, you either:
 
-- **Approve them explicitly** via [`lpm approve-scripts`](/docs/packages/approve-scripts) — the package gets recorded in `package.json > lpm > trustedDependencies` with its integrity + script hash.
-- **Opt out per-invocation** with `lpm install --policy=allow` (or `--yolo`) — runs everything, no gate.
-- **Opt out persistently** with `package.json > lpm > scriptPolicy: "allow"` or `~/.lpm/config.toml > script-policy = "allow"`.
+- **Approve them explicitly** via [`lpm approve-scripts`](/docs/packages/approve-scripts) — the package gets recorded in `package.json > lpm > trustedDependencies` (project) or `~/.lpm/global/trusted-dependencies.json` (`--global`) with its integrity + script hash.
+- **Opt out per-invocation** with `lpm install --policy=allow` (or `--yolo`) — runs everything, no gate. Works on `lpm install -g` too.
+- **Opt out persistently** with `package.json > lpm > scriptPolicy: "allow"` or `~/.lpm/config.toml > script-policy = "allow"`. The user-config tier applies to both project and global installs.
 
 Approvals are **strict**: bound to `{name, version, integrity, scriptHash}`. A republished version with different bytes invalidates the approval and re-opens the package for review. This is what makes the deny-by-default model usable across long-running projects — trust is for a specific build, not a name.
 
@@ -111,9 +111,9 @@ The vulnerability check is **online** — it hits OSV/registry. Cache hits keep 
 
 ## Layer 4: Provenance + cooldown
 
-Two install-time gates that catch attacks against the publisher identity itself:
+Two install-time gates that catch attacks against the publisher identity itself. Both apply to `lpm install` and `lpm install -g`.
 
-**Minimum release age** — newly-published versions can't install for 24 hours by default. Defends against the "race a malicious version into a maintained dep" attack pattern. Configurable per-invocation (`--min-release-age=<DUR>`), per-project (`package.json > lpm > minimumReleaseAge`), or per-user (`~/.lpm/config.toml > minimum-release-age-secs`). Bypass for one install with `--allow-new`.
+**Minimum release age** — newly-published versions can't install for 24 hours by default. Defends against the "race a malicious version into a maintained dep" attack pattern. Configurable per-invocation (`--min-release-age=<DUR>`), per-project (`package.json > lpm > minimumReleaseAge`), or per-user (`~/.lpm/config.toml > minimum-release-age-secs`). Bypass for one install with `--allow-new`. On `-g` the project-level tier is N/A (the synthesized package.json doesn't carry `lpm.minimumReleaseAge`); the chain collapses to CLI flag > `~/.lpm/config.toml` > 24h default.
 
 **Provenance drift** — when a previously-approved package is re-resolved, LPM compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
 
@@ -126,7 +126,9 @@ Two install-time gates that catch attacks against the publisher identity itself:
 (None,     None)                  → never had it; layers 1/2/4 decide
 ```
 
-A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) to capture the new identity, or opt out per-package with `lpm install --ignore-provenance-drift <pkg>`.
+A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. The reference snapshot lives in `package.json > lpm > trustedDependencies > <pkg>@<ver> > provenanceAtApproval` for project trust and in `~/.lpm/global/trusted-dependencies.json` for global trust.
+
+`--allow-new` and `--ignore-provenance-drift[-all]` are independent — `--allow-new` only skips the cooldown; drift still applies unless you also waive it.
 
 ## Layer 5: Triage
 

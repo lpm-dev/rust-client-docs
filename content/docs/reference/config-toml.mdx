@@ -42,8 +42,8 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | --- | --- | --- | --- |
 | `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix used when `lpm install <pkg>` writes to `package.json`. `*` is rejected. |
 | `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix`. |
-| `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install` and `lpm rebuild`. |
-| `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. |
+| `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Machine-wide policy: applies to project and global installs alike. |
+| `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. Applies to both `lpm install` and `lpm install -g`. |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
 | `linker` | `"isolated"` \| `"hoisted"` | `"isolated"` | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
 | `tunnel.relay-url` | string | `"wss://relay.lpm.fyi/connect"` | WebSocket URL for the LPM tunnel relay. Per-process override: `LPM_TUNNEL_RELAY`. Each host gets its own TOFU pin under `~/.lpm/relay-pins/<host>`. |
@@ -70,6 +70,8 @@ For most settings, the precedence chain is (highest first):
 3. **`./lpm.toml`** — project-level (today: `save-prefix`, `save-exact`)
 4. **`~/.lpm/config.toml`** — this file
 5. **Built-in default**
+
+On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `minimum-release-age-secs`, and the script-policy aliases (`--yolo` / `--triage`).
 
 ### Exception — `linker`
 

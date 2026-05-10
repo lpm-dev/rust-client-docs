@@ -107,6 +107,26 @@ lpm install -g foo --replace-bin serve
 
 The previous owner keeps its install but loses `serve` from PATH; the new shim points at `foo`'s `serve` binary. See [`lpm install -g`](/docs/packages/install) for the full collision surface (`--replace-bin`, `--alias <ORIG=ALIAS>`).
 
+## Security gates on `-g`
+
+`lpm install -g` runs through the same install pipeline as project installs, with all four security gates applied to the synthesized global project:
+
+| Flag | Behavior on `-g` |
+| --- | --- |
+| `--allow-new` | Bypasses the [minimum release age](/docs/packages/security-audit#layer-4-provenance--cooldown) cooldown |
+| `--min-release-age=<DUR>` | Overrides the cooldown window (`<N>h`, `<N>d`, or seconds; `0` disables) |
+| `--ignore-provenance-drift <PKG>` | Waives the [drift check](/docs/packages/security-audit#layer-4-provenance--cooldown) for one package (repeatable) |
+| `--ignore-provenance-drift-all` | Waives the drift check for every resolved package |
+| `--policy=deny\|allow\|triage` | [Script-policy](/docs/packages/install#lifecycle-scripts) for this invocation |
+| `--yolo` | Alias for `--policy=allow` |
+| `--triage` | Alias for `--policy=triage` |
+| `--auto-build` | Forces the rebuild attempt under triage with mixed-trust trees |
+
+Two `-g`-specific notes:
+
+- **No project-config tier.** Globals use a synthesized package.json that doesn't carry `lpm > scriptPolicy`, `lpm > minimumReleaseAge`, or `lpm > scripts.autoBuild`. The script-policy and cooldown precedence chains collapse to CLI flag > `~/.lpm/config.toml` > default. Triage on `-g` requires the explicit `--auto-build` flag for mixed-trust trees — there's no per-project knob.
+- **Reinstall to rerun blocked scripts.** After `lpm approve-scripts --global`, the trust file is updated but the install root isn't re-executed. Run `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global to actually run the approved scripts. `lpm rebuild --global` is a planned follow-up.
+
 ## Approving scripts for globals
 
 Globally-installed packages have their own blocked-set for lifecycle scripts. Manage it with:
@@ -116,7 +136,7 @@ lpm approve-scripts --global             # review the global blocked set
 lpm approve-scripts --global --group     # group by top-level globally-installed package
 ```
 
-Approvals write to `~/.lpm/global/trusted-dependencies.json` (separate from any project's `package.json`).
+Approvals write to `~/.lpm/global/trusted-dependencies.json` (separate from any project's `package.json`). The success banner enumerates the top-level globals affected so you can run the matching `lpm uninstall -g … && lpm install -g …` for each.
 
 ## See also
 
