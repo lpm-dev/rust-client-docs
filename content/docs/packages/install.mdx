@@ -64,6 +64,8 @@ LPM does not execute lifecycle scripts during `lpm install` by default — the i
 | `allow` (`--yolo`) | Run every lifecycle script during install — matches npm/pnpm/bun default |
 | `triage` (`--triage`) | Tiered gate: greens auto-run in a sandbox; ambers and reds require manual review |
 
+Triage auto-runs only when every unbuilt scripted package classifies green. If any amber or red remains, scripts defer to `lpm approve-scripts` review unless an explicit auto-build signal is set: `--auto-build` on the command line, or — on project installs — `package.json > lpm > scripts.autoBuild = true`. Global installs (`-g`) only honor `--auto-build`; the synthesized package.json doesn't project per-project script knobs.
+
 Set per-invocation:
 
 ```bash
@@ -84,7 +86,7 @@ Or globally in `~/.lpm/config.toml`:
 script-policy = "deny"
 ```
 
-Precedence: CLI flag > `package.json` > `~/.lpm/config.toml` > default (`deny`).
+Precedence: CLI flag > `package.json` > `~/.lpm/config.toml` > default (`deny`). On `-g` the `package.json` tier is N/A; the chain collapses to CLI > `~/.lpm/config.toml` > default.
 
 See [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for the manual-approval flow.
 
@@ -122,7 +124,26 @@ lpm install foo --min-release-age=1h       # tighten or loosen the window
 lpm install foo --min-release-age=0        # disable the cooldown for this command
 ```
 
-Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`).
+Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`.
+
+## Global installs
+
+`lpm install -g` shares the project install pipeline. The same security gates fire end-to-end on `-g`:
+
+| Flag | Behavior on `-g` |
+| --- | --- |
+| `--allow-new` | Bypasses the cooldown |
+| `--min-release-age=<DUR>` | Overrides the cooldown window |
+| `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
+| `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the script-policy |
+| `--auto-build` | Forces the rebuild attempt under triage with mixed-trust trees |
+
+Two things differ from project installs:
+
+- **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
+- **The script-policy chain collapses.** With no project-level `package.json > lpm > scriptPolicy` to read, the precedence chain on `-g` is CLI flag > `~/.lpm/config.toml > script-policy` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
+
+Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
 
 ## Engines enforcement
 
