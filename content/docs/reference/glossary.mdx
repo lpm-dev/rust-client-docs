@@ -11,7 +11,7 @@ A reference for terms that mean something specific in LPM-land. Sorted alphabeti
 
 ### Auto-build
 
-The `lpm.scripts.autoBuild` flag (or `lpm install --auto-build` / `lpm install --yolo`) that triggers `lpm rebuild` for trusted packages immediately after install completes.
+The signal that triggers the rebuild step for trusted packages immediately after install completes. Sources: `lpm install --auto-build` (works on both project and `-g` installs), `lpm install --yolo` / `--policy=allow` (auto-trigger via Phase 57), or — project only — `package.json > lpm > scripts.autoBuild = true`. Globals don't read per-project script knobs from `package.json`, so triage with mixed-trust trees on `-g` requires the explicit `--auto-build` flag.
 
 ### Behavioral tag
 
@@ -67,7 +67,7 @@ A distribution mode where installs require a license purchase. Per-package opt-i
 
 ### Minimum release age
 
-Cooldown (default 24h) before a freshly published version is installable. Defends against version-pinning supply-chain attacks. Tunable via `lpm install --min-release-age` or `package.json > lpm > minimumReleaseAge`.
+Cooldown (default 24h) before a freshly published version is installable. Defends against version-pinning supply-chain attacks. Tunable via `lpm install --min-release-age` (works on both project and `-g`), `package.json > lpm > minimumReleaseAge` (project only), or `~/.lpm/config.toml > minimum-release-age-secs` (machine-wide, applies to project and `-g`). Bypass per-invocation with `--allow-new`.
 
 ### npm-alias dep
 
@@ -83,7 +83,7 @@ Sigstore-signed attestation that proves which CI workflow built a tarball and wh
 
 ### Provenance drift
 
-A change in a package's publisher identity between a prior approval and a candidate version. LPM blocks installs on drift; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`.
+A change in a package's publisher identity between a prior approval and a candidate version. LPM blocks installs on drift on both project and `-g` paths; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`. The reference snapshot is captured into the trust binding's `provenanceAtApproval` field at `lpm approve-scripts` time (or `--global` time for the global trust file).
 
 ### Quality score
 
@@ -91,7 +91,7 @@ Per-package score (0–100) computed from readme / license / types / tests / mai
 
 ### Rebuild
 
-The lifecycle-script step of the install pipeline. The executed phases are `preinstall`, `install`, `postinstall` (in that order); `prepare` and `prepublishOnly` are recognized for detection but never executed. Default-deny: scripts don't run during `lpm install` and require approval via [`lpm approve-scripts`](/docs/packages/approve-scripts) or a non-default [script policy](/docs/packages/install#lifecycle-scripts).
+The lifecycle-script step of the install pipeline. The executed phases are `preinstall`, `install`, `postinstall` (in that order); `prepare` and `prepublishOnly` are recognized for detection but never executed. Default-deny: scripts don't run during `lpm install` (or `lpm install -g`) and require approval via [`lpm approve-scripts`](/docs/packages/approve-scripts) (project) / `lpm approve-scripts --global` (global) or a non-default [script policy](/docs/packages/install#lifecycle-scripts). The standalone `lpm rebuild` command targets the project; a `lpm rebuild --global` companion is a planned follow-up — until then, reinstalling the affected global is the post-approval rerun path.
 
 ### Save policy
 
@@ -99,7 +99,7 @@ The rule that decides what range gets saved to `package.json` when `lpm install 
 
 ### Script policy
 
-`deny` (default) / `allow` / `triage`. Governs whether and how lifecycle scripts run. Set per-invocation with `--policy`, per-project with `package.json > lpm > scriptPolicy`, per-user with `~/.lpm/config.toml > script-policy`.
+`deny` (default) / `allow` / `triage`. Governs whether and how lifecycle scripts run on both `lpm install` and `lpm install -g`. Set per-invocation with `--policy` / `--yolo` / `--triage`, per-project with `package.json > lpm > scriptPolicy` (project installs only), per-user with `~/.lpm/config.toml > script-policy` (applies to both project and `-g`). On `-g` the project-config tier is N/A; the chain collapses to CLI flag > `~/.lpm/config.toml` > default.
 
 ### Source package
 
@@ -111,7 +111,7 @@ The global content-addressable package store at `~/.lpm/store/`. One on-disk cop
 
 ### Trusted dependency
 
-A package on the `package.json > lpm > trustedDependencies` allowlist that's permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Two shapes accepted: legacy array of names, and rich map bound to integrity + script hash.
+A package on a trust allowlist that's permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Project trust lives in `package.json > lpm > trustedDependencies` (legacy array of names, or rich map bound to integrity + script hash). Global trust lives in `~/.lpm/global/trusted-dependencies.json` (rich map only, with an extra `provenanceAtApproval` snapshot used by the install-time drift gate). The two stores are independent — `lpm approve-scripts` writes the former, `lpm approve-scripts --global` writes the latter.
 
 ### Tunnel claim
 
