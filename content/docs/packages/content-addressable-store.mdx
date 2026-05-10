@@ -3,7 +3,7 @@ title: Content-addressable store
 description: "How LPM stores packages once on disk and links them into every project — clonefile on macOS, hardlink on Linux."
 ---
 
-Every package LPM downloads goes into a **single global store** at `~/.lpm/store/`. Every project that depends on the same `(name, version)` shares the same on-disk copy. The result: installing the same dep set across 50 projects costs disk-space and time once, not 50 times.
+Every package LPM downloads goes into a **single global store** at `~/.lpm/store/`. Every project that depends on the same package shares the same on-disk copy — and not just the raw bytes, but the materialized wrapper directory with sibling symlinks already laid out. The result: installing the same dep set across 50 projects costs disk-space and time once, not 50 times.
 
 This page covers the design — what the store is, how packages get into it, how projects reach into it from `node_modules/`, and the maintenance surface.
 
@@ -11,42 +11,59 @@ This page covers the design — what the store is, how packages get into it, how
 
 ```text
 ~/.lpm/store/
-└── v1/                              ← store wire-format version
-    ├── react@19.2.4/                ← extracted package directory
-    │   ├── package.json
-    │   ├── index.js
-    │   ├── ...
-    ├── express@4.22.1/
-    │   └── ...
-    └── tarball/                     ← non-registry sources
-        └── sha512-...../            ← keyed by SRI integrity hash
-            ├── package.json
-            └── ...
+└── v2/
+    ├── objects/                            ← extracted package bytes
+    │   ├── sha512-aabb…/                   ← one entry per content hash
+    │   │   ├── package.json
+    │   │   ├── index.js
+    │   │   └── …
+    │   └── …
+    └── links/                              ← per-graph wrapper directories
+        ├── react@19.2.4+a1b2c3d4/
+        │   ├── node_modules/
+        │   │   ├── react/                  ← link from objects/<sri>
+        │   │   ├── scheduler/              ← symlink to a sibling link entry
+        │   │   └── …
+        │   └── .lpm-link-meta.json         ← sidecar (object SRI, dep targets)
+        └── …
 ```
 
-Two arms under `v1/`:
+Two arms under `v2/`:
 
-- **Registry packages** — keyed by `(name, version)`, e.g. `~/.lpm/store/v1/react@19.2.4/`. The common case.
-- **Tarball-URL packages** — keyed by SRI integrity hash, e.g. `~/.lpm/store/v1/tarball/sha512-aabb..../`. Used when a dep is pulled from a raw `https://...tgz` URL with no registry context. Hex (not base64) for filesystem-safety on every platform.
+- **`objects/<sri>/`** — content-addressable extracted bytes. One entry per unique tarball content; shared by every package version with that hash. The SRI is the same one verified against the lockfile.
+- **`links/<graph-key>/`** — per-graph wrapper directories. The graph-key folds in the package's name, version, platform tuple, peer-context, dep edges, alias edges, and root-link names. Two installations of the same `(name, version)` are interchangeable iff their graph-key inputs match — so projects with compatible graphs share the same link entry.
 
-The `STORE_VERSION = "v1"` directory is the unit of removal for blunt wipes (`lpm store clean`). The outer `store/` dir holds control files (`.gc.lock`, etc.) that survive.
+Each link entry's `node_modules/<pkg>/` is a clonefile (macOS) / reflink-or-hardlink (Linux) of the corresponding `objects/<sri>/` directory. Sibling entries (`scheduler/` next to `react/` above) are **symlinks** pointing at other graph-keys' link entries — not copies. This keeps the inode budget small even on a machine with thousands of packages.
 
 ## How packages enter the store
 
-`lpm install` extracts a package into the store exactly once across the lifetime of the machine.
+`lpm install` extracts a package into the store exactly once per content hash and materializes a link entry exactly once per graph-key.
 
-1. **Existence check** — if `~/.lpm/store/v1/<name>@<version>/` exists, skip extraction entirely. Package-level dedup, not just file-level.
-2. **Extract** — gzip-decompress + tar-walk the tarball into a staging dir (a temp dir under `~/.lpm/store/v1/`).
-3. **Security scan** — run [behavioral analysis](/docs/packages/security-audit) against the extracted source. Persist results into `.lpm-security.json` next to the package files so future installs don't re-scan.
-4. **Finalize** — write the `.integrity` file (the verified SRI), atomic-rename the staging dir into its final `<name>@<version>/` location.
+1. **Existence check (object).** If `~/.lpm/store/v2/objects/<sri>/` exists, skip extraction entirely. Content-level dedup.
+2. **Extract.** Gzip-decompress + tar-walk into a staging dir under `~/.lpm/store/v2/objects/`.
+3. **Security scan.** Behavioral analysis runs against the extracted source as part of the same pass. Results persist into `.lpm-security.json` next to the package files so future installs and audits don't re-scan. See [Security audit](/docs/packages/security-audit).
+4. **Finalize object.** Write the `.integrity` file (the verified SRI) and atomic-rename the staging dir into its final `objects/<sri>/` location.
+5. **Existence check (link entry).** If `~/.lpm/store/v2/links/<graph-key>/` exists, skip materialization.
+6. **Materialize link entry.** Clonefile/reflink the package bytes from `objects/<sri>/` into the link entry's `node_modules/<pkg>/`. Write sibling-dep symlinks for the package's declared deps. Write the `.lpm-link-meta.json` sidecar.
+7. **Finalize link entry.** Atomic-rename the staging dir into its final `links/<graph-key>/` location.
 
-The atomic rename is the visibility boundary. A concurrent install racing for the same `(name, version)` either sees the package or doesn't — never a partially-extracted state.
+The atomic renames are the visibility boundary. A concurrent install racing for the same content or graph-key either sees the entry or doesn't — never a partially-extracted state.
 
 ## How projects reach into the store
 
-Once a package is in the store, projects link to it without copying:
+Project `node_modules/<pkg>/` is a **symlink** straight into a global link entry:
 
-| OS | Linking mechanism |
+```text
+<project>/node_modules/react
+  → ~/.lpm/store/v2/links/react@19.2.4+a1b2c3d4/node_modules/react
+
+<project>/node_modules/.bin/
+  └── (real dir; bin shims are project-local)
+```
+
+When Node resolves `require("scheduler")` from inside `react/`, it walks up to the link entry's `node_modules/` and finds `scheduler/` as a sibling symlink — pointing at *another* link entry that scheduler is materialized under. Same Node-resolver semantics as a flat or pnpm-isolated layout, just with the wrapper tree relocated to a global, shared location.
+
+| OS | Object → link-entry mechanism |
 | --- | --- |
 | macOS (APFS) | `clonefile(2)` — copy-on-write reflinks. Free until something writes. |
 | Linux (Btrfs, XFS, OverlayFS) | reflink via `ioctl(FICLONERANGE)` when the FS supports it; hardlink fallback. |
@@ -54,35 +71,37 @@ Once a package is in the store, projects link to it without copying:
 | Linux (other) | hardlink. |
 | Windows | hardlink. |
 
-This is what makes warm install fast. After `lpm install`, the project's `node_modules/` (or the isolated wrapper at `<project>/.lpm/wrappers/`) is a tree of links pointing into `~/.lpm/store/v1/`. Subsequent `lpm install` invocations on other projects with overlapping deps reuse the same on-disk bytes.
+Project `node_modules/<pkg>` symlinks themselves are real symlinks on every platform (Windows uses directory symlinks / junctions).
 
-## Isolated vs hoisted layout
+## Cross-project sharing
 
-The linker has two materialization modes — both reach into the same global store:
+Because link entries are keyed by graph context — not by project — every project that resolves the same dependency graph reuses the same on-disk wrapper directory. Five projects using `react@19.2.4` with the same peer-context cost one materialization, not five. The first install pays the materialization cost; the rest are pure symlink creation.
+
+This survives `rm -rf node_modules`. The canonical bytes and wrapper symlinks live in `~/.lpm/store/v2/`, not in the project. A re-install only needs to recreate the project-side `node_modules/<pkg>` symlinks — which is why warm install is fast.
+
+## Isolated vs hoisted
+
+Both linker modes use the same underlying objects + link entries — they differ only in how the project's `node_modules/` is shaped:
 
 ```text
-# Isolated (default — pnpm-style)
-<project>/.lpm/wrappers/express@4.22.1/node_modules/
-  express/  → <global-store>/v1/express@4.22.1/      ← link
-  debug/    → ../../debug@2.6.9/node_modules/debug   ← symlink to sibling wrapper
-
+# Hoisted (default — npm-style flat)
 <project>/node_modules/
-  express/  → ../.lpm/wrappers/express@4.22.1/node_modules/express
+  react/      → ~/.lpm/store/v2/links/react@…/node_modules/react
+  scheduler/  → ~/.lpm/store/v2/links/scheduler@…/node_modules/scheduler
+  …
   .bin/
-    express → ../../.lpm/wrappers/express@4.22.1/node_modules/express/bin/express
+    react → …
 ```
 
 ```text
-# Hoisted (--linker=hoisted)
+# Isolated (--linker=isolated, auto-default for workspaces)
 <project>/node_modules/
-  express/      ← link from store
-  debug/        ← link from store (hoisted)
-  ms/           ← link from store (hoisted)
+  react/  → ~/.lpm/store/v2/links/react@…/node_modules/react
   .bin/
-    express → ../express/bin/express
+    react → …
 ```
 
-Both layouts are content-equivalent — the same on-disk store entry sits behind every link. Isolated gives you strict-deps enforcement (no phantom-dep access); hoisted gives you the npm-flat layout for tools that walk `node_modules/` recursively.
+Hoisted exposes every transitive dep at the project root for tools that walk `node_modules/` recursively. Isolated only exposes direct deps — strict-deps enforcement, no phantom-dep access. Both reach the same canonical bytes via the global store.
 
 ## Where the store lives
 
@@ -96,42 +115,45 @@ If `LPM_HOME` ends up on a network filesystem, LPM emits a one-time warning at s
 
 ## Maintenance
 
-[`lpm store`](/docs/infra/store) is the maintenance surface:
+The store grows monotonically as new graph contexts appear. Two surfaces clean it up:
+
+- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal. Walks `~/.lpm/known-projects.json` (the registry of every project LPM has installed into), traces each project's `node_modules/` symlinks back into the store, and removes link entries + objects no longer reachable from any registered project. Safe to run regularly. Default is dry-run; pass `--apply` to delete.
+- [`lpm store`](/docs/infra/store) — verify integrity, print the store path, blunt full wipe.
 
 ```bash
-lpm store path                   # print ~/.lpm/store/
-lpm store list                   # every (name, version) currently stored
-lpm store verify                 # re-hash entries, report integrity drift
-lpm store verify --deep --fix    # parse package.json + auto-fix stale caches
-lpm store gc                     # reference-aware garbage collection
-lpm store gc --older-than 30d
-lpm store clean                  # wipe v1/ entirely (rare)
+lpm cache prune                         # preview orphans
+lpm cache prune --apply                 # actually remove
+lpm cache prune --max-age 30d --apply   # only prune entries last touched > 30d ago
+
+lpm store path                          # print ~/.lpm/store/
+lpm store verify                        # re-hash entries, report integrity drift
 ```
 
-Reference-aware GC walks every project lockfile LPM has seen and removes everything **not** referenced. Safe to run regularly. Without `--force`, GC errors when no lockfile is in scope (a fresh checkout's first install would otherwise wipe everything you just downloaded).
+If the project registry is missing, corrupt, or unreadable AND no explicit `--project <path>` is supplied, `lpm cache prune` skips the orphan walk (without trustworthy roots, every link entry would look unreachable) and `--apply` degrades to **tombstone-only mode** — the global-install tombstone sweep still runs so `lpm uninstall -g`'s deferred cleanup retry stays reachable. The warning names the cause; for corrupt registries it includes the parser's reason so you can repair or delete the file. Run `lpm install` in a project to populate a fresh registry, or pass `--project <path>` to walk a specific project.
 
 ## Concurrency
 
-The store is reads-mostly under normal operation. Two scenarios need coordination:
+The store is reads-mostly under normal operation. Three scenarios coordinate explicitly:
 
-- **Concurrent extract for the same `(name, version)`.** The atomic rename + the existence check race-handle this: whichever install wins the rename publishes the entry; the other install's existence check on the next iteration sees the win and skips.
-- **Concurrent `lpm store gc` invocations.** They serialize through `~/.lpm/store/.gc.lock`.
-
-The third scenario — **concurrent install vs. in-progress `gc`** — is **not yet fully isolated**. M3 will close it via a shared lock the install pipeline takes during extraction. Until then, don't run `lpm store gc` while a teammate is mid-install on the same machine.
+- **Concurrent extract for the same content.** The atomic rename + the existence check race-handle this: whichever install wins the rename publishes the entry; the other install sees the win on the next iteration and skips.
+- **Concurrent install vs. `lpm cache prune`.** A writer-preference reader/writer protocol (data lock + writer-intent gate + writer-queue baton at `~/.lpm/store/.gc.lock*`) lets multiple installs run concurrently while serializing prune behind in-flight installs. See [`lpm store` — Locking model](/docs/infra/store#locking-model).
+- **Concurrent prune invocations.** Serialize through the same protocol.
 
 ## Security caches
 
-After the security scan finishes, results are persisted alongside the package as `.lpm-security.json`. [`lpm audit`](/docs/packages/audit) reads from these caches; a second `lpm audit` run on an unchanged tree is essentially free. `lpm store verify --fix` refreshes stale security caches without re-extracting.
+After the security scan finishes, results persist alongside the package as `.lpm-security.json` inside the object directory. [`lpm audit`](/docs/packages/audit) reads from these caches; a second `lpm audit` run on an unchanged tree is essentially free. `lpm store verify --fix` refreshes stale security caches without re-extracting.
 
 ## When does this matter?
 
-- **Disk usage on a multi-project machine** — without the global store, every project's `node_modules/` would be a full extracted copy. With the store, every project is mostly links into one shared tree.
-- **Cold install speed across projects** — the second project to need a given dep just makes links, no extraction work.
-- **Audit speed** — security analysis runs once per `(name, version)`, not per project.
+- **Disk usage on a multi-project machine** — without the global link entries, every project would re-materialize its own wrapper tree. With them, the wrapper population is shared across every project with a matching graph context.
+- **Warm install speed** — `rm -rf node_modules` survives the global store. Re-install is symlink creation, not extraction.
+- **Cold install across projects** — the second project to need a given dep at a given graph context just makes a project-side symlink; no extraction, no clonefile.
+- **Audit speed** — security analysis runs once per content hash, not per project.
 
 ## See also
 
-- [`lpm store`](/docs/infra/store) — CLI maintenance commands
+- [`lpm cache prune`](/docs/packages/cache) — orphan removal for the global store
+- [`lpm store`](/docs/infra/store) — integrity, path, blunt full wipe
 - [Lockfile](/docs/packages/lockfile) — what records the integrity hash the store verifies against
 - [`lpm install --linker`](/docs/packages/install) — picks isolated vs hoisted layout
 - [Environment variables](/docs/reference/env-vars#filesystem-layout) — `LPM_HOME` to relocate the store

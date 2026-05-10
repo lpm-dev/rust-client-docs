@@ -45,7 +45,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Machine-wide policy: applies to project and global installs alike. |
 | `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. Applies to both `lpm install` and `lpm install -g`. |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
-| `linker` | `"isolated"` \| `"hoisted"` | `"isolated"` | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
+| `linker` | `"isolated"` \| `"hoisted"` | `"hoisted"` (workspaces auto-default to `"isolated"`) | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
 | `tunnel.relay-url` | string | `"wss://relay.lpm.fyi/connect"` | WebSocket URL for the LPM tunnel relay. Per-process override: `LPM_TUNNEL_RELAY`. Each host gets its own TOFU pin under `~/.lpm/relay-pins/<host>`. |
 
 Unknown keys are accepted silently — forward-compatible by design.
@@ -81,7 +81,7 @@ The `linker` key inverts the user-vs-project order. Per-user preference (this fi
 2. `~/.lpm/config.toml > linker` — this file
 3. `LPM_LINKER` — per-process env var
 4. `package.json > lpm > linker` — project-declared default
-5. Built-in default `"isolated"`
+5. Built-in default — `"hoisted"` for single packages, `"isolated"` when LPM detects a workspace root (a `package.json > workspaces` glob or a `pnpm-workspace.yaml`)
 
 The resolved mode is folded into `.lpm/install-hash` so a post-install flip of any of these surfaces invalidates the "up to date" cache and triggers a re-link on the next `lpm install`.
 
