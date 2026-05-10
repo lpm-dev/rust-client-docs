@@ -1,6 +1,6 @@
 ---
 title: lpm store
-description: "Verify, list, garbage-collect, or wipe the global content-addressable package store."
+description: "Verify integrity, print the path, or wipe the global content-addressable package store."
 ---
 
 ```bash
@@ -9,32 +9,25 @@ lpm store <action>
 
 Maintenance commands for the global content-addressable store at `~/.lpm/store/`. Every `lpm install` deduplicates packages into this store and then links them into project `node_modules` trees — so the store is shared across every project on your machine.
 
+For reachability-aware orphan cleanup, use [`lpm cache prune`](/docs/packages/cache). `lpm store` covers integrity, the store path, and the blunt full wipe.
+
 ## Examples
 
 ```bash
 lpm store path                          # print the store root
-lpm store list                          # list every package@version in the store
 lpm store verify                        # check integrity (fast)
 lpm store verify --deep                 # also parse package.json + check name/version match
 lpm store verify --fix                  # auto-fix what it can (e.g., refresh stale caches)
-
-lpm store gc                            # garbage-collect entries no project references
-lpm store gc --dry-run                  # preview what GC would remove
-lpm store gc --older-than 30d           # only entries older than 30 days
-lpm store gc --force                    # GC even with no lockfile in scope (aggressive)
-
-lpm store clean                         # wipe ~/.lpm/store/v1/ entirely (rare)
+lpm store clean                         # wipe the entire store (rare)
 ```
 
 ## Subcommands
 
-| Subcommand | Aliases | Effect |
-| --- | --- | --- |
-| `path` | — | Print the store root path |
-| `list` | `ls` | List every `package@version` currently in the store |
-| `verify` | — | Integrity-check entries against their declared SRI |
-| `gc` | — | Reference-aware garbage collection |
-| `clean` | — | Blunt wipe — removes the entire `v1/` subtree |
+| Subcommand | Effect |
+| --- | --- |
+| `path` | Print the store root path |
+| `verify` | Integrity-check entries against their declared SRI |
+| `clean` | Blunt wipe — removes everything under the store root |
 
 ## Locking model
 
@@ -46,10 +39,10 @@ Store operations coordinate through a writer-preference reader/writer protocol b
 
 Surface:
 
-- **Shared (multi-reader):** `lpm install`, `lpm patch`, `lpm rebuild`, `lpm approve-scripts`, and `lpm store list` / `lpm store verify` always acquire the shared lock for the duration of the command. `lpm audit` and `lpm query` acquire it only when the project has LPM-store-backed packages, and they narrow the lock to just the store-touching slice (audit's behavioral-analysis pass; query's inventory load + lifecycle/build-state loop) — discovery, registry calls, and OSV calls run unlocked. Multiple readers run concurrently — two `lpm install` invocations in different shells share without contention.
-- **Exclusive (single-writer):** `lpm store gc` and `lpm store clean`. They take the queue baton shared (signaling "writer queued"), then the gate exclusive (blocking new reader admissions), then wait for in-flight readers to release the data lock.
+- **Shared (multi-reader):** `lpm install`, `lpm patch`, `lpm rebuild`, `lpm approve-scripts`, `lpm store verify`, and `lpm cache prune` (dry-run) always acquire the shared lock for the duration of the command. `lpm audit` and `lpm query` acquire it only when the project has LPM-store-backed packages, and they narrow the lock to just the store-touching slice (audit's behavioral-analysis pass; query's inventory load + lifecycle/build-state loop) — discovery, registry calls, and OSV calls run unlocked. Multiple readers run concurrently — two `lpm install` invocations in different shells share without contention.
+- **Exclusive (single-writer):** `lpm store clean` and `lpm cache prune --apply`. They take the queue baton shared (signaling "writer queued"), then the gate exclusive (blocking new reader admissions), then wait for in-flight readers to release the data lock.
 
-**Writer preference.** Once any `lpm store gc` is queued, no new reader is admitted until every queued writer has run. The protocol holds even with multiple writers in line — W2 stays at the head of the queue across W1's release boundary because W2's queue-shared keeps the readers' probes blocked. Bias is intentional: gc/clean is rare; install/query is common.
+**Writer preference.** Once a writer is queued, no new reader is admitted until every queued writer has run. The protocol holds even with multiple writers in line — W2 stays at the head of the queue across W1's release boundary because W2's queue-shared keeps the readers' probes blocked. Bias is intentional: writes are rare; install/query is common.
 
 If contention lasts longer than one second, the blocked command emits a single `Waiting for another lpm store operation to finish...` line on stderr — no PID claim (the lock primitive doesn't expose owner introspection), but enough to confirm you aren't stuck. The hint fires once per acquisition, not on every poll iteration.
 
@@ -67,33 +60,15 @@ Pass `--deep` for a slower but more thorough pass that also parses `package.json
 
 `--fix` refreshes stale derived state (e.g., security caches) without touching package contents.
 
-## Garbage collection
-
-```bash
-lpm store gc
-```
-
-Reference-aware: walks every project lockfile LPM knows about, builds a set of "still-referenced" entries, and removes everything else. Safe to run regularly.
-
-Tunable:
-
-| Flag | Effect |
-| --- | --- |
-| `--dry-run` | Print what would be removed, change nothing |
-| `--older-than <DUR>` | Only consider entries older than this (`30d`, `7d`, `24h`, etc.) |
-| `--force` | Run even when no lockfile is in scope — removes ALL unreferenced entries (dangerous) |
-
-Without `--force`, `gc` errors if it can't find a lockfile to reference against — protecting you from accidentally wiping the store on a fresh checkout.
-
 ## Clean (full wipe)
 
 ```bash
 lpm store clean
 ```
 
-Removes `~/.lpm/store/v1/` in its entirety. The next install rebuilds whatever it needs.
+Removes everything under `~/.lpm/store/` — extracted package bytes, per-graph wrapper directories, and any cached integrity sidecars. The next install rebuilds whatever it needs.
 
-This is the "I want a from-scratch state" escape hatch — for normal maintenance use `gc`, which is reference-aware and won't evict packages a project still needs.
+This is the "I want a from-scratch state" escape hatch. For normal maintenance use [`lpm cache prune`](/docs/packages/cache), which is reference-aware and won't evict entries a project still needs.
 
 ## Flags
 
@@ -101,14 +76,11 @@ This is the "I want a from-scratch state" escape hatch — for normal maintenanc
 | --- | --- | --- |
 | `--deep` | `verify` | Also parse package.json, validate name/version |
 | `--fix` | `verify` | Auto-fix issues (e.g., refresh stale caches) |
-| `--dry-run` | `gc` | Preview without deleting |
-| `--older-than <DUR>` | `gc` | Filter by age |
-| `--force` | `gc` | Run with no lockfile in scope |
 
 Plus the [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm cache`](/docs/packages/cache) — ephemeral caches (metadata, tasks, dlx) — different system
+- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal for the global store
 - [Content-addressable store](/docs/packages/content-addressable-store) — design overview
 - [`lpm doctor`](/docs/infra/doctor) — surfaces store-integrity issues alongside other checks
