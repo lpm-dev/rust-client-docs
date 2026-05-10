@@ -30,9 +30,13 @@ lpm approve-scripts --global --group         # group by top-level globally-insta
 
 ## What approval writes
 
+The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. The binding shape and drift semantics are otherwise identical.
+
+### Project scope (default)
+
 Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map form** (not the legacy array form):
 
-```json
+```json title="package.json"
 {
   "lpm": {
     "trustedDependencies": {
@@ -45,7 +49,33 @@ Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map f
 }
 ```
 
-The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events.)
+### Global scope (`--global`)
+
+Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-machine trust file. The bound fields are the same plus a `provenanceAtApproval` snapshot used by the install-time drift gate:
+
+```json title="~/.lpm/global/trusted-dependencies.json"
+{
+  "schema_version": 1,
+  "trusted": {
+    "esbuild@0.25.1": {
+      "integrity": "sha512-...",
+      "scriptHash": "sha256-...",
+      "provenanceAtApproval": {
+        "present": true,
+        "publisher": "github:evanw/esbuild",
+        "workflowPath": ".github/workflows/release.yml",
+        "workflowRef": "refs/tags/v0.25.1"
+      }
+    }
+  }
+}
+```
+
+`approve-scripts --global` fetches the candidate's Sigstore attestation at approval time (best-effort — network failure or no-attestation degrades to `provenanceAtApproval = null`). On the next `lpm install -g`, the drift gate compares the freshly-fetched provenance against this snapshot. The project's `package.json` is not touched.
+
+### Drift semantics (both scopes)
+
+The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events for project trust.)
 
 ## Modes
 
@@ -74,6 +104,8 @@ lpm approve-scripts --global --group
 ```
 
 When the global blocked set exceeds 10 entries (auto-enabled at that threshold), `--group` clusters list and review output by top-level globally-installed package. Persisted approvals still record per-dependency-binding rows under the hood.
+
+After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins`. `--dry-run` omits `next_step` since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
 
 ## JSON output
 
