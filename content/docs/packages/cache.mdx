@@ -1,6 +1,77 @@
 ---
-title: cache
-description: "Manage the global package cache."
+title: lpm cache
+description: "Manage ephemeral caches and prune the global package store."
 ---
 
-Coming soon.
+```bash
+lpm cache <action>
+```
+
+`lpm cache` covers two adjacent concerns: ephemeral caches under `~/.lpm/cache/` (registry metadata, task results, dlx tarballs) and the global package store at `~/.lpm/store/`.
+
+## Examples
+
+```bash
+lpm cache path                          # print ~/.lpm/cache/
+lpm cache path metadata                 # print ~/.lpm/cache/metadata/
+
+lpm cache clean                         # wipe metadata + tasks + dlx
+lpm cache clean metadata                # only wipe registry metadata
+lpm cache clean tasks                   # only wipe task-runner cache
+lpm cache clean dlx                     # only wipe dlx tarball cache
+
+lpm cache prune                         # preview orphan store entries (dry-run)
+lpm cache prune --apply                 # actually remove orphans
+lpm cache prune --max-age 30d --apply   # only entries last touched > 30d ago
+lpm cache prune --project ./my-app      # manual repair: walk one project only
+```
+
+## Actions
+
+| Action | Effect |
+| --- | --- |
+| `path` | Print the cache root (`~/.lpm/cache/`) or one of its subcategories |
+| `clean` | Wipe ephemeral caches (`~/.lpm/cache/`) |
+| `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) |
+
+`clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`); without one, all three are wiped. `clean` never touches the global package store — for that, use `prune`.
+
+## Prune
+
+`lpm cache prune` walks the global store and removes entries no project still references. Default is dry-run; pass `--apply` to delete.
+
+### How it decides what to keep
+
+LPM tracks every project it has installed into in a registry at `~/.lpm/known-projects.json`. For each registered project, prune walks the project's `node_modules/` symlinks back into `~/.lpm/store/v2/links/<graph-key>/`, then BFS through each link entry's sidecar metadata to mark every reachable graph-key. Anything not marked is an orphan. Object directories under `~/.lpm/store/v2/objects/` are pruned the same way — by collecting every surviving link entry's object reference and removing the rest.
+
+Stale registry entries (projects that have moved or been deleted) are dropped silently during the walk. The `--max-age` filter operates on each link entry's `last_referenced_at` timestamp (recorded in the entry's sidecar at first population, refreshed by `lpm install` cache hits) — not on the project registry's `last_seen`, which is set at install-time only.
+
+### Manual repair: `--project <path>`
+
+When the registry is missing, corrupted, or doesn't reflect actual machine state (after a restore, after copying `~/.lpm/` between machines, etc.), pass `--project <path>` to walk only that project's lockfile + `node_modules/` for roots. The registry is ignored.
+
+This mode is for scripted cleanup of a single project's footprint. **Default mode is safer when you have multiple projects on the machine** — `--project` only sees the one you point it at, so any link entry referenced by another project would look like an orphan.
+
+### Safety rails
+
+- **Dry-run by default.** No deletions without `--apply`.
+- **Tombstone-only degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips orphan removal in this case, runs the tombstone sweep regardless, and prints a warning naming the cause. For corrupt registries the warning includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
+- **Canonicalized paths.** The registry stores fully resolved absolute paths, so symlink-cwd quirks don't accumulate aliased entries.
+- **Atomic registry rewrites.** Updates go through `<path>.tmp.<pid>` → rename. No partial-write corruption.
+- **In-flight installs are respected.** Prune coordinates with concurrent `lpm install`, `lpm audit`, and `lpm query` invocations through the store reader/writer lock — dry-run takes the shared half, `--apply` takes the exclusive half. See [`lpm store` — Locking model](/docs/infra/store#locking-model).
+
+## Flags
+
+| Flag | Applies to | Effect |
+| --- | --- | --- |
+| `--apply` | `prune` | Actually remove orphans (default is dry-run) |
+| `--max-age <DUR>` | `prune` | Only prune entries last touched older than this (`30d`, `7d`, `24h`, …) |
+| `--project <PATH>` | `prune` | Manual repair: walk only this project's roots, ignore the registry |
+
+Plus the [global flags](/docs/commands#global-flags). `--json` emits a structured report of what would be / was pruned.
+
+## See also
+
+- [Content-addressable store](/docs/packages/content-addressable-store) — design overview, on-disk layout
+- [`lpm store`](/docs/infra/store) — integrity checks, store path, blunt full wipe
+- [`lpm doctor`](/docs/infra/doctor) — surfaces store-size hints alongside other checks
