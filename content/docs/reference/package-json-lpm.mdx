@@ -22,6 +22,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
     "strictDeps": "warn",
 
     "scriptPolicy": "deny",
+    "triageAdvisor": "none",
     "trustedDependencies": ["esbuild", "sharp"],
 
     "minimumReleaseAge": 86400,
@@ -102,9 +103,28 @@ Lifecycle-script gate for `lpm install` and `lpm rebuild`. See [`lpm install`](/
 | --- | --- |
 | `"deny"` (default) | Scripts blocked. `lpm approve-scripts` required per package. |
 | `"allow"` | Run every lifecycle script during install. Matches npm/pnpm/bun default. |
-| `"triage"` | Four-layer tiered gate: greens auto-run in the sandbox; ambers and reds need manual review. |
+| `"triage"` | Tiered gate: greens auto-run in the sandbox; ambers and reds need manual review (or the [optional LLM advisor](/docs/packages/security-audit#optional-llm-advisor)). |
 
 Precedence: CLI flag > `package.json > lpm > scriptPolicy` > `~/.lpm/config.toml > script-policy` > default (`deny`).
+
+### `triageAdvisor`
+
+```json
+{ "lpm": { "triageAdvisor": "claude-cli" } }
+```
+
+Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor). Active only when `scriptPolicy: "triage"`.
+
+| Value | Provider |
+| --- | --- |
+| `"none"` (default) | No advisor — portable layers 1-4 only. |
+| `"claude-cli"` | [Claude CLI](https://github.com/anthropics/claude-code). |
+| `"codex"` | OpenAI [Codex CLI](https://github.com/openai/codex). |
+| `"ollama"` | Ollama-served local model. |
+
+Approvals are **ephemeral** — never written to `package.json` or any other file. A second `lpm install` invokes the advisor again. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) (which writes to `trustedDependencies`) for durable trust.
+
+Precedence: `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default (`"none"`).
 
 ### `trustedDependencies`
 

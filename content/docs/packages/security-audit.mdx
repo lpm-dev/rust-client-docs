@@ -132,18 +132,58 @@ A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/p
 
 ## Layer 5: Triage
 
-The four-layer tiered gate that lets some scripted packages auto-approve. Active under `script-policy: "triage"` (or `lpm install --triage` / `--policy=triage`).
+The tiered gate that lets some scripted packages auto-approve. Active under `script-policy: "triage"` (or `lpm install --triage` / `--policy=triage`).
 
 | Tier | Behavior |
 | --- | --- |
 | **Green** | Hand-curated allowlist of pure local build steps (`node-gyp rebuild`, `tsc`, `prisma generate`, `husky install`, etc.). Auto-approves and runs in the [filesystem sandbox](/docs/reference/package-json-lpm#the-lpmscripts-block). |
-| **Amber** | Doesn't fit a green pattern, doesn't match a red. Defers to layers 2/3/4 (trust manifest, provenance + cooldown, optional LLM triage). Network binary downloaders (`puppeteer install`, `playwright install`, `cypress install`) live here by design. |
-| **Amber-LLM** | An amber that an LLM advisor approved (P8). Persisted with the approver identity so teammates on a different model family re-review. |
-| **Red** | Hand-curated blocklist (pipe-to-shell, base64-decode-to-execute, nested package-manager installs, etc.). **Blocks unconditionally**. Never reaches the LLM. |
+| **Amber** | Doesn't fit a green pattern, doesn't match a red. Defers to layers 2/3/4 (trust manifest, provenance + cooldown, optional LLM advisor). Network binary downloaders (`puppeteer install`, `playwright install`, `cypress install`) live here by design. |
+| **Red** | Hand-curated blocklist (pipe-to-shell, base64-decode-to-execute, nested package-manager installs, etc.). **Blocks unconditionally**. Never reaches the advisor. |
 
 Worst-wins reducer across phases — a package whose `preinstall` is green but `postinstall` is red is classified as red.
 
 The sandbox itself is Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied. Capability-widening (extra env vars, full project read, looser rlimits) requires explicit approval.
+
+### Optional LLM advisor
+
+Layer 5 includes an opt-in advisor that uplifts Amber packages to AutoRun for the current install only. Configure via `triage-advisor`:
+
+| Value | Provider |
+| --- | --- |
+| `"none"` (default) | No advisor — portable layers 1-4 only. |
+| `"claude-cli"` | [Claude CLI](https://github.com/anthropics/claude-code) — local subprocess call. |
+| `"codex"` | OpenAI [Codex CLI](https://github.com/openai/codex) — local subprocess call. |
+| `"ollama"` | Ollama-served local model — local HTTP call. |
+
+```toml title="~/.lpm/config.toml"
+script-policy   = "triage"
+triage-advisor  = "claude-cli"
+```
+
+```json title="package.json"
+{ "lpm": { "scriptPolicy": "triage", "triageAdvisor": "claude-cli" } }
+```
+
+The two keys are **independent**. `script-policy: "triage"` with `triage-advisor: "none"` is the portable L1-4 baseline. `script-policy: "deny"` with any advisor setting still blocks unconditionally — the advisor never runs outside `triage`.
+
+Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
+
+**Properties:**
+
+- **Ephemeral.** Approvals never write to disk. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
+- **Source-aware identity.** Approvals key on `(name, version, integrity)` so a registry copy of a package can never inherit approval from a workspace copy of the same coordinates.
+- **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
+- **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
+- **Worst-of-phases per package.** Approve only if every amber phase classified Approve; one Manual or Abstain blocks the whole package.
+
+Set up interactively:
+
+```bash
+lpm config scripts                 # pick deny / triage / allow
+lpm config triage                  # pick none / claude-cli / codex / ollama
+```
+
+Both wizards accept `--set <value>` for non-interactive use.
 
 ## Typosquatting
 
