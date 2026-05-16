@@ -21,7 +21,7 @@ Two equivalent shapes — both accepted in `package.json`:
 
 Both globs match recursively under the project root. Each match is a workspace **member** — a directory with its own `package.json`, with its own dependencies, scripts, and version.
 
-`pnpm-workspace.yaml` is **not** read. If you're migrating from pnpm and you used that file, copy the globs into `package.json > workspaces`. (See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).)
+`pnpm-workspace.yaml` is read as a **fallback** when `package.json > workspaces` is absent. If both are present, `package.json` wins. Migrating from pnpm doesn't require deleting `pnpm-workspace.yaml` — though copying the globs into `package.json > workspaces` is the cleaner long-term shape. (See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).)
 
 ## Filter grammar
 
@@ -34,10 +34,10 @@ The filter expression — used by `--filter` on every workspace-aware command �
 | `./apps/*` | Every member under a path glob |
 | `{./apps/web}` | Exact path match (path with literal characters) |
 | `[origin/main]` | Members changed since a git ref |
-| `web...` | `web` and every member that depends on `web` (forward closure) |
-| `web^...` | Same, excluding `web` itself |
-| `...web` | `web` and every member it depends on (reverse closure) |
-| `...^web` | Same, excluding `web` itself |
+| `web...` | `web` and **every member `web` depends on** (transitive deps — downstream closure) |
+| `web^...` | Same, excluding `web` itself (deps-only) |
+| `...web` | `web` and **every member that depends on `web`** (transitive dependents — upstream closure) |
+| `...^web` | Same, excluding `web` itself (dependents-only) |
 | `!web` | Exclusion — remove `web` from the resulting set |
 
 > **Substring matching is not supported.** `--filter core` does NOT match `@babel/core` — write `--filter '*/core'` for that. This is the most common surprise for users coming from `pnpm`.

@@ -1,6 +1,143 @@
 ---
 title: Project setup
-description: "Configure a project with package.json, lpm.json, and lpm.toml."
+description: "What goes in package.json, lpm.json, and lpm.toml — and which file owns each kind of setting."
 ---
 
-Coming soon.
+import { Card, Cards } from "fumadocs-ui/components/card";
+
+LPM splits project configuration across three files. Each owns a different kind of setting, by design:
+
+| File | What it owns | Commit? |
+| --- | --- | --- |
+| [`package.json`](#packagejson) | Standard npm fields (dependencies, scripts, engines) **plus** an `"lpm"` block for project-shared LPM behavior (script policy, trust, linker, sandbox, overrides) | Yes |
+| [`lpm.json`](#lpmjson) | Dev-server, task-runner, env-file mapping, env schema, services, publish targets — runtime infrastructure that isn't publishable metadata | Yes |
+| [`lpm.toml`](#lpmtoml) | Per-project CLI defaults (today: save-prefix, save-exact) — tool behavior, not publishable | Team's call |
+
+The split is deliberate: anything that ships to consumers of your package lives in `package.json`. Anything that's about running the project locally lives in `lpm.json`. Anything that's about which way you personally (or the team) prefer the CLI to behave lives in `lpm.toml`.
+
+## `package.json`
+
+Most LPM behavior keys live under the `"lpm"` block — committed alongside dependencies so every contributor picks them up:
+
+```json title="package.json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "engines": { "node": ">=22.0.0", "lpm": ">=0.40.0" },
+  "workspaces": ["packages/*"],
+
+  "dependencies": { "react": "^19.0.0" },
+
+  "lpm": {
+    "linker": "isolated",
+    "scriptPolicy": "deny",
+    "trustedDependencies": ["esbuild", "sharp"],
+    "scripts": {
+      "autoBuild": false,
+      "sandboxWriteDirs": ["build/"]
+    }
+  }
+}
+```
+
+Full field reference: [`package.json` "lpm" key](/docs/reference/package-json-lpm).
+
+## `lpm.json`
+
+Optional. Sits next to `package.json` and configures runtime / dev infrastructure:
+
+```json title="lpm.json"
+{
+  "$schema": "https://lpm.dev/schemas/lpm.json",
+  "runtime": { "node": ">=22.0.0" },
+  "tools": { "oxlint": "1.57.0", "biome": "2.4.8" },
+
+  "env": {
+    "dev":  ".env.development",
+    "prod": ".env.production"
+  },
+  "envSchema": {
+    "vars": {
+      "DATABASE_URL": { "required": true, "format": "url" }
+    }
+  },
+
+  "tasks": {
+    "build": {
+      "command": "tsup",
+      "dependsOn": ["^build"],
+      "cache": true,
+      "outputs": ["dist/**"]
+    }
+  },
+
+  "services": {
+    "db":  { "command": "docker compose up postgres", "readyPort": 5432 },
+    "web": { "command": "next dev", "port": 3000, "primary": true }
+  },
+
+  "publish": {
+    "registries": ["lpm", "npm"]
+  }
+}
+```
+
+Full field reference: [`lpm.json`](/docs/reference/lpm-json).
+
+The `$schema` line is optional but enables inline validation and field completion in any JSON-schema-aware editor.
+
+## `lpm.toml`
+
+Optional. Sits next to `package.json` and pins per-project CLI defaults. Today it owns the [save policy](/docs/packages/save-policy):
+
+```toml title="lpm.toml"
+save-prefix = "~"     # team prefers tilde over caret
+save-exact  = false
+```
+
+Commit it for team-shared CLI defaults; `.gitignore` it if save policy should stay per-developer. The keys here override `~/.lpm/config.toml` (user-level) but lose to CLI flags.
+
+Full field reference: [`lpm.toml`](/docs/reference/lpm-toml).
+
+## Which file owns what
+
+Quick decision table when you're not sure where a setting belongs:
+
+| You want to… | Goes in |
+| --- | --- |
+| Pin a runtime dep with a version range | `package.json > dependencies` |
+| Pin Node version for the project | `lpm.json > runtime.node` (or `package.json > engines.node`) |
+| Block lifecycle scripts for everyone on the team | `package.json > lpm.scriptPolicy = "deny"` |
+| Approve a specific package to run scripts | `package.json > lpm.trustedDependencies` (or `lpm approve-scripts`) |
+| Define a custom build task with caching | `lpm.json > tasks.<name>` |
+| Map `lpm run dev` to a specific `.env` file | `lpm.json > env.dev` |
+| Configure dev services with readiness checks | `lpm.json > services` |
+| Set a save-prefix that overrides every developer's preference | `lpm.toml > save-prefix` |
+| Set your personal default save prefix machine-wide | `~/.lpm/config.toml > save-prefix` |
+| Publish to multiple registries from one `lpm publish` | `lpm.json > publish.registries` |
+
+## `.gitignore` essentials
+
+`lpm init` creates a `.gitattributes` entry for the binary lockfile automatically:
+
+```text title=".gitattributes"
+lpm.lockb binary
+```
+
+You probably want to ignore a few LPM artifacts:
+
+```text title=".gitignore"
+node_modules/
+.lpm/                  # local install hash, security caches, skills, tunnel state
+.env*.local            # local-only env overrides
+```
+
+`.lpm/` holds project-local install state (`install-hash`, captured tunnel webhooks, agent skill markdown, etc.). The global store lives in `~/.lpm/`, completely separate — nothing project-specific belongs there.
+
+## See also
+
+- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — every field under the `"lpm"` block
+- [`lpm.json`](/docs/reference/lpm-json) — runtime / task / publish config
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults
+- [Save policy](/docs/packages/save-policy) — full precedence chain across these files

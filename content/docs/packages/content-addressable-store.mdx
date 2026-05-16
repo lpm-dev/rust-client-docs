@@ -31,7 +31,7 @@ This page covers the design — what the store is, how packages get into it, how
 Two arms under `v2/`:
 
 - **`objects/<sri>/`** — content-addressable extracted bytes. One entry per unique tarball content; shared by every package version with that hash. The SRI is the same one verified against the lockfile.
-- **`links/<graph-key>/`** — per-graph wrapper directories. The graph-key folds in the package's name, version, platform tuple, peer-context, dep edges, alias edges, and root-link names. Two installations of the same `(name, version)` are interchangeable iff their graph-key inputs match — so projects with compatible graphs share the same link entry.
+- **`links/<graph-key>/`** — per-graph wrapper directories. The graph-key folds in the package's name, version, platform tuple, **linker mode** (hoisted vs isolated produces distinct keys), peer-context (empty in hoisted mode), dep edges, alias edges, root-link names, source disambiguator (Registry vs Tarball/Git), and **patch fingerprint** (a `lpm patch`'d install gets its own link directory and never shares bytes with the unpatched coords). Two installations of the same `(name, version)` are interchangeable iff every one of those inputs matches — so projects with compatible graphs share the same link entry, while a hoisted vs isolated install of the same dep set produce two link entries.
 
 Each link entry's `node_modules/<pkg>/` is a clonefile (macOS) / reflink-or-hardlink (Linux) of the corresponding `objects/<sri>/` directory. Sibling entries (`scheduler/` next to `react/` above) are **symlinks** pointing at other graph-keys' link entries — not copies. This keeps the inode budget small even on a machine with thousands of packages.
 

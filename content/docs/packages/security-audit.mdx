@@ -148,7 +148,30 @@ Identity widening is shape-keyed, not name-keyed: there is no per-package allowl
 
 **Cooldown defense-in-depth.** Identity widening refuses to fire when the configured [minimum release age](#layer-4-provenance--cooldown) is above zero AND the package's publish age is below the threshold (or unknown). This keeps the cooldown axis orthogonal to the script-tier axis — `lpm install --allow-new <pkg>` bypasses the cooldown halt but a recent-publish package whose identity matches still stays Amber and surfaces in the script-tier review. To opt out of both, set `minimum-release-age` to `0` (universally disabling cooldown also disables the defense-in-depth check) or use `--policy=allow`.
 
-The sandbox itself is Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied. Capability-widening (extra env vars, full project read, looser rlimits) requires explicit approval.
+The sandbox itself is Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied. Capability-widening (extra env vars, full project read, looser rlimits) requires explicit approval.
+
+## Putting it together — `script-policy` × `sandbox-mode`
+
+The two axes are **independent**. `script-policy` decides whether a script runs; `sandbox-mode` decides what it can do once running. Every combination is valid and configured through separate precedence chains.
+
+| script-policy | sandbox-mode | What happens to a scripted package |
+| --- | --- | --- |
+| [`deny`](#layer-1-lifecycle-script-gate-default-deny) | `default` | Script blocked at the script-policy gate. After [`lpm approve-scripts`](/docs/packages/approve-scripts): runs with filesystem + env containment, outbound network allowed. |
+| `deny` | `strict` | Same gate. After approval: runs with containment **+ outbound network denied**. |
+| `deny` | `none` | Same gate. After approval: runs unsandboxed (full host access including credential env). |
+| [`triage`](#layer-5-triage) | `default` | L1-L3 tier decides per package. Greens auto-run with containment + network allowed. Ambers go to the [`lpm approve-scripts`](/docs/packages/approve-scripts) queue. Reds blocked permanently. |
+| `triage` | `strict` | Same tiering. Whatever runs runs with containment **+ outbound network denied**. |
+| `triage` | `none` | Same tiering. Whatever runs runs unsandboxed. |
+| `allow` | `default` | Every script runs with containment + network allowed. |
+| `allow` | `strict` | Every script runs with containment **+ outbound network denied**. Trust-the-lockfile + deny-install-time-network shape. |
+| `allow` | `none` | Every script runs unsandboxed — equivalent to `npm install`. |
+
+Each axis is configured independently:
+
+- **`script-policy`** — `package.json > lpm > scriptPolicy` (project), `~/.lpm/config.toml > script-policy` (user), CLI flag (`--policy=<v>` / `--yolo` / `--triage`), or the [`lpm config scripts`](/docs/reference/config#setup-wizards) wizard.
+- **`sandbox-mode`** — `./lpm.toml > [sandbox] mode` (project) or `~/.lpm/config.toml > [sandbox] mode` (user), CLI flag (`--strict-sandbox` / `--paranoid` / `--no-sandbox`), `LPM_STRICT_SANDBOX=1` env, or the [`lpm config sandbox`](/docs/reference/config#setup-wizards) wizard.
+
+[`lpm approve-scripts`](/docs/packages/approve-scripts) grants permission to **run** — it never escalates the sandbox. An approved script under `sandbox-mode = strict` still runs without network access; an approved script under `sandbox-mode = none` runs with full host access.
 
 ### Optional LLM advisor
 
