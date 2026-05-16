@@ -1,54 +1,68 @@
 ---
 title: MCP servers
-description: "Wire Claude Code, Cursor, and Windsurf to LPM's MCP server."
+description: "Wire Claude Code, Cursor, Windsurf, VS Code, and Claude Desktop to LPM's MCP server."
 ---
 
 ```bash
 lpm mcp <action> [name]
 ```
 
-Manages [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server configuration for AI editors. `lpm mcp setup` writes the LPM MCP server entry into your editor's MCP config so the editor's AI agent can call LPM tools (search, install hint, audit, etc.) on your behalf.
+Manages [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server configuration for AI editors. `lpm mcp setup` writes the LPM MCP server entry into each detected editor's MCP config so the editor's agent can call LPM tools (search, install hint, audit, etc.) on your behalf.
 
 ## Examples
 
 ```bash
-lpm mcp setup                      # detect installed editors and configure them all
-lpm mcp setup claude-code          # configure a specific editor
-lpm mcp setup cursor
-lpm mcp setup windsurf
-lpm mcp status                     # which editors have LPM's MCP server wired up
-lpm mcp remove cursor              # remove from one editor
+lpm mcp setup                      # write the "lpm-registry" entry to every detected editor
+lpm mcp setup my-server            # use a custom server name instead of "lpm-registry"
+lpm mcp status                     # which editors have any MCP server configured
+lpm mcp remove lpm-registry        # remove the LPM entry from every editor that has it
 ```
+
+The positional argument is the **server name** that gets written into each editor's `mcpServers` (or VS Code's `servers`) map — it is **not** an editor selector. `lpm mcp setup` always walks every editor in the supported list and writes the entry; pass a name to override the default `lpm-registry`.
 
 ## Subcommands
 
 | Subcommand | Effect |
 | --- | --- |
-| `setup [name]` | Add LPM's MCP server entry to one or every detected editor's MCP config. Idempotent — safe to re-run. |
-| `remove <name>` | Remove the LPM entry from a specific editor's config |
-| `status` | List which editors have LPM's MCP server configured |
+| `setup [name]` | Add an MCP entry under `name` (default `lpm-registry`) to every editor in the supported list. Idempotent — re-running overwrites the entry in place. |
+| `remove <name>` | Remove the named entry from every editor whose config file exists. Editors without an existing config are skipped silently. |
+| `status` | List every supported editor and which MCP servers (LPM or other) are configured in each. |
 
 ## Supported editors
 
-| Editor | Config file |
-| --- | --- |
-| Claude Code | `~/.claude.json` (key: `mcpServers`) |
-| Cursor | `~/.cursor/mcp.json` (key: `mcpServers`) |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` (key: `mcpServers`) |
+| Editor | Platform | Config file | Key |
+| --- | --- | --- | --- |
+| Claude Code | all | `~/.claude.json` | `mcpServers` |
+| Cursor | all | `~/.cursor/mcp.json` | `mcpServers` |
+| Windsurf | all | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| VS Code | macOS | `~/Library/Application Support/Code/User/mcp.json` | `servers` |
+| VS Code | Linux | `~/.config/Code/User/mcp.json` | `servers` |
+| Claude Desktop | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` |
 
-`lpm mcp setup` (without a name) walks every editor whose config file is detected and adds the entry. Editors that aren't installed are skipped silently.
+`setup` creates the parent directory and an empty config object when the file doesn't exist, then merges the LPM entry alongside any servers the user (or another tool) already wrote. Other keys in the config — themes, settings, unrelated MCP servers — are preserved. A malformed existing config is a hard error: the file is left untouched rather than overwritten.
 
 ## What gets written
 
-The entry registers an MCP server pointing at LPM's bundled server binary. No additional installation required — the binary ships inside the LPM CLI.
+```json
+{
+  "mcpServers": {
+    "lpm-registry": {
+      "command": "npx",
+      "args": ["-y", "@lpm.dev/lpm-mcp-server"]
+    }
+  }
+}
+```
 
-After `setup`, restart the editor and ask the agent to e.g. "find a JSON-schema validator" — it'll route through the MCP tools to LPM's search and quality endpoints rather than guessing from training data.
+VS Code uses the same shape under the `servers` key instead of `mcpServers`. The server itself is the `@lpm.dev/lpm-mcp-server` npm package — `npx -y` fetches and runs it on demand, so no separate install step is required.
+
+After `setup`, restart the editor and ask the agent something like "find a JSON-schema validator on LPM" — it'll route through the MCP tools to LPM's search and quality endpoints rather than guessing from training data.
 
 ## Flags
 
-`lpm mcp` takes no specific flags besides the [global flags](/docs/commands#global-flags).
+`lpm mcp` takes no specific flags besides the global flags. `--json` emits structured output (`success`, `server`, plus `configured` / `removed_from` / `editors` depending on the subcommand) for scripting.
 
 ## See also
 
-- [`lpm skills`](/docs/reference/ai-agent-skills) — separate from MCP; agent skills travel with installed packages
+- [`lpm skills`](/docs/packages/skills) — separate from MCP; agent skills travel with installed packages ([concept page](/docs/reference/ai-agent-skills))
 - [Model Context Protocol](https://modelcontextprotocol.io) — the upstream spec

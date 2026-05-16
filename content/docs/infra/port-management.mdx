@@ -56,7 +56,7 @@ lpm ports list
 lpm ports                    # default action
 ```
 
-Reads `lpm.json > services` and prints the declared ports. Read-only. Useful for the "what runs where in this project" quick check without scrolling through `lpm.json`.
+Reads `lpm.json > services`, then for each declared port runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the port, whether it's `free` or `in use`, and (when in use) the owning PID + process name. Useful both for the "what runs where in this project" quick check and for spotting conflicts before they bite at `lpm dev` startup.
 
 ## `lpm ports reset`
 
@@ -64,9 +64,9 @@ Reads `lpm.json > services` and prints the declared ports. Read-only. Useful for
 lpm ports reset
 ```
 
-Clears LPM's port-reservation state. The reservation system is internal — LPM tracks "which session has which port" so concurrent `lpm dev` invocations on different projects can negotiate. `reset` wipes that state.
+Clears persisted port **overrides** for the current project. LPM keeps per-project port overrides in `~/.lpm/ports.toml` (keyed by a hash of the project directory), so a service whose default port collides on this machine can be remapped without editing `lpm.json`. `reset` removes only this project's entry from that file — other projects' overrides are untouched.
 
-Useful for the "I have no idea why my dev server won't start" escape hatch. Doesn't kill any processes — just clears LPM's bookkeeping.
+Useful for the "I have no idea why my dev server won't start on the port I expected" escape hatch. Doesn't kill any processes; doesn't touch `lpm.json`. After reset, the next `lpm dev` falls back to the declared ports.
 
 ## Cross-service env injection
 
@@ -86,7 +86,7 @@ For service "api":
   WEB_URL=http://localhost:3000
 ```
 
-Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Pretty much every service in a typical `lpm.json` ends up with a usable URL for its peers without writing them out manually.
+Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Hyphens in service names become underscores (a service named `my-api` injects `MY_API_PORT` / `MY_API_URL`). A service never receives its own `_PORT`/`_URL` — only peers do. The URL scheme follows the dev server's HTTPS state: `lpm dev --https` swaps `http://localhost:<port>` for `https://localhost:<port>` in every injected URL. Pretty much every service in a typical `lpm.json` ends up with a usable URL for its peers without writing them out manually.
 
 Plus per-service overrides from `lpm.json > services.<name>.env`:
 

@@ -21,11 +21,17 @@ lpm dlx --refresh create-next-app   # bypass the dlx cache
 
 ## How it works
 
-1. Resolve the spec against the appropriate registry — see [Registries](/docs/registries) for routing. (Bare names like `cowsay` go to `registry.npmjs.org`; `@lpm.dev/*` packages go to lpm.dev.)
+1. Resolve the spec against the appropriate registry. `lpm dlx` calls into the full install pipeline, so routing follows the same rules as [`lpm install`](/docs/packages/install): `@lpm.dev/*` packages go to lpm.dev, `.npmrc`-declared scopes go to the registry that scope points at, and everything else goes to `registry.npmjs.org`.
 2. Materialize the package into a cache directory under `~/.lpm/cache/dlx/`. Cached by `name@resolved-version` — a second run reuses the same cache entry.
 3. Run the package's primary binary, forwarding everything after the package name verbatim.
 
 `lpm dlx <pkg>@<version>` pins the resolved version; `lpm dlx <pkg>` uses whatever the cache currently has, or fetches the latest.
+
+## Cache TTL
+
+dlx cache entries live for **24 hours**. After that, the next invocation reinstalls (loudly — you see a `cache expired for <pkg>, reinstalling...` line) so you don't keep running an old binary forever. Within the TTL window, repeat invocations are essentially free — the cache entry already has `node_modules/.bin/` populated and the binary spawns directly.
+
+`--refresh` forces an immediate reinstall regardless of the TTL.
 
 ## Argument forwarding
 

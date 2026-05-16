@@ -99,7 +99,7 @@ lpm query :critical --assert-none # CI gate: fail if any critical-tagged package
 
 ## Layer 3: Vulnerability data (OSV)
 
-`lpm audit` cross-references every installed package against [OSV.dev](https://osv.dev) and any registry-side advisories. Findings are surfaced inline with the behavioral report. Severity levels: `info`, `moderate`, `high`.
+`lpm audit` cross-references every installed package against [OSV.dev](https://osv.dev) (for npm packages) and any registry-side advisories (for `@lpm.dev` packages). Findings are surfaced inline with the behavioral report. Severity ladder: `critical` > `high` > `moderate` (alias `medium`) > `info` (alias `low`).
 
 ```bash
 lpm audit                       # all findings
@@ -130,17 +130,23 @@ A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/p
 
 `--allow-new` and `--ignore-provenance-drift[-all]` are independent — `--allow-new` only skips the cooldown; drift still applies unless you also waive it.
 
+The cooldown threshold also gates the Layer 5 [identity widening](#layer-5-triage) — a recent-publish package whose script body matches an identity-Green shape still stays Amber until the publish age clears the cooldown. The two axes are independently bypassable: `--allow-new` skips the cooldown halt, `--policy=allow` skips the script-tier review.
+
 ## Layer 5: Triage
 
 The tiered gate that lets some scripted packages auto-approve. Active under `script-policy: "triage"` (or `lpm install --triage` / `--policy=triage`).
 
 | Tier | Behavior |
 | --- | --- |
-| **Green** | Hand-curated allowlist of pure local build steps (`node-gyp rebuild`, `tsc`, `prisma generate`, `husky install`, etc.). Auto-approves and runs in the [filesystem sandbox](/docs/reference/package-json-lpm#the-lpmscripts-block). |
+| **Green** | A curated catalog of shape patterns (`node-gyp rebuild`, `tsc`, `prisma generate`, `husky install`, etc.) plus identity-matched delegating installers — a `node install.js` / `node postinstall.js` / `node scripts/install.js` body (+ `.cjs`/`.mjs` variants) Greens when the package's `repository` URL or a `bin` entry plainly names the package. Auto-approves and runs in the [filesystem sandbox](/docs/reference/package-json-lpm#the-lpmscripts-block). |
 | **Amber** | Doesn't fit a green pattern, doesn't match a red. Defers to layers 2/3/4 (trust manifest, provenance + cooldown, optional LLM advisor). Network binary downloaders (`puppeteer install`, `playwright install`, `cypress install`) live here by design. |
 | **Red** | Hand-curated blocklist (pipe-to-shell, base64-decode-to-execute, nested package-manager installs, etc.). **Blocks unconditionally**. Never reaches the advisor. |
 
 Worst-wins reducer across phases — a package whose `preinstall` is green but `postinstall` is red is classified as red.
+
+Identity widening is shape-keyed, not name-keyed: there is no per-package allowlist. The classifier looks at the script body's structure (exactly `node <reserved>.{js,cjs,mjs}`), reads the manifest's `repository` URL and `bin` entries, and matches by the package's base name (case-insensitive, with `.git` suffixes stripped). Generic / too-short base names (anything ≤ 2 chars, plus `js`, `lib`, `core`, `node`, `src`, `util`, `utils`) carry no identity payload and never widen.
+
+**Cooldown defense-in-depth.** Identity widening refuses to fire when the configured [minimum release age](#layer-4-provenance--cooldown) is above zero AND the package's publish age is below the threshold (or unknown). This keeps the cooldown axis orthogonal to the script-tier axis — `lpm install --allow-new <pkg>` bypasses the cooldown halt but a recent-publish package whose identity matches still stays Amber and surfaces in the script-tier review. To opt out of both, set `minimum-release-age` to `0` (universally disabling cooldown also disables the defense-in-depth check) or use `--policy=allow`.
 
 The sandbox itself is Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied. Capability-widening (extra env vars, full project read, looser rlimits) requires explicit approval.
 
@@ -170,11 +176,35 @@ Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdv
 
 **Properties:**
 
-- **Ephemeral.** Approvals never write to disk. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
+- **Ephemeral.** Approvals never write to disk as trust state. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
 - **Source-aware identity.** Approvals key on `(name, version, integrity)` so a registry copy of a package can never inherit approval from a workspace copy of the same coordinates.
 - **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
 - **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
 - **Worst-of-phases per package.** Approve only if every amber phase classified Approve; one Manual or Abstain blocks the whole package.
+
+### Prompt context
+
+The advisor sees a fixed template — role framing, verdict-format reminder, and a structured context block:
+
+| Field | Source | Notes |
+| --- | --- | --- |
+| `Package` | `name@version` | Always present. |
+| `Repository:` | `package.json > repository` (URL or shorthand) | Emitted only when the manifest carries a non-empty value. Treated as untrusted hint — pairs with the body's actual behaviour, never approves on URL alone. |
+| `Lifecycle phase` | `preinstall` / `install` / `postinstall` | Always present. |
+| `Script body` | The phase's exact `package.json` value | Fenced with `<<UNTRUSTED-SCRIPT-BEGIN-{nonce}>>` markers using a per-call random nonce. |
+| `Referenced files` | Files the body delegates to (e.g. `install.js` when the body is `node install.js`) | Each file fenced with its own per-file nonce. Caps: depth 1 (no recursive `require` following), ≤ 32 KB per file (truncated with explicit marker), safe-relative paths only (no `..`, abs paths, env-var expansion), text-only (binary files fall back to no-context Amber). |
+
+### Verdict cache
+
+Advisor verdicts are persisted at `$LPM_HOME/cache/l4-verdicts.json`. The next install of the same `(name, version)` with byte-identical script bodies skips the advisor round-trip and replays the cached verdict.
+
+The cache key folds in the script identity, the prompt template hash, the provider slug, and the model version. Any of those changing produces a different key and the next invocation re-classifies — there is no manual invalidation step. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
+
+Tunables (env vars):
+
+- `LPM_L4_CACHE=0` — disable the cache entirely. Useful for measurement runs where the comparison must include the round-trip cost.
+- `LPM_L4_CACHE_PATH=<path>` — override the cache file location.
+- `LPM_L4_CACHE_TTL_SECS=<n>` — override the 30-day default TTL.
 
 Set up interactively:
 
@@ -203,13 +233,13 @@ The recommended CI gate stack:
 
 ```yaml
 - run: lpm install --offline --strict-integrity
-- run: lpm trust diff                              # trustedDependencies drift
+- run: lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
 - run: lpm audit --fail-on vuln                    # confirmed vulns
 - run: lpm query ":vulnerable:not(:built)" --assert-none
 - run: lpm query ":eval:scripts" --assert-none      # eval + scripts is a yellow flag
 ```
 
-`lpm audit --fail-on` covers the broad-strokes gate; `lpm query --assert-none` covers your project's specific concerns. Together they're cheap and they catch most real classes of supply-chain trouble.
+`lpm audit --fail-on` covers the broad-strokes gate; `lpm query --assert-none` covers your project's specific concerns. `lpm trust diff` itself is informational — pipe through `jq -e` to make it gate on `trustedDependencies` drift. Together they're cheap and they catch most real classes of supply-chain trouble.
 
 ## See also
 

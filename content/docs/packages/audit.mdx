@@ -9,11 +9,13 @@ lpm audit
 
 Walks every installed package and reports:
 
-1. **Confirmed vulnerabilities** — cross-referenced against [OSV.dev](https://osv.dev) and registry advisories.
-2. **Behavioral flags** — uses static analysis to surface risky behaviors (`eval`, `child_process`, network access, filesystem writes, native code, etc.). See the full tag list under [`lpm query`](/docs/packages/query).
-3. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
+1. **Confirmed vulnerabilities** — npm packages are cross-referenced against [OSV.dev](https://osv.dev); `@lpm.dev/*` packages get vulnerability data from the registry's per-version metadata.
+2. **Behavioral flags** — static analysis surfaces risky behaviors (`eval`, `child_process`, network access, filesystem writes, native code, etc.). See the full tag list under [`lpm query`](/docs/packages/query).
+3. **Quality score** — for `@lpm.dev/*` packages. Scores below 40 surface as moderate; below 20 surface as high.
+4. **Dependency-confusion warnings** — when an installed `@lpm.dev/*` package's bare name collides with a popular npm package (`react`, `lodash`, etc.), the audit warns about the registry-confusion risk.
+5. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
 
-Works in any project, not just LPM-published ones. `lpm audit` is registry-agnostic — it audits whatever's in `node_modules`.
+Works in any project, not just LPM-published ones. Discovery walks `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (text form); falls back to walking `node_modules/` in degraded mode.
 
 ## Examples
 
@@ -29,13 +31,14 @@ lpm audit --json                    # structured output for tooling
 
 ## CI gating
 
-By default, `lpm audit` exits non-zero if **either** a vulnerability or a critical behavioral flag is found. Tighten or loosen with `--fail-on`:
+`lpm audit` exits non-zero when its findings trip the active `--fail-on` policy. The implicit default is conservative — high-severity behavioral signals like `eval` don't fail CI unless you ask for them explicitly with `--fail-on all`.
 
 | Policy | Exit code 1 when |
 | --- | --- |
-| `vuln` | A confirmed OSV / registry vulnerability is present |
-| `behavior` | A critical or high behavioral flag is present |
-| `all` (default) | Either of the above |
+| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, high-entropy strings). Excludes `high` behaviors so existing pipelines that tolerate `eval` don't break. |
+| `vuln` | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`) |
+| `behavior` | Any critical **or** high behavioral flag |
+| `all` (explicit) | Vulnerabilities + critical behaviors + high behaviors — the strict union |
 
 For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like selectors target individual flags or combinations.
 
@@ -45,7 +48,7 @@ For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like sele
 lpm audit --level high
 ```
 
-Suppresses anything below the threshold. Levels: `info`, `moderate`, `high`. Default is `info` (show everything).
+Suppresses anything below the threshold. Ladder from most-to-least severe: `critical` → `high` → `moderate` (alias `medium`) → `info` (alias `low`). Default is `info` (show everything).
 
 ## Secret scanning
 
@@ -53,15 +56,17 @@ Suppresses anything below the threshold. Levels: `info`, `moderate`, `high`. Def
 lpm audit --secrets
 ```
 
-Scans the installed source tree for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
+Scans the installed source tree under `node_modules/` for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
+
+Requires `node_modules/` to exist (errors with a `run \`lpm install\` first` hint otherwise). `--secrets` runs as a separate mode from the main audit — `--fail-on` and `--level` are not consulted; the secret scan is informational and always exits zero.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--level <info\|moderate\|high>` | Minimum severity to report (default: `info`) |
-| `--fail-on <vuln\|behavior\|all>` | CI exit-code policy (default: `all`) |
-| `--secrets` | Also scan installed source for hardcoded secrets |
+| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`) |
+| `--fail-on <vuln\|behavior\|all>` | CI exit-code policy (no flag = vulns + critical only; `all` is the strict superset) |
+| `--secrets` | Scan installed source for hardcoded secrets (separate mode — `--fail-on` / `--level` not consulted; always exits zero) |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
 

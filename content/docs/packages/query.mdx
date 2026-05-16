@@ -73,12 +73,21 @@ Each selector matches packages by **behavioral tag**, **state**, or **identity**
 
 ### Severity
 
+Severity selectors are **aliases** — each one expands to an OR of the underlying behavioral tags assigned to that level. Useful for "fail on any critical" gates without enumerating the tags by hand.
+
+| Tag | Expands to |
+| --- | --- |
+| `:critical` | `:obfuscated` OR `:protestware` OR `:high-entropy` |
+| `:high` | `:eval` OR `:child-process` OR `:shell` OR `:dynamic-require` OR `:scripts` OR `:vulnerable` |
+| `:medium` | `:network` OR `:git-dep` OR `:http-dep` OR `:wildcard-dep` OR `:no-license` OR `:native` |
+| `:info` | `:fs` OR `:crypto` OR `:env` OR `:ws` OR `:telemetry` OR `:trivial` OR `:copyleft` OR `:minified` OR `:url-strings` |
+
+### Structural
+
 | Tag | Matches |
 | --- | --- |
-| `:critical` | Tagged critical by the audit pipeline |
-| `:high` | Tagged high |
-| `:medium` | Tagged medium |
-| `:info` | Tagged info |
+| `:root` | The invocation root — the `package.json` closest to where the command ran |
+| `:workspace-root` | The workspace container in a monorepo (same as `:root` outside monorepos, distinct when invoked from a workspace member) |
 
 ### Combinators
 
@@ -117,11 +126,10 @@ lpm query --count
 Tabulates tag counts across every installed package, grouped by severity. Useful for high-level "how risky is my tree right now" surveys.
 
 ```bash
-lpm query :network -V
 lpm query :network --query-verbose
 ```
 
-`-V` / `--query-verbose` adds per-match tag detail — the full set of tags carried by each matched package, not just the ones in the selector.
+`--query-verbose` adds per-match tag detail — the full set of tags carried by each matched package, not just the ones in the selector.
 
 ## Output formats
 
@@ -143,11 +151,11 @@ For broader graph rendering (full tree, DOT, JSON, HTML), use [`lpm graph`](/doc
 | --- | --- |
 | `<selector>` | Optional selector expression. Required unless `--count`. |
 | `--count` | Show tag counts across all packages, grouped by severity |
-| `-V`, `--query-verbose` | Per-match tag details |
+| `--query-verbose` | Per-match tag details |
 | `--assert-none` | Exit non-zero if any package matches (CI gate) |
 | `--format <list\|mermaid>` | Output format (default `list`) |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` returns structured matches.
+Plus the [global flags](/docs/commands#global-flags). `--json` emits an array of matched packages with `name`, `version`, optional `path`, and (under `--query-verbose`) `analysis`, `hasScripts`, `isBuilt`, `isVulnerable`.
 
 ## See also
 

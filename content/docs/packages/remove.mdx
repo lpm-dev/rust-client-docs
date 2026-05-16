@@ -1,22 +1,43 @@
 ---
 title: lpm remove
-description: "Reverse an lpm add — remove a source-delivered package from your project."
+description: "Best-effort cleanup of a source-delivered @lpm.dev package."
 ---
 
 ```bash
 lpm remove <package>   # alias: lpm rm
 ```
 
-Removes the source files that `lpm add` previously copied into your project, plus any tracking entry LPM kept for it.
+Cleans up the on-disk artifacts of an [`lpm add`](/docs/packages/add) invocation for an `@lpm.dev/*` package. Removes the package's skills and source directory from canonical install locations, then exits.
 
-This is the **reverse of [`lpm add`](/docs/packages/add)**. To remove a runtime dependency from `package.json` and `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall) instead.
+This is the **reverse of [`lpm add`](/docs/packages/add)** for the `@lpm.dev` case. To remove a runtime dependency from `package.json` and `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall).
 
-## Examples
+## Scope
+
+`lpm remove` only operates on `@lpm.dev/*` packages — both the scoped form (`@lpm.dev/owner.ui-kit`) and the short form (`owner.ui-kit`) work. npm packages added via `lpm add lodash.merge` or similar are **not** removable via this command.
 
 ```bash
 lpm remove @lpm.dev/owner.ui-kit
-lpm rm lodash.merge
+lpm rm owner.ui-kit                 # short form
 ```
+
+## What it removes
+
+For a package `@lpm.dev/<owner>.<name>`, the command:
+
+1. Removes `.lpm/skills/<owner>.<name>/` if it exists, plus any editor integrations LPM set up alongside (e.g. Cursor symlinks).
+2. Scans a fixed list of canonical install directories for a folder named `<name>` (the trailing segment after the dot) and removes it if present:
+   - `components/<name>/`
+   - `src/components/<name>/`
+   - `lib/<name>/`
+   - `src/lib/<name>/`
+   - `Sources/<name>/` (Swift)
+   - `Packages/LPMComponents/Sources/<name>/` (Swift)
+
+That's it — there's no manifest of what `lpm add` originally copied, so cleanup is shape-based.
+
+**Source files that `lpm add` copied to a custom `--path` are not removed.** If you ran `lpm add @lpm.dev/owner.ui-kit --path ./src/vendor`, `lpm remove` won't find them. Delete those directories manually.
+
+The command exits successfully even when no files were found, with a warning naming the package — useful for idempotent CI cleanup, but it also means a typo'd name fails silently.
 
 ## See also
 

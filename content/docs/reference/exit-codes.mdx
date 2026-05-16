@@ -35,7 +35,39 @@ With `--json`, every error path also emits a structured JSON object on stdout be
 }
 ```
 
-The `error_code` field is the canonical short name for the error variant (e.g. `auth_required`, `not_found`, `forbidden`, `network`, `invalid_package_name`, `store`, `task`, `plugin`). Use it for programmatic dispatch in CI / agents.
+The `error_code` field is the canonical short name for the error variant. Use it for programmatic dispatch in CI / agents (the `error` message text is human-facing and subject to change; `error_code` is the stable contract).
+
+### Full `error_code` catalog
+
+| `error_code` | Emitted when |
+| --- | --- |
+| `auth_required` | Operation needs an authenticated session and none is present |
+| `session_expired` | A stored session token has expired and self-heal didn't recover |
+| `forbidden` | The server accepted the token but rejected the operation (plan gate, ACL, etc.) |
+| `not_found` | Package, version, vault, or other addressable resource doesn't exist |
+| `rate_limited` | Server (or a downstream like GitHub) returned a rate-limit response |
+| `network` | Underlying network failure (DNS, TCP, TLS) before the server replied |
+| `http` | Server replied but the response was malformed or an unhandled HTTP status |
+| `registry` | Registry-side error not covered by a more specific code |
+| `invalid_package_name` | Argument doesn't match the package-name grammar (e.g., bad scope, invalid chars) |
+| `invalid_integrity` | An SRI string is structurally malformed |
+| `integrity_mismatch` | A downloaded tarball's hash differs from the lockfile / manifest expectation |
+| `invalid_version` | Argument isn't a valid semver |
+| `invalid_version_range` | Argument isn't a valid semver range |
+| `engine_mismatch` | `engines.lpm` or `engines.node` constraint isn't satisfied |
+| `script` | A lifecycle script (or `lpm run` script body) failed (script field also covers `ScriptWithOutput`) |
+| `task` | Task-runner failure (graph cycle, missing dep, cache corruption) |
+| `workspace` | Workspace-config error (bad glob, member resolution, schema) |
+| `env_validation` | `envSchema` validation in `lpm.json` failed (missing required var, format mismatch) |
+| `plugin` | Plugin-backed tool (Oxlint, Biome) failed to download, hash-verify, or launch |
+| `cert` | mkcert / cert install error from `lpm cert` |
+| `tunnel` | Tunnel relay / domain claim / WebSocket failure |
+| `store` | Content-addressable store error (corruption, missing object, write failure) |
+| `io` | Filesystem I/O failed below a higher-level operation |
+| `json` | JSON parse / serialize failure on a file or response body |
+| `self_update_paused` | Self-update was administratively paused for the resolved release channel |
+| `self_update_rate_limited` | Self-update hit a per-IP probe rate limit |
+| `exit_code` | Subprocess passthrough — the exit code came from a wrapped tool (vitest, oxlint, etc.); see [Subprocess passthrough](#subprocess-passthrough) above |
 
 For single-package subprocess passthrough (`lpm run script`, `lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON.
 

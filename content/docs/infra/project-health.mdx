@@ -19,9 +19,11 @@ Three levels:
 
 A `warn` is informational — `lpm doctor` exits 0 even if every check warns. A `fail` exits 1, which is what CI gates on.
 
-## Parallel network probes
+## Fast vs full run
 
-Two infrastructure checks run **concurrently** at the start of the doctor run:
+By default, `lpm doctor` runs a **fast local-only preset** — no network round-trips, no subprocess spawns. The full check set runs under `--all`.
+
+Under `--all`, two infrastructure checks run **concurrently** at the start of the doctor run:
 
 - **Registry health** — `client.health_check()` against the configured registry URL.
 - **Auth check** — `client.whoami()` if a token exists in the keychain.
@@ -32,7 +34,7 @@ After those two land, the rest of the checks run inline (they're filesystem-boun
 
 ## Check inventory (representative)
 
-The full list is in [`crates/lpm-cli/src/commands/doctor.rs`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-cli/src/commands/doctor.rs) (~3400 lines). Highlights:
+The authoritative live catalog is [`lpm doctor list`](/docs/infra/doctor#lpm-doctor-list) (or `--json` for machine-readable). Highlights:
 
 | Group | Checks |
 | --- | --- |
@@ -54,7 +56,10 @@ Each check produces one `Check` row. Use `--json` to get the full structured set
 lpm doctor --fix              # prompt before each remediation
 lpm doctor --fix -y           # skip prompts (CI-friendly)
 lpm doctor -y                 # implies --fix
+lpm doctor --all --fix        # full sweep + repair (pair --all with --fix to repair every catalog row)
 ```
+
+`--fix` only repairs what was actually checked — running `--fix` without `--all` cannot fix rows that the fast preset never ran.
 
 For each `fail` (and some `warn`s), the remediator either has a known fix or doesn't. Examples of fixable checks:
 
@@ -89,7 +94,7 @@ lpm health          # registry connectivity check (different command)
 | --- | --- | --- |
 | Scope | Project + environment | Just the registry |
 | Reads `package.json`? | Yes | No |
-| Hits the network? | Yes (1–2 calls) | Yes (1 call) |
+| Hits the network? | Only under `--all` (1–2 calls); default fast preset is local-only | Yes (1 call) |
 | Auto-fix? | Yes (`--fix`) | No |
 | Use case | "Is my project in a good state?" | "Is the registry reachable from this CI runner?" |
 
@@ -106,17 +111,34 @@ Structured array of check results:
 ```json
 {
   "success": true,
+  "mode": "fast",
+  "no_failures": false,
+  "clean": false,
+  "has_warnings": false,
+  "passed": 2,
+  "failed": 1,
+  "warnings": 0,
   "checks": [
-    { "name": "Registry reachable", "severity": "pass", "detail": "lpm.dev OK (87ms)" },
-    { "name": "Node version", "severity": "pass", "detail": "22.12.0 from lpm.json" },
-    { "name": "node_modules sync", "severity": "fail", "detail": "drifted from lpm.lock — run `lpm install`" },
-    ...
+    { "code": "registry_reachable", "check": "Registry", "passed": true, "severity": "pass", "detail": "lpm.dev OK (87ms)" },
+    { "code": "node_managed_match", "check": "Node version", "passed": true, "severity": "pass", "detail": "22.12.0 from lpm.json" },
+    { "code": "deps_sync_drift", "check": "Dependencies", "passed": false, "severity": "fail", "detail": "drifted from lpm.lock — run `lpm install`" }
   ],
   "fixes_applied": ["lpm install"]
 }
 ```
 
-Useful for CI dashboards or agents that want to dispatch on specific failures rather than parse human output.
+Top-level fields:
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `"fast"` (default, local-only) or `"all"` (under `--all`) |
+| `no_failures` | `true` when every check passed (warnings don't break this) |
+| `has_warnings` | `true` when at least one check reported `warn` |
+| `clean` | `no_failures && !has_warnings` — the "everything green" shorthand |
+| `passed` / `failed` / `warnings` | Per-severity counts |
+| `fixes_applied` | Array of remediation actions that ran under `--fix`; empty when `--fix` wasn't passed |
+
+Full envelope shape (per-check fields) is documented on the [`lpm doctor`](/docs/infra/doctor#machine-readable-output-json) page. Useful for CI dashboards or agents that want to dispatch on specific failures rather than parse human output.
 
 ## When to run
 

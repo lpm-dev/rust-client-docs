@@ -28,11 +28,13 @@ lpm publish --min-score 80                   # gate on quality score
 
 In order:
 
-1. **Pack** — assemble the tarball from `files`, `main`, `bin`, etc.
-2. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
-3. **Quality score** — compute readme/license/types/tests/maintenance signals. Print the report. With `--min-score N`, abort if the score is below the threshold.
-4. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
-5. **Upload** — push the tarball to the chosen registry with the appropriate auth.
+1. **Pack** — assemble the tarball from `files`, `main`, `bin`, etc. Tarballs over **500 MB** are rejected outright.
+2. **Workspace protocol rewrite** — in monorepos, `workspace:*` and `catalog:` specifiers in `dependencies` get replaced with their resolved versions before hashing. Registries can't resolve those protocols; the rewrite happens on the in-memory tarball so the on-disk `package.json` stays untouched.
+3. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
+4. **Quality score** — compute readme/license/types/tests/maintenance signals. Print the report. With `--min-score N`, abort if the score is below the threshold.
+5. **Skills validation** (LPM target only) — when the project ships `.lpm/skills/`, validate every skill file and run a security pattern check on the content; either failing aborts the publish.
+6. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
+7. **Upload** — push the tarball to each target registry with the appropriate auth.
 
 `--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
 
@@ -55,15 +57,24 @@ Consumers can later verify provenance via the audit pipeline or registry UI.
 
 ## Targets
 
-| Flag | Registry |
-| --- | --- |
-| (default) / `--lpm` | lpm.dev |
-| `--npm` | `registry.npmjs.org` |
-| `--github` | GitHub Packages (requires `publish.github.repository` in `lpm.json`) |
-| `--gitlab` | GitLab Packages (requires `publish.gitlab.projectId` in `lpm.json`) |
-| `--publish-registry <URL>` | Any npm-compatible registry |
+```bash
+lpm publish --lpm --npm                 # publish to both in one run
+lpm publish --github --gitlab           # cross-publish to both git-host registries
+```
 
-You must be logged in to the chosen target — see [Authentication](/docs/reference/authentication) for `lpm login --npm`, `--github`, `--gitlab`, etc.
+Multiple target flags compose — `lpm publish` runs through them in order and reports per-target success / failure. Up to **5** target registries per invocation.
+
+| Flag | Registry | Requirements |
+| --- | --- | --- |
+| (default) / `--lpm` | lpm.dev | Package name must be `@lpm.dev/owner.pkg`. Override with `publish.lpm.name` in `lpm.json` |
+| `--npm` | `registry.npmjs.org` (or custom via `publish.npm.registry`) | Override name with `publish.npm.name`; tune `access` / `tag` / `otpRequired` under `publish.npm.*` |
+| `--github` | GitHub Packages | Package name must be **scoped** (`@owner/pkg`). Falls back to `publish.github.name` → `publish.npm.name` → `package.json#name` — any of them being a scoped name is enough |
+| `--gitlab` | GitLab Packages | `publish.gitlab.projectId` is required. Optional `publish.gitlab.registry` overrides the default `https://gitlab.com` instance |
+| `--publish-registry <URL>` | Any npm-compatible registry | — |
+
+When no target flag is set on the CLI, the active set comes from `lpm.json > publish.registries` (default: `["lpm"]`).
+
+You must be logged in to the chosen target — see [Authentication](/docs/reference/authentication) for `lpm login --npm`, `--github`, `--gitlab`, or `lpm login --login-registry <URL>` for custom.
 
 ## Flags
 

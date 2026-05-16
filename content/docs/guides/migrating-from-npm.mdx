@@ -77,7 +77,7 @@ If anything goes wrong (or the migration was a mistake):
 lpm migrate --rollback
 ```
 
-Walks the backups created by the previous run and restores `package-lock.json`, `.npmrc`, and `package.json` to their pre-migration state. Files that the migration newly created — `lpm.lock`, `lpm.lockb`, and any patch files copied to `patches/` — are removed. Safe to run repeatedly.
+Walks the backups created by the previous run and restores `package-lock.json`, `.npmrc` (if it was touched), and `.gitattributes` to their pre-migration state. Files the migration newly created — `lpm.lock`, `lpm.lockb`, any new `.gitattributes`, and any patch files copied to `patches/` — are removed. `package.json` is only rolled back if the migration mutated it (i.e., when `pnpm.*` blocks were translated; usually not on the npm path). Safe to run repeatedly.
 
 ## Optional flags
 
@@ -97,12 +97,12 @@ Walks the backups created by the previous run and restores `package-lock.json`, 
 
 - `package.json` — `dependencies`, `devDependencies`, `scripts`, `workspaces` are read as-is. No renames, no deletions.
 - `node_modules/` — gets rebuilt by the install step. The on-disk shape may change (npm-flat → LPM's isolated layout); your imports continue to work because LPM's resolver respects the same semver semantics npm does.
-- `.npmrc` — if you had `@scope:registry=` lines for private registries, they survive the migration. LPM honors `.npmrc` for routing — see [Registries](/docs/registries).
+- `.npmrc` — any existing `@scope:registry=` lines for private registries survive the migration. The migration additively appends `@lpm.dev:registry=https://lpm.dev/api/registry/` (unless you pass `--no-npmrc`); if your `.npmrc` already declared that scope, the step is a no-op. LPM honors `.npmrc` for routing — see [Registries](/docs/registries).
 
 ## What changes
 
 - `package-lock.json` → `lpm.lock` + `lpm.lockb`. Both are committed, both should travel with the repo.
-- `node_modules/` layout switches to **isolated by default** (pnpm-style symlinks). To keep the npm-style flat layout: `lpm install --linker=hoisted` or set `package.json > lpm > linker = "hoisted"`.
+- `node_modules/` layout stays **hoisted** (npm-style flat) for single packages — same shape your project is on today. **Workspaces auto-flip to isolated** (pnpm-style symlinks) for phantom-dep catching; force-flat with `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
 - New `.gitattributes` line: `lpm.lockb binary` (so git doesn't try to text-merge the binary lockfile).
 
 ## Common pitfalls

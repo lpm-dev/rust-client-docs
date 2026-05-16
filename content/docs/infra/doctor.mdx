@@ -4,7 +4,7 @@ description: "Project + environment health checks, with auto-fix."
 ---
 
 ```bash
-lpm doctor [--fix] [-y]
+lpm doctor [--all] [--fix] [-y]
 lpm health
 ```
 
@@ -13,17 +13,26 @@ Two complementary diagnostic commands:
 - **`lpm doctor`** — checks the **project + environment**: Node version detection, `lpm install` state, sandbox availability, certificate trust, store integrity, and a handful of others. The big "is everything OK here?" command.
 - **`lpm health`** — checks the **registry**: connectivity, latency, the registry's own health endpoint. The "is the service up?" command.
 
+## Fast vs full
+
+`lpm doctor` runs a **fast local-only preset by default**: no registry probe, no `whoami`, no tunnel lookup, no lint / fmt subprocess, no plugin reachability fetch, no sandbox probe, no manifest-compat sweep. It's the "why is this project broken right now?" pass — milliseconds.
+
+Pass `--all` to run **every catalog row**, including the network-touching and subprocess-spawning ones. Use `--all` in CI gates and when you actually want the broad sweep; stick with the default for quick local checks.
+
 ## Examples
 
 ```bash
-lpm doctor                       # report — read-only
+lpm doctor                       # fast preset — local-only checks
+lpm doctor --all                 # full sweep — every catalog row
 lpm doctor --fix                 # auto-fix what it can, prompt where unclear
 lpm doctor --fix -y              # auto-fix, no prompts (CI-friendly)
-lpm doctor --json                # structured for tooling
+lpm doctor --all --json          # full sweep, structured for tooling
 
 lpm health                       # registry connectivity check
 lpm health --json
 ```
+
+`--fix` only repairs what was actually checked — running `--fix` without `--all` cannot fix rows that the fast preset never ran. Pair `--all --fix` for the full repair pass.
 
 ## What `lpm doctor` checks
 
@@ -47,6 +56,7 @@ The catalog drives the runtime: `lpm doctor`'s `Check` constructors take a `&'st
 ```json
 {
   "success": true,
+  "mode": "all",
   "no_failures": false,
   "clean": false,
   "has_warnings": true,
@@ -72,6 +82,18 @@ The catalog drives the runtime: `lpm doctor`'s `Check` constructors take a `&'st
   ]
 }
 ```
+
+Top-level fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `mode` | `string` | `"fast"` (default preset) or `"all"` (under `--all`). Agents need this to distinguish what was actually checked vs skipped. |
+| `no_failures` | `bool` | `true` when no `severity = "fail"` checks fired (warnings tolerated). |
+| `clean` | `bool` | `true` when no failures AND no warnings. |
+| `has_warnings` | `bool` | `true` when at least one `severity = "warn"` check fired. |
+| `passed` / `failed` / `warnings` | `number` | Counts. |
+| `fixes_applied` | `string[]` | Remediations `--fix` ran. Empty in read-only mode. |
+| `checks[]` | `array` | Per-check rows — see below. |
 
 Per-check fields:
 
@@ -106,9 +128,21 @@ Pass `-y` (which implies `--fix`) to skip every prompt — useful in CI bootstra
 
 ```bash
 lpm health
+lpm health --json
 ```
 
-Hits the registry's health endpoint, measures round-trip latency, and reports up/down + p50/p99. Use as a CI smoke test or when investigating slow installs.
+Hits the registry's health endpoint with a **single round-trip**, reports up/down and the response time in milliseconds. Exits non-zero when the registry is unreachable, so the command works as a self-gating CI smoke test on its own — no need to wrap it.
+
+```json
+{
+  "success": true,
+  "healthy": true,
+  "registry_url": "https://lpm.dev",
+  "response_time_ms": 87
+}
+```
+
+`lpm health` does not aggregate percentiles or sample repeatedly — `response_time_ms` is one measurement. For load-testing or latency distribution, drive it from your own benchmarking harness.
 
 `lpm health` does not check your project — only the registry. For project + environment checks, use `lpm doctor`.
 
@@ -118,7 +152,8 @@ Hits the registry's health endpoint, measures round-trip latency, and reports up
 
 | Flag | Effect |
 | --- | --- |
-| `--fix` | Auto-fix issues with prompts |
+| `--all` | Run every catalog row (including registry / auth / tunnel / lint / fmt / plugin / sandbox / manifest-compat). Default is the fast local-only preset |
+| `--fix` | Auto-fix issues with prompts. Only repairs what was actually checked — pair with `--all` for the full repair pass |
 | `-y`, `--yes` | Skip prompts (implies `--fix`) |
 
 ### `lpm doctor list`
@@ -163,8 +198,11 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 | --- | --- | --- |
 | `package_json_present` | pass | A readable `package.json` exists in the project directory. |
 | `package_json_missing` | fail | No `package.json` exists in the project directory. **Fix:** Run `lpm init`, or `cd` into your project root before running doctor. |
+| `linker_mode_resolved` | pass | Reports the linker mode the install pipeline would resolve to plus which surface produced it (CLI flag / `~/.lpm/config.toml` / `LPM_LINKER` / `package.json > lpm > linker` / workspace auto-detect / default). Informational. |
 | `node_modules_isolated_healthy` | pass | `node_modules/` exists and is backed by an isolated `.lpm/wrappers/` store. |
 | `node_modules_hoisted_healthy` | pass | `node_modules/` exists and uses the hoisted layout. |
+| `node_modules_virtual_healthy` | pass | `node_modules/` symlinks point into the virtual store at `~/.lpm/store/v2/links/`. |
+| `v2_store_orphans` | warn | The v2 store at `~/.lpm/store/v2/` has link entries or objects no longer reachable from any registered project. **Fix:** `lpm cache prune` (dry-run) then `lpm cache prune --apply`. |
 | `node_modules_mixed_layout` | warn | Both isolated and hoisted layout state are present in `node_modules/`. **Fix:** Re-run `lpm install` to converge on the configured linker layout. |
 | `node_modules_no_store` | warn | `node_modules/` exists but no LPM-owned store is present. **Fix:** Run `lpm install` to rebuild the layout under LPM ownership. |
 | `node_modules_legacy_layout` | warn | An older LPM layout is on disk and a one-time migration is pending. **Fix:** Run `lpm install` to migrate to the current layout. |
@@ -283,10 +321,12 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 | Code | Severity | Description |
 | --- | --- | --- |
 | `sandbox_available` | pass | The OS sandbox backend used by lifecycle scripts is available. |
+| `sandbox_helper_missing` | warn | (Windows) `lpm-sandbox-helper.exe` is not located next to `lpm.exe`, so strict-mode AppContainer containment falls back to the Low IL backend (no outbound-network denial). **Fix:** Reinstall `@lpm-registry/cli`, or set `LPM_SANDBOX_HELPER=<path>` if the helper lives elsewhere. |
+| `sandbox_degraded` | warn | Strict mode is engaged but the host kernel forced the V1 fallback (filesystem containment only — no outbound network denial). **Fix:** Upgrade to kernel 6.7+ and unset `[sandbox] allow-degraded`, or drop back to default via `lpm config sandbox --set default`. |
+| `sandbox_disabled_by_user` | warn | Sandbox is persistently disabled via `[sandbox] mode = "none"`. Lifecycle scripts run with no containment, including credential env vars. **Fix:** Restore via `lpm config sandbox --set default` (or `--set strict`). |
 | `sandbox_kernel_too_old` | warn | Linux kernel is too old to support Landlock at the required ABI. **Fix:** Upgrade the kernel, or accept that lifecycle scripts run unsandboxed. |
 | `sandbox_unsupported_platform` | warn | No supported sandbox backend exists for this platform. **Fix:** Lifecycle scripts will not be sandboxed on this platform — review with `lpm approve-scripts`. |
 | `sandbox_probe_failed` | fail | The sandbox probe errored unexpectedly. **Fix:** File a bug with the `detail` text. |
-| `policy_scope_project_only` | pass | Script policy is scoped to project installs only. |
 | `policy_force_security_floor` | warn | An override is in effect that lowers the default script-policy floor. **Fix:** Review the override and confirm it matches the project's threat model. |
 
 ### Manifest compat

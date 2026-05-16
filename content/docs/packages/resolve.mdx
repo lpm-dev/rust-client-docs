@@ -17,8 +17,8 @@ Useful for previewing the impact of a candidate dep, debugging unexpected transi
 lpm resolve react                            # latest, full tree
 lpm resolve react@^19                        # a specific range
 lpm resolve react vue zod                    # multiple at once
-lpm resolve @lpm.dev/owner.pkg               # works against any registry
-lpm resolve react --json | jq '.tree'        # structured output for scripts
+lpm resolve @lpm.dev/owner.pkg               # @lpm.dev/* through the lpm.dev registry
+lpm resolve react --json | jq '.packages'    # structured output for scripts
 ```
 
 ## Spec format
@@ -32,15 +32,43 @@ Each spec is `<name>` or `<name>@<range>`. Bare names default to `*` (latest mat
 | `react@19.0.0` | Exact `19.0.0` |
 | `react@beta` | Latest tag `beta` |
 | `@lpm.dev/owner.pkg@^1` | Latest `^1` from lpm.dev |
-| `@my-co/internal` | Resolves via `.npmrc` mapping |
 
 ## How it works
 
 1. Parses each spec into `(name, range)`.
-2. Calls the resolver with the combined dep map. The resolver hits the appropriate registry for each name (lpm.dev for `@lpm.dev/*`, `.npmrc`-declared registries for matching scopes, `registry.npmjs.org` for everything else — see [Registries](/docs/registries)).
-3. Prints the resolved tree with versions and integrity hashes for every transitive dep.
+2. Calls the resolver with the combined dep map. `@lpm.dev/*` names route to lpm.dev; every other name routes through the default LPM Worker proxy to npmjs.org.
+3. Prints the resolved tree with name, version, and an `lpm` / `npm` badge per row.
 
 No tarballs are downloaded. The resolver only needs metadata.
+
+`lpm resolve` does **not** consult `.npmrc` for routing — even if your project's `.npmrc` declares `@my-co:registry=…`, `lpm resolve @my-co/internal` goes through the default proxy path. Only `lpm install` reads `.npmrc`. To resolve against a private registry, set `--registry <URL>` to point the entire CLI at it for this invocation.
+
+## JSON output
+
+```bash
+lpm resolve react --json
+```
+
+```json
+{
+  "success": true,
+  "count": 47,
+  "elapsed_secs": 0.83,
+  "packages": [
+    { "package": "react", "version": "19.0.0" },
+    { "package": "scheduler", "version": "0.25.0" }
+  ]
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `count` | `number` | Total resolved packages (root + transitive). |
+| `elapsed_secs` | `number` | Resolver wall-clock time. |
+| `packages[].package` | `string` | Package name. |
+| `packages[].version` | `string` | Resolved exact version. |
+
+Integrity hashes aren't part of the resolve envelope — pair with [`lpm download`](/docs/packages/download) to fetch the tarball + SRI for a specific resolved version.
 
 ## When to reach for this
 

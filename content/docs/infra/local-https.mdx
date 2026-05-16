@@ -15,9 +15,9 @@ This page covers the design — what gets generated, where it lives, how trust-s
    └─ ~/.lpm/certs/rootCA-key.pem    ← private key (mode 0o600)
 
 2. Install the CA into the OS trust store
-   └─ macOS:   security add-trusted-cert
-   └─ Linux:   /usr/local/share/ca-certificates/ + update-ca-certificates
-   └─ Windows: certutil -addstore "ROOT"
+   └─ macOS:   security add-trusted-cert (user login keychain, no sudo)
+   └─ Linux:   /usr/local/share/ca-certificates/ + update-ca-certificates (sudo)
+   └─ Windows: certutil -addstore Root (UAC)
 
 3. Generate a per-project certificate signed by the root CA
    └─ <project>/.lpm/certs/cert.pem
@@ -59,11 +59,11 @@ If a key file already exists, it's removed first so the `create_new` succeeds on
 
 `lpm cert trust` installs `rootCA.pem` into the OS trust store. Per-OS:
 
-| OS | Mechanism | Sudo? |
+| OS | Mechanism | Elevation? |
 | --- | --- | --- |
-| macOS | `security add-trusted-cert -d -k /Library/Keychains/System.keychain rootCA.pem` | Yes (System keychain). User keychain variant uses `-k ~/Library/Keychains/login.keychain-db` (no sudo). |
-| Linux | Copy to `/usr/local/share/ca-certificates/lpm-ca.crt`, then `update-ca-certificates` | Yes |
-| Windows | `certutil -addstore "ROOT" rootCA.pem` | Yes (admin) |
+| macOS | `security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db rootCA.pem` (user login keychain) | No sudo |
+| Linux | Copy to `/usr/local/share/ca-certificates/lpm-local-ca.crt`, then `update-ca-certificates` | Sudo (both steps) |
+| Windows | `certutil -addstore Root rootCA.pem` | UAC prompt |
 
 Untrust:
 

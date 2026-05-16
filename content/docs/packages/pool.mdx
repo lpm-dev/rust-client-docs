@@ -1,6 +1,83 @@
 ---
-title: pool
-description: "Show Pool revenue stats with package breakdown."
+title: lpm pool
+description: "Show your Pool revenue stats with per-package weighted downloads."
 ---
 
-Coming soon.
+```bash
+lpm pool
+```
+
+Prints your Pool revenue stats for the current billing period — total weighted downloads, estimated earnings, and a per-package breakdown. Requires an authenticated session against lpm.dev (`lpm login` first).
+
+## Example
+
+```text
+$ lpm pool
+
+  Pool Revenue Stats
+
+  billing period         2026-05
+  weighted downloads     142,830
+  estimated earnings     $18.42
+
+  packages (3):
+    @lpm.dev/acme.toolkit       (84,210 downloads)
+    @lpm.dev/acme.cli           (51,003 downloads)
+    @lpm.dev/acme.icons         (7,617  downloads)
+```
+
+The numbers shown are the **current period's accruing estimate** — they're recomputed from raw download events at payout time. Earnings settle when the period closes.
+
+## What's a "weighted download"
+
+Not every install counts the same. Pool weighting protects against download inflation:
+
+- **`per_user` distribution** (current default) — each unique consumer counts once per package per billing period, regardless of how many CI runs or machine reinstalls they perform. This is the fairer model for small / niche packages that would otherwise lose to bot-driven inflation.
+- **Verified-publisher / quality gates** — packages below the quality floor or flagged for behavioral risk don't accrue.
+- **Pool participants only** — only packages with `distribution: "pool"` set on the version manifest count toward your share. Private and marketplace packages live on a different revenue path.
+
+The exact weight rules live server-side and are subject to anti-gaming changes; the `weightedDownloads` value returned here is always the authoritative one for the active rules.
+
+## `--json` output
+
+```json
+{
+  "success": true,
+  "billingPeriod": "2026-05",
+  "totalWeightedDownloads": 142830,
+  "estimatedEarningsCents": 1842,
+  "packages": [
+    {
+      "name": "@lpm.dev/acme.toolkit",
+      "owner": "acme",
+      "packageName": "toolkit",
+      "installCount": 91500,
+      "weightedDownloads": 84210,
+      "sharePercentage": 58.96,
+      "estimatedEarningsCents": 1086
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `billingPeriod` | ISO month (`YYYY-MM`) the stats cover |
+| `totalWeightedDownloads` | Sum across all your pool packages |
+| `estimatedEarningsCents` | Accruing total in cents (`/100` for dollars) |
+| `packages[].installCount` | Raw install events before weighting |
+| `packages[].weightedDownloads` | Post-weighting count that determines share |
+| `packages[].sharePercentage` | Your share of this package within the pool, in percent |
+| `packages[].estimatedEarningsCents` | Per-package accrual in cents |
+
+Any field can be absent (server omits null entries). Treat the envelope as forward-compatible — additional fields may appear in future releases.
+
+## Flags
+
+`lpm pool` takes no specific flags besides the global flags. `--json` switches the output to the structured envelope above.
+
+## See also
+
+- [Distribution mode](/docs/reference/glossary#distribution-mode) — what `private` / `pool` / `marketplace` mean and why mode changes are irreversible
+- [`lpm publish`](/docs/packages/publish) — how a package opts into Pool (the dashboard-driven flip)
+- [Publishing a package](/docs/guides/publishing-a-package) — walkthrough including the pool/marketplace flip
