@@ -61,12 +61,13 @@ The CLI policy flags share semantics with [`lpm install`](/docs/packages/install
 
 ## Sandbox
 
-Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux, AppContainer + Job Object on Windows. Two postures:
+Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux, AppContainer + Job Object on Windows. Three modes:
 
-| Posture | Filesystem | Env | Outbound network | How to engage |
-| --- | --- | --- | --- | --- |
-| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Credential vars stripped (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.) | Allowed | Nothing — this is the default |
-| **Strict** | Same as default | Same as default | **Denied** | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
+| Mode | Filesystem | Env | Outbound network | Project secret files | How to engage |
+| --- | --- | --- | --- | --- | --- |
+| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Credential vars stripped (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.) | Allowed | **Denied** — `.env*`, `.npmrc`, `.aws/`, `*.pem`, … (see [below](#project-secret-files)) | Nothing — this is the default |
+| **Strict** | Same as default | Same as default | **Denied** | **Denied** | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
+| **Disabled** | No containment | **Not scrubbed** — `LPM_TOKEN`, `NPM_TOKEN`, etc. all pass through | Allowed | **Readable** — every file in `project_dir` reachable | `--no-sandbox` (per-command, loud banner), or `lpm config sandbox --set none` (persistent) |
 
 ```bash
 lpm rebuild --strict-sandbox     # filesystem + env + network containment for this run
@@ -74,6 +75,44 @@ lpm rebuild --paranoid           # alias — same behavior
 ```
 
 Strict network denial coverage is platform-asymmetric: macOS Seatbelt denies every socket family; Linux landlock denies TCP `connect(2)`/`bind(2)` and seccomp-bpf denies direct UDP / raw / AF_PACKET / AF_NETLINK sockets; Windows uses AppContainer + Windows Filtering Platform. On platforms where strict isn't fully implementable, the sandbox refuses to start unless the `allow_degraded` config is set.
+
+### Project secret files
+
+**Sandbox blocks lifecycle script reads of project secrets by default; opt in via `[sandbox] script-read-allow` if your build needs a specific secret file.**
+
+Lifecycle scripts have read access to most of `project_dir` so they can locate sources, configs, generated files, etc. But certain conventional secret-file locations are denied even though they sit inside the project tree — a malicious or compromised script has no legitimate reason to read your `.env`, `.aws/credentials`, or a `*.pem` private key.
+
+The deny list covers:
+
+- **dotenv conventions** — `.env`, `.env.local`, `.env.production(.local)`, `.env.development(.local)`, `.env.staging(.local)`, `.env.test(.local)`, `.envrc`
+- **package-manager auth files** — `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pypirc`
+- **shell / HTTP auth files** — `.netrc`, `_netrc`, `.git-credentials`, `.htpasswd`
+- **git credential URLs** — `.git/config`, `.git/credentials`
+- **SSH keys at project root** — `id_rsa`, `id_ecdsa`, `id_ed25519`, `id_dsa` (and `.pub` variants)
+- **cloud / credential dirs** — `.ssh/`, `.aws/`, `.kube/`, `.gcp/`, `.config/gcloud/`, `.terraform/`, `secrets/`, `secret/`
+- **filetype patterns at any depth** — `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.tfstate`, `*.tfvars`, `*.tfvars.json`
+
+On macOS the denial fires as a Seatbelt `(deny file-read* ...)` rule layered after the project-dir allow (SBPL last-match-wins). On Linux the sandbox enters a fresh user + mount namespace before the script runs and bind-mounts `/dev/null` over each enumerated secret file — reads return zero bytes. Hardened distros that block unprivileged user namespaces (Debian with `kernel.unprivileged_userns_clone=0`, some AppArmor profiles, unprivileged containers) silently no-op the overlay; the script falls back to baseline access. Windows AppContainer has no equivalent overlay layer today.
+
+#### Opting specific files back in
+
+Some builds genuinely need access — `prisma generate` reads `DATABASE_URL` from `.env`, a custom build script may read a project-rooted CA bundle, etc. Two surfaces let you exempt named files:
+
+```json title="package.json (per-project)"
+{
+  "lpm": {
+    "scripts": {
+      "sandboxReadAllow": [".env", "services/api/.env"]
+    }
+  }
+}
+```
+
+```toml title="~/.lpm/config.toml (per-user, applied to every project)"
+script-read-allow = [".env", ".npmrc"]
+```
+
+Per-project (`package.json > lpm > scripts > sandboxReadAllow`) and per-user (`~/.lpm/config.toml > script-read-allow`) lists are **unioned** at install time. Every entry must resolve to a path **inside** `project_dir` — traversal escapes (`..`) and absolute paths pointing outside the project are rejected with an actionable error naming the config source and key. Duplicate entries across the two lists are deduplicated.
 
 ### Disabling the sandbox
 
