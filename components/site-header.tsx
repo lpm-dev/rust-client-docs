@@ -14,6 +14,7 @@ type NavItem = {
 };
 
 const NAV_ITEMS: NavItem[] = [
+	{ label: "Get started", href: "/docs", matchPrefix: "/docs" },
 	{ label: "Packages", href: "/docs/packages", matchPrefix: "/docs/packages" },
 	{ label: "Dev", href: "/docs/dev", matchPrefix: "/docs/dev" },
 	{ label: "Infra", href: "/docs/infra", matchPrefix: "/docs/infra" },
@@ -21,18 +22,34 @@ const NAV_ITEMS: NavItem[] = [
 	{ label: "Reference", href: "/docs/reference", matchPrefix: "/docs/reference" },
 ];
 
-const TRAILING_ITEMS: NavItem[] = [
-	{ label: "Changelog", href: "/changelog", matchPrefix: "/changelog" },
-];
+const TRAILING_ITEMS: NavItem[] = [];
 
-function isActive(pathname: string, item: NavItem) {
-	const prefix = item.matchPrefix ?? item.href;
-	return pathname === prefix || pathname.startsWith(`${prefix}/`);
+// Longest matching prefix wins — so `/docs/packages/install` highlights
+// "Packages" (prefix `/docs/packages`, len 14), not "Get started" (prefix
+// `/docs`, len 5), even though both prefixes technically match.
+function pickActiveItem(
+	pathname: string,
+	items: NavItem[],
+): NavItem | undefined {
+	let best: NavItem | undefined;
+	let bestLen = -1;
+	for (const item of items) {
+		const prefix = item.matchPrefix ?? item.href;
+		const matches =
+			pathname === prefix || pathname.startsWith(`${prefix}/`);
+		if (matches && prefix.length > bestLen) {
+			best = item;
+			bestLen = prefix.length;
+		}
+	}
+	return best;
 }
 
 export function SiteHeader() {
 	const pathname = usePathname() ?? "/";
 	const githubHref = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
+	const activeNavItem = pickActiveItem(pathname, NAV_ITEMS);
+	const activeTrailingItem = pickActiveItem(pathname, TRAILING_ITEMS);
 
 	return (
 		<header
@@ -54,7 +71,7 @@ export function SiteHeader() {
 						<NavLink
 							key={item.href}
 							item={item}
-							active={isActive(pathname, item)}
+							active={item === activeNavItem}
 						/>
 					))}
 				</nav>
@@ -66,7 +83,7 @@ export function SiteHeader() {
 						<NavLink
 							key={item.href}
 							item={item}
-							active={isActive(pathname, item)}
+							active={item === activeTrailingItem}
 							className="hidden sm:inline-flex"
 						/>
 					))}

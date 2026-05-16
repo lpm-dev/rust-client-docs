@@ -2,9 +2,9 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import { SidebarTabsDropdown } from "fumadocs-ui/components/sidebar/tabs/dropdown";
 import { getLayoutTabs, isLayoutTabActive } from "fumadocs-ui/layouts/shared";
 import type * as PageTree from "fumadocs-core/page-tree";
 import { baseOptions } from "@/lib/layout.shared";
@@ -25,18 +25,24 @@ export function DocsLayoutClient({
 
 	const tabs = useMemo(() => getLayoutTabs(tree), [tree]);
 
+	const activeTab = useMemo(
+		() =>
+			tabs.findLast((t) => {
+				if (isLayoutTabActive(t, pathname)) return true;
+				if (!t.url) return false;
+				return pathname === t.url || pathname.startsWith(`${t.url}/`);
+			}),
+		[tabs, pathname],
+	);
+
 	const scopedTree = useMemo<PageTree.Root>(() => {
-		const activeTab = tabs.findLast((t) => {
-			if (isLayoutTabActive(t, pathname)) return true;
-			if (!t.url) return false;
-			return pathname === t.url || pathname.startsWith(`${t.url}/`);
-		});
 		const activeFolder = activeTab?.$folder;
 
 		if (activeFolder) {
 			// Inside a capability section: show only that section's children,
-			// stripping the index page entry (the capability dropdown already
-			// represents the section, so the index would be a duplicate "title").
+			// stripping the index page entry (the section label in the sidebar
+			// header already represents the section, so the index would be a
+			// duplicate "title").
 			const indexUrl = activeTab?.url;
 			const children = activeFolder.children.filter(
 				(node) => !(node.type === "page" && node.url === indexUrl),
@@ -53,7 +59,7 @@ export function DocsLayoutClient({
 
 		// On /docs root or a top-level page: show top-level non-root items
 		// (Installation, First install, etc.), hide the capability roots since
-		// the top-nav + dropdown handle cross-section navigation.
+		// the top-nav handles cross-section navigation.
 		return {
 			...tree,
 			$id: "scope:root",
@@ -61,7 +67,7 @@ export function DocsLayoutClient({
 				(node) => !(node.type === "folder" && node.root),
 			),
 		} as PageTree.Root;
-	}, [tree, tabs, pathname]);
+	}, [tree, activeTab]);
 
 	return (
 		<DocsLayout
@@ -70,7 +76,12 @@ export function DocsLayoutClient({
 			nav={{
 				...baseOptions().nav,
 				children: (
-					<SidebarTabsDropdown options={tabs} className="flex-1" />
+					<Link
+						href={activeTab?.url ?? "/docs"}
+						className="flex-1 text-sm font-medium text-fd-foreground"
+					>
+						{activeTab?.title ?? "Get started"}
+					</Link>
 				),
 			}}
 			containerProps={{ style: docsContainerStyle }}
