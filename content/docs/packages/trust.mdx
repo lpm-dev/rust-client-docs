@@ -33,11 +33,21 @@ Read-only. Compares the current `package.json > lpm > trustedDependencies` again
 - **Removals** — entries that were there but are now gone. Usually intentional cleanup, but worth a glance.
 - **Same-key binding changes** — same `name@version` key, but a different `integrity` or `scriptHash`. Indicates the package contents changed without a version bump (re-publish, tampering).
 
-Useful as a CI gate or local pre-merge check — runs in milliseconds, no network.
+The snapshot lives at `<project>/.lpm/trust-snapshot.json`, written by every successful `lpm install`. If the project has never been installed with LPM, `diff` reports `"no prior snapshot"` and exits cleanly — there's no baseline to compare against yet.
+
+`trust diff` is informational — it always exits zero and prints whatever it found. To turn it into a CI gate, parse `--json`:
+
+```bash
+lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
+```
+
+`jq -e` exits non-zero when the boolean evaluates to false, so any non-empty diff fails the step.
+
+The JSON envelope: `schema_version`, `command`, `snapshot_captured_at`, `current_binding_count`, `added[]`, `removed[]`, `changed[]`. Each entry carries `key` (e.g., `esbuild@0.25.1`), `previous`, and `current` (the integrity / scriptHash before and after).
 
 | Flag | Effect |
 | --- | --- |
-| `--json` | Machine-readable output for CI gates |
+| `--json` | Machine-readable output for CI gating via `jq` |
 
 ## `lpm trust prune`
 
@@ -48,15 +58,21 @@ lpm trust prune -y                # skip the prompt (required on non-TTY / CI)
 lpm trust prune --json
 ```
 
-Removes `trustedDependencies` entries whose package isn't in the resolved tree anymore. Entries become stale when:
+Removes `trustedDependencies` entries whose package isn't in the resolved tree anymore. "No longer in the tree" means: `lpm.lock` has zero entries with this name (regardless of version). Per-version drift on a name that's still installed is **not** considered stale — that's drift, handled by the install-time gate, not by prune.
+
+Entries become stale when:
 
 - A dep was removed from `package.json` but its trust entry stayed
-- A version was bumped, leaving the previous version's pin orphaned
+- A dep was renamed (the old name's pin is now orphaned)
 - A dep was moved (e.g., from `dependencies` to `optionalDependencies` and never reinstalled)
 
-The interactive prompt confirms the removal list before writing. In CI / non-TTY contexts, `-y` is required (the prompt would deadlock).
+`lpm trust prune` reads `lpm.lock` to determine what's installed. **If the lockfile is missing**, the command exits with `no lpm.lock found — run \`lpm install\` before pruning trust entries` — refusing to prune from an empty installed-set (which would mark everything stale).
+
+The interactive prompt confirms the removal list before writing. In CI / non-TTY contexts, `-y` is required — without it, prune errors with `lpm trust prune needs a TTY for confirmation. Pass \`--yes\` to ...`.
 
 `--dry-run` runs the analysis normally but doesn't touch `package.json`.
+
+The JSON envelope: `schema_version`, `command`, `dry_run`, `mutated` (the actual final state — `false` on `--dry-run` or no-op), `stale_count`, `stale[]` (the keys removed).
 
 | Flag | Effect |
 | --- | --- |
@@ -68,11 +84,17 @@ The interactive prompt confirms the removal list before writing. In CI / non-TTY
 
 ```yaml
 - run: lpm install --offline
-- run: lpm trust diff           # fails if trustedDependencies drifted unreviewed
-- run: lpm trust prune --dry-run --json  # would prune anything? alert.
+- run: lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
+- run: lpm trust prune --dry-run --json   # informational — would prune anything?
 ```
 
-`diff` is the better gate — it tells you if the allowlist changed since the last reviewed install. `prune --dry-run` is for hygiene reports, not gating.
+`trust diff` itself doesn't fail on drift; pipe through `jq -e` (or any tool that asserts on the JSON shape) to turn it into a gate. The intent is "fail the build if `trustedDependencies` changed since the last reviewed install."
+
+`prune --dry-run` is for hygiene reports only — it always exits zero. Gate it the same way if you want to fail on stale entries:
+
+```bash
+lpm trust prune --dry-run --json | jq -e '.stale_count == 0'
+```
 
 ## See also
 

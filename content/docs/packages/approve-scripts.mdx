@@ -22,7 +22,8 @@ lpm approve-scripts esbuild@0.25.1           # approve a specific version
 lpm approve-scripts --list                   # read-only listing
 lpm approve-scripts --yes                    # bulk approve, loud — emits a warning banner
 lpm approve-scripts --dry-run                # preview decisions without writing
-lpm approve-scripts --json                   # structured output for agents
+lpm approve-scripts --list --json            # structured listing for agents
+lpm approve-scripts esbuild --json           # structured single-package approval
 
 lpm approve-scripts --global                 # review globally-installed blocked set
 lpm approve-scripts --global --group         # group by top-level globally-installed package
@@ -81,13 +82,15 @@ The script-hash binding is what makes drift detectable. If the next install reso
 
 | Mode | Behavior |
 | --- | --- |
-| (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows the package, version, declared scripts, integrity, capabilities requested. Approve / skip / inspect per package. |
+| (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows `name@version`, integrity, script hash, the lifecycle phases the package declares, the [static tier](/docs/packages/security-audit#layer-5-triage) (green / amber / red), and a binding-drift warning when this package was previously approved and the script content has changed since. Approve / skip / inspect per package. |
 | `--list` | Read-only — print the blocked set, no prompts, no mutations. Mutually exclusive with `--yes`. |
-| `--yes` | Bulk approve everything. Emits a warning banner. Mutually exclusive with `--list`. |
-| `<pkg>` | Approve a specific package directly. Skips the interactive walk. Accepts `name` or `name@version`. |
+| `--yes` | Bulk approve everything. Emits a warning banner. **Refuses to bulk-approve any package classified outside the green tier** — amber / amber-llm / red entries each require explicit per-package review via the interactive walk or `<pkg>` argument. Error message starts with `--yes refuses` so agents can branch on it. Mutually exclusive with `--list`. |
+| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name` or `name@version`. This is the correct non-interactive path for single-package approvals. |
 | `--dry-run` | Run the review flow normally, but skip every write. JSON envelopes carry `"dry_run": true` so agents can detect the mode. |
 
 `--dry-run` composes with `--yes`, `<pkg>`, the interactive walk, and `--global` / `--json`. It's a no-op when combined with `--list` (already read-only).
+
+`--json` is **mutually exclusive with the interactive walk**. Pair it with `--list`, `--yes`, or `<pkg>` for structured output — bare `lpm approve-scripts --json` errors out and names the valid pairings.
 
 ## Global vs project
 
@@ -110,21 +113,26 @@ After a successful global approval, the banner enumerates the affected top-level
 ## JSON output
 
 ```bash
-lpm approve-scripts --json
+lpm approve-scripts --list --json            # structured listing
+lpm approve-scripts --yes --json             # bulk approval envelope
+lpm approve-scripts esbuild --json           # single-package envelope
+lpm approve-scripts --list --json --dry-run  # preview plan, no writes
 ```
 
-Returns a structured envelope agents can parse — blocked-set inventory, per-package metadata, capability requests, your decisions. Combined with `--dry-run`, lets an automation agent preview an approval plan before any human says yes.
+`--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
+
+The envelope carries `schema_version`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in) and successful `--global --yes` runs add a `next_step: {kind: "reinstall_globals", origins: [...]}` payload telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits `next_step` since no mutation happened.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `<package>` | Approve a specific package directly (`name` or `name@version`) |
-| `--yes` | Bulk-approve every blocked package (loud) |
+| `<package>` | Approve a specific package directly (`name` or `name@version`). Auto-confirms in non-TTY / JSON mode. |
+| `--yes` | Bulk-approve every blocked package (loud). Refuses to bulk-approve amber / red tier packages. |
 | `--list` | Read-only listing |
 | `--dry-run` | Preview without writing |
 | `--global` | Operate on the global blocked set |
-| `--group` | (with `--global`) group rows by top-level globally-installed package |
+| `--group` | (with `--global`) group rows by top-level globally-installed package. Auto-enabled when the global blocked set exceeds 10 entries. |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful here.
 

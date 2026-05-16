@@ -87,11 +87,13 @@ Caching is opt-in per task:
 The cache key is a SHA-256 hash of:
 
 - The `command` string
-- The full content of every file matching `inputs` globs (default `inputs` covers `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`)
-- The resolved env (matching the task's `env` mode, if any)
-- The lockfile content (so a dep bump invalidates every cache)
+- The per-file SHA-256 of every file matching `inputs` globs (default `inputs` covers `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`)
+- The resolved env vars (sorted by key) for the task's `env` mode, if any
+- `package.json > dependencies` serialized as JSON (so a declared-dep version bump invalidates the cache)
 
 Any change to any of those flips the key. Same key = cache hit.
+
+Worth being precise about the dep input: it's the **manifest** dep set, not `lpm.lock`. A transitive-only lockfile change (e.g., a sub-dep float that the lockfile picked up) won't invalidate the task cache unless one of the input files actually changed. If you need to gate the cache on lockfile state, list `lpm.lock` in the task's `inputs` globs explicitly.
 
 ### Cache layout
 

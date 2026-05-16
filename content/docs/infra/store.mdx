@@ -51,14 +51,21 @@ Locks release on normal exit and on panic — there's no stale-lock recovery to 
 ## Verify
 
 ```bash
-lpm store verify
+lpm store verify          # fast pass
+lpm store verify --deep   # also parse package.json + lockfile cross-check
+lpm store verify --fix    # regenerate stale behavioral-analysis caches
 ```
 
-Walks every store entry and re-hashes it against the recorded SRI. Flags any mismatches (file corruption, manual edits, partial extraction).
+The fast pass walks every store entry and confirms three things: the directory exists, `package.json` is present, and the directory is non-empty. Mismatches surface as `corrupted` entries with a remediation hint.
 
-Pass `--deep` for a slower but more thorough pass that also parses `package.json` inside each entry and confirms the on-disk name/version match the directory name.
+`--deep` extends the pass with two extra checks per entry:
 
-`--fix` refreshes stale derived state (e.g., security caches) without touching package contents.
+- **Parses `package.json`** and confirms the on-disk `name` and `version` match the directory's coordinates.
+- **Cross-checks the integrity hash** against `lpm.lock` in the current directory. Mismatches surface as `integrity mismatch` errors — they catch a re-published version with different bytes, accidental edits, or partial extraction. Run from a project root for this to do anything; without a lockfile, the cross-check is a no-op.
+
+`--fix` writes one specific thing: missing or stale `.lpm-security.json` behavioral-analysis caches alongside each package. It does **not** repair integrity mismatches, restore missing directories, or fix invalid `package.json` — those are reported as corrupted regardless. Use `lpm store clean` for the blunt repair.
+
+The output distinguishes **entries** (one per directory on disk; may double-count during a v1↔v2 migration or under cross-project graph-key splits where the same `name@version` legitimately lives at multiple paths) from **unique coordinates** (deduped on `name@version`). Both counts appear in human + JSON output so an in-flight migration doesn't look like an inflated package count.
 
 ## Clean (full wipe)
 
@@ -66,9 +73,37 @@ Pass `--deep` for a slower but more thorough pass that also parses `package.json
 lpm store clean
 ```
 
-Removes everything under `~/.lpm/store/` — extracted package bytes, per-graph wrapper directories, and any cached integrity sidecars. The next install rebuilds whatever it needs.
+Removes `~/.lpm/store/v1/` and `~/.lpm/store/v2/` in their entirety — every extracted package, every link entry, every cached integrity sidecar. The outer `~/.lpm/store/` directory plus the `.gc.lock*` control files stay so the next operation doesn't have to reinitialize them. The next `lpm install` rebuilds whatever it needs.
 
 This is the "I want a from-scratch state" escape hatch. For normal maintenance use [`lpm cache prune`](/docs/packages/cache), which is reference-aware and won't evict entries a project still needs.
+
+## JSON output
+
+```bash
+lpm store path --json     # { "success": true, "path": "/Users/you/.lpm/store" }
+lpm store verify --json   # entry counts, unique coords, corrupted list
+lpm store clean --json    # bytes freed across v1 + v2 subdirectories
+```
+
+`verify` envelope:
+
+| Field | Meaning |
+| --- | --- |
+| `entries_verified` | Number of store entries walked (one per directory on disk) |
+| `verified` | Legacy alias of `entries_verified` for older consumers |
+| `unique_coords` | Deduped count over `name@version` — different from `entries_verified` during v1↔v2 migration |
+| `duplicated_entries` | `entries_verified − unique_coords` |
+| `corrupted` | Number of entries with at least one failed check |
+| `issues[]` | Per-entry human-readable issue strings (e.g., `"sharp@0.34.4 — integrity mismatch: stored 'sha512-aaa...' != lockfile 'sha512-bbb...'"`) |
+
+`clean` envelope:
+
+| Field | Meaning |
+| --- | --- |
+| `removed_bytes` / `removed` | Total bytes / formatted total across `v1` + `v2` |
+| `v1_removed_bytes` / `v2_removed_bytes` | Per-subdirectory breakdown |
+| `v1_path` / `v2_path` | Absolute paths that were removed |
+| `path` | Legacy alias of `v1_path` retained for pre-v2 consumers — prefer `v1_path` / `v2_path` |
 
 ## Flags
 

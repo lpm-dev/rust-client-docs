@@ -17,9 +17,9 @@ lpm login --gitlab
 lpm login --login-registry https://npm.my-co.com --token <T>
 ```
 
-Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in the OS keychain. CSRF state is verified end-to-end.
+Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in the OS keychain. CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
 
-For other registries (npm, GitHub, GitLab, custom), pass `--token <T>` directly — they don't expose a browser flow.
+For other registries (npm, GitHub, GitLab, custom), there's no browser flow — the CLI takes the token directly. In a TTY without `--token`, it prompts with masked input and follows up with two interactive questions: a **token-expiry reminder** (in days, defaults to 30) and whether the account uses **2FA/OTP** for publishing (stored so `lpm publish` prompts for OTP up-front). In `--json` mode (or non-TTY), `--token <T>` is required.
 
 | Flag | Effect |
 | --- | --- |
@@ -27,7 +27,7 @@ For other registries (npm, GitHub, GitLab, custom), pass `--token <T>` directly 
 | `--github` | Log in to GitHub Packages with a personal access token |
 | `--gitlab` | Log in to GitLab Packages with a personal/deploy/job token |
 | `--login-registry <URL>` | Log in to a custom npm-compatible registry |
-| `--token <T>` | Provide the token directly (required for non-lpm.dev registries) |
+| `--token <T>` | Provide the token non-interactively. Required in `--json` mode; in a TTY it skips the masked prompt |
 
 If you're already logged in to the target registry, `lpm login` reports the existing identity and exits without re-authenticating. To force a re-login, run `lpm logout` first.
 
@@ -36,19 +36,23 @@ If you're already logged in to the target registry, `lpm login` reports the exis
 ```bash
 lpm logout                                   # alias: lpm lo — log out of lpm.dev
 lpm logout --revoke                          # also revoke the token on the server
-lpm logout --npm                             # log out of npm
+lpm logout --npm                             # log out of npm (lpm.dev session is left alone)
 lpm logout --github
 lpm logout --gitlab
 lpm logout --logout-registry https://npm.my-co.com
-lpm logout --all                             # clear every stored registry token
+lpm logout --all                             # clear every stored registry token, lpm.dev included
 ```
+
+**Scope rule for per-registry flags.** With no flags, `lpm logout` clears the lpm.dev session only. Passing one of `--npm` / `--github` / `--gitlab` / `--logout-registry <URL>` clears **only that target** — your lpm.dev session stays signed in. Use `--all` to clear everything in one shot.
+
+`--revoke` (lpm.dev only) also unpairs any browser/desktop sessions paired against your current LPM token. The unpair is best-effort — it won't fail the logout if the registry can't reach the pairing endpoint.
 
 | Flag | Effect |
 | --- | --- |
-| `--revoke` | Also revoke the token server-side (lpm.dev only) |
-| `--npm` / `--github` / `--gitlab` | Clear that registry's token |
-| `--logout-registry <URL>` | Clear a custom registry's token |
-| `--all` | Clear every stored token |
+| `--revoke` | Also revoke the token server-side + unpair browser sessions (lpm.dev only) |
+| `--npm` / `--github` / `--gitlab` | Clear that registry's token only — leaves lpm.dev signed in |
+| `--logout-registry <URL>` | Clear a custom registry's token only |
+| `--all` | Clear every stored token (lpm.dev + npm + GitHub + GitLab + every custom registry) |
 
 ## `lpm whoami`
 
@@ -56,7 +60,15 @@ lpm logout --all                             # clear every stored registry token
 lpm whoami
 ```
 
-Prints the currently logged-in identity for lpm.dev, plus plan tier, MFA status, pool access flag, storage / private-package usage and limits, and any organizations you belong to. `--json` returns the same data structurally.
+Prints the currently logged-in identity for lpm.dev, plus:
+
+- **Plan tier**, MFA status, pool access flag
+- **Storage / private-package usage** against your plan's limits — with an OVER LIMIT warning when usage exceeds them (publishing and invites are restricted in that state)
+- **Available Scopes** — your personal `@lpm.dev/<profile>.*` plus one row per organization you belong to (`@lpm.dev/<org-slug>.*`) with your role
+- **External Registries** — every npm / GitHub / GitLab / custom registry you've logged into with `lpm login`, with stored-token status
+- **Token expiry warnings** if any registry token is approaching the reminder window you set during `lpm login`
+
+`--json` returns the same data structurally: `{username, email, plan, mfa_enabled, has_pool_access, usage{storage_bytes, private_packages}, limits{storage_bytes, private_packages}, orgs[{slug, name, role}], registries[{name, status}]}`.
 
 ## `lpm token-rotate`
 
@@ -64,7 +76,7 @@ Prints the currently logged-in identity for lpm.dev, plus plan tier, MFA status,
 lpm token-rotate
 ```
 
-Server-side rotation: creates a new token, invalidates the old one, stores the new one in your keychain. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system.
+Server-side rotation for the **lpm.dev token only**: creates a new token, invalidates the old one, stores the new one in your keychain. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system. There's no equivalent for npm / GitHub / GitLab — rotate those by re-running `lpm login --<target>` with a fresh token.
 
 ## `lpm setup`
 
@@ -76,7 +88,7 @@ lpm setup --scoped              # only @lpm.dev/* through lpm.dev (default)
 lpm setup -r https://lpm.dev    # override the registry URL
 ```
 
-Generates an `.npmrc` for CI/CD environments. Other tools (npm, pnpm, yarn) can then install `@lpm.dev/*` packages from CI.
+Generates an `.npmrc` in the current project directory for CI/CD environments. Other tools (npm, pnpm, yarn) can then install `@lpm.dev/*` packages from CI. On Unix, the file is set to `0o600` (owner read/write only) since it embeds the auth token.
 
 | Flag | Effect |
 | --- | --- |
@@ -89,6 +101,8 @@ Generates an `.npmrc` for CI/CD environments. Other tools (npm, pnpm, yarn) can 
 
 When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
 
+Under `--json`, `lpm setup` emits the file content and target path as part of the envelope (`{success, path, content, uses_env_var, oidc, proxy}`) **without writing the file** — JSON mode is preview-only, intended for scripted CI templating. Drop `--json` (or pipe the `content` field to `.npmrc` yourself) to actually materialize the file.
+
 ## `lpm setup-npmrc`
 
 ```bash
@@ -97,7 +111,7 @@ lpm setup-npmrc -d 7           # 7-day token
 lpm setup-npmrc --proxy        # route ALL npm traffic through lpm.dev
 ```
 
-Generates a **read-only** `.npmrc` token for local development — narrower scope than the full session token, with a configurable validity window. Useful when you want a teammate or local tool to install LPM packages without granting publish capability.
+Generates a **read-only** `.npmrc` token for local development — narrower scope than the full session token, with a configurable validity window. Useful when you want a teammate or local tool to install LPM packages without granting publish capability. The command also adds `.npmrc` to `.gitignore` automatically so the embedded token can't get committed by accident.
 
 | Flag | Effect |
 | --- | --- |
@@ -111,13 +125,13 @@ Generates a **read-only** `.npmrc` token for local development — narrower scop
 lpm ci env                              # auto-detect CI platform, output env vars
 lpm ci env --env=staging                # use the staging env file
 lpm ci env --output=ci-env.txt          # write to a file
-lpm ci setup github-actions             # generate an OIDC workflow YAML
+lpm ci setup github-actions             # print an OIDC workflow snippet + auth command
 ```
 
 CI/CD helpers, with two complementary subcommands:
 
-- **`lpm ci env`** — emits the loaded env vars in a CI-native output format. Auto-detects GitHub Actions and Vercel for platform-native masking; everything else (GitLab CI, CircleCI, Bitbucket, generic POSIX runners) gets shell-export lines that work in any CI.
-- **`lpm ci setup <platform>`** — generates an OIDC-wired starter workflow. Currently supports `github-actions` and `gitlab`. The GitLab snippet mints `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
+- **`lpm ci env`** — emits the loaded env vars in a CI-native format. Auto-detection: GitHub Actions runners get GitHub's masked-output format (`echo "::add-mask::…"`-style); Vercel gets dotenv (key=value); everything else (GitLab CI, CircleCI, Bitbucket, generic POSIX runners) gets shell-export lines that work in any CI. `--env=<mode>` selects which env file is loaded; `--output=<file>` writes a **dotenv-formatted** copy to the given path regardless of the auto-detected CI format (the stdout stream still uses the CI-native shape). Secret-marked vars from `lpm.json > envSchema` are masked in the CI-native output where the platform supports it.
+- **`lpm ci setup <platform>`** — **prints** an OIDC-wired starter workflow snippet plus the `lpm env oidc allow` authorization command to run after committing it. Does not write any files — copy the snippet into `.github/workflows/<name>.yml` (or `.gitlab-ci.yml`) yourself. Currently supports `github-actions` (aliases: `github`, `gha`) and `gitlab` (alias: `gitlab-ci`). The GitLab snippet mints `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
 
 ## Token storage
 

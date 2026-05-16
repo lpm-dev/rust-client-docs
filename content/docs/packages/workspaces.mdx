@@ -3,7 +3,7 @@ title: Workspaces
 description: "Monorepo support — workspace declaration, filter grammar, workspace:* protocol, catalogs, deploy."
 ---
 
-LPM treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `deploy`) accepts `--filter`, `--all`, and `--affected` to scope work. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
+LPM treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`, `deploy`) accepts `--filter`, `--all`, and `--affected` to scope work. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
 
 This page covers the conceptual model. For a step-by-step setup walkthrough, see the [Monorepo setup guide](/docs/guides/monorepo-setup).
 
@@ -50,7 +50,7 @@ lpm filter web... --explain           # full per-package trace (which filter mat
 lpm filter web --fail-if-no-match     # exit non-zero if empty (useful in CI)
 ```
 
-[`lpm filter`](/docs/packages/install) drives the same `FilterEngine` as `lpm run --filter`, so the result is byte-identical.
+`lpm filter` drives the same `FilterEngine` as `lpm run --filter`, so the result is byte-identical. Pass `--json` for structured output suitable for piping into scripts or agents.
 
 ## `--affected`
 
@@ -71,7 +71,7 @@ A typo'd filter (`--filter we` instead of `--filter web`) produces an empty matc
 lpm run test --filter web --fail-if-no-match
 ```
 
-Available on `install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `filter`.
+Available on `install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`.
 
 ## Multi-member confirmation
 
@@ -134,15 +134,24 @@ One pin, every member uses it. Bump the catalog entry in one place to update eve
 For Docker / serverless — materialize one member's production closure into a self-contained directory:
 
 ```bash
-lpm deploy /prod/api --filter api
+lpm deploy /prod/api --filter api               # build the deploy output
+lpm deploy /prod/api --filter api --dry-run     # preview, no filesystem changes
+lpm deploy /prod/api --filter api --force       # overwrite a non-empty output dir
 ```
 
 Output dir contains:
 
-- The member's source files (excluding `.env*`, `node_modules`, `.git`, LPM-internal state)
+- The member's source files, copied via hardlink when possible (zero disk cost on the same filesystem; falls back to byte-copy for cross-device)
 - A `package.json` with `workspace:*` references rewritten to concrete versions
 - A populated `node_modules/` (install pipeline runs at the output dir)
 - A `lpm.lock` for the deploy tree
+
+The source copy applies a deny list at **every level** (not just the root). Excluded basenames:
+
+- **LPM internal state** that the install pipeline recreates: `node_modules`, `.lpm`, `lpm.lock`, `lpm.lockb`
+- **Secrets** — every `.env*` variant: `.env`, `.env.local`, `.env.development[.local]`, `.env.production[.local]`, `.env.test[.local]`. Critical: a developer-only `.env.local` riding into a Docker image is a credential leak
+- **Version control**: `.git`, `.gitignore`, `.gitattributes`, `.svn`, `.hg`
+- **OS / editor cruft**: `.DS_Store`, `Thumbs.db`
 
 In a Dockerfile:
 
@@ -168,5 +177,5 @@ Constraints:
 - [`lpm install --filter`](/docs/packages/install#workspaces) — install scoped to members
 - [`lpm uninstall --filter`](/docs/packages/uninstall#workspaces) — remove scoped to members
 - [`lpm run --filter --affected`](/docs/dev/run#workspaces) — task running with workspace selection
-- [`lpm filter`](/docs/packages/install) — preview a filter expression
+- [`lpm filter`](#filter-grammar) — preview a filter expression with `--explain` / `--json`
 - [Save policy](/docs/packages/save-policy) — `workspace:*` is preserved verbatim

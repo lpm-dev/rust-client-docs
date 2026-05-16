@@ -10,7 +10,7 @@ This guide covers the moving parts of running LPM in CI: pinning the binary, aut
 The fastest path is npm — it works everywhere:
 
 ```yaml
-- run: npm install -g @lpm-registry/cli@0.29.0
+- run: npm install -g @lpm-registry/cli@0.41.0
 ```
 
 Pin the version explicitly. Don't `@latest` in CI — reproducible builds depend on a fixed toolchain.
@@ -36,7 +36,7 @@ jobs:
   install:
     steps:
       - uses: actions/checkout@v4
-      - run: npm install -g @lpm-registry/cli@0.29.0
+      - run: npm install -g @lpm-registry/cli@0.41.0
       - run: lpm setup --oidc      # exchanges OIDC token at install time
       - run: lpm install --offline --strict-integrity
 ```
@@ -46,7 +46,7 @@ jobs:
 ### Static token (the universal fallback)
 
 ```yaml
-- run: npm install -g @lpm-registry/cli@0.29.0
+- run: npm install -g @lpm-registry/cli@0.41.0
 - run: lpm setup       # writes .npmrc with ${LPM_TOKEN} placeholder
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
@@ -68,11 +68,11 @@ For GitLab CI, mint `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https:
 ## 3. Generate the workflow with `lpm ci setup`
 
 ```bash
-lpm ci setup github-actions       # writes a starter workflow YAML
+lpm ci setup github-actions       # prints a starter workflow snippet + auth command
 lpm ci setup gitlab               # GitLab equivalent
 ```
 
-Wires up OIDC, env-var injection, and a starter `lpm install` + test step. Commit the output to `.github/workflows/ci.yml` (or `.gitlab-ci.yml`) and adapt.
+Prints a starter snippet (OIDC permissions, `lpm env pull`, a deploy step) to stdout, followed by the `lpm env oidc allow` command you need to run once to authorize the repo. No files are written — copy the snippet into `.github/workflows/<name>.yml` (or `.gitlab-ci.yml`) yourself and adapt. `--env=<mode>` controls which env mode the snippet references (default `production`).
 
 ## 4. Reproducible installs
 
@@ -96,7 +96,7 @@ The standard gate sequence:
 
 ```yaml
 - run: lpm install --offline --strict-integrity
-- run: lpm trust diff                # fail if trustedDependencies drifted unreviewed
+- run: lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
 - run: lpm audit --fail-on vuln      # fail on vulnerabilities (not behavior signals)
 - run: lpm test                      # forwards vitest/jest exit code
 - run: lpm lint                      # forwards oxlint exit code
@@ -104,7 +104,7 @@ The standard gate sequence:
 - run: lpm check                     # tsc --noEmit
 ```
 
-Each step exits non-zero on failure — no special handling needed. See [Exit codes](/docs/reference/exit-codes).
+Each step exits non-zero on failure — no special handling needed. See [Exit codes](/docs/reference/exit-codes). `lpm trust diff` itself is informational and always exits zero — pipe through `jq -e` (or another JSON asserter) to gate on `trustedDependencies` drift.
 
 For finer-grained security gates, use [`lpm query`](/docs/packages/query):
 

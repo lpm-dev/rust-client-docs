@@ -4,11 +4,11 @@ description: "Edit an installed package's source and persist the change as a pat
 ---
 
 ```bash
-lpm patch <name>@<version>            # step 1 — extract for editing
+lpm patch <selector>                  # step 1 — extract for editing
 lpm patch-commit <staging_dir>        # step 2 — finalize as a .patch file
 ```
 
-Two-step workflow for fixing a bug in a dependency without forking it. The patch travels with your repo (`patches/<name>.patch`) and re-applies automatically on every subsequent `lpm install`.
+Two-step workflow for fixing a bug in a dependency without forking it. The patch travels with your repo under `patches/<name>@<version>.patch` and re-applies automatically on every subsequent `lpm install`.
 
 Same shape as [`patch-package`](https://www.npmjs.com/package/patch-package) — but bound to the original store integrity, so a silently-republished version of the dep can never substitute for the version the patch was authored against.
 
@@ -24,28 +24,34 @@ vim /tmp/lpm-patch-XXXXXX/node_modules/lodash/index.js
 
 # 3. Produce the patch file and register it in package.json
 lpm patch-commit /tmp/lpm-patch-XXXXXX
-# → patches/lodash.patch
+# → patches/lodash@4.17.21.patch
 # → package.json :: lpm.patchedDependencies updated
 ```
 
 After `patch-commit`, **commit `patches/` and `package.json`** to your repo. The next `lpm install` (yours, your teammates', CI's) auto-applies the patch after linking.
 
-## `lpm patch <name>@<version>`
+## `lpm patch <selector>`
 
 ```bash
-lpm patch lodash@4.17.21
+lpm patch lodash                # bare name — resolves against the project lockfile
+lpm patch lodash@4.17.21        # exact pin — works without a lockfile
+lpm patch lodash@^4.0.0         # semver range — resolves against the project lockfile
 ```
 
-| Argument | Notes |
+| Selector | Notes |
 | --- | --- |
-| `<name>@<version>` | Exact-version pin only. Range selectors aren't supported yet. |
+| Bare name (`lodash`) | Resolves to whatever exact version is in `lpm.lock`. Requires a lockfile (run `lpm install` first). |
+| Exact pin (`lodash@4.17.21`) | Works without a lockfile. The version must already be in the global store. |
+| Semver range (`lodash@^4.0.0`) | Resolves to the lockfile's pinned version. Requires a lockfile. |
+| Dist-tags (`latest`, `next`) | Not accepted. Pin to an exact version or range. |
 
 Steps:
 
-1. Looks up `<name>@<version>` in the global store. Errors if not present (run `lpm install <name>@<version>` first).
-2. Copies the store entry into a unique staging directory under the OS temp root (`/tmp/lpm-patch-XXXXXX/node_modules/<name>/`).
-3. Writes a breadcrumb file (`.lpm-patch.json`) in the staging root so `patch-commit` can recover `(name, version, store_path)` without re-parsing the path.
-4. Prints the staging path. The dir is intentionally NOT auto-deleted — it must outlive the process so you can edit it.
+1. Resolves the selector to an exact `(name, version)` pair (using the lockfile for non-exact inputs).
+2. Looks up `<name>@<version>` in the global store. Errors with a `lpm install <name>@<version>` hint if not present.
+3. Copies the **pristine** store bytes into a unique staging directory under the OS temp root (`/tmp/lpm-patch-XXXXXX/node_modules/<name>/`). "Pristine" matters: re-running `lpm patch` on a project where this dep is already patched still seeds the staging dir from the upstream bytes, so the resulting diff is delta-from-upstream, not delta-from-previously-patched.
+4. Writes a `.lpm-patch.json` breadcrumb in the staging root recording the resolved `name`, `version`, exact-pin `key`, and the store source path.
+5. Prints the staging path. The dir is intentionally NOT auto-deleted — it must outlive the process so you can edit it.
 
 ## `lpm patch-commit <staging_dir>`
 
@@ -55,11 +61,12 @@ lpm patch-commit /tmp/lpm-patch-XXXXXX
 
 Steps:
 
-1. Reads the breadcrumb to recover `(name, version, store_path)`.
-2. Generates a unified diff between the staging directory and the original store baseline.
-3. Writes `<project>/patches/<name>.patch`.
-4. Updates `package.json > lpm > patchedDependencies` with an entry recording the patch path and the original SRI integrity hash.
-5. Cleans up the staging directory.
+1. Reads the breadcrumb to recover `(name, version, key)`.
+2. Re-locates the store baseline from the live store (not the breadcrumb's recorded path), so a store relocation between `patch` and `patch-commit` doesn't break the diff.
+3. Generates a unified diff between the staging directory and the pristine baseline. Aborts if the diff is **empty** ("no changes detected") or contains **binary file edits** (patches must be text-only — `originalIntegrity` already covers binary drift on install).
+4. Writes `<project>/patches/<key>.patch` atomically (`.tmp` then rename). Scoped names have `/` translated to `__` for cross-platform portability — `@scope/pkg@1.0.0` lands at `patches/@scope__pkg@1.0.0.patch`. Mirrors pnpm.
+5. Updates `package.json > lpm > patchedDependencies` with an entry recording the patch path and the original SRI integrity hash.
+6. Cleans up the staging directory (best-effort).
 
 The on-disk `package.json > lpm > patchedDependencies` entry looks like:
 
@@ -68,7 +75,7 @@ The on-disk `package.json > lpm > patchedDependencies` entry looks like:
   "lpm": {
     "patchedDependencies": {
       "lodash@4.17.21": {
-        "patchFile": "patches/lodash.patch",
+        "path": "patches/lodash@4.17.21.patch",
         "originalIntegrity": "sha512-..."
       }
     }
@@ -78,7 +85,7 @@ The on-disk `package.json > lpm > patchedDependencies` entry looks like:
 
 ## Drift safety
 
-On every install, the patch engine verifies the store entry's `.integrity` matches `originalIntegrity`. **Drift is a hard error** — your install will refuse to apply the patch if the underlying package's content changed (re-publish under the same version, tampering, etc.). Bump the patched dep, regenerate the patch.
+On every install, the patch engine verifies the store entry's integrity matches `originalIntegrity`. **Drift is a hard error** — your install will refuse to apply the patch if the underlying package's content changed (re-publish under the same version, tampering, etc.). Bump the patched dep, regenerate the patch.
 
 This is the key safety property versus stock `patch-package`: a republished `lodash@4.17.21` with different bytes can't silently slip past your patch.
 

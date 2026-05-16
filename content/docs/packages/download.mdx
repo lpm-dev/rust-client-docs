@@ -7,29 +7,29 @@ description: "Download and extract a package tarball — no install side-effects
 lpm download <package> [--version <V>] [--output <DIR>]
 ```
 
-Fetches a package tarball from the appropriate registry and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
+Fetches an `@lpm.dev/*` package tarball and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
 
 Useful for inspecting a package's contents before you trust it, archiving a snapshot for offline reference, generating a fixture, or reading the source of a package you don't want to install.
+
+**Scope: `@lpm.dev/*` packages only.** Bare names like `zod` or `react` are rejected at parse time. For npm tarballs, use `npm pack <pkg>` then `tar -xf`.
 
 ## Examples
 
 ```bash
-lpm download zod                                 # latest, extracted into the current directory
-lpm download zod --version 4.3.6                 # a specific version
-lpm download zod --output /tmp/inspect           # extract into /tmp/inspect/ (or `-o`)
-lpm download @lpm.dev/owner.pkg --version 2.1.0  # works against any registry
-lpm download react --json                        # structured output (URL, integrity, paths)
+lpm download @lpm.dev/owner.pkg                      # latest, extracted into the current directory
+lpm download @lpm.dev/owner.pkg --version 2.1.0      # a specific version
+lpm download owner.pkg --output /tmp/inspect         # short form + `-o` alias
+lpm download @lpm.dev/owner.pkg --json               # structured output (URL, integrity, paths)
 ```
 
 ## How it works
 
-1. Resolves the package against the appropriate registry — see [Registries](/docs/registries) for routing.
-2. Fetches the package metadata to find the tarball URL and SRI integrity hash for the requested (or latest) version.
-3. Downloads the tarball.
-4. Verifies the SRI hash.
-5. Extracts into the output directory.
+1. Fetches the package metadata from lpm.dev to find the tarball URL and SRI integrity hash for the requested (or latest) version.
+2. Downloads the tarball.
+3. Verifies the SRI hash when the registry ships one; emits a `No integrity hash available — skipping verification` warning and continues when it doesn't.
+4. Extracts into the output directory.
 
-The output directory defaults to the current working directory. The tarball's top-level `package/` is unwrapped during extraction, so you get the package contents directly (not a `package/` wrapper).
+The output directory defaults to the current working directory. The tarball's top-level `package/` is unwrapped during extraction (equivalent to `tar x --strip-components=1`), so you get the package contents directly.
 
 ## What `lpm download` does NOT do
 
@@ -55,9 +55,9 @@ Plus the [global flags](/docs/commands#global-flags).
 ```json
 {
   "success": true,
-  "package": "react",
-  "version": "18.3.1",
-  "tarball_url": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+  "package": "@lpm.dev/owner.pkg",
+  "version": "2.1.0",
+  "tarball_url": "https://lpm.dev/api/registry/@lpm.dev/owner.pkg/-/owner.pkg-2.1.0.tgz",
   "integrity": "sha512-...",
   "integrity_verified": true,
   "size_bytes": 87654,

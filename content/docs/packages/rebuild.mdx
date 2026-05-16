@@ -19,7 +19,7 @@ Matches `npm rebuild` / `pnpm rebuild` semantics.
 2. `install`
 3. `postinstall`
 
-Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/security-audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
+Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
 
 ## Examples
 
@@ -61,17 +61,29 @@ The CLI policy flags share semantics with [`lpm install`](/docs/packages/install
 
 ## Sandbox
 
-Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied.
+Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux, AppContainer + Job Object on Windows. Two postures:
+
+| Posture | Filesystem | Env | Outbound network | How to engage |
+| --- | --- | --- | --- | --- |
+| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Credential vars stripped (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.) | Allowed | Nothing — this is the default |
+| **Strict** | Same as default | Same as default | **Denied** | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
+
+```bash
+lpm rebuild --strict-sandbox     # filesystem + env + network containment for this run
+lpm rebuild --paranoid           # alias — same behavior
+```
+
+Strict network denial coverage is platform-asymmetric: macOS Seatbelt denies every socket family; Linux landlock denies TCP `connect(2)`/`bind(2)` and seccomp-bpf denies direct UDP / raw / AF_PACKET / AF_NETLINK sockets; Windows uses AppContainer + Windows Filtering Platform. On platforms where strict isn't fully implementable, the sandbox refuses to start unless the `allow_degraded` config is set.
 
 ### Disabling the sandbox
 
-There is **no flag that disables the sandbox alone**. Disabling containment requires explicitly opting into credential exposure as well:
-
 ```bash
-lpm rebuild --unsafe-full-env --no-sandbox
+lpm rebuild --no-sandbox
 ```
 
-`--no-sandbox` without `--unsafe-full-env` is rejected at parse time. The pairing is deliberate — disabling the sandbox is high-impact, and the partner flag (which also exposes `LPM_TOKEN` / `NPM_TOKEN` / `GITHUB_TOKEN` to the script's environment) makes the consequences hard to miss. Reserve the combo for debugging a sandbox false-positive that `sandboxWriteDirs` can't express.
+A **single flag** drops both containment AND env scrubbing — scripts run with full host access including credential-bearing env (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`). Reserve for debugging a sandbox false-positive that `sandboxWriteDirs` can't express.
+
+`--no-sandbox` is mutually exclusive with `--strict-sandbox`, `--paranoid`, and `--sandbox-log`. Persistent off-mode goes through `lpm config sandbox --set none` instead — the CLI flag is the per-command escape.
 
 ### Diagnostic mode
 
@@ -81,17 +93,7 @@ lpm rebuild --sandbox-log
 
 macOS-only. Rule triggers are **logged** via `sandboxd` but **not enforced**. View accesses via `log show --last 5m --predicate 'senderImagePath CONTAINS "Sandbox"'` and grep for the script's pid. **Not a safety signal** — a clean run under `--sandbox-log` does not mean the script would pass under the full sandbox; it only means the logged accesses were visible for review.
 
-On Linux, `--sandbox-log` errors at sandbox init (landlock has no native observe-only primitive) and points at `--unsafe-full-env --no-sandbox`.
-
-`--no-sandbox` and `--sandbox-log` are mutually exclusive.
-
-### Flag summary
-
-| Flag | Effect |
-| --- | --- |
-| `--unsafe-full-env` | Don't strip credentials before running scripts. Exposes `LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc. Also required to pair with `--no-sandbox`. |
-| `--no-sandbox` | Disable the sandbox entirely. Requires `--unsafe-full-env`. |
-| `--sandbox-log` | macOS-only diagnostic mode. Logged but not enforced. |
+On Linux and Windows, `--sandbox-log` errors at sandbox init (no native observe-only primitive) and points at `--no-sandbox` for the same debug case.
 
 ## `--force` flag
 
@@ -117,12 +119,13 @@ Refuses to run **any** scripts, even trusted ones. Useful as a CI smoke test: "w
 | `--dry-run` | Preview without executing scripts |
 | `--force` | Re-run scripts even for already-built packages |
 | `--timeout <SECS>` | Per-script timeout (default `300` = 5 min) |
-| `--unsafe-full-env` | Don't strip credentials. **DANGEROUS.** |
 | `--deny-all` | Refuse to run any scripts |
 | `--policy <deny\|allow\|triage>` | Override the policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |
 | `--triage` | Alias for `--policy=triage` |
-| `--no-sandbox` | Disable filesystem sandbox (requires `--unsafe-full-env`) |
+| `--strict-sandbox` | Engage strict sandbox (filesystem + env + outbound network denial) |
+| `--paranoid` | Alias for `--strict-sandbox` |
+| `--no-sandbox` | Drop all containment for this run — also drops env scrubbing. Mutually exclusive with `--strict-sandbox` / `--paranoid` / `--sandbox-log` |
 | `--sandbox-log` | macOS only: observe-only sandbox |
 | `--no-engine-strict` | Skip `engines.lpm` / `engines.node` enforcement (see [`lpm install`](/docs/packages/install#engines-enforcement)) |
 

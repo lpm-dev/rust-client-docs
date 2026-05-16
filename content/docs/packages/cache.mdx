@@ -31,14 +31,16 @@ lpm cache prune --project ./my-app      # manual repair: walk one project only
 | Action | Effect |
 | --- | --- |
 | `path` | Print the cache root (`~/.lpm/cache/`) or one of its subcategories |
-| `clean` | Wipe ephemeral caches (`~/.lpm/cache/`) |
-| `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) |
+| `clean` | Wipe ephemeral caches (`~/.lpm/cache/`). `lpm cache clear` is an alias. |
+| `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) plus a sweep of deferred global-install tombstones |
 
 `clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`); without one, all three are wiped. `clean` never touches the global package store — for that, use `prune`.
 
 ## Prune
 
-`lpm cache prune` walks the global store and removes entries no project still references. Default is dry-run; pass `--apply` to delete.
+`lpm cache prune` walks the global store and removes entries no project still references, then sweeps any deferred global-install tombstones left behind by `lpm uninstall -g`. Default is dry-run; pass `--apply` to mutate.
+
+The tombstone sweep runs even when the orphan walk is skipped (registry missing or corrupt — see [Safety rails](#safety-rails)), so `lpm uninstall -g`'s deferred cleanup always has a way to reach disk.
 
 ### How it decides what to keep
 
@@ -64,11 +66,32 @@ This mode is for scripted cleanup of a single project's footprint. **Default mod
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--apply` | `prune` | Actually remove orphans (default is dry-run) |
-| `--max-age <DUR>` | `prune` | Only prune entries last touched older than this (`30d`, `7d`, `24h`, …) |
+| `--apply` | `prune` | Actually remove orphans + sweep tombstones (default is dry-run) |
+| `--max-age <DUR>` | `prune` | Only prune entries last touched older than this. Accepts `<N>d` (days) or `<N>h` (hours) — nothing else |
 | `--project <PATH>` | `prune` | Manual repair: walk only this project's roots, ignore the registry |
 
-Plus the [global flags](/docs/commands#global-flags). `--json` emits a structured report of what would be / was pruned.
+Plus the [global flags](/docs/commands#global-flags).
+
+## JSON output
+
+```bash
+lpm cache prune --json            # dry-run report
+lpm cache prune --apply --json    # post-apply report (same shape, mutations recorded)
+```
+
+The envelope reports both the orphan walk and the tombstone sweep:
+
+| Field | Meaning |
+| --- | --- |
+| `applied` | `true` when `--apply` was passed |
+| `projects_walked` / `registry_entries_dropped` | Project-registry coverage stats |
+| `link_entries_total` / `_reachable` / `_orphaned[]` | Link-entry walk results; `_orphaned[]` is a list of paths |
+| `object_entries_total` / `_reachable` / `_orphaned[]` | Object-entry walk results |
+| `bytes_freed_or_eligible` | Bytes the orphan walk would free (dry-run) or did free (apply) |
+| `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Degraded-mode flags — when either is true, orphan paths arrays are empty (walk was skipped) and tombstones are the only mutation reported |
+| `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |
+
+`lpm cache clean` emits a parallel `{success, cleaned[], total_bytes_freed, total_freed}` envelope per subcategory.
 
 ## See also
 

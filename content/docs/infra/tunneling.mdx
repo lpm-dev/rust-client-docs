@@ -76,8 +76,6 @@ LPM operates two base domains today:
 | `lpm.fyi` | `free` | The default base. Free random subdomains live here. |
 | `lpm.llc` | `pro` | Available for claimed Pro/Org domains. |
 
-Adding a new base domain (e.g. `lpm.run`) is **one DB insert + DNS + a Wrangler route** — no code deploy. The list lives in `tunnel_base_domains` on the lpm.dev side.
-
 List what's available right now:
 
 ```bash
@@ -187,11 +185,14 @@ The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discri
 
 | Direction | Type | Purpose |
 | --- | --- | --- |
-| Client → relay | `hello` | Initial handshake — token, requested domain, local port |
+| Client → relay | `hello` | Initial handshake — token, requested domain (wire field: `subdomain`), local port |
+| Relay → client | `hello` | Handshake response — assigned domain, full `tunnel_url`, `session_id` |
 | Relay → client | `http_request` | Incoming HTTP request to proxy |
 | Client → relay | `http_response` | The local server's response |
-| Relay → client | `ws_open` | Incoming WebSocket connection |
+| Relay → client | `ws_upgrade` | Incoming WebSocket upgrade request from a remote client |
 | Both | `ws_frame` | WebSocket frames in either direction |
+| Both | `ws_close` | WebSocket close events in either direction (with optional `code` + `reason`) |
+| Client → relay | `ping` | Keepalive |
 
 Bodies are base64-encoded for binary safety. The CLI maintains a request-ID map so concurrent requests don't conflict.
 

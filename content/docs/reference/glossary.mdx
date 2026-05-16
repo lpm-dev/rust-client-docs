@@ -73,6 +73,10 @@ Cooldown (default 24h) before a freshly published version is installable. Defend
 
 A dep declared like `"my-react": "npm:react@^19.0.0"`. Local name (`my-react`) diverges from the canonical target (`react`). Tracked in lockfiles via `alias-dependencies` and `root-aliases`. Disables the binary lockfile (TOML-only).
 
+### Plugin
+
+A versioned, lazy-downloaded binary that backs one of LPM's built-in tools — today, Oxlint (powers [`lpm lint`](/docs/dev/lint)) and Biome (powers [`lpm fmt`](/docs/dev/fmt)). First use downloads + checksum-verifies the asset into `~/.lpm/cache/plugins/`; the same machine reuses the cached copy across projects. Pin versions per-project in `lpm.json > tools`; manage installed plugins with [`lpm plugin`](/docs/dev/plugin) (`list`, `update`, `clean`). Tools that aren't plugin-backed (e.g., `tsc` via [`lpm check`](/docs/dev/check)) shell out to the project-local install instead.
+
 ### Pool package
 
 A distribution mode where the package's metadata is public but installs are gated to pool subscribers. Publisher earns a share of the pool's revenue. Per-package opt-in.
@@ -93,6 +97,10 @@ Per-package score (0–100) computed from readme / license / types / tests / mai
 
 The lifecycle-script step of the install pipeline. The executed phases are `preinstall`, `install`, `postinstall` (in that order); `prepare` and `prepublishOnly` are recognized for detection but never executed. Default-deny: scripts don't run during `lpm install` (or `lpm install -g`) and require approval via [`lpm approve-scripts`](/docs/packages/approve-scripts) (project) / `lpm approve-scripts --global` (global) or a non-default [script policy](/docs/packages/install#lifecycle-scripts). The standalone `lpm rebuild` command targets the project; a `lpm rebuild --global` companion is a planned follow-up — until then, reinstalling the affected global is the post-approval rerun path.
 
+### Sandbox
+
+The OS-level containment LPM runs lifecycle scripts inside: Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Three modes: **default** (filesystem containment + env scrubbing; outbound network allowed), **strict** (also denies outbound network), **none** (no containment; full host access including credential env). Set per-invocation with `lpm install --strict-sandbox` / `--paranoid` (alias) / `--no-sandbox`; persistently with `[sandbox] mode` in `~/.lpm/config.toml` (or `LPM_STRICT_SANDBOX=1` for strict). Setup wizard: [`lpm config sandbox`](/docs/reference/config#setup-wizards). Packages can request capability widening (extra write roots, env vars) via the [`lpm.scripts`](#capability) block in `package.json`, but widening requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts).
+
 ### Save policy
 
 The rule that decides what range gets saved to `package.json` when `lpm install <pkg>` finishes. Defaults to `^resolvedVersion`. See [Save policy](/docs/packages/save-policy).
@@ -100,6 +108,10 @@ The rule that decides what range gets saved to `package.json` when `lpm install 
 ### Script policy
 
 `deny` (default) / `allow` / `triage`. Governs whether and how lifecycle scripts run on both `lpm install` and `lpm install -g`. Set per-invocation with `--policy` / `--yolo` / `--triage`, per-project with `package.json > lpm > scriptPolicy` (project installs only), per-user with `~/.lpm/config.toml > script-policy` (applies to both project and `-g`). On `-g` the project-config tier is N/A; the chain collapses to CLI flag > `~/.lpm/config.toml` > default. Setup wizard: `lpm config scripts`.
+
+### Skill (agent skill)
+
+A markdown file authored by a package maintainer to teach an AI agent how to use the package — usage examples, gotchas, integration steps. Skills ship inside the published tarball and extract into `.lpm/skills/<package>/*.md` on consumer machines. Auto-installed by [`lpm install`](/docs/packages/install) and [`lpm add`](/docs/packages/add) (skip with `--no-skills`); manage explicitly with [`lpm skills`](/docs/packages/skills). **lpm.dev-only today** — non-lpm.dev packages skip skill installation. Publish-time rules: ≥100 chars, ≤15 KB per skill, ≤100 KB total, required YAML frontmatter. See [AI agent skills](/docs/reference/ai-agent-skills) for the full concept page.
 
 ### Triage advisor
 
@@ -111,7 +123,7 @@ A package whose tarball ships an `lpm.config.json` at the root — `lpm add` tre
 
 ### Store
 
-The global content-addressable package store at `~/.lpm/store/`. One on-disk copy per content hash, shared across every project on the machine. Linked into project `node_modules/` via clonefile (macOS) or hardlinks (Linux). Maintained by [`lpm store`](/docs/infra/store).
+The global content-addressable package store at `~/.lpm/store/v2/`. One on-disk copy per content hash (`objects/`), shared across every project on the machine via per-graph link entries (`links/`). Project `node_modules/<pkg>` is a **symlink** into the matching link entry; the link entries themselves materialize from objects via clonefile (macOS) or hardlinks (Linux). Maintained by [`lpm store`](/docs/infra/store); see [Content-addressable store](/docs/packages/content-addressable-store) for the full mechanism.
 
 ### Trusted dependency
 

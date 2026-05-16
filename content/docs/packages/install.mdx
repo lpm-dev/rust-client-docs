@@ -27,7 +27,7 @@ lpm install --force           # full re-install, bypass every fast path
 1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
 3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages default to **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
-4. **Skip scripts.** Lifecycle scripts do **not** run by default. The install pipeline executes `preinstall`, `install`, and `postinstall`; other names like `prepare` and `prepublishOnly` are recognized for detection but never executed. See [lifecycle scripts](#lifecycle-scripts) below.
+4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 ## Save policy
 
@@ -98,7 +98,30 @@ lpm config triage --set claude-cli          # one-time setup
 
 Or in `package.json`: `{ "lpm": { "triageAdvisor": "claude-cli" } }` · or `~/.lpm/config.toml`: `triage-advisor = "claude-cli"`. The advisor is **opt-in** — `triage-advisor: "none"` is the default, and `script-policy: "triage"` alone gives you the portable layers 1-4.
 
+Override per-invocation with `--advisor`:
+
+```bash
+lpm install --triage --advisor=claude-cli   # one-off uplift
+lpm install --triage --advisor=none         # one-off opt-out
+```
+
+Precedence: `--advisor` flag > `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default (`none`). The flag is only consulted when the effective script-policy is `triage`; under `deny` / `allow` the advisor never runs.
+
 See [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for the manual-approval flow.
+
+### Sandbox
+
+When a lifecycle script does run (greens under `triage`, or anything under `allow`), it executes inside the filesystem sandbox by default — Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Default mode allows the project read, the package's own directory write, and outbound network. Strict mode adds env scrubbing and denies outbound network.
+
+```bash
+lpm install --strict-sandbox          # engage strict mode for this install
+lpm install --paranoid                # alias for --strict-sandbox
+lpm install --no-sandbox              # drop ALL containment for this install (single flag — drops env scrubbing too)
+```
+
+Persistent strict mode: `~/.lpm/config.toml > [sandbox] mode = "strict"` (or `LPM_STRICT_SANDBOX=1`). Persistent off: `lpm config sandbox --set none`. Per-invocation flags override the persistent mode.
+
+`--no-sandbox` is reserved for debugging a sandbox false-positive — scripts run with full host access including credential-bearing env (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.). The three flags are mutually exclusive. See the [filesystem sandbox reference](/docs/reference/package-json-lpm#the-lpmscripts-block) for declaring extra write directories per-package.
 
 ## Workspaces
 
@@ -134,7 +157,7 @@ lpm install foo --min-release-age=1h       # tighten or loosen the window
 lpm install foo --min-release-age=0        # disable the cooldown for this command
 ```
 
-Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`.
+Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — `--allow-new` proceeds with the install but a recent-publish package whose script body matches an identity-Green shape stays Amber. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
 
 ## Global installs
 
@@ -146,7 +169,7 @@ Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/
 | `--min-release-age=<DUR>` | Overrides the cooldown window |
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
 | `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the script-policy |
-| `--auto-build` | Forces the rebuild attempt under triage with mixed-trust trees |
+| `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted for global installs. Also useful under `deny` with an established global trust set. |
 
 Two things differ from project installs:
 
@@ -202,7 +225,11 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |
 | `--triage` | Alias for `--policy=triage` |
+| `--advisor <none\|claude-cli\|codex\|ollama>` | Triage advisor override (only consulted under `--policy=triage`) |
 | `--auto-build` | Auto-run `lpm rebuild` for trusted packages after install |
+| `--strict-sandbox` | Engage strict sandbox for this install's lifecycle scripts (filesystem containment + env scrubbing + outbound network denial) |
+| `--paranoid` | Alias for `--strict-sandbox` |
+| `--no-sandbox` | Drop all sandbox containment for this install's lifecycle scripts (debug only — also drops env scrubbing) |
 | `--exact` | Save exact version (no prefix) |
 | `--tilde` | Save with `~` prefix |
 | `--save-prefix <P>` | Override save prefix (`^`, `~`, or `""`) |
@@ -224,7 +251,7 @@ Plus the [global flags](/docs/commands#global-flags): `--token`, `--registry`, `
 ## See also
 
 - [`lpm uninstall`](/docs/packages/uninstall) — remove a dependency
-- [`lpm upgrade`](/docs/packages/upgrade) — bump existing deps to their latest matching range
+- [`lpm upgrade`](/docs/packages/upgrade) — bump `@lpm.dev/*` deps to their latest matching range
 - [`lpm rebuild`](/docs/packages/rebuild) — run lifecycle scripts after install
 - [`lpm approve-scripts`](/docs/packages/approve-scripts) — approve packages to run scripts
 - [Save policy](/docs/packages/save-policy) — full details of the save-prefix system

@@ -52,7 +52,9 @@ The dispatcher and metadata fetcher are **fused** in the default resolver — th
 
 ## peerDependencies and optionalDependencies
 
-- **Peer deps** are recorded but not eagerly installed. After the main pass, `check_unmet_peers` surfaces missing peer warnings. Future work will add bun's "queue peer edge, drain after main pass" semantics for tighter peer satisfaction.
+- **Peer deps are auto-installed by default.** After the main resolution pass, an eager peer-drain step synthesizes installs for every non-optional `peerDependency` not already in the resolved tree. These "ambient" installs surface at `node_modules/<name>/` even though they aren't in `package.json`. `check_unmet_peers` then runs a post-pass to warn on anything that couldn't be satisfied (e.g., peer-range conflicts between consumers).
+- Toggle the auto-install with `package.json > lpm > autoInstallPeers` (default `true`) → `~/.lpm/config.toml > auto-install-peers` → built-in default. Set to `false` for npm-classic / pnpm-classic semantics (no synthesis, peer warnings only).
+- **Optional peers** (`peerDependenciesMeta.<name>.optional = true`) are **never** auto-installed regardless of the flag — the manifest author opted out of the dependency entirely.
 - **Optional deps** are tried; failure to resolve or download is logged but doesn't fail the install.
 
 ## Overrides and resolutions
@@ -85,7 +87,7 @@ Projects with any alias edges write **only `lpm.lock`** — the binary lockfile 
 | --- | --- |
 | `LPM_RESOLVER=pubgrub` | Use PubGrub-with-split-retry instead of greedy-fusion |
 | `LPM_GREEDY_FUSION=0` | Force walker-arm orchestration (debug) |
-| `LPM_NPM_FANOUT=N` | Concurrent npm metadata fetches (default `50`) |
+| `LPM_NPM_FANOUT=N` | Concurrent npm metadata fetches (default `256`) |
 | `LPM_WALKER=stream` | Use the continuous-stream walker; default is the level-step BFS |
 
 ## When to look at the resolver
