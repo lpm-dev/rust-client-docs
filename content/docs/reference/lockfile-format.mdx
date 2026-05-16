@@ -15,7 +15,7 @@ The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile holds 
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 1
+lockfile-version = 2
 resolved-with = "greedy-fusion"
 
 [[packages]]
@@ -35,13 +35,17 @@ integrity = "sha512-..."
 # Only present when at least one root dep uses npm:<target>@<range>
 [root-aliases]
 my-react-alias = "react"
+
+# Only present when the eager peer-drain pass synthesized installs to
+# satisfy unmet peerDependencies (default-on under autoInstallPeers).
+ambient-peer-installs = ["loose-envify"]
 ```
 
 ## `[metadata]`
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `1`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. |
+| `lockfile-version` | u32 | Schema version. Current: `2` (bumped from `1` when the per-entry `tarball` hint + `peers` array landed). Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 
 ## `[[packages]]`
@@ -56,7 +60,8 @@ One entry per resolved package. Sorted by `name` for deterministic diffs and min
 | `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated when the registry provides it. Always trusted on subsequent installs. |
 | `dependencies` | string[] | Direct deps as `<local_name>@<version>` entries. Skipped from output when empty. |
 | `alias-dependencies` | `[string, string][]` | npm-alias edges as `[local_name, target_canonical_name]` pairs. Only present when the package uses `npm:<target>@<range>` aliases. |
-| `tarball` | string \| absent | Tarball URL hint cached from resolve time. Speeds up the warm-install fast path. Absent on lockfiles produced before this hint shipped. |
+| `peers` | string[] | Resolved peer dependencies as `<peer_name>@<resolved_version>` entries (same format as `dependencies`). Each entry is one of the package's declared `peerDependencies` intersected with the install set's resolved versions. **Load-bearing for warm-install correctness** — the v2 store's link-entry identity hashes peer pinning, so dropping these would let the warm install compute a different graph key than the cold install. Sorted by peer name; skipped from output when empty (the common case). |
+| `tarball` | string \| absent | Tarball URL hint cached from resolve time. Speeds up the warm-install fast path by letting it skip the per-package metadata round-trip. Only valid for `Source::Registry` packages — pairing this hint with a non-Registry source is rejected at parse time. Absent on lockfiles produced before this hint shipped. |
 
 ### `dependencies` format
 
@@ -90,6 +95,16 @@ my-alias = "actual-package"
 ```
 
 Maps root-level npm-alias edges so warm installs reproduce the original `node_modules/<local>/` layout without re-resolving. Empty for projects without root-level aliases — and omitted entirely from output in that case (backwards-compatible with older lockfiles that pre-date alias support).
+
+## `ambient-peer-installs`
+
+```toml
+ambient-peer-installs = ["loose-envify", "scheduler"]
+```
+
+Canonical names the resolver auto-installed at root scope to satisfy unmet `peerDependencies` (the eager peer-drain pass, on by default via `autoInstallPeers = true`). These packages are already in `[[packages]]` (they were resolved and extracted like any other dep) — this list carries the orthogonal signal *"surface them at `node_modules/<peer>/` even though they aren't in `pkg.dependencies`."* Symmetric with `[root-aliases]` — both are project-side install-orchestration metadata, not per-package state.
+
+Empty and omitted from output on the common no-auto-install path (project's `dependencies` block already covers every declared peer). See [Resolver](/docs/packages/resolver#peerdependencies-and-optionaldependencies) for the auto-install contract + toggle.
 
 ## Determinism
 

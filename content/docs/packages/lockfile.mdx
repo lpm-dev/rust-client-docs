@@ -46,9 +46,9 @@ This is the "I just ran `lpm install` and now I'm running it again" case. Hits i
 
 ### Tier 2: Warm install (~23 ms)
 
-If `lpm.lockb` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the global content-addressable store.
+If `lpm.lockb` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the [global content-addressable store](/docs/packages/content-addressable-store).
 
-No metadata fetches. No tarball downloads. Just symlinks (isolated layout) or hardlinks (hoisted layout) into already-extracted store entries. The wrapper tree lives at `.lpm/wrappers/` (a project-root sibling, not under `node_modules/`), so `rm -rf node_modules` between iterations doesn't destroy the wrapper tree — warm install becomes a symlink rebuild from already-materialized wrappers.
+No metadata fetches. No tarball downloads. Project `node_modules/<pkg>` is created as a symlink into the matching link entry under `~/.lpm/store/v2/links/<graph-key>/`. The link entries live in the **global** store, not in the project, so `rm -rf node_modules` between iterations only loses the cheap project-side symlinks — the canonical extracted bytes and the per-graph wrappers stay put. Warm install is a symlink rebuild over already-materialized link entries.
 
 ### Tier 3: Lockfile-only install (offline-able)
 
@@ -70,9 +70,9 @@ This is the slow path, but "slow" is relative — cold install on a 266-package 
 
 ## Lockfile-version
 
-The TOML lockfile is **schema-versioned** (current: `1`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage.
+The TOML lockfile is **schema-versioned** (current: `2`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage.
 
-The binary lockfile has its own wire-format version (current: `2`). On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
+The binary lockfile has its own wire-format version (current: `2`, bumped from `1` when the per-entry `tarball_off`/`tarball_len` pair was added). On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
 
 ## When the binary lockfile is skipped
 

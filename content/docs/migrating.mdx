@@ -1,6 +1,75 @@
 ---
 title: Migrating to LPM
-description: "Migrate an existing project from npm, pnpm, yarn, or bun."
+description: "Convert an existing npm, pnpm, yarn, or bun project to LPM with one command."
 ---
 
-Coming soon.
+import { Card, Cards } from "fumadocs-ui/components/card";
+
+[`lpm migrate`](/docs/packages/migrate) is the one-command path from any npm-ecosystem project to LPM. It auto-detects the source package manager, converts its lockfile to LPM's dual-format lockfile (`lpm.lock` + `lpm.lockb`), preserves your config, and runs a fresh install to verify nothing broke. Every file it touches is backed up first — `lpm migrate --rollback` reverts everything.
+
+The migration shape is the same for every source. What differs is the lockfile parser and any source-specific config (most notably `pnpm.*` blocks → `lpm.*`).
+
+## Sources supported today
+
+| From | Source files | Walkthrough |
+| --- | --- | --- |
+| npm | `package-lock.json` | [Migrating from npm](/docs/guides/migrating-from-npm) |
+| pnpm | `pnpm-lock.yaml` (+ `pnpm-workspace.yaml`, `pnpm.*` blocks in `package.json`) | [Migrating from pnpm](/docs/guides/migrating-from-pnpm) |
+| Yarn (classic + Berry) | `yarn.lock` | Same flow — `lpm migrate` auto-detects |
+| Bun | `bun.lock` / `bun.lockb` | Same flow — `lpm migrate` auto-detects |
+
+## The 30-second version
+
+```bash
+lpm migrate --dry-run   # preview: parse the source lockfile, report what'll convert
+lpm migrate             # do it: convert, install, verify
+```
+
+That's the whole flow. Each step is backed up; if anything goes wrong, `lpm migrate --rollback` walks the `.backup` files and restores the pre-migration state.
+
+## What carries over without changes
+
+- `package.json > dependencies` / `devDependencies` / `peerDependencies` / `optionalDependencies` — read identically.
+- `package.json > scripts` — `lpm run <name>` and the bare-name shorthand (`lpm <name>`) work the same as `npm run` / `pnpm run`.
+- `package.json > workspaces` — both array and object forms accepted. (`pnpm-workspace.yaml` is also read as a fallback.)
+- `.npmrc` — scope-to-registry mappings and per-origin auth tokens carry over verbatim. LPM honors `.npmrc` for routing across npm, lpm.dev, and private registries.
+- `package.json > overrides` (npm-style) and `resolutions` (yarn-style) — honored as-is.
+
+## What changes — be deliberate
+
+These behave differently than your previous PM:
+
+| Difference | What to do |
+| --- | --- |
+| **Lifecycle scripts deny-by-default.** `lpm install` doesn't run `postinstall` etc. | Run [`lpm rebuild`](/docs/packages/rebuild) once after migration, then [`lpm approve-scripts`](/docs/packages/approve-scripts) to whitelist packages that need to run scripts. Or set `package.json > lpm > scriptPolicy = "allow"` for npm-classic semantics. |
+| **`node_modules` layout differs.** Single packages stay **hoisted** (npm-flat). Workspaces auto-flip to **isolated** (pnpm-style symlinks). | Phantom-dep code (importing a package you didn't declare in `dependencies`) breaks under isolated. Add the missing entries; or override per-project with `package.json > lpm > linker = "hoisted"`. |
+| **Cooldown on recent versions.** LPM blocks installs of versions published less than 24h ago by default. | `lpm install --allow-new` per-invocation, or `package.json > lpm > minimumReleaseAge` per-project. |
+| **`engines` enforced by default.** npm reads `engines` but only enforces with `engine-strict=true` in `.npmrc`. | Set `package.json > lpm > engineStrict = false` if you want npm's read-but-don't-enforce behavior. |
+| **`pnpm.overrides` / `pnpm.patchedDependencies` / `pnpm.peerDependencyRules`** | Auto-translated by `lpm migrate` to `lpm.overrides` / `lpm.patchedDependencies` / `lpm.peerDependencyRules`. The original `pnpm.*` blocks stay in place so a parallel `pnpm install` keeps working during transition. |
+
+## After the migration
+
+```bash
+lpm install --offline       # confirms reproducibility from the new lockfile
+lpm test                    # confirms nothing broke under isolated layout / deny-by-default
+lpm lint
+lpm fmt --check
+```
+
+Commit `lpm.lock`, `lpm.lockb`, the updated `.npmrc`, and the (possibly mutated) `package.json`. Discard the source lockfile (`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock*`) only after everyone on the team has switched over — leaving it in place during transition lets developers keep using the old PM until they cut over.
+
+## Walkthroughs
+
+<Cards>
+  <Card title="Migrating from npm" href="/docs/guides/migrating-from-npm" description="package-lock.json → lpm.lock + lpm.lockb, with rollback safety." />
+  <Card title="Migrating from pnpm" href="/docs/guides/migrating-from-pnpm" description="pnpm-lock.yaml + pnpm.* blocks → LPM equivalents. Isolated layout preserved." />
+</Cards>
+
+The Yarn and Bun paths use the same `lpm migrate` command and produce the same end state — the npm guide is the closest match for either.
+
+## See also
+
+- [`lpm migrate`](/docs/packages/migrate) — full flag reference (`--dry-run`, `--force`, `--rollback`, `--no-install`, `--skip-verify`, `--no-npmrc`, `--ci`, `--no-ci`)
+- [npm compatibility](/docs/packages/npm-compatibility) — what carries over, what differs, what LPM adds
+- [Lockfile](/docs/packages/lockfile) — what the dual-format lockfile actually pins
+- [Project setup](/docs/project-setup) — where post-migration config lives
