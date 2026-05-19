@@ -1,9 +1,15 @@
-import Link from 'next/link';
-import { appName, appTagline } from '@/lib/shared';
+import Link from "next/link";
+import { homeJsonLd, safeJsonLd } from "@/lib/seo";
+import { appName, appTagline } from "@/lib/shared";
 
 export default function HomePage() {
   return (
     <main className="flex flex-col items-center justify-center flex-1 px-6 py-24 text-center">
+      <script
+        type="application/ld+json"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD payload is escaped by safeJsonLd
+        dangerouslySetInnerHTML={safeJsonLd(homeJsonLd())}
+      />
       <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
         {appName}
       </h1>
@@ -25,7 +31,7 @@ export default function HomePage() {
         </Link>
       </div>
       <p className="mt-12 text-sm text-fd-muted-foreground">
-        Landing content coming soon — benchmarks, feature cards, and the{' '}
+        Landing content coming soon — benchmarks, feature cards, and the{" "}
         <code className="px-1.5 py-0.5 rounded bg-fd-muted">lpm dev</code> demo.
       </p>
     </main>

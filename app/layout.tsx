@@ -1,12 +1,13 @@
-import { RootProvider } from 'fumadocs-ui/provider/next';
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import { SiteHeader } from '@/components/site-header';
-import { appName, appTagline, siteUrl } from '@/lib/shared';
-import './global.css';
+import { RootProvider } from "fumadocs-ui/provider/next";
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import PostHogProvider from "@/components/posthog-provider";
+import { SiteHeader } from "@/components/site-header";
+import { appName, appTagline, siteUrl } from "@/lib/shared";
+import "./global.css";
 
 const inter = Inter({
-  subsets: ['latin'],
+  subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
@@ -18,16 +19,25 @@ export const metadata: Metadata = {
   description: appTagline,
   applicationName: appName,
   openGraph: {
-    type: 'website',
+    type: "website",
     siteName: appName,
     title: `${appName} — ${appTagline}`,
     description: appTagline,
     url: siteUrl,
+    images: [
+      {
+        url: "/og/home",
+        width: 1200,
+        height: 630,
+        alt: `${appName} — ${appTagline}`,
+      },
+    ],
   },
   twitter: {
-    card: 'summary_large_image',
+    card: "summary_large_image",
     title: `${appName} — ${appTagline}`,
     description: appTagline,
+    images: ["/og/home"],
   },
   robots: {
     index: true,
@@ -35,13 +45,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function Layout({ children }: LayoutProps<'/'>) {
+export default function Layout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={inter.className} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
         <RootProvider>
-          <SiteHeader />
-          <div className="flex-1 flex flex-col">{children}</div>
+          <PostHogProvider>
+            <SiteHeader />
+            <div className="flex-1 flex flex-col">{children}</div>
+          </PostHogProvider>
         </RootProvider>
       </body>
     </html>
