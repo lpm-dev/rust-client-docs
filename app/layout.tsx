@@ -43,6 +43,11 @@ export const metadata: Metadata = {
     index: true,
     follow: true,
   },
+  verification: {
+    other: {
+      "msvalidate.01": "15A27CC3490BC984B8BE766FE51A4E02",
+    },
+  },
 };
 
 export default function Layout({ children }: LayoutProps<"/">) {

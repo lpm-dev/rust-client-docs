@@ -34,11 +34,12 @@ export function docsBreadcrumbJsonLd(slug: string[]): object {
     item?: string;
   }[] = [];
 
-  const docsRoot = source.getPage([]);
+  // The breadcrumb root is the docs section itself, not the index page's
+  // frontmatter title (which may be a marketing-style headline like "LPM").
   items.push({
     "@type": "ListItem",
     position: 1,
-    name: docsRoot?.data.title ?? "Docs",
+    name: "Docs",
     item: `${siteUrl}/docs`,
   });
 
