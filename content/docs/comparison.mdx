@@ -1,0 +1,129 @@
+---
+title: Compared to npm, pnpm, bun
+description: "Side-by-side defaults across the four JavaScript package managers — security, resolution, developer orchestration, publishing, and platform."
+---
+
+import { Accordion, Accordions } from "fumadocs-ui/components/accordion";
+
+A factual comparison of default behavior across **npm 11**, **pnpm 11**, **bun 1.4**, and **lpm**.
+
+## Benchmarks
+
+|                                |     npm |    pnpm |     bun |         **lpm** |
+| ------------------------------ | ------: | ------: | ------: | --------------: |
+| Cold install, equal footing ¹  | 6,784ms | 1,532ms |   905ms |       **880ms** |
+| Cold install, full wipe loop ² | 7,077ms | 2,445ms | 1,151ms |     **2,193ms** |
+| Warm install ³                 |   648ms |   665ms |   263ms |        **23ms** |
+| Up-to-date install ³           |   348ms |   152ms |     8ms |         **6ms** |
+| Script overhead ⁴              |    67ms |   107ms |     6ms |         **9ms** |
+| `lpm lint` vs `npx oxlint` ⁴   |   250ms |       — |       — | **78ms** (3.2×) |
+| `lpm fmt` vs `npx biome` ⁴     |   264ms |       — |       — |  **13ms** (20×) |
+
+<Accordions>
+  <Accordion title="What each row measures">
+
+1. **Cold install** — fresh project, no cache, no lockfile reuse, no `node_modules/`. The full pipeline runs: resolve, download, extract, link. What you pay the first time anyone clones the repo.
+2. **Warm install** — cache and lockfile present, `node_modules/` deleted. PM rebuilds the tree from already-cached tarballs. What you pay after `rm -rf node_modules`.
+3. **Up-to-date install** — cache, lockfile, **and** `node_modules/` all present. PM detects "nothing to do" via an mtime fast-path and exits. What you pay re-running `install` after no changes.
+4. **Script overhead** — latency of the runner's `run` command invoking a `package.json` script. Independent of dep tree size; measures the runner itself.
+
+  </Accordion>
+  <Accordion title="Methodology">
+
+- **¹ Equal-footing cold install** — `bench/fixture-large` (21 direct, 266 transitive). Cache + lockfile wipes happen outside the timed region so the comparison isn't skewed by asymmetric `rm -rf` cost. lpm and bun run in a round-robin (alternating order per iter) to neutralize CDN-warmth bias between them; npm/pnpm run sequentially since their multi-second baseline makes a 200ms warmth shift negligible.
+- **² Full wipe loop** — same fixture as ¹, but cache wipes are inside the timed region (closer to a CI cold-clone). lpm wipes two cache paths plus a project wrapper tree (~270ms of the difference), which is why it wins on row ¹ but trails bun here.
+- **³ Warm / up-to-date** — `bench/project` (17 direct, 51 packages). Warm wipes `node_modules/` between iterations; up-to-date keeps everything and exercises the mtime fast-path.
+- **⁴ Tool-overhead benches** — `bench/project`. `lpm lint` / `lpm fmt` use lazy-downloaded oxlint / biome binaries with no `npx` resolution overhead per invocation.
+
+Hardware: Apple M5, macOS 25.4. `RUNS=20` median, 2026-05-01. Reproduce: `./bench/scripts/run-readme.sh 20`.
+
+  </Accordion>
+</Accordions>
+
+## Security defaults
+
+| Axis                                                                                                                | npm                                    | pnpm                                                        | bun                                                                            | lpm                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Install-time process sandbox                                                                                        | —                                      | —                                                           | —                                                                              | Enforce mode by default — macOS seatbelt deny-default, Linux `≥6.7` landlock V4 + seccomp-bpf, Windows AppContainer. Linux `<6.7` fails closed. |
+| Lifecycle scripts (`preinstall` / `install` / `postinstall`)                                                        | All scripts run                        | Blocked until approved (`approve-builds` flow)              | Blocked unless in `trustedDependencies`                                        | Blocked by default; four-layer triage policy with optional approval                                                                             |
+| Sigstore verification on install                                                                                    | Manual via `audit signatures`          | Mints attestations on publish; no install-time verification | —                                                                              | DSSE + Rekor body + Rekor SET + SCT + X.509 chain verified end-to-end on install, including attestations served by npmjs                        |
+| Minimum release age (cooldown)                                                                                      | `min-release-age` flag, off by default | 1-day cooldown by default                                   | Off by default                                                                 | 1-day cooldown by default                                                                                                                       |
+| `engines.node` enforcement                                                                                          | Warn only                              | Warn only                                                   | —                                                                              | Hard-fails install / rebuild / add before any IO                                                                                                |
+| Built-in vulnerability audit                                                                                        | npm security database                  | Registry-side data                                          | Proxies to npm audit endpoint                                                  | OSV + behavioral analysis + verdict cache                                                                                                       |
+| Provenance drift detection on republish                                                                             | —                                      | —                                                           | —                                                                              | Trust binding per package + drift detection when a publisher identity changes                                                                   |
+| Pluggable third-party security scanner protocol (register an npm package as a scanner, run it against the lockfile) | —                                      | —                                                           | `bunfig.toml > [install.security] scanner = "<pkg>"`, invoked by `bun pm scan` | — (built-in triage + audit cover a different surface; not pluggable)                                                                            |
+
+## Resolver, store, and layout
+
+| Axis                                                                                                               | npm                                | pnpm                                               | bun                                                                 | lpm                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Resolver                                                                                                           | Arborist backtracking              | Highest-version + workspace-rooted peer resolution | Tree resolution + backtracking                                      | Greedy-fusion (PubGrub legacy arm available)                                                            |
+| Package store                                                                                                      | Content-addressable cache          | Content-addressable, versioned virtual store       | Content-addressable, hardlinked                                     | Content-addressable, **clonefile on macOS** (mutation-safe COW)                                         |
+| `node_modules` layout                                                                                              | Hoisted                            | **Isolated** (symlinked virtual store)             | Auto: hoisted for single-package, isolated when workspaces detected | Auto: same heuristic as bun, with the full precedence chain configurable                                |
+| Phantom-dependency prevention                                                                                      | Hoisted layout leaks unlisted deps | Isolated by default                                | In isolated mode                                                    | In isolated mode (default for workspaces)                                                               |
+| Lockfile                                                                                                           | `package-lock.json` v3             | `pnpm-lock.yaml` v9                                | `bun.lock` (JSONC)                                                  | **Dual write**: `lpm.lock` (TOML, git-diffable) + `lpm.lockb` (binary mmap, zero-parse on warm install) |
+| Patched dependencies                                                                                               | —                                  | `pnpm patch` workflow                              | `bun patch` workflow                                                | Native `patchedDependencies`; reads pnpm's shape for migration                                          |
+| Dependency overrides                                                                                               | —                                  | Yes                                                | Yes                                                                 | Honors npm and pnpm shapes                                                                              |
+| Side-effects cache for native builds (cache `node-gyp` output so `sharp` / `node-sass` skip rebuild on re-install) | —                                  | Default on                                         | —                                                                   | —                                                                                                       |
+
+## Developer orchestration and local infrastructure
+
+This is the most lopsided table — three of the four columns are blank for several rows.
+
+| Axis                                                          | npm                    | pnpm                    | bun                                                      | lpm                                                                                                                                         |
+| ------------------------------------------------------------- | ---------------------- | ----------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Secrets vault (E2E-encrypted, OS-keychain-backed, cloud sync) | —                      | —                       | Auto-loads `.env`, no vault                              | Per-project, per-environment, org-shareable, OIDC CI escrow, platform pushes to Vercel / AWS SSM / Fly / Railway / Coolify / GitHub Actions |
+| Zero-config dev server orchestrator                           | —                      | —                       | —                                                        | Auto-installs stale deps, loads env, starts services, wires the Node inspector, opens the browser when ready                                |
+| Local HTTPS with dev-only certificate authority               | Use `mkcert`           | Use `mkcert`            | Use `mkcert`                                             | Built-in CA: status / trust / uninstall / generate. Picked up automatically by the dev server.                                              |
+| Local tunneling (public URL to localhost)                     | Use `ngrok`            | Use `ngrok`             | Use `ngrok`                                              | Stable claimable domains, webhook capture, replay, and audit log                                                                            |
+| Node.js version management                                    | —                      | Yes                     | Bun is its own runtime                                   | Auto-installed from `lpm.json > runtime.node`                                                                                               |
+| Built-in linter / formatter as install-time tools             | —                      | —                       | Formatter exists in the runtime, not the install surface | oxlint + biome as lazy-downloaded plugins, pinned via `lpm.json > tools`                                                                    |
+| One-off package execution (npx-equivalent)                    | `npx`, permanent cache | `pnpm dlx`, 1-day cache | `bunx`                                                   | `lpm dlx`, 1-day cache                                                                                                                      |
+| Built-in bundler                                              | —                      | —                       | Yes                                                      | —                                                                                                                                           |
+| Built-in test runner                                          | —                      | —                       | Yes                                                      | —                                                                                                                                           |
+
+## Code and package operations
+
+| Axis                                                                                         | npm                    | pnpm                            | bun                               | lpm                                                                                                               |
+| -------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Source-code delivery (copy package files into the project, shadcn-style)                     | —                      | —                               | —                                 | `lpm add` — works for any tarball-shipped package on any reachable registry (lpm.dev, npm, private via `.npmrc`)  |
+| Dependency selector queries (CSS-like syntax over behavioral tags)                           | —                      | —                               | —                                 | `lpm query` — `:eval`, `:scripts:not(:built)`, `:root > :network`, `#express`, `--assert-none` CI gate            |
+| Dependency-graph visualization                                                               | `npm ls` (text)        | `pnpm list` (text)              | `bun pm ls` (text)                | `lpm graph` — HTML / JSON / dot output, depth filter, `--why <pkg>` reverse-lookup                                |
+| Interactive upgrade picker                                                                   | —                      | `pnpm update -i`                | `bun update --interactive`        | `lpm upgrade` (interactive by default on TTY) — dual-row WithinMajor + AbsoluteLatest, peer-impact analysis       |
+| Programmable resolution hooks (intercept `readPackage` / `afterAllResolved` at resolve time) | —                      | `.pnpmfile.cjs`                 | —                                 | —                                                                                                                 |
+| Workspaces (monorepo)                                                                        | `--workspace` selector | Rich `--filter` pattern syntax  | `--workspace`, `--all-workspaces` | Rich filter engine matching pnpm's pattern surface                                                                |
+| Catalog version pins for monorepos (one declaration, every member references it)             | —                      | `pnpm-workspace.yaml > catalog` | Catalogs in lockfile              | `package.json > catalogs` (default + named)                                                                       |
+| Workspace-package deploy (extract one member + transitive deps to a deployable dir)          | —                      | `pnpm deploy`                   | —                                 | `lpm deploy`                                                                                                      |
+| Migration from other package managers                                                        | —                      | —                               | Reads npm + yarn lockfiles        | One command from npm / pnpm / yarn / bun, preserving overrides, patches, and peer rules                           |
+| Swift Package Manager (SE-0292)                                                              | —                      | —                               | —                                 | SPM resolves lpm packages natively; CMS-signed Swift releases; auto-installs the signing certificate on first use |
+
+## Publishing and registry
+
+| Axis                                   | npm                 | pnpm                           | bun          | lpm                                                                         |
+| -------------------------------------- | ------------------- | ------------------------------ | ------------ | --------------------------------------------------------------------------- |
+| Sigstore provenance signing on publish | `--provenance` flag | Auto in CI when OIDC available | —            | `--provenance` flag + auto-OIDC token exchange                              |
+| OIDC trusted-publisher token exchange  | GitHub Actions      | GitHub Actions + GitLab CI     | —            | GitHub Actions + GitLab CI                                                  |
+| 2FA on publish                         | OTP                 | OTP                            | `--otp` flag | OTP                                                                         |
+| `.npmrc` scope-to-registry routing     | Yes                 | Yes                            | Yes          | Honored across npm, lpm.dev, and private registries; per-origin auth tokens |
+| Default registry routing               | npmjs.org           | npmjs.org                      | npmjs.org    | Direct to npmjs.org for npm packages; lpm.dev only for `@lpm.dev/*`         |
+
+## Platform
+
+| Axis                          | npm                  | pnpm                  | bun                      | lpm                                                                           |
+| ----------------------------- | -------------------- | --------------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| macOS (Intel + Apple Silicon) | Yes                  | Yes                   | Yes                      | Yes                                                                           |
+| Linux (glibc)                 | Yes                  | Yes                   | Yes                      | Yes                                                                           |
+| Linux (musl / Alpine)         | Yes                  | Yes                   | Yes                      | Yes — detected at runtime, folded into store keys                             |
+| Windows                       | Yes                  | Yes                   | Yes                      | Yes                                                                           |
+| FreeBSD                       | Yes                  | Yes                   | —                        | —                                                                             |
+| Self-update                   | `npm install -g npm` | `pnpm self-update`    | `bun upgrade`            | `lpm self-update` — npm-first, GitHub Releases fallback, 24-hour banner check |
+| Implementation language       | JavaScript (Node.js) | TypeScript (compiled) | Zig (Rust port underway) | Rust                                                                          |
+
+## See also
+
+- [Migrating to LPM](/docs/migrating) — one-command path from any of the above
+- [Secrets vault](/docs/infra/secrets-vault) — the storage and encryption design
+- [Zero-config dev server](/docs/guides/zero-config-dev-server) — what `lpm dev` auto-detects
+- [Tunneling](/docs/infra/tunneling) — public URLs to localhost
+- [Local HTTPS](/docs/infra/local-https) — the dev certificate authority
+- [Package audit](/docs/packages/security-audit) — the audit pipeline

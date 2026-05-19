@@ -34,6 +34,7 @@ Both `lpm schema lpm.json` and the published copy are regenerated from the same 
 ```json title="lpm.json"
 {
   "$schema":      "https://lpm.dev/schemas/lpm.json",
+  "vault":        "<uuid-v4>",
   "runtime":      { "<runtime>": "<semver>" },
   "tools":        { "<tool>": "<version>" },
   "https":        true,
@@ -96,6 +97,38 @@ When the pinned version isn't already in `~/.lpm/cache/`, the next invocation of
 | `domain` | string | Stable tunnel domain (must already be claimed via [`lpm tunnel claim`](/docs/infra/tunnel)). Pro/Org only — free users get an ephemeral random domain. |
 
 CLI flags: `lpm dev --tunnel`, `lpm dev --domain <NAME>`, `lpm tunnel <port> <domain>`.
+
+## `vault`
+
+```json
+{ "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b" }
+```
+
+| Type | Notes |
+| --- | --- |
+| string | UUID v4. Stable opaque identifier that links this project to a vault row on lpm.dev. Generated and written back by the CLI on first `lpm env` use if missing. Commit it to git — it's a pointer, not a secret. |
+
+The value is path-traversal-validated: empty strings, `/`, `\`, `..` substrings, leading `~`, control characters, and absolute-drive prefixes are rejected (the value is joined into `~/.lpm/vaults/<id>.enc` on machines using the file fallback). Removing the field regenerates a fresh UUID on next use, which decouples the working directory from the previous vault without deleting server-side data.
+
+[`LPM_VAULT_ID`](/docs/reference/env-vars#auth-and-routing) overrides per-invocation. See [Secrets vault — Per-project identity](/docs/infra/secrets-vault#per-project-identity).
+
+## `vaultSync`
+
+```json
+{
+  "vaultSync": {
+    "personalVersion": 7,
+    "orgVersions": { "acme": 12 }
+  }
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `personalVersion` | int | Last known personal cloud-vault version this checkout has seen. |
+| `orgVersions.<slug>` | int | Last known org-shared cloud-vault version per org slug. |
+
+Written by `lpm env push` / `lpm env pull` for conflict-detection (CAS) against the server. Don't edit by hand; mismatches surface as `409 VaultConflictError` and the CLI tells you to pull, reconcile, and re-push.
 
 ## `env`
 
