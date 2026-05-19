@@ -30,10 +30,6 @@ export default function HomePage() {
           Commands
         </Link>
       </div>
-      <p className="mt-12 text-sm text-fd-muted-foreground">
-        Landing content coming soon — benchmarks, feature cards, and the{" "}
-        <code className="px-1.5 py-0.5 rounded bg-fd-muted">lpm dev</code> demo.
-      </p>
     </main>
   );
 }
