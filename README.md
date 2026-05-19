@@ -24,6 +24,40 @@ npm start
 Pushed to `main` → Coolify auto-deploys via Nixpacks (Next.js auto-detected,
 no `Dockerfile` needed). Same pattern as `a-package-manager`.
 
+### Environment variables
+
+| Var | Purpose |
+|---|---|
+| `BUILD_TIME` | ISO timestamp set during build (`export BUILD_TIME=$(date -u +%FT%TZ)`). Stamps `lastModified` on static sitemap entries. Falls back to process start. |
+| `NEXT_PUBLIC_POSTHOG_KEY` | Public PostHog project key (shared with `lpm.dev` — segment by `$host` for docs-only views). |
+| `NEXT_PUBLIC_POSTHOG_HOST` | PostHog ingest host. `https://eu.i.posthog.com`. |
+| `POSTHOG_PERSONAL_API_KEY` | Personal API key for source-map upload during build. Optional. |
+| `POSTHOG_PROJECT_ID` | `127102`. Pairs with the personal key above. |
+| `INDEXNOW_KEY` | Per-host IndexNow ownership key. **Use** `d8a67742ffdd149c66e9c07d26850c40` for `cli.lpm.dev`. Served at `/indexnow-key.txt`. |
+| `CRON_SECRET` | Bearer token guarding `/api/cron/indexnow-sync`. |
+
+### Post-deploy hook (Coolify)
+
+After every successful deploy, hit the IndexNow sync route once so Bing/Yandex
+re-fetch the sitemap entries. Static pages carry `BUILD_TIME`, so a fresh
+deploy brings them into the 48h lookback window automatically.
+
+```bash
+curl -sf -H "Authorization: Bearer $CRON_SECRET" \
+  "https://cli.lpm.dev/api/cron/indexnow-sync"
+```
+
+For first-run backfill (one-time, when first wiring up IndexNow):
+
+```bash
+curl -sf -H "Authorization: Bearer $CRON_SECRET" \
+  "https://cli.lpm.dev/api/cron/indexnow-sync?full=1"
+```
+
+Google ignores IndexNow but picks up changes from
+[`/sitemap.xml`](https://cli.lpm.dev/sitemap.xml) — no extra action needed
+beyond verifying the property in Search Console.
+
 ## Content
 
 Docs live under [content/docs/](./content/docs). Each section is a folder

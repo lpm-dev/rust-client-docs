@@ -1,7 +1,7 @@
-import { source } from '@/lib/source';
-import { DocsLayoutClient } from './layout.client';
+import { source } from "@/lib/source";
+import { DocsLayoutClient } from "./layout.client";
 
-export default function Layout({ children }: LayoutProps<'/docs'>) {
+export default function Layout({ children }: LayoutProps<"/docs">) {
   const tree = source.getPageTree();
 
   return (
