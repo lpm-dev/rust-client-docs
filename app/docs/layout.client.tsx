@@ -73,6 +73,10 @@ export function DocsLayoutClient({
     <DocsLayout
       tree={scopedTree}
       {...baseOptions()}
+      // SiteHeader already renders the GitHub link and theme switch in the
+      // top-right; the fumadocs sidebar's bottom-left copies are redundant.
+      githubUrl={undefined}
+      themeSwitch={{ enabled: false }}
       nav={{
         ...baseOptions().nav,
         children: (
