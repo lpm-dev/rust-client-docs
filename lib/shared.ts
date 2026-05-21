@@ -1,4 +1,4 @@
-export const appName = "LPM";
+export const appName = "LPM-cli";
 export const appTagline = "The fast, all-in-one toolkit for modern software.";
 export const siteUrl = "https://cli.lpm.dev";
 
