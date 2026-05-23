@@ -25,6 +25,7 @@ lpm audit --level high              # only show high-severity findings
 lpm audit --secrets                 # also scan for hardcoded credentials
 lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
 lpm audit --fail-on behavior        # CI: exit non-zero only on critical behaviors
+lpm audit --secrets --fail-on secrets # CI: exit non-zero only on hardcoded secrets
 lpm audit --fail-on all             # CI: exit non-zero on either (default)
 lpm audit --json                    # structured output for tooling
 ```
@@ -33,12 +34,13 @@ lpm audit --json                    # structured output for tooling
 
 `lpm audit` exits non-zero when its findings trip the active `--fail-on` policy. The implicit default is conservative — high-severity behavioral signals like `eval` don't fail CI unless you ask for them explicitly with `--fail-on all`.
 
-| Policy | Exit code 1 when |
-| --- | --- |
+| Policy                      | Exit code 1 when                                                                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, high-entropy strings). Excludes `high` behaviors so existing pipelines that tolerate `eval` don't break. |
-| `vuln` | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`) |
-| `behavior` | Any critical **or** high behavioral flag |
-| `all` (explicit) | Vulnerabilities + critical behaviors + high behaviors — the strict union |
+| `vuln`                      | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`)                                                                                                       |
+| `behavior`                  | Any critical **or** high behavioral flag                                                                                                                                             |
+| `secrets`                   | Any hardcoded-secret finding from `lpm audit --secrets`                                                                                                                              |
+| `all` (explicit)            | Vulnerabilities + critical behaviors + high behaviors + secrets — the strict union                                                                                                   |
 
 For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like selectors target individual flags or combinations.
 
@@ -58,15 +60,20 @@ lpm audit --secrets
 
 Scans the installed source tree under `node_modules/` for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
 
-Requires `node_modules/` to exist (errors with a `run \`lpm install\` first` hint otherwise). `--secrets` runs as a separate mode from the main audit — `--fail-on` and `--level` are not consulted; the secret scan is informational and always exits zero.
+Requires `node_modules/` to exist (errors with a `run \`lpm install\` first`hint otherwise).`--secrets`still runs as its own scan mode, but it now participates in`--fail-on`:
+
+- `lpm audit --secrets` uses the command's default gate policy (`all`), so a detected secret exits non-zero.
+- `lpm audit --secrets --fail-on secrets` gates on secret findings only.
+- `lpm audit --secrets --fail-on vuln` or `--fail-on behavior` keeps the secret scan informational.
+- `--level` is still ignored in secrets mode.
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`) |
-| `--fail-on <vuln\|behavior\|all>` | CI exit-code policy (no flag = vulns + critical only; `all` is the strict superset) |
-| `--secrets` | Scan installed source for hardcoded secrets (separate mode — `--fail-on` / `--level` not consulted; always exits zero) |
+| Flag                                       | Effect                                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`)                                                                    |
+| `--fail-on <vuln\|behavior\|secrets\|all>` | CI exit-code policy (`secrets` applies to `--secrets`; `all` includes secret findings too)                      |
+| `--secrets`                                | Scan installed source for hardcoded secrets (separate scan mode; consults `--fail-on`, still ignores `--level`) |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
 

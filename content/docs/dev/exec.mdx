@@ -1,15 +1,15 @@
 ---
 title: lpm exec
-description: "Run a JS or TS file directly — no scripts entry, no transpile step."
+description: "Run a JS or TS file directly with runtime auto-detection."
 ---
 
 ```bash
 lpm exec <file> [-- args...]
 ```
 
-Runs a single JavaScript or TypeScript file. The runtime is auto-detected from the extension: `.js` / `.mjs` / `.cjs` go through `node`; `.ts` / `.tsx` / `.mts` / `.cts` go through whichever TypeScript runtime is fastest on this machine — see [How runtime is picked](#how-runtime-is-picked) below.
+Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through `node`; `.ts` / `.tsx` / `.mts` / `.cts` probe the same PATH `lpm exec` will actually use and pick the first compatible TypeScript runtime — see [How runtime is picked](#how-runtime-is-picked) below.
 
-Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json` and without spinning up `ts-node` / `tsx` yourself.
+Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json`.
 
 ## Examples
 
@@ -22,10 +22,18 @@ lpm exec src/cli.ts arg1 arg2                  # bare trailing args also work
 
 ## How runtime is picked
 
-| Extension | Runtime |
-| --- | --- |
-| `.js`, `.mjs`, `.cjs` | `node` — direct spawn, no shell |
-| `.ts`, `.tsx`, `.mts`, `.cts` | First match wins: Node ≥23.6 (native TypeScript, no flags) → Node ≥22.6 (`node --experimental-strip-types`) → project-local `tsx` → `npx tsx`. The detection runs once per `lpm exec` invocation |
+| Extension                     | Runtime                                                                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.js`, `.mjs`, `.cjs`         | `node` — direct spawn, no shell                                                                                                                                        |
+| `.ts`, `.tsx`, `.mts`, `.cts` | First compatible runtime on the effective exec PATH: Node ≥23.6 (native TypeScript) → Node ≥22.6 (`node --experimental-strip-types`) → project-local `tsx` → `npx tsx` |
+
+The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
+
+If `lpm exec` falls back to `npx tsx`, it prints a warning because the first run may download `tsx` from npm.
+
+## Environment loading
+
+`lpm exec` loads the project's env files before spawn. `--no-env-check` skips env-schema validation only; it does not disable env loading.
 
 ## Argument forwarding
 
@@ -37,9 +45,9 @@ lpm exec scripts/seed.ts -- --verbose --env=prod
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--no-env-check` | Skip env-var schema validation (matches `lpm run --no-env-check`) |
+| Flag             | Effect                                          |
+| ---------------- | ----------------------------------------------- |
+| `--no-env-check` | Skip env-var schema validation before execution |
 
 Plus the [global flags](/docs/commands#global-flags).
 

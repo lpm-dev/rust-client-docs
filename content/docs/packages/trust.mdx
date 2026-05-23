@@ -15,15 +15,16 @@ To **add** entries, use [`lpm approve-scripts`](/docs/packages/approve-scripts) 
 
 ## Subcommands
 
-| Subcommand | What it does |
-| --- | --- |
-| [`diff`](#lpm-trust-diff) | Show how the current `trustedDependencies` differs from the last install's snapshot |
-| [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree |
+| Subcommand                  | What it does                                                                        |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| [`diff`](#lpm-trust-diff)   | Show how the current `trustedDependencies` differs from the last install's snapshot |
+| [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree                      |
 
 ## `lpm trust diff`
 
 ```bash
 lpm trust diff
+lpm trust diff --assert-none
 lpm trust diff --json
 ```
 
@@ -35,19 +36,26 @@ Read-only. Compares the current `package.json > lpm > trustedDependencies` again
 
 The snapshot lives at `<project>/.lpm/trust-snapshot.json`, written by every successful `lpm install`. If the project has never been installed with LPM, `diff` reports `"no prior snapshot"` and exits cleanly — there's no baseline to compare against yet.
 
-`trust diff` is informational — it always exits zero and prints whatever it found. To turn it into a CI gate, parse `--json`:
+`trust diff` is informational by default — it prints whatever it found. For a built-in CI gate, use `--assert-none`:
 
 ```bash
-lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
+lpm trust diff --assert-none
 ```
 
-`jq -e` exits non-zero when the boolean evaluates to false, so any non-empty diff fails the step.
+That exits non-zero when any `added`, `removed`, or `changed` entry is present.
+
+If you still want machine-readable output for bots or logs, `--json` works with the same gate:
+
+```bash
+lpm trust diff --json --assert-none
+```
 
 The JSON envelope: `schema_version`, `command`, `snapshot_captured_at`, `current_binding_count`, `added[]`, `removed[]`, `changed[]`. Each entry carries `key` (e.g., `esbuild@0.25.1`), `previous`, and `current` (the integrity / scriptHash before and after).
 
-| Flag | Effect |
-| --- | --- |
-| `--json` | Machine-readable output for CI gating via `jq` |
+| Flag            | Effect                                         |
+| --------------- | ---------------------------------------------- |
+| `--json`        | Machine-readable output for CI gating via `jq` |
+| `--assert-none` | Exit non-zero if any diff entries are present  |
 
 ## `lpm trust prune`
 
@@ -74,21 +82,21 @@ The interactive prompt confirms the removal list before writing. In CI / non-TTY
 
 The JSON envelope: `schema_version`, `command`, `dry_run`, `mutated` (the actual final state — `false` on `--dry-run` or no-op), `stale_count`, `stale[]` (the keys removed).
 
-| Flag | Effect |
-| --- | --- |
+| Flag          | Effect                                             |
+| ------------- | -------------------------------------------------- |
 | `-y`, `--yes` | Skip the confirmation prompt (required on non-TTY) |
-| `--dry-run` | Preview without writing |
-| `--json` | Machine-readable output |
+| `--dry-run`   | Preview without writing                            |
+| `--json`      | Machine-readable output                            |
 
 ## CI usage
 
 ```yaml
 - run: lpm install --offline
-- run: lpm trust diff --json | jq -e '(.added | length) + (.removed | length) + (.changed | length) == 0'
-- run: lpm trust prune --dry-run --json   # informational — would prune anything?
+- run: lpm trust diff --assert-none
+- run: lpm trust prune --dry-run --json # informational — would prune anything?
 ```
 
-`trust diff` itself doesn't fail on drift; pipe through `jq -e` (or any tool that asserts on the JSON shape) to turn it into a gate. The intent is "fail the build if `trustedDependencies` changed since the last reviewed install."
+`trust diff --assert-none` is the built-in drift gate: fail the build if `trustedDependencies` changed since the last reviewed install. Add `--json` if you also want structured output in CI logs.
 
 `prune --dry-run` is for hygiene reports only — it always exits zero. Gate it the same way if you want to fail on stale entries:
 

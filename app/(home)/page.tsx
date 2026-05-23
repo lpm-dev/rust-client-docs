@@ -98,8 +98,7 @@ export default function HomePage() {
         </p>
         <p className="text-sm sm:text-base text-fd-muted-foreground max-w-xl mb-10 leading-relaxed">
           Modern apps are a patchwork of npm, nvm, ngrok, mkcert, dotenv-vault,
-          Turborepo, and shadcn-cli. LPM-cli collapses all of it into one Rust
-          binary.
+          and shadcn-cli. LPM-cli collapses all of it into one Rust binary.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Link

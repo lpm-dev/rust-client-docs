@@ -9,6 +9,12 @@ lpm install [packages...]   # alias: lpm i
 
 With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
 
+## Project discovery
+
+`lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock` / `lpm.lockb`, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
+
+If `lpm i <pkg>` runs in a directory with no `package.json` anywhere up the tree, LPM auto-creates a minimal `{"dependencies": {}}` manifest in the current directory before installing — matching `npm i <pkg>`'s fresh-dir behavior. Bare `lpm install` (no package args) still errors when nothing can be found, since it has nothing to install against.
+
 ## Examples
 
 ```bash
@@ -20,7 +26,21 @@ lpm install -D vitest         # save under devDependencies
 lpm install -g typescript     # install into ~/.lpm/global/
 lpm install --offline         # never touch the network
 lpm install --force           # full re-install, bypass every fast path
+lpm install --verbose         # append per-phase timings + lockfile size
 ```
+
+### `--verbose` footer
+
+The global `--verbose` flag (no short form — `-v` is `--version`, matching npm / pnpm / yarn) appends a per-phase timing breakdown and the lockfile size beneath the `✓ Done` line. Useful for profiling install runs without dropping to JSON.
+
+```text
+✓ Done · installed 247 packages in 1.31s
+  resolve: 383ms  fetch: 165ms  link: 2ms
+  lpm.lock (247 packages) + lpm.lockb (4.2 KB)
+  120 linked, 127 symlinked
+```
+
+Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output focused on what changed (`+ pkg@version` entries) and the success terminus.
 
 ## How it works
 
@@ -159,6 +179,47 @@ lpm install foo --min-release-age=0        # disable the cooldown for this comma
 
 Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — `--allow-new` proceeds with the install but a recent-publish package whose script body matches an identity-Green shape stays Amber. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
 
+## Audit after install
+
+Optional opt-in: after a successful install, LPM can run [`lpm audit`](/docs/packages/audit) silently and emit a one-line advisory:
+
+```text
+✓ Done · installed 247 packages in 1.31s
+! Audited 247 packages, 1 vulnerability, 67 suspicious in 412ms — run `lpm audit`
+```
+
+The advisory is **informational only** — vulnerabilities found here NEVER fail the install. Run [`lpm audit --fail-on=<level>`](/docs/packages/audit) explicitly if you want a gating audit. The feature is **disabled by default**.
+
+Enable per-invocation:
+
+```bash
+lpm install --audit-after-install        # opt in for this run
+lpm install --no-audit-after-install     # opt out for this run (beats env + config)
+```
+
+Or persistently:
+
+- `LPM_AUDIT_AFTER_INSTALL=1` env (accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`)
+- `~/.lpm/config.toml > audit-after-install = true`
+
+Precedence: `--audit-after-install` / `--no-audit-after-install` > `LPM_AUDIT_AFTER_INSTALL` > `~/.lpm/config.toml` > default (`false`).
+
+Under `--json`, the human line is suppressed and the same counts are attached to the install envelope as `audit_summary`:
+
+```json
+{
+  "success": true,
+  "audit_summary": {
+    "packages_audited": 247,
+    "vulnerabilities": 1,
+    "suspicious": 67,
+    "elapsed_ms": 412
+  }
+}
+```
+
+The `! Audited` advisory is hidden when the install short-circuits on the up-to-date fast path — re-auditing an unchanged tree on every `lpm install` would be noise. Run `lpm audit` directly if you want to scan without re-installing.
+
 ## Global installs
 
 `lpm install -g` shares the project install pipeline. The same security gates fire end-to-end on `-g`:
@@ -243,6 +304,8 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
 | `--ignore-provenance-drift-all` | Skip the check for every package |
 | `--no-engine-strict` | Skip `engines.lpm` / `engines.node` enforcement |
+| `--audit-after-install` | Run [audit after install](#audit-after-install) for this run (informational only — never fails the install) |
+| `--no-audit-after-install` | Skip [audit after install](#audit-after-install) for this run, overriding env + config |
 | `--replace-bin <CMD>` | (`-g` only) Take ownership of a colliding bin name (repeatable) |
 | `--alias <ORIG=ALIAS>` | (`-g` only) Install a declared bin under a different PATH name |
 

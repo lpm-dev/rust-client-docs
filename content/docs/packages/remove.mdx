@@ -1,41 +1,40 @@
 ---
 title: lpm remove
-description: "Best-effort cleanup of a source-delivered @lpm.dev package."
+description: "Remove source files that lpm add previously copied into your project."
 ---
 
 ```bash
 lpm remove <package>   # alias: lpm rm
 ```
 
-Cleans up the on-disk artifacts of an [`lpm add`](/docs/packages/add) invocation for an `@lpm.dev/*` package. Removes the package's skills and source directory from canonical install locations, then exits.
+Cleans up the on-disk artifacts of an [`lpm add`](/docs/packages/add) invocation by reading the project-local `.lpm/added-sources.json` manifest that `lpm add` writes. Exact tracked files are removed from whatever path they were copied to, then LPM cleans up any package skills it installed.
 
-This is the **reverse of [`lpm add`](/docs/packages/add)** for the `@lpm.dev` case. To remove a runtime dependency from `package.json` and `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall).
+This is the **reverse of [`lpm add`](/docs/packages/add)** for source-delivered packages on lpm.dev, npm, or a private registry routed via `.npmrc`. To remove a runtime dependency from `package.json` and `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall).
 
 ## Scope
 
-`lpm remove` only operates on `@lpm.dev/*` packages — both the scoped form (`@lpm.dev/owner.ui-kit`) and the short form (`owner.ui-kit`) work. npm packages added via `lpm add lodash.merge` or similar are **not** removable via this command.
+`lpm remove` accepts the same package identity you passed to [`lpm add`](/docs/packages/add): bare npm names (`lodash.merge`), scoped registry packages (`@scope/private-pkg`), and lpm.dev packages (`@lpm.dev/owner.ui-kit`). For legacy lpm.dev cleanup, the short remove-only form (`owner.ui-kit`) still works too.
 
 ```bash
+lpm remove lodash.merge
+lpm remove @scope/private-pkg
 lpm remove @lpm.dev/owner.ui-kit
 lpm rm owner.ui-kit                 # short form
 ```
 
 ## What it removes
 
-For a package `@lpm.dev/<owner>.<name>`, the command:
+For a tracked package, the command:
 
-1. Removes `.lpm/skills/<owner>.<name>/` if it exists, plus any editor integrations LPM set up alongside (e.g. Cursor symlinks).
-2. Scans a fixed list of canonical install directories for a folder named `<name>` (the trailing segment after the dot) and removes it if present:
-   - `components/<name>/`
-   - `src/components/<name>/`
-   - `lib/<name>/`
-   - `src/lib/<name>/`
-   - `Sources/<name>/` (Swift)
-   - `Packages/LPMComponents/Sources/<name>/` (Swift)
+1. Removes the exact file paths recorded in `.lpm/added-sources.json` when `lpm add` copied the source files.
+2. Prunes now-empty parent directories under the project root.
+3. Removes `.lpm/skills/<owner>.<name>/` if the add installed LPM agent skills, plus any editor integrations LPM set up alongside (for example Cursor symlinks).
 
-That's it — there's no manifest of what `lpm add` originally copied, so cleanup is shape-based.
+That manifest-backed path means custom `--path` installs are reversible now — if you ran `lpm add source-pkg --path ./src/vendor`, `lpm remove source-pkg` removes the tracked files from `src/vendor` rather than guessing from framework defaults.
 
-**Source files that `lpm add` copied to a custom `--path` are not removed.** If you ran `lpm add @lpm.dev/owner.ui-kit --path ./src/vendor`, `lpm remove` won't find them. Delete those directories manually.
+For older projects added before `.lpm/added-sources.json` existed, `lpm remove` falls back to the legacy heuristic scan of canonical directories such as `components/`, `src/components/`, `lib/`, `src/lib/`, `Sources/`, and `Packages/LPMComponents/Sources/`. That fallback can still miss custom pre-manifest installs.
+
+There is still no dedicated `--dry-run` or "show me the tracked paths" flag. If you need to inspect what a manifest-backed remove will target, read `.lpm/added-sources.json` in the project root.
 
 The command exits successfully even when no files were found, with a warning naming the package — useful for idempotent CI cleanup, but it also means a typo'd name fails silently.
 
