@@ -7,26 +7,33 @@ description: "Download and extract a package tarball — no install side-effects
 lpm download <package> [--version <V>] [--output <DIR>]
 ```
 
-Fetches an `@lpm.dev/*` package tarball and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
+Fetches a package tarball and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
 
 Useful for inspecting a package's contents before you trust it, archiving a snapshot for offline reference, generating a fixture, or reading the source of a package you don't want to install.
 
-**Scope: `@lpm.dev/*` packages only.** Bare names like `zod` or `react` are rejected at parse time. For npm tarballs, use `npm pack <pkg>` then `tar -xf`.
+Routing matches [`lpm install`](/docs/packages/install):
+
+- `@lpm.dev/*` fetches from lpm.dev.
+- `@scope/pkg` follows the current project's `.npmrc` `@scope:registry=...` mapping when one exists.
+- Unscoped names (`react`, `zod`, `lodash.merge`) use the current project's default `.npmrc` registry, or npmjs.org when no override is present.
+
+If you specifically mean an lpm.dev package, prefer the fully scoped `@lpm.dev/owner.pkg` form.
 
 ## Examples
 
 ```bash
-lpm download @lpm.dev/owner.pkg                      # latest, extracted into the current directory
+lpm download react                                   # npmjs.org (or project .npmrc default registry)
+lpm download @my-co/internal                         # project .npmrc scoped registry
+lpm download @lpm.dev/owner.pkg                      # force lpm.dev
 lpm download @lpm.dev/owner.pkg --version 2.1.0      # a specific version
-lpm download owner.pkg --output /tmp/inspect         # short form + `-o` alias
 lpm download @lpm.dev/owner.pkg --json               # structured output (URL, integrity, paths)
 ```
 
 ## How it works
 
-1. Fetches the package metadata from lpm.dev to find the tarball URL and SRI integrity hash for the requested (or latest) version.
+1. Fetches the package metadata from the routed registry to find the tarball URL and SRI integrity hash for the requested (or latest) version.
 2. Downloads the tarball.
-3. Verifies the SRI hash when the registry ships one; emits a `No integrity hash available — skipping verification` warning and continues when it doesn't.
+3. Verifies the SRI hash when the registry ships one. If the registry does not ship integrity, `lpm download` refuses to extract by default; re-run with `--allow-unverified` only when you intentionally accept an unverified tarball.
 4. Extracts into the output directory.
 
 The output directory defaults to the current working directory. The tarball's top-level `package/` is unwrapped during extraction (equivalent to `tar x --strip-components=1`), so you get the package contents directly.
@@ -43,10 +50,11 @@ For a real install, use [`lpm install`](/docs/packages/install). For source deli
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--version <V>` | Specific version to download (default: latest) |
-| `--output <DIR>`, `-o` | Output directory (default: current working directory). The `output_dir` field in `--json` mode is canonicalized to an absolute path regardless of how the flag was passed. |
+| Flag                   | Effect                                                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--version <V>`        | Specific version to download (default: latest)                                                                                                                               |
+| `--output <DIR>`, `-o` | Output directory (default: current working directory). The `output_dir` field in `--json` mode is canonicalized to an absolute path regardless of how the flag was passed.   |
+| `--allow-unverified`   | Waive the default integrity gate when the registry returns no SRI hash. Intended for legacy sources that genuinely do not ship integrity; you take on verification yourself. |
 
 Plus the [global flags](/docs/commands#global-flags).
 
@@ -69,13 +77,13 @@ Plus the [global flags](/docs/commands#global-flags).
 
 Fields:
 
-| Field | Meaning |
-| --- | --- |
-| `tarball_url` | Resolved tarball URL the bytes came from. Useful for mirroring or audit logs. |
-| `integrity` | SRI string the registry advertised for this version (e.g. `sha512-…`), or `null` if the registry didn't ship one. |
-| `integrity_verified` | `true` when the SRI was present and verified, `false` when the registry didn't ship one (verification was skipped, not failed — a verification failure aborts the run). |
-| `output_dir` | Absolute path where files were extracted (canonicalized). |
-| `files_extracted` | Count of files written from the tarball, after the `package/` prefix is stripped. |
+| Field                | Meaning                                                                                                                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tarball_url`        | Resolved tarball URL the bytes came from. Useful for mirroring or audit logs.                                                                                                                                     |
+| `integrity`          | SRI string the registry advertised for this version (e.g. `sha512-…`), or `null` if the registry didn't ship one. A `null` value only reaches a success envelope when you explicitly passed `--allow-unverified`. |
+| `integrity_verified` | `true` when the SRI was present and verified, `false` only on the explicit `--allow-unverified` path where extraction proceeds without a registry-provided hash. A verification failure still aborts the run.     |
+| `output_dir`         | Absolute path where files were extracted (canonicalized).                                                                                                                                                         |
+| `files_extracted`    | Count of files written from the tarball, after the `package/` prefix is stripped.                                                                                                                                 |
 
 ## See also
 

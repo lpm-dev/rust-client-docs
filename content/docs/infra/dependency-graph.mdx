@@ -22,7 +22,7 @@ DepNode {
   version:      "19.0.0"
   registry:     Lpm | Npm | Unknown    ← parsed from the lockfile's `source` field
   depth:        0..N                   ← shortest path from a root
-  is_direct:    bool                   ← named in package.json > dependencies
+  is_direct:    bool                   ← named in the active direct-dependency set (dependencies and/or devDependencies after prod/dev filtering)
   is_duplicate: bool                   ← another (name, *) node exists
   is_root:      bool                   ← the project itself
   dependencies: ["scheduler@0.25.0", ...]  ← edges (keys into the node map)
@@ -68,14 +68,14 @@ my-app
 
 Six formats, each tuned for a different consumer:
 
-| Format | Output destination | Best for |
-| --- | --- | --- |
-| `tree` (default) | stdout — terminal-friendly indented tree | Quick eyeballing |
-| `dot` | stdout — Graphviz DOT source | Pipe into `dot -Tpng > graph.png` |
-| `mermaid` | stdout — Mermaid graph block | Embedding in markdown / docs |
-| `json` | stdout — structured `DepGraph` data | Custom analyses, scripts, agents |
-| `stats` | stdout — counts and aggregates | High-level audits |
-| `html` | writes `<project>/.lpm/graph.html` and auto-opens in browser (suppress with `--no-open`) | Interactive exploration |
+| Format           | Output destination                                                                       | Best for                          |
+| ---------------- | ---------------------------------------------------------------------------------------- | --------------------------------- |
+| `tree` (default) | stdout — terminal-friendly indented tree of resolved `name@version` nodes                | Quick eyeballing                  |
+| `dot`            | stdout — Graphviz DOT source                                                             | Pipe into `dot -Tpng > graph.png` |
+| `mermaid`        | stdout — Mermaid graph block                                                             | Embedding in markdown / docs      |
+| `json`           | stdout — structured `DepGraph` data                                                      | Custom analyses, scripts, agents  |
+| `stats`          | stdout — counts and aggregates                                                           | High-level audits                 |
+| `html`           | writes `<project>/.lpm/graph.html` and auto-opens in browser (suppress with `--no-open`) | Interactive exploration           |
 
 The `html` format is the only one that writes to disk — every other format prints to stdout so you can pipe or redirect it.
 
@@ -87,13 +87,13 @@ lpm graph --format stats
 
 Returns:
 
-| Field | What it counts |
-| --- | --- |
-| `total_packages` | Distinct `(name, version)` nodes in the graph (including the root) |
-| `lpm_packages` | Nodes with `Registry::Lpm` (sourced from lpm.dev) |
-| `npm_packages` | Nodes with `Registry::Npm` (sourced from registry.npmjs.org) |
-| `max_depth` | Longest shortest-path from any root to any node, **1-based** (root = level 1, direct deps = level 2). Empty graph reports `0`. Matches the `--depth N` flag's contract so the number you see in stats lines up with the truncation level you'd pass. |
-| `duplicates` | List of `(name, [versions])` pairs where the same canonical has multiple versions installed |
+| Field            | What it counts                                                                                                                                                                                                                                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `total_packages` | Distinct `(name, version)` nodes in the graph (including the root)                                                                                                                                                                                   |
+| `lpm_packages`   | Nodes with `Registry::Lpm` (sourced from lpm.dev)                                                                                                                                                                                                    |
+| `npm_packages`   | Nodes with `Registry::Npm` (sourced from registry.npmjs.org)                                                                                                                                                                                         |
+| `max_depth`      | Longest shortest-path from any root to any node, **1-based** (root = level 1, direct deps = level 2). Empty graph reports `0`. Matches the `--depth N` flag's contract so the number you see in stats lines up with the truncation level you'd pass. |
+| `duplicates`     | List of `(name, [versions])` pairs where the same canonical has multiple versions installed                                                                                                                                                          |
 
 Useful for high-level audits — "how many of my deps are from lpm.dev vs npm", "do I have ten copies of `loose-envify`", "how deep does my tree actually go".
 
@@ -101,14 +101,14 @@ Useful for high-level audits — "how many of my deps are from lpm.dev vs npm", 
 
 Four filter flags trim the graph. They are applied at the graph level — every output format (tree, dot, mermaid, json, stats, html) sees the same truncated set:
 
-| Flag | Effect |
-| --- | --- |
-| `--depth <N>` | Truncate to N levels (root counts as level 1, direct deps as level 2). `--depth 2` keeps just root + direct deps. |
-| `--filter <NAME>` | Only show subtrees that contain `<NAME>` somewhere. Diamond patterns keep both branches. |
-| `--prod` | Only production dependencies (skip devDependencies and their transitives) |
-| `--dev` | Only devDependencies (mutually exclusive with `--prod`) |
+| Flag              | Effect                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--depth <N>`     | Truncate to N levels (root counts as level 1, direct deps as level 2). `--depth 2` keeps just root + direct deps. |
+| `--filter <NAME>` | Only show subtrees whose package names contain `<NAME>` as a substring. Diamond patterns keep both branches.      |
+| `--prod`          | Only production dependencies (skip devDependencies and their transitives)                                         |
+| `--dev`           | Only devDependencies (mutually exclusive with `--prod`)                                                           |
 
-`--filter` is helpful in big trees — `lpm graph --filter react` shows just the parts of your tree that touch react, rather than the whole 200-package output.
+`--filter` is helpful in big trees — `lpm graph --filter react` shows just the parts of your tree that touch react, rather than the whole 200-package output. The match is substring-based, so `lpm graph --filter press` keeps the `express` branch.
 
 ## Scoping the output
 
@@ -124,16 +124,16 @@ Useful when you want the same shape as `lpm graph --why <pkg>` but rendered as a
 
 ## When to use the graph
 
-| You want to... | Use |
-| --- | --- |
-| See what's installed, terminal-style | `lpm graph` (default tree) |
-| Scope to one package's subtree | `lpm graph <pkg>` |
-| Find why a package is in your tree | `lpm graph --why <pkg>` |
-| Render in docs | `lpm graph --format mermaid` |
-| Render as a real graph image | `lpm graph --format dot \| dot -Tpng > graph.png` |
-| Pipe into an analysis script | `lpm graph --format json` |
-| High-level audit | `lpm graph --format stats` |
-| Browse interactively | `lpm graph --format html` |
+| You want to...                       | Use                                               |
+| ------------------------------------ | ------------------------------------------------- |
+| See what's installed, terminal-style | `lpm graph` (default tree)                        |
+| Scope to one package's subtree       | `lpm graph <pkg>`                                 |
+| Find why a package is in your tree   | `lpm graph --why <pkg>`                           |
+| Render in docs                       | `lpm graph --format mermaid`                      |
+| Render as a real graph image         | `lpm graph --format dot \| dot -Tpng > graph.png` |
+| Pipe into an analysis script         | `lpm graph --format json`                         |
+| High-level audit                     | `lpm graph --format stats`                        |
+| Browse interactively                 | `lpm graph --format html`                         |
 
 For selector-based queries against installed packages (find all packages that use eval, etc.), use [`lpm query`](/docs/packages/query) — different system, more precise.
 
