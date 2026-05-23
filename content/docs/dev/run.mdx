@@ -11,15 +11,17 @@ Runs one or more `scripts` entries from `package.json`. With multiple scripts, r
 
 ## Shorthand: `lpm <script>` without `run`
 
-`lpm` falls through to `lpm run` when the first argument isn't a known subcommand. So `lpm build`, `lpm test:unit`, `lpm whatever` all resolve as `lpm run <name>` if `<name>` exists in `package.json > scripts`. Matches `npm`, `pnpm`, and `bun` conventions.
+`lpm` falls through to the same task runner as `lpm run <name>` when the first argument isn't a known subcommand. That means plain shorthand invocations pick up `lpm.json` meta-tasks, `dependsOn` expansion, caching, and the normal script/task resolution rules.
 
 ```bash
 lpm build              # equivalent to lpm run build
 lpm typecheck          # equivalent to lpm run typecheck
-lpm db:migrate         # equivalent to lpm run db:migrate
+lpm verify             # equivalent to lpm run verify (including lpm.json meta-tasks)
 ```
 
 The lookup only kicks in for unknown subcommand names — built-in commands always win. So `lpm test` runs the Vitest/Jest forwarder (built-in `lpm test`), not your `"test"` script entry. To force the script entry when a built-in conflicts, use `lpm run <name>` explicitly.
+
+Use `lpm run` when you need runner flags. `lpm build --filter web` forwards `--filter web` to your script; `lpm run build --filter web` applies LPM's workspace selection.
 
 ## Examples
 
@@ -64,7 +66,11 @@ lpm run test --affected --base develop # change base branch (default: main)
 
 `--filter` accepts the [filter grammar](/docs/packages/workspaces): exact name (`foo`), glob (`@scope/*`), path glob (`./apps/*`), forward closure (`foo...`), reverse closure (`...foo`), exclusion (`!foo`).
 
+Full grammar also includes path exact (`{./apps/web}`), git ref (`[origin/main]`), and the dependency/dependent-closure variants `foo^...` and `...^foo`.
+
 `--all` is mutually exclusive with `--filter` and `--affected`; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+
+`--all`, `--filter`, and `--affected` require a workspace.
 
 `--filter core` does **not** match `@babel/core` — substring matching is not supported. Use `--filter '*/core'` for that.
 
@@ -72,7 +78,7 @@ lpm run test --affected --base develop # change base branch (default: main)
 
 ## Caching
 
-Task results are cached. A cached task with unchanged inputs replays instantly without re-executing. Bypass the cache with `--no-cache`. The cache lives under `~/.lpm/cache/tasks/` — manage with [`lpm cache`](/docs/packages/cache).
+Task results are cached only when the task opts in via `lpm.json` (`cache: true` plus non-empty `outputs`). A cached task with unchanged inputs replays instantly without re-executing. Bypass the cache with `--no-cache`. The cache lives under `~/.lpm/cache/tasks/` — manage with [`lpm cache`](/docs/packages/cache).
 
 ## Environment files
 
@@ -80,7 +86,11 @@ Task results are cached. A cached task with unchanged inputs replays instantly w
 lpm run start --env=staging
 ```
 
-Loads `.env.staging` before running the script. Without `--env`, LPM loads `.env`, then `.env.local` (gitignored override).
+With `--env=staging`, LPM loads `.env`, `.env.local`, `.env.staging`, then `.env.staging.local`. Without `--env`, it loads `.env`, then `.env.local`.
+
+If the script name resolves to an env mode through `lpm.json`, LPM uses that mode automatically unless you override it with `--env`.
+
+Vault-backed env secrets override file values after dotenv loading.
 
 `--no-env-check` skips environment-variable schema validation if you've declared a schema.
 
@@ -90,7 +100,11 @@ Loads `.env.staging` before running the script. Without `--env`, LPM loads `.env
 lpm run dev --watch
 ```
 
-Re-runs the script on file changes. Pairs nicely with `--filter` for "rebuild only the affected member."
+Re-runs one script in one package on file changes.
+
+If the task declares `inputs` globs in `lpm.json`, only matching file changes retrigger the run. Otherwise, relevant project-file changes retrigger it.
+
+`--watch` is single-package today: it does not support multiple script names or workspace-selection flags like `--all`, `--filter`, or `--affected`. Watch runs fresh on every change; the task cache is not used.
 
 ## Flags
 
@@ -98,16 +112,16 @@ Re-runs the script on file changes. Pairs nicely with `--filter` for "rebuild on
 | --------------------- | ---------------------------------------------------------------------------------------------------- |
 | `-p`, `--parallel`    | Run scripts concurrently (respects task deps from `lpm.json`)                                        |
 | `--continue-on-error` | Keep running remaining tasks after a failure                                                         |
-| `--stream`            | Live prefixed output instead of buffered per-task                                                    |
+| `--stream`            | Live prefixed output instead of buffered per-task in task-graph / parallel runs                      |
 | `--all`               | Run in every workspace member (topological order); mutually exclusive with `--filter` / `--affected` |
 | `--filter <EXPR>`     | Filter workspace members (repeatable; unions)                                                        |
 | `--fail-if-no-match`  | Exit non-zero if the selected workspace set is empty                                                 |
 | `--affected`          | Only members affected by changes vs `--base`                                                         |
 | `--base <REF>`        | Git base ref for `--affected` (default: `main`)                                                      |
-| `--no-cache`          | Bypass the task cache                                                                                |
+| `--no-cache`          | Bypass the task cache for cache-enabled tasks; ignored in watch mode                                 |
 | `--no-env-check`      | Skip env-var schema validation                                                                       |
-| `--env=<MODE>`        | Load `.env.<MODE>` instead of `.env`                                                                 |
-| `--watch`             | Re-run on file changes                                                                               |
+| `--env=<MODE>`        | Load `.env`, `.env.local`, `.env.<MODE>`, and `.env.<MODE>.local`                                    |
+| `--watch`             | Re-run one script in one package on file changes                                                     |
 
 Plus the [global flags](/docs/commands#global-flags).
 

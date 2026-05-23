@@ -48,14 +48,14 @@ The CLI pins each relay's certificate independently — see [Certificate pinning
 
 Tunnels are gated by plan tier across **six** dimensions:
 
-| Dimension | Free | Pro | Org |
-| --- | --- | --- | --- |
-| Concurrent tunnels | **1** | **3** | **10** |
-| Rate limit | **100 req/min** | unlimited | unlimited |
-| Max body size | **10 MB** | 100 MB | 100 MB |
-| Max session length | **2 hours** | unlimited | unlimited |
-| Custom subdomain claims | **0** | 3 total | 10 total |
-| `--tunnel-auth` flag | not available | available | available |
+| Dimension               | Free            | Pro       | Org       |
+| ----------------------- | --------------- | --------- | --------- |
+| Concurrent tunnels      | **1**           | **3**     | **10**    |
+| Rate limit              | **100 req/min** | unlimited | unlimited |
+| Max body size           | **10 MB**       | 100 MB    | 100 MB    |
+| Max session length      | **2 hours**     | unlimited | unlimited |
+| Custom subdomain claims | **0**           | 3 total   | 10 total  |
+| `--tunnel-auth` flag    | not available   | available | available |
 
 Limits are enforced at the relay (the Cloudflare Worker), not the CLI. They're documented in [`workers/tunnel/src/limits.js`](https://github.com/lpm-dev/a-package-manager/blob/main/workers/tunnel/src/limits.js).
 
@@ -71,10 +71,10 @@ Free-tier random subdomains are different: they're freshly minted each connect w
 
 LPM operates two base domains today:
 
-| Domain | Default plan required | Notes |
-| --- | --- | --- |
-| `lpm.fyi` | `free` | The default base. Free random subdomains live here. |
-| `lpm.llc` | `pro` | Available for claimed Pro/Org domains. |
+| Domain    | Default plan required | Notes                                               |
+| --------- | --------------------- | --------------------------------------------------- |
+| `lpm.fyi` | `free`                | The default base. Free random subdomains live here. |
+| `lpm.llc` | `pro`                 | Available for claimed Pro/Org domains.              |
 
 List what's available right now:
 
@@ -183,16 +183,16 @@ Or pass `--domain` per invocation. Every `lpm tunnel 3000` (and `lpm dev --tunne
 
 The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discriminating `type` field:
 
-| Direction | Type | Purpose |
-| --- | --- | --- |
-| Client → relay | `hello` | Initial handshake — token, requested domain (wire field: `subdomain`), local port |
-| Relay → client | `hello` | Handshake response — assigned domain, full `tunnel_url`, `session_id` |
-| Relay → client | `http_request` | Incoming HTTP request to proxy |
-| Client → relay | `http_response` | The local server's response |
-| Relay → client | `ws_upgrade` | Incoming WebSocket upgrade request from a remote client |
-| Both | `ws_frame` | WebSocket frames in either direction |
-| Both | `ws_close` | WebSocket close events in either direction (with optional `code` + `reason`) |
-| Client → relay | `ping` | Keepalive |
+| Direction      | Type            | Purpose                                                                           |
+| -------------- | --------------- | --------------------------------------------------------------------------------- |
+| Client → relay | `hello`         | Initial handshake — token, requested domain (wire field: `subdomain`), local port |
+| Relay → client | `hello`         | Handshake response — assigned domain, full `tunnel_url`, `session_id`             |
+| Relay → client | `http_request`  | Incoming HTTP request to proxy                                                    |
+| Client → relay | `http_response` | The local server's response                                                       |
+| Relay → client | `ws_upgrade`    | Incoming WebSocket upgrade request from a remote client                           |
+| Both           | `ws_frame`      | WebSocket frames in either direction                                              |
+| Both           | `ws_close`      | WebSocket close events in either direction (with optional `code` + `reason`)      |
+| Client → relay | `ping`          | Keepalive                                                                         |
 
 Bodies are base64-encoded for binary safety. The CLI maintains a request-ID map so concurrent requests don't conflict.
 
@@ -220,33 +220,32 @@ Org ownership is matched by **UUID**, not slug — the cache stores the org's UU
 Every request the relay forwards to your local server is captured to disk on **your** machine — the relay doesn't store request bodies:
 
 ```text
-<project>/.lpm/tunnel/
-├── events/
-│   ├── 0001.json         ← request + response metadata
-│   ├── 0001.body         ← request body bytes
-│   ├── 0001.response     ← response body bytes
-│   └── ...
-└── sessions/             ← session-level metadata
+<project>/.lpm/
+├── webhook-log.jsonl     ← compact newest-first event index
+└── webhooks/
+  ├── <id>.json         ← full request + response bodies and headers
+  └── ...
 ```
 
 Browse:
 
 ```bash
 lpm tunnel inspect             # terminal table
-lpm tunnel inspect --last 10
-lpm tunnel inspect --filter '/webhooks/stripe'
-lpm tunnel inspect --status 4xx
+lpm tunnel inspect -- --last 10
+lpm tunnel inspect -- --filter stripe
+lpm tunnel inspect -- --status 4xx
 lpm tunnel log                 # full event log
-lpm tunnel inspect --ui        # browser inspector (URL printed on startup)
+lpm tunnel inspect -- --ui     # browser inspector (URL printed on startup)
 ```
 
 Replay a captured event back to your local server:
 
 ```bash
 lpm tunnel replay 3
+lpm tunnel replay 3 -- --port 4000
 ```
 
-Replays are useful for iterating on webhook handlers — fix the bug, replay the failed event, see if it lands. No need to wait for the upstream provider to fire again.
+Replays are useful for iterating on webhook handlers — fix the bug, replay the failed event, see if it lands. No need to wait for the upstream provider to fire again. Local `inspect`, `log`, and `replay` flags are forwarded after `--`.
 
 ## `--auto-ack`
 
@@ -270,7 +269,7 @@ Free tier doesn't have `--tunnel-auth` (per the plan-limits matrix above). Usefu
 
 ## The inspector
 
-`lpm tunnel inspect --ui` starts a small web UI on a free ephemeral port (the URL is printed on startup) — pass `--inspect-port N` for a stable bookmark. It shows captured events with full headers, body, response status, and replay controls. Same data as the terminal `inspect`, just easier to navigate for big captures.
+`lpm tunnel inspect -- --ui` starts a small web UI on a free ephemeral port (the URL is printed on startup) — pass `--inspect-port N` for a stable bookmark. It shows captured events with full headers, body, response status, and replay controls. Same data as the terminal `inspect`, just easier to navigate for big captures.
 
 The inspector is auto-started alongside the tunnel by default and binds to a free port chosen by the OS — race-free against the dev server's own port. Pass `--inspect-port N` to bind a specific port (strict — fails loudly if `N` is in use), or `--no-inspect` to skip it entirely. Both `lpm tunnel` and `lpm dev --tunnel` accept the same flags.
 

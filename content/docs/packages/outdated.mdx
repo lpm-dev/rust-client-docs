@@ -7,20 +7,18 @@ description: "List dependencies with newer versions available."
 lpm outdated
 ```
 
-Compares every entry in `package.json > dependencies` against the registry and prints the ones with newer versions available. Read-only — never modifies anything.
-
-**Only `dependencies` is checked.** Entries in `devDependencies` are not surveyed.
+Compares every entry in `package.json > dependencies` and `package.json > devDependencies` against the registry and prints the ones with newer versions available. Read-only — never modifies anything.
 
 ## Example output
 
 ```text
-Package           Current   Latest
-react             18.2.0    19.0.0
-zod               4.3.5     4.3.6
-typescript        5.4.0     5.6.2
+Section            Package                            Current      Wanted       Latest
+dependencies       react                              18.2.0       18.3.1       19.0.0
+dependencies       zod                                4.3.5        4.3.6        4.4.0
+devDependencies    typescript                         5.4.0        5.6.2        5.7.0
 ```
 
-A row appears when the installed version (from `lpm.lock`) differs from the registry's latest tag.
+A row appears when the installed version (from `lpm.lock`) differs from the registry's latest tag. `wanted` is the newest published version that still satisfies the declared range; `latest` is the newest published version overall.
 
 ## Ecosystem scope
 
@@ -35,14 +33,21 @@ lpm outdated --registry-only=lpm # @lpm.dev only — useful when npm is rate-lim
 
 ## Acting on the report
 
-For `@lpm.dev/*` packages, [`lpm upgrade`](/docs/packages/upgrade) applies the updates (interactive at TTY, batch in CI). It's `@lpm.dev`-only today.
+[`lpm upgrade`](/docs/packages/upgrade) applies the report for `@lpm.dev/*` packages and for npm packages whose existing `lpm.lock` entry records a public npm source. That keeps the common flow as:
 
-For npm packages, bump them per-package with `lpm install`:
+```bash
+lpm outdated
+lpm upgrade -y
+```
+
+For one-off manual bumps, use `lpm install` with the spec you want:
 
 ```bash
 lpm install zod@latest
 lpm install react@^19            # explicit range
 ```
+
+Packages without a recorded npm-public source are still skipped instead of being queried against `registry.npmjs.org`. Run `lpm install` first so the source is captured in `lpm.lock`, then rerun `lpm outdated` or `lpm upgrade`.
 
 ## JSON output
 
@@ -50,25 +55,30 @@ lpm install react@^19            # explicit range
 lpm outdated --json
 ```
 
-Emits an envelope with `success`, `count`, `outdated_count`, and a `packages[]` array. Each row carries:
+Emits a schema-versioned envelope with `schema_version`, `success`, `count`, `outdated_count`, and a `packages[]` array. Each row carries:
 
-| Field | Meaning |
-| --- | --- |
-| `name` | Package name |
-| `current` | Version resolved in `lpm.lock`, or `"?"` if the lockfile is missing |
-| `wanted` | The **raw range string** from `package.json` (e.g., `"^4.3.0"`) — not a resolved version |
-| `latest` | The newest version on the registry, regardless of range |
-| `outdated` | `true` when `current` differs from `latest` |
+| Field            | Meaning                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `schema_version` | JSON contract version for the envelope. Current value: `2`                                                    |
+| `name`           | Package name                                                                                                  |
+| `current`        | Version resolved in `lpm.lock`, or `"?"` if the lockfile is missing                                           |
+| `wanted`         | The newest published version that satisfies the declared range, or `null` when nothing published satisfies it |
+| `wanted_range`   | The raw declared spec from `package.json` (for example `"^4.3.0"`)                                            |
+| `latest`         | The newest version on the registry, regardless of range                                                       |
+| `section`        | Which dependency map produced the row: `dependencies` or `devDependencies`                                    |
+| `outdated`       | `true` when `current` differs from `latest`                                                                   |
+
+When `lpm outdated` skips non-`@lpm.dev/*` packages because they do not have a recorded npm-public source in `lpm.lock`, the envelope also includes `skipped_private` and `skipped_private_reason`.
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
+| Flag                         | Effect                                              |
+| ---------------------------- | --------------------------------------------------- |
 | `--registry-only <all\|lpm>` | Limit checks to a single ecosystem (default: `all`) |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for scripting.
 
 ## See also
 
-- [`lpm upgrade`](/docs/packages/upgrade) — apply the updates (for `@lpm.dev/*` packages)
+- [`lpm upgrade`](/docs/packages/upgrade) — apply the updates surfaced by `lpm outdated`
 - [`lpm audit`](/docs/packages/audit) — check for vulnerable versions you should bump

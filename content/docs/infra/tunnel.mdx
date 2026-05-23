@@ -21,7 +21,7 @@ lpm tunnel unclaim acme-api.lpm.llc       # release a claimed domain
 lpm tunnel list                           # your claimed domains
 lpm tunnel domains                        # available base domains
 lpm tunnel inspect                        # captured webhook event log
-lpm tunnel inspect --ui                   # open browser inspector
+lpm tunnel inspect -- --ui                # open browser inspector
 lpm tunnel replay 3                       # replay event #3 to localhost
 lpm tunnel log                            # browse event log
 ```
@@ -32,7 +32,7 @@ lpm tunnel log                            # browse event log
 lpm tunnel 3000
 ```
 
-Returns an `https://` URL that proxies to `localhost:3000`. Requires an LPM login — `lpm tunnel` errors with `authentication required. Run \`lpm login\` first` if no token is stored. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
+Returns an `https://` URL that proxies to `localhost:3000`. Requires a refresh-backed LPM login session — `lpm tunnel` rejects `--token`, `LPM_TOKEN`, and CI-only tokens for relay-facing actions. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
 
 ```bash
 lpm tunnel 3000 acme-api.lpm.llc          # use a claimed domain
@@ -60,16 +60,17 @@ Claimed domains persist across runs — the same URL keeps working as long as yo
 
 ```bash
 lpm tunnel inspect                # show captured events (terminal table)
-lpm tunnel inspect --ui           # open the inspector in a browser
-lpm tunnel inspect --last 10
-lpm tunnel inspect --status 4xx
-lpm tunnel inspect --filter '/webhooks/stripe'
+lpm tunnel inspect -- --ui        # open the inspector in a browser
+lpm tunnel inspect -- --last 10
+lpm tunnel inspect -- --status 4xx
+lpm tunnel inspect -- --filter stripe
 lpm tunnel log                    # event log browse view
 
 lpm tunnel replay 3               # re-deliver event #3 to the local server
+lpm tunnel replay 3 -- --port 4000
 ```
 
-Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Replays POST the original request back at the local port, so you can iterate on a bug without waiting for the upstream provider to fire again.
+Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Local `inspect`, `log`, and `replay` flags are forwarded after `--`. Replays POST the original request back at the local port, so you can iterate on a bug without waiting for the upstream provider to fire again.
 
 ## Inspector port
 
@@ -87,16 +88,16 @@ The auto-pick keeps the inspector race-free against the dev server's own port an
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--org <SLUG>` | Operate against an organization (claim/unclaim/list) |
-| `--tunnel-auth` | Require an auth token to access the tunnel URL (Pro/Org only) |
-| `--auto-ack` | Return 200 OK to webhooks when the local server is down |
-| `--session <NAME>` | Name this tunnel session in the inspector |
-| `--no-inspect` | Disable the auto-started inspector UI |
+| Flag                 | Effect                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `--org <SLUG>`       | Operate against an organization (claim/unclaim/list)                               |
+| `--tunnel-auth`      | Require an auth token to access the tunnel URL (Pro/Org only)                      |
+| `--auto-ack`         | Return 200 OK to webhooks when the local server is down                            |
+| `--session <NAME>`   | Name this tunnel session in the inspector                                          |
+| `--no-inspect`       | Disable the auto-started inspector UI                                              |
 | `--inspect-port <N>` | Bind the inspector to exactly this port (default: auto-pick a free ephemeral port) |
 
-Trailing arguments are forwarded to inspect / replay / log subcommands (e.g., `--last`, `--filter`, `--status`).
+Trailing arguments are forwarded to inspect / replay / log subcommands after `--` (for example: `lpm tunnel inspect -- --last 10`, `lpm tunnel replay 3 -- --port 4000`).
 
 Plus the [global flags](/docs/commands#global-flags).
 

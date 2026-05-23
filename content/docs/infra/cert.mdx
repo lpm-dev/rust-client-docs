@@ -18,6 +18,9 @@ lpm cert uninstall                      # remove the CA from the trust store
 lpm cert generate                       # (re-)generate a project cert
 lpm cert generate --host alt.local      # add SAN entries
 lpm cert generate --host a.local --host b.local
+lpm cert rotate                         # rotate the root CA and reissue leaves
+lpm cert rotate --keep-old-trusted 14   # keep the old root trusted for a grace window
+lpm cert reconcile --dry-run            # preview pending cleanup work
 ```
 
 ## First-time setup
@@ -32,12 +35,14 @@ You only need to run this **once per machine**. After that, `lpm dev --https` an
 
 ## Subcommands
 
-| Subcommand | Effect |
-| --- | --- |
-| `status` | Show CA presence/trust/expiry, plus the project cert's expiry, hostnames, and renewal need |
-| `trust` | Generate the CA (if missing) and install it into the OS trust store |
-| `uninstall` | Remove the CA from the trust store. Does not delete the on-disk CA. |
-| `generate` | Generate or renew the project's cert, with the hostnames in `--host` |
+| Subcommand  | Effect                                                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `status`    | Show CA presence/trust/expiry, plus the project cert's expiry, hostnames, and renewal need                                     |
+| `trust`     | Generate the CA (if missing) and install it into the OS trust store                                                            |
+| `uninstall` | Remove the CA from the trust store. Does not delete the on-disk CA.                                                            |
+| `generate`  | Generate or renew the project's cert, with the hostnames in `--host`                                                           |
+| `rotate`    | Generate a fresh root CA, reissue reachable project leaves, and either remove the old root immediately or schedule its removal |
+| `reconcile` | Clean up expired grace-window entries, interrupted-rotation leftovers, and stale staged CA artifacts                           |
 
 ## Status output
 
@@ -49,6 +54,7 @@ Reports two blocks:
 
 - **Root CA** — exists / trusted, subject, expiry
 - **Project cert** — exists, expiry, hostnames in the SAN, whether renewal is recommended
+- **Permission drift** — only when key/cert file modes drift from the expected secure permissions
 
 `--json` returns the same data structurally for tooling.
 
@@ -58,13 +64,33 @@ Reports two blocks:
 lpm cert generate --host my-app.local --host api.my-app.local
 ```
 
-Generates a fresh project certificate whose SAN includes the defaults — `localhost`, `127.0.0.1`, `::1`, and `*.local` (the wildcard covers mDNS-style hostnames like `my-app.local`) — plus every hostname passed via `--host`. Pair with a hosts-file entry to develop against a custom name.
+Generates a fresh project certificate whose SAN includes the defaults — `localhost`, `127.0.0.1`, and `::1` — plus every hostname passed via `--host`. Pair with a hosts-file entry to develop against a custom name.
+
+`.local` hostnames are not added implicitly to the leaf certificate. If you want `my-app.local` or `api.my-app.local` in the SAN, pass each one explicitly with `--host`.
+
+## CA rotation and cleanup
+
+```bash
+lpm cert rotate
+lpm cert rotate --project ../other-app
+lpm cert rotate --keep-old-trusted 14
+lpm cert reconcile
+lpm cert reconcile --dry-run
+```
+
+`rotate` stages a new root CA, reissues every reachable project leaf, then either removes the old root immediately or schedules removal through `--keep-old-trusted <DAYS>`. Use `--project <DIR>` to include extra project directories beyond the registered set, and `--fail-on-missing` if vanished project paths should fail the run instead of being skipped.
+
+`reconcile` is the maintenance pass for interrupted rotations and grace-window expiry. It removes expired old-root trust entries, retries unresolved `ca.reconcile_required` cleanup, and prunes stale `.next` / `.previous` CA artifacts. `--dry-run` reports what would be cleaned up without mutating anything.
 
 ## Flags
 
-| Flag | Effect |
-| --- | --- |
-| `--host <NAME>` | Extra hostname for the certificate's SAN (repeatable, only meaningful for `generate`) |
+| Flag                        | Effect                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--host <NAME>`             | Extra hostname for the certificate's SAN (repeatable, only meaningful for `generate`)                  |
+| `--project <DIR>`           | Extra project directory to reissue during `rotate` (repeatable)                                        |
+| `--keep-old-trusted <DAYS>` | During `rotate`, defer uninstalling the old trusted root for the given grace window. Capped at 90 days |
+| `--fail-on-missing`         | During `rotate`, exit non-zero instead of skipping missing project directories                         |
+| `--dry-run`                 | During `reconcile`, report pending cleanup without mutating trust-store or CA artifacts                |
 
 Plus the [global flags](/docs/commands#global-flags).
 

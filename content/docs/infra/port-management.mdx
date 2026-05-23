@@ -3,7 +3,7 @@ title: Port management
 description: "How LPM handles port assignment, conflict detection, and cross-service env injection for dev orchestration."
 ---
 
-When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, and tell each service how to reach its peers. This page covers what LPM does behind the scenes — port checks, kill-on-conflict (opt-in), cross-service env injection, and the readiness model.
+When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, remap busy ports without mutating `lpm.json`, and tell each service how to reach its peers. This page covers what LPM does behind the scenes — declared-port checks, persisted override remapping, cross-service env injection, and the readiness model.
 
 The CLI surface is [`lpm ports`](/docs/infra/ports). The configuration field is [`lpm.json > services`](/docs/reference/lpm-json#servicesname).
 
@@ -14,7 +14,7 @@ Services declare their port in `lpm.json`:
 ```json title="lpm.json"
 {
   "services": {
-    "db":  { "command": "docker compose up postgres", "readyPort": 5432 },
+    "db": { "command": "docker compose up postgres", "readyPort": 5432 },
     "api": { "command": "node server.js", "port": 4000, "dependsOn": ["db"] },
     "web": { "command": "next dev", "port": 3000, "primary": true }
   }
@@ -23,10 +23,10 @@ Services declare their port in `lpm.json`:
 
 Two related fields:
 
-| Field | Purpose |
-| --- | --- |
-| `port` | Where the service listens. Used for env injection, display, and the readiness fallback. |
-| `readyPort` | TCP port to poll for readiness. Defaults to `port` when absent. |
+| Field       | Purpose                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `port`      | Where the service listens. Used for env injection, display, and the readiness fallback. |
+| `readyPort` | TCP port to poll for readiness. Defaults to `port` when absent.                         |
 
 The split exists for services that listen on a different port than they expose for readiness — uncommon, but real (e.g., Postgres listens on 5432 and that's also its readiness probe; a service behind a sidecar might split them).
 
@@ -38,12 +38,13 @@ Before starting any service, `lpm dev` walks every declared port and checks whet
 TcpListener::bind(("127.0.0.1", port))
 ```
 
-If the bind fails, LPM reports who's holding the port. On macOS / Linux, `lsof -ti :{port}` produces the PID and process name; the conflict message points the user at the offender.
+If the bind fails, LPM reports who's holding the port. On macOS / Linux, `lsof -ti :{port}` produces the PID and process name. LPM does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
 
-LPM **does not auto-kill** conflicting processes. The reasoning: `lpm dev` is interactive — surfacing the problem is more useful than silently killing whatever was already running on `:3000`. To resolve:
+That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. To reclaim the original port later:
 
 ```bash
 lpm ports kill 3000        # kill the process holding the port
+lpm ports reset            # forget this project's persisted override
 lpm dev                    # retry
 ```
 
@@ -56,7 +57,9 @@ lpm ports list
 lpm ports                    # default action
 ```
 
-Reads `lpm.json > services`, then for each declared port runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the port, whether it's `free` or `in use`, and (when in use) the owning PID + process name. Useful both for the "what runs where in this project" quick check and for spotting conflicts before they bite at `lpm dev` startup.
+Reads `lpm.json > services`, then for each declared `port` runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the declared port, whether it's `free` or `in use`, and (when in use) the owning PID + process name. Services with only `readyPort` and no declared `port` are omitted.
+
+Important: `list` shows the declared `lpm.json` ports, not the current persisted override map. If `lpm dev` previously remapped `web` from `3000` to `3001`, `lpm ports list` still reports the declared `3000` row and whether `:3000` is currently free or occupied.
 
 ## `lpm ports reset`
 
@@ -109,10 +112,10 @@ Plus per-service overrides from `lpm.json > services.<name>.env`:
 
 A service is "ready" when one of these signals fires:
 
-| Mechanism | Field | What it checks |
-| --- | --- | --- |
-| TCP poll | `readyPort` (default = `port`) | A connection to `localhost:<port>` succeeds |
-| HTTP poll | `readyUrl` | A GET against the URL returns a 2xx |
+| Mechanism | Field                          | What it checks                              |
+| --------- | ------------------------------ | ------------------------------------------- |
+| TCP poll  | `readyPort` (default = `port`) | A connection to `localhost:<port>` succeeds |
+| HTTP poll | `readyUrl`                     | A GET against the URL returns a 2xx         |
 
 Polled every ~100ms up to `readyTimeout` (default 30s). Once ready, the next service in the topology can start.
 
