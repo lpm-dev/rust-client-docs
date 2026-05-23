@@ -3,7 +3,7 @@ title: Authentication
 description: "Log in, log out, check identity, rotate tokens, and configure CI auth."
 ---
 
-LPM stores auth tokens in your **OS keychain** — Keychain on macOS, libsecret / GNOME Keyring on Linux, Credential Manager on Windows. Tokens never land in plain text on disk under `~/.lpm/`. Multi-registry: separate tokens for lpm.dev, npm, GitHub Packages, GitLab Packages, and any custom registries you've added.
+LPM stores auth tokens in your **local secure store**. It prefers the OS keychain — Keychain on macOS, Credential Manager on Windows, Secret Service-compatible keyrings on Linux — and falls back to encrypted file storage under `~/.lpm/.credentials` when the system store is unavailable. Tokens never land in plain text on disk. Multi-registry: separate tokens for lpm.dev, npm, GitHub Packages, GitLab Packages, and any custom registries you've added.
 
 This page covers every command in the auth surface: [`login`](#lpm-login), [`logout`](#lpm-logout), [`whoami`](#lpm-whoami), [`token-rotate`](#lpm-token-rotate), [`setup`](#lpm-setup), [`setup-npmrc`](#lpm-setup-npmrc), and [`ci`](#lpm-ci).
 
@@ -17,7 +17,7 @@ lpm login --gitlab
 lpm login --login-registry https://npm.my-co.com --token <T>
 ```
 
-Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in the OS keychain. CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
+Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in local secure storage (OS keychain when available, encrypted file fallback otherwise). CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
 
 For other registries (npm, GitHub, GitLab, custom), there's no browser flow — the CLI takes the token directly. In a TTY without `--token`, it prompts with masked input and follows up with two interactive questions: a **token-expiry reminder** (in days, defaults to 30) and whether the account uses **2FA/OTP** for publishing (stored so `lpm publish` prompts for OTP up-front). In `--json` mode (or non-TTY), `--token <T>` is required.
 
@@ -76,7 +76,7 @@ Prints the currently logged-in identity for lpm.dev, plus:
 lpm token-rotate
 ```
 
-Server-side rotation for the **lpm.dev token only**: creates a new token, invalidates the old one, stores the new one in your keychain. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system. There's no equivalent for npm / GitHub / GitLab — rotate those by re-running `lpm login --<target>` with a fresh token.
+Server-side rotation for the **lpm.dev token only**: creates a new token, invalidates the old one, and stores the new one in local secure storage. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system. There's no equivalent for npm / GitHub / GitLab — rotate those by re-running `lpm login --<target>` with a fresh token.
 
 ## `lpm setup`
 
@@ -101,7 +101,7 @@ Generates an `.npmrc` in the current project directory for CI/CD environments. O
 
 When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
 
-Under `--json`, `lpm setup` emits the file content and target path as part of the envelope (`{success, path, content, uses_env_var, oidc, proxy}`) **without writing the file** — JSON mode is preview-only, intended for scripted CI templating. Drop `--json` (or pipe the `content` field to `.npmrc` yourself) to actually materialize the file.
+Under `--json`, `lpm setup` still writes the on-disk `.npmrc`. The JSON envelope (`{success, path, content, uses_env_var, oidc, proxy}`) is safe for logs and templating because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`.
 
 ## `lpm setup-npmrc`
 
@@ -138,12 +138,12 @@ CI/CD helpers, with two complementary subcommands:
 | Platform | Backend |
 | --- | --- |
 | macOS | Keychain (`security` framework) |
-| Linux | libsecret / GNOME Keyring (D-Bus) |
+| Linux | Secret Service-compatible keyring (via `keyring`) |
 | Windows | Credential Manager |
 
 Service name: `lpm-cli`. Account names are scoped per registry — lpm.dev, npm, GitHub, GitLab, and custom registries each get their own keychain entry. `lpm logout --all` walks every stored entry and clears them.
 
-If the keychain is unavailable (sandboxed environment, headless Linux without D-Bus), the CLI surfaces the error rather than silently falling back to plaintext storage.
+If the system keychain is unavailable (sandboxed environment, headless Linux without D-Bus, locked store), the CLI falls back to encrypted file storage at `~/.lpm/.credentials` instead of storing tokens in plaintext.
 
 ## See also
 
