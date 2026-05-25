@@ -1,9 +1,9 @@
 ---
 title: Built-in tools
-description: "How LPM ships Oxlint and Biome — lazy-downloaded, version-pinned, checksum-verified. Plus how `lpm check` integrates with the project's TypeScript install."
+description: "How LPM ships Oxlint and Biome, plus how `lpm check` mixes local tsc parity with a managed tsgo engine."
 ---
 
-LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), and a type-check wrapper for [`lpm check`](/docs/dev/check). The first two are **lazy-downloaded** on first use, cached, and pinned per-project. `lpm check` is **not** lazy-downloaded — it shells out to the selected project-local engine (`tsc` by default, `tsgo` when you pass `--engine tsgo`).
+LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), and a type-check wrapper for [`lpm check`](/docs/dev/check). Oxlint and Biome are **plugin-backed**: lazy-downloaded on first use, cached, and pinned per-project. `lpm check` now straddles two models: default `tsc` remains project-local, while `--engine tsgo` uses a managed engine cache under `~/.lpm/engines`.
 
 This page covers the design — how the plugin system works, where binaries land, how versions are resolved, and the security model.
 
@@ -20,7 +20,26 @@ Measured cost: `lpm lint` is **78 ms** (vs `npx oxlint` 250 ms — 3.2× faster)
 | `oxlint` | [`lpm lint`](/docs/dev/lint) | `oxc-project/oxc` GitHub Releases | `.tar.gz` archive |
 | `biome` | [`lpm fmt`](/docs/dev/fmt) | `biomejs/biome` GitHub Releases | Direct binary |
 
-`lpm check` is **not** a plugin — the wrapper shells out through the same PATH-injection mechanism `lpm run` uses. PATH-injection prepends `node_modules/.bin` and falls back to the system `PATH`, so a globally-installed engine can run too — but the project-local install is the right answer. For `tsc`, editor IntelliSense uses workspace `node_modules/typescript`, and a system `tsc` may be a different version. [`lpm doctor`](/docs/infra/doctor) flags the system-only case as `typescript_missing_for_tsconfig` (warn). For `tsgo`, install `@typescript/native-preview` in the project so the native binary and its bundled `lib/*.d.ts` files stay together.
+`lpm check` is **not** a plugin. It has two distinct execution paths:
+
+- `tsc` shells out through the same PATH-injection mechanism `lpm run` uses. PATH-injection prepends `node_modules/.bin` and falls back to the system `PATH`, so a globally-installed `tsc` can run too — but the project-local install is the right answer. [`lpm doctor`](/docs/infra/doctor) flags the system-only case as `typescript_missing_for_tsconfig` (warn).
+- `tsgo` is a managed engine. LPM downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
+
+That split is intentional: `tsc` preserves editor and CI parity, while `tsgo` needs a full package layout (`lib/tsgo` plus the bundled `lib/*.d.ts` files) that does not fit the single-binary plugin model.
+
+## Managed engine layout
+
+```text
+~/.lpm/engines/
+└── tsgo/
+  └── 7.0.0-dev.20260525.1/
+    └── darwin-arm64/
+      ├── lib/tsgo
+      ├── lib/lib.d.ts
+      └── .lpm-engine.json
+```
+
+The engine sidecar records the engine identity, platform, entry path, tarball integrity, tarball SHA-256, and a hash of the extracted layout. Reuse re-hashes the installed layout before `tsgo` runs, so a stray binary without a sidecar or a tampered `lib/*.d.ts` file is treated as a cache miss instead of trusted state.
 
 ## On-disk layout
 
@@ -177,6 +196,6 @@ The cache key is the `lpm.json` hash — when `tools` versions change, the cache
 
 - [`lpm lint`](/docs/dev/lint) — backed by oxlint
 - [`lpm fmt`](/docs/dev/fmt) — backed by biome
-- [`lpm check`](/docs/dev/check) — NOT a plugin — uses project-local `tsc` by default or `tsgo` when selected
+- [`lpm check`](/docs/dev/check) — NOT a plugin — uses project-local `tsc` by default and a managed `tsgo` engine when selected
 - [`lpm plugin`](/docs/dev/plugin) — manage installed plugins
 - [`lpm.json` tools](/docs/reference/lpm-json#tools) — version pinning per project
