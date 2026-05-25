@@ -1,9 +1,9 @@
 ---
 title: Built-in tools
-description: "How LPM ships Oxlint and Biome, plus how `lpm check` and `lpm bundle` use managed engines."
+description: "How LPM ships Oxlint and Biome, plus how `lpm check`, `lpm pack`, and `lpm bundle` pick their backends."
 ---
 
-LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint and Biome are **plugin-backed**: lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` and `lpm bundle` use a separate **managed engine** cache under `~/.lpm/engines`.
+LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), a package-build wrapper for [`lpm pack`](/docs/dev/pack), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint and Biome are **plugin-backed**: lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` and `lpm bundle` use a separate **managed engine** cache under `~/.lpm/engines`.
 
 This page covers the design — how the plugin system works, where binaries land, how versions are resolved, and the security model.
 
@@ -23,10 +23,11 @@ Measured cost: `lpm lint` is **78 ms** (vs `npx oxlint` 250 ms — 3.2× faster)
 Managed engines sit beside the plugin system:
 
 - `tsc` shells out through the same PATH-injection mechanism `lpm run` uses. PATH-injection prepends `node_modules/.bin` and falls back to the system `PATH`, so a globally-installed `tsc` can run too — but the project-local install is the right answer. [`lpm doctor`](/docs/infra/doctor) flags the system-only case as `typescript_missing_for_tsconfig` (warn).
+- `tsdown` stays project-local. [`lpm pack`](/docs/dev/pack) walks `node_modules/.bin` from the current package up to the workspace root and requires a reachable `tsdown` there. LPM owns the workspace selection, `--json` envelope, and stable top-level flags; the backend version still comes from the repo's own `package.json`.
 - `tsgo` is a managed engine. LPM downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
 - `rolldown` is also a managed engine. [`lpm bundle`](/docs/dev/bundle) installs the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the current platform binding into one verified cached layout under `~/.lpm/engines/rolldown/<version>/<platform>/`.
 
-That split is intentional: `tsc` preserves editor and CI parity, while `tsgo` and `rolldown` need full package layouts that do not fit the single-binary plugin model.
+That split is intentional: `tsc` and `tsdown` preserve repo-local version ownership, while `tsgo` and `rolldown` need managed layouts that do not fit the single-binary plugin model.
 
 ## Managed engine layout
 
@@ -206,6 +207,7 @@ The cache key is the `lpm.json` hash — when `tools` versions change, the cache
 - [`lpm lint`](/docs/dev/lint) — backed by oxlint
 - [`lpm fmt`](/docs/dev/fmt) — backed by biome
 - [`lpm check`](/docs/dev/check) — project-local `tsc` by default, managed `tsgo` when selected
+- [`lpm pack`](/docs/dev/pack) — project-local tsdown with LPM workspace orchestration
 - [`lpm bundle`](/docs/dev/bundle) — managed Rolldown engine
 - [`lpm plugin`](/docs/dev/plugin) — manage installed plugins
 - [`lpm.json` tools](/docs/reference/lpm-json#tools) — version pinning per project
