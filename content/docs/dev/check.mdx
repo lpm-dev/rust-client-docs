@@ -1,20 +1,21 @@
 ---
 title: lpm check
-description: "Type-check the project with tsc --noEmit."
+description: "Type-check the project with tsc by default, or tsgo when you opt in."
 ---
 
 ```bash
-lpm check [-- args...]
+lpm check [--engine tsc|tsgo] [-- args...]
 ```
 
-Runs `tsc --noEmit` against the project. Forwards any trailing arguments to `tsc`.
+Runs `tsc --noEmit` against the project by default. Pass `--engine tsgo` to run `tsgo --noEmit` instead. LPM forwards any trailing arguments to the selected engine.
 
-Unlike [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), `lpm check` is **not** lazy-downloaded — TypeScript must be installed in the project (or globally available on `PATH`). LPM resolves `tsc` from `node_modules/.bin` via the same PATH-injection it uses for `lpm run`.
+Unlike [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), `lpm check` is **not** lazy-downloaded. LPM resolves the selected engine from `node_modules/.bin` via the same PATH-injection it uses for `lpm run`, then falls back to the system `PATH`.
 
 ## Examples
 
 ```bash
 lpm check                          # type-check the whole project
+lpm check --engine tsgo            # opt into tsgo for this run
 lpm check -- --pretty              # forward tsc flags
 lpm check -- -p tsconfig.test.json # type-check a different tsconfig
 lpm check --all                    # workspace: every member
@@ -23,25 +24,29 @@ lpm check --filter './apps/*'      # workspace: path glob
 lpm check --affected               # workspace: only affected members
 ```
 
-## Requires TypeScript in the project
+## Engine installation
 
 ```bash
 lpm install -D typescript
+lpm install -D @typescript/native-preview
 ```
 
-`lpm check` resolves `tsc` from `node_modules/.bin` first and falls back to the system `PATH`. The project-local install is the right answer — editor IntelliSense (`tsserver` from `node_modules/typescript`) and CI run the same version, and your `tsconfig.json` references resolve against the same `@types/*` packages.
+Use `typescript` for the default `tsc` engine. Use `@typescript/native-preview` when you want `--engine tsgo`.
+
+Project-local installs are the right answer either way. For `tsc`, editor IntelliSense (`tsserver` from `node_modules/typescript`) and CI run the same version, and your `tsconfig.json` references resolve against the same `@types/*` packages. For `tsgo`, the package ships the native binary plus the TypeScript standard library files it expects beside it, so keeping it in the project avoids PATH drift.
 
 ### Preflight
 
-Before spawning `tsc`, `lpm check` verifies setup and surfaces specific errors:
+Before spawning the selected engine, `lpm check` verifies setup and surfaces specific errors:
 
 | Condition | Error |
 | --- | --- |
 | `tsconfig.json` is missing | `no tsconfig.json found in <dir>. Add one (or pass -p <path>) to use a different one.` |
-| `typescript` declared in `package.json` but not installed | `typescript declared in package.json but not installed. Run: lpm install` |
-| `typescript` not declared and no `tsc` on `PATH` | `typescript not installed. Run: lpm install -D typescript` |
+| `typescript` declared in `package.json` but not installed and `--engine tsc` is selected | `typescript declared in package.json but not installed. Run: lpm install` |
+| `typescript` not declared and no `tsc` on `PATH` while `--engine tsc` is selected | `typescript not installed. Run: lpm install -D typescript` |
+| No `tsgo` is reachable while `--engine tsgo` is selected | `failed to run tsgo: ... Is @typescript/native-preview installed? Run: lpm install -D @typescript/native-preview` |
 
-The preflight is **argument-aware**: when you pass `-p <path>`, `--project <path>`, or a positional file argument, the tsconfig check is skipped and `tsc` decides — `lpm check -- -p tsconfig.test.json` and `lpm check src/foo.ts` both work without a root `tsconfig.json`.
+The preflight is **argument-aware**: when you pass `-p <path>`, `--project <path>`, or a positional file argument, the tsconfig check is skipped and the selected engine decides — `lpm check -- -p tsconfig.test.json` and `lpm check src/foo.ts` both work without a root `tsconfig.json`.
 
 ### `lpm doctor` reports the same signal
 
@@ -76,13 +81,14 @@ Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-gr
 
 | Flag | Effect |
 | --- | --- |
+| `--engine <name>` | Select the type-check engine for this run: `tsc` or `tsgo` (default: `tsc`) |
 | `--all` | Run in every workspace member |
 | `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
 | `--affected` | Run only in members affected by changes vs `--base` |
 | `--base <REF>` | Git base ref for `--affected` (default: `main`) |
 | `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
 
-Anything after `--` (or trailing) is forwarded to `tsc`. `--noEmit` is always passed.
+Anything after `--` (or trailing) is forwarded to the selected engine. `--noEmit` is always passed.
 
 Plus the [global flags](/docs/commands#global-flags).
 
