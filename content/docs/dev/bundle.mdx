@@ -1,0 +1,143 @@
+---
+title: lpm bundle
+description: "Bundle the project with Rolldown through an LPM-managed engine."
+---
+
+```bash
+lpm bundle [--entry <path>] [--out-dir <dir>] [--config <file>] [-- args...]
+```
+
+Runs [Rolldown](https://rolldown.rs) through an LPM-owned command surface. Common bundle flags are exposed directly, and anything after `--` is forwarded to Rolldown unchanged.
+
+`--entry` maps to Rolldown's `--input`, and `--out-dir` maps to Rolldown's `--dir`. If you omit both, Rolldown falls back to its config file or upstream defaults.
+
+## Examples
+
+```bash
+lpm bundle --entry src/index.js --out-dir dist
+lpm bundle --config rolldown.config.mjs
+lpm bundle --entry src/index.js --format esm --platform browser --minify --sourcemap
+lpm bundle -- --watch
+lpm bundle --all --config rolldown.config.mjs
+lpm bundle --filter web --entry src/index.js --out-dir dist
+lpm bundle --affected --base develop --config rolldown.config.mjs
+```
+
+## Managed engine
+
+`lpm bundle` does not rely on a project-local `rolldown` dependency. On first use, LPM installs a pinned managed engine into `~/.lpm/engines/rolldown/<version>/<platform>/`, verifies every tarball's SRI integrity, preserves the full extracted package layout, and reuses that verified cache on later runs.
+
+Rolldown's managed layout is a composed npm package tree: the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the platform-specific native binding.
+
+```text
+~/.lpm/engines/
+└── rolldown/
+  └── 1.0.2/
+    └── darwin-arm64/
+      ├── bin/cli.mjs
+      ├── node_modules/@rolldown/pluginutils/
+      ├── node_modules/@oxc-project/types/
+      ├── node_modules/@rolldown/binding-darwin-arm64/
+      └── .lpm-engine.json
+```
+
+The engine sidecar records the engine identity, platform, entry path, every package's install subdir and tarball metadata, per-package SHA-256s, and a hash of the extracted layout. Reuse re-hashes the installed layout before Rolldown runs, so a tampered tree or mismatched package definition becomes a cache miss instead of trusted state.
+
+## Node runtime
+
+LPM manages Rolldown, not Node itself. `lpm bundle` still needs `node` available through the normal PATH chain. The usual path is:
+
+```bash
+lpm use node@22
+```
+
+That installs a managed Node runtime and makes it available to LPM commands. A system `node` on PATH also works.
+
+## Forwarding Rolldown flags
+
+Anything after `--` is passed straight to Rolldown:
+
+```bash
+lpm bundle --entry src/index.js --out-dir dist -- --watch
+lpm bundle --config rolldown.config.mjs -- --external react --treeshake
+```
+
+This is the escape hatch for upstream flags LPM does not surface directly.
+
+## Workspaces
+
+```bash
+lpm bundle --all                               # every member
+lpm bundle --filter web                        # exact name
+lpm bundle --filter '@scope/*'                 # glob
+lpm bundle --filter './apps/*'                 # path glob
+lpm bundle --affected                          # members changed vs main
+lpm bundle --affected --base develop           # change base branch
+lpm bundle --filter web --fail-if-no-match     # exit non-zero on typo'd filter
+```
+
+Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. The managed Rolldown engine is resolved once before workspace fan-out, so a cold install happens once per workspace run, not once per member.
+
+`--all` and `--affected` are mutually exclusive; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+
+Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+## Watch mode
+
+`lpm bundle -- --watch` works in single-package mode.
+
+In workspace mode, watch is only supported when the selection resolves to exactly one member. If `--all`, `--affected`, or a broad `--filter` resolves to multiple members, LPM exits with an error instead of starting one watcher per package.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--entry <PATH>` | Entry file to bundle |
+| `--out-dir <DIR>` | Output directory for bundle artifacts |
+| `--config <PATH>` | Explicit Rolldown config file |
+| `--format <esm\|cjs\|iife>` | Output format |
+| `--platform <node\|browser\|neutral>` | Target platform |
+| `--minify` | Minify the bundle output |
+| `--sourcemap` | Emit a sourcemap |
+| `--all` | Run in every workspace member |
+| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
+| `--affected` | Run only in members affected by changes vs `--base` |
+| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
+
+Anything after `--` (or trailing) is forwarded to Rolldown.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode preserves Rolldown's stdout — LPM does not wrap it. Workspace mode emits one LPM envelope on stdout, with per-member stdout/stderr captured only on failure:
+
+```json
+{
+  "success": false,
+  "packages": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "duration_ms": 1840,
+  "members": [
+    { "name": "web", "success": true, "exit_code": 0, "duration_ms": 420 },
+    {
+      "name": "api",
+      "success": false,
+      "exit_code": 1,
+      "duration_ms": 180,
+      "stdout": "...",
+      "stderr": "..."
+    }
+  ]
+}
+```
+
+Spawn/config/engine failures surface as `exit_code: null` paired with an `error` string, distinguishing “ran and exited non-zero” from “could not even launch.”
+
+## See also
+
+- [`lpm check`](/docs/dev/check) — type-checking, with project-local `tsc` or managed `tsgo`
+- [`lpm lint`](/docs/dev/lint) — Oxlint
+- [Built-in tools](/docs/dev/builtin-tools) — plugin-backed tools vs managed engines
