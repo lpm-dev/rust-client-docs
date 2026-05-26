@@ -1,0 +1,139 @@
+---
+title: lpm pack
+description: "Build library-oriented package output through project-local tsdown."
+---
+
+```bash
+lpm pack [--entry <path>] [--out-dir <dir>] [--dts] [-- args...]
+```
+
+Runs [tsdown](https://tsdown.dev) through an LPM-owned command surface aimed at package builds. Common pack flags are exposed directly, and anything after `--` is forwarded to tsdown unchanged.
+
+`--entry` is forwarded as tsdown's positional input file. `--out-dir` maps to tsdown's `--out-dir`. If you omit both, tsdown falls back to its config file or upstream defaults.
+
+## Examples
+
+```bash
+lpm install -D tsdown
+lpm pack --entry src/index.ts --out-dir dist --format esm --dts
+lpm pack --config tsdown.config.ts
+lpm pack --entry src/index.ts --target es2022 --platform node --minify --sourcemap
+lpm pack -- --watch
+lpm pack --all --config tsdown.config.ts
+lpm pack --filter web --entry src/index.ts --out-dir dist
+lpm pack --affected --base develop --config tsdown.config.ts
+```
+
+## Local tsdown resolution
+
+`lpm pack` does not install or manage tsdown for you. LPM walks the local `node_modules/.bin` chain from the current package upward to the workspace root and requires a reachable `tsdown` binary there.
+
+That is deliberate: the tsdown version stays pinned in the repo's own `package.json`, so local runs, CI, and editor tooling all see the same backend.
+
+If nothing resolves, `lpm pack` fails fast with:
+
+```text
+tsdown not installed. Run: lpm install -D tsdown
+```
+
+## Node runtime
+
+LPM wraps tsdown, not Node itself. `lpm pack` still needs `node` available through the normal PATH chain. The straightforward path is:
+
+```bash
+lpm use node@22
+```
+
+That installs a managed Node runtime and makes it available to LPM commands. A system `node` on PATH also works.
+
+## Forwarding tsdown flags
+
+Anything after `--` is passed straight to tsdown:
+
+```bash
+lpm pack --entry src/index.ts --out-dir dist -- --watch
+lpm pack --config tsdown.config.ts -- --clean --exports
+```
+
+Use this for upstream flags LPM does not surface directly.
+
+## Workspaces
+
+```bash
+lpm pack --all                               # every member
+lpm pack --filter web                        # exact name
+lpm pack --filter '@scope/*'                 # glob
+lpm pack --filter './apps/*'                 # path glob
+lpm pack --affected                          # members changed vs main
+lpm pack --affected --base develop           # change base branch
+lpm pack --filter web --fail-if-no-match     # exit non-zero on typo'd filter
+```
+
+Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. Each member resolves `tsdown` through its own local bin chain, so a root-level workspace install is reused automatically by every member.
+
+`--all` and `--affected` are mutually exclusive; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+
+Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+## Watch mode
+
+`lpm pack -- --watch` works in single-package mode.
+
+In workspace mode, watch is only supported when the selection resolves to exactly one member. If `--all`, `--affected`, or a broad `--filter` resolves to multiple members, LPM exits with an error instead of starting one watcher per package.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--entry <PATH>` | Entry file to pack |
+| `--out-dir <DIR>` | Output directory for package artifacts |
+| `--config <PATH>` | Explicit tsdown config file |
+| `--tsconfig <PATH>` | Explicit tsconfig file |
+| `--target <VALUE>` | Target runtime passed to tsdown |
+| `--format <esm\|cjs\|iife>` | Output format |
+| `--platform <node\|browser\|neutral>` | Target platform |
+| `--dts` | Emit declaration files |
+| `--minify` | Minify the packed output |
+| `--sourcemap` | Emit a sourcemap |
+| `--all` | Run in every workspace member |
+| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
+| `--affected` | Run only in members affected by changes vs `--base` |
+| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
+| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
+
+Anything after `--` (or trailing) is forwarded to tsdown.
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## `--json` in workspace mode
+
+Single-package mode preserves tsdown's stdout. Workspace mode emits one LPM envelope on stdout, with per-member stdout/stderr captured only on failure:
+
+```json
+{
+  "success": false,
+  "packages": 3,
+  "succeeded": 2,
+  "failed": 1,
+  "duration_ms": 1840,
+  "members": [
+    { "name": "pkg-a", "success": true, "exit_code": 0, "duration_ms": 420 },
+    {
+      "name": "pkg-b",
+      "success": false,
+      "exit_code": 1,
+      "duration_ms": 180,
+      "stdout": "...",
+      "stderr": "..."
+    }
+  ]
+}
+```
+
+Spawn/config failures surface as `exit_code: null` paired with an `error` string, distinguishing “ran and exited non-zero” from “could not even launch.”
+
+## See also
+
+- [`lpm bundle`](/docs/dev/bundle) — managed Rolldown engine for direct bundling
+- [`lpm check`](/docs/dev/check) — type-checking, with project-local `tsc` or managed `tsgo`
+- [Built-in tools](/docs/dev/builtin-tools) — plugin-backed tools, project-local wrappers, and managed engines
