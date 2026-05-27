@@ -18,8 +18,8 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 
 `lpm security` is the command surface for two related jobs:
 
-- `unlock` creates a short-lived, project-scoped approval for one guarded weakening.
-- `status` shows the effective security floor for the current project root, where that floor came from, and which unlocks are still active.
+- `unlock` creates a short-lived approval for one guarded weakening, either for one project or for the machine-global trust surface.
+- `status` shows the effective security floor, active runtime overrides, and whichever unlock scope you asked to inspect.
 
 ## Examples
 
@@ -27,9 +27,12 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 lpm security unlock sandbox-none --project . --ttl 10m
 lpm security unlock cooldown-bypass --project . --ttl 10m
 lpm security unlock scripts-allow --project . --ttl 10m
+lpm security unlock provenance-ignore-drift --project . --package esbuild --ttl 10m
+lpm security unlock trust-bulk-approve --global --ttl 10m
 
 lpm security status
 lpm security status --project /path/to/repo
+lpm security status --global
 lpm security status --json
 ```
 
@@ -37,18 +40,20 @@ lpm security status --json
 
 | Subcommand | What it does |
 | --- | --- |
-| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening in one project |
-| `lpm security status` | Print the effective floor, source attribution, and active unlocks for the current project |
+| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening in one project or for the global trust surface |
+| `lpm security status` | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
 
 ## `unlock`
 
 ```bash
-lpm security unlock <scope> --project . --ttl 10m
+lpm security unlock <scope> (--project . | --global) --ttl 10m
 ```
 
-Creates a temporary approval under `~/.lpm/security/unlocks/` for one project root. The command does **not** run the risky action itself. It only creates the unlock so you can rerun the original install or rebuild command.
+Creates a temporary approval under `~/.lpm/security/unlocks/` for one project root, or for the machine-global trust surface when you pass `--global`. The command does **not** run the risky action itself. It only creates the unlock so you can rerun the original install, rebuild, or trust command.
 
 Default TTL is `10m`. Maximum TTL is `30m`.
+
+Use `--package <name>` to scope the unlock to one or more packages when the weakening is package-specific. Repeat `--package` to cover more than one package.
 
 ### Common scopes
 
@@ -61,11 +66,15 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `cooldown-bypass` | `lpm install --allow-new`, `--min-release-age=0`, or a lower `minimumReleaseAge` |
 | `scripts-allow` | `lpm install --yolo`, `--policy=allow`, or `scriptPolicy = "allow"` |
 | `scripts-triage` | `lpm install --triage` or `scriptPolicy = "triage"` when that weakens the current floor |
-| `provenance-unverified` | weaker persistent Sigstore verification settings |
+| `trust-bulk-approve` | `lpm approve-scripts --yes`, `lpm approve-scripts --global --yes`, or direct `trustedDependencies` widening |
+| `trust-scope-widen` | direct `trustedScopes` widening in `package.json` |
+| `capability-widen` | direct widening of `passEnv`, `readProject`, or `sandboxLimits` in `package.json` |
+| `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all` |
+| `provenance-unverified` | `LPM_PROVENANCE_ENFORCE=warn|off`, `--unverified-provenance*`, or weaker persistent Sigstore verification settings |
 
 ### Interactive vs automation
 
-`lpm security unlock` is interactive today. In a TTY it asks for confirmation, then writes the signed unlock grant on success.
+`lpm security unlock` is interactive today. In a TTY it asks for native system approval, then writes the signed unlock grant on success.
 
 In any of these modes, it refuses instead of prompting:
 
@@ -75,22 +84,26 @@ In any of these modes, it refuses instead of prompting:
 
 The refusal uses `error_code: "security_approval_required"` and includes a `suggested_command`.
 
+Every guarded attempt and granted unlock is also appended as a signed entry in `~/.lpm/security/audit.jsonl`.
+
 ## `status`
 
 ```bash
-lpm security status [--project PATH]
+lpm security status [--project PATH | --global]
 ```
 
-Shows the effective security floor for the selected project root.
+Shows the effective security floor for the selected project root, or for the global trust surface when you pass `--global`.
 
 Human output includes:
 
-- the current project root
+- the selected target (`project` or `global`)
+- the current project root when applicable
 - the effective values for script policy, release-age floor, sandbox mode, sandbox degraded mode, and Sigstore verification
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
 - the active managed policy file, if one is present
-- the active unlocks for this project and when they expire
+- any active runtime overrides such as `LPM_PROVENANCE_ENFORCE`
+- the active unlocks for that scope, including package scoping and min-release-age limits when present
 
 With `--json`, the envelope looks like:
 
@@ -98,6 +111,7 @@ With `--json`, the envelope looks like:
 {
   "success": true,
   "status": {
+    "target": "project",
     "project_root": "/abs/path/to/repo",
     "effective_floor": {
       "script_policy": "deny",
@@ -121,6 +135,13 @@ With `--json`, the envelope looks like:
       "source": "mdm",
       "enforced_controls": ["minimum-release-age-secs"]
     },
+    "active_runtime_overrides": [
+      {
+        "control": "sigstore.verify",
+        "value": "warn",
+        "source": "LPM_PROVENANCE_ENFORCE"
+      }
+    ],
     "active_unlocks": []
   }
 }
@@ -136,6 +157,7 @@ For direct CLI weakeners such as:
 lpm install --no-sandbox
 lpm install --allow-new
 lpm install --yolo
+LPM_PROVENANCE_ENFORCE=off lpm install
 ```
 
 LPM may ask inline for confirmation in an interactive terminal. If you approve, it mints the same temporary unlock internally and continues the command.
@@ -206,7 +228,7 @@ allow-degraded = false
 verify = "deny"
 ```
 
-When this file owns a control, weaker repo or user changes do not win. They fail with `error_code: "security_floor"` instead.
+When this file owns a control, weaker repo or user changes do not win. They fail with `error_code: "security_floor"` instead. In production, LPM only loads managed policy from the managed path itself and validates that the file and its parent directories are authority-owned rather than user-writable.
 
 Use `lpm security status` to see exactly which controls are currently coming from managed policy.
 
