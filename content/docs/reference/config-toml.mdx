@@ -3,7 +3,7 @@ title: ~/.lpm/config.toml
 description: "User-level CLI defaults — applies to every project on this machine."
 ---
 
-`~/.lpm/config.toml` is the per-user CLI configuration file. It sets defaults that apply to every project on the machine, sitting **below** project-level config (`./lpm.toml`, `package.json > lpm`) and **above** built-in defaults in the precedence chain — except for `linker`, where the user-level value beats `package.json > lpm > linker`. See [Precedence](#precedence) for details.
+`~/.lpm/config.toml` is the per-user CLI configuration file. It sets defaults that apply to every project on the machine, sitting **below** project-level config (`./lpm.toml`, `package.json > lpm`) and **above** built-in defaults in the precedence chain — except for `linker`, where the user-level value beats `package.json > lpm > linker`. For security-sensitive keys, this file is still a proposal layer: the effective machine floor can also be constrained by the signed approved-posture store and a managed policy. See [Precedence](#precedence) and [Security-sensitive keys are proposals](#security-sensitive-keys-are-proposals).
 
 You can edit the file directly, or use [`lpm config`](/docs/reference/config) to manage it from the CLI:
 
@@ -41,6 +41,15 @@ linker = "isolated"
 # blocks but you want readable across every project on this machine)
 script-read-allow = [".env", ".npmrc"]
 
+# Lifecycle-script sandbox
+[sandbox]
+mode = "default"
+allow-degraded = false
+
+# Provenance verification posture
+[sigstore]
+verify = "deny"
+
 # Tunnel relay (override per-process with LPM_TUNNEL_RELAY)
 [tunnel]
 relay-url = "wss://relay.lpm.fyi/connect"
@@ -53,6 +62,9 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Machine-wide policy: applies to project and global installs alike. |
 | `triage-advisor` | `"none"` \| `"claude-cli"` \| `"codex"` \| `"ollama"` | `"none"` | Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor). Only active when `script-policy = "triage"`. Approvals are ephemeral — never written to disk. |
 | `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. Applies to both `lpm install` and `lpm install -g`. |
+| `sandbox.mode` | `"default"` \| `"strict"` \| `"none"` | `"default"` | Default lifecycle-script sandbox posture for this machine. Set with [`lpm config sandbox`](/docs/reference/config#setup-wizards). |
+| `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this machine when full containment is unavailable. |
+| `sigstore.verify` | `"deny"` \| `"warn"` \| `"off"` | `"deny"` | Provenance verification posture used by installs and related flows. Set with [`lpm config sigstore`](/docs/reference/config#setup-wizards). |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
 | `audit-after-install` | bool | `false` | Run [`lpm audit`](/docs/packages/audit) silently after every successful `lpm install` and emit a one-line advisory (`! Audited N packages, V vulnerabilities, S suspicious in Tms — run \`lpm audit\``). Informational only — findings never fail the install. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Per-process env: `LPM_AUDIT_AFTER_INSTALL`. See [Audit after install](/docs/packages/install#audit-after-install). |
 | `linker` | `"isolated"` \| `"hoisted"` | `"hoisted"` (workspaces auto-default to `"isolated"`) | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
@@ -72,6 +84,28 @@ minimum-release-age-secs = "86400"    # string (lpm config set wrote this)
 
 Both parse to `86400`. Invalid values (non-numeric strings, negative numbers, etc.) error at load time with the file path baked in.
 
+## Security-sensitive keys are proposals
+
+For ordinary preferences, editing this file directly is fine.
+
+For security-sensitive keys such as:
+
+- `script-policy`
+- `minimum-release-age-secs`
+- `[sandbox] mode`
+- `[sandbox] allow-degraded`
+- `[sigstore] verify`
+
+the file is only one input to the decision. A weaker value written here does **not** automatically become authoritative.
+
+LPM only honors a weaker value when it is already covered by the current approved machine posture or by an active temporary unlock. Otherwise:
+
+- `lpm config ...` asks for confirmation before persisting the weaker posture in an interactive TTY
+- install / rebuild / approve-scripts and related mutating commands fail with `security_approval_required` if the raw file value is weaker than the approved floor
+- a managed machine policy can fail the change with `security_floor` instead
+
+For short-lived exceptions, use [`lpm security unlock`](/docs/reference/security#unlock). For persistent changes, use [`lpm config`](/docs/reference/config) rather than relying on a hand edit alone. Raw `[sigstore].verify = "warn"` or `"off"` is reported by `lpm security status` as a runtime override until it is removed, approved, or blocked by managed policy.
+
 ## Precedence
 
 For most settings, the precedence chain is (highest first):
@@ -82,7 +116,7 @@ For most settings, the precedence chain is (highest first):
 4. **`~/.lpm/config.toml`** — this file
 5. **Built-in default**
 
-On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, and the script-policy aliases (`--yolo` / `--triage`).
+On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, and the script-policy aliases (`--yolo` / `--triage`). Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
 
 ### Exception — `linker`
 
@@ -110,6 +144,7 @@ The file is created on demand the first time `lpm config set` writes to it.
 ## See also
 
 - [`lpm config`](/docs/reference/config) — CLI surface for getting / setting these keys
+- [`lpm security`](/docs/reference/security) — inspect the effective floor or create a temporary unlock
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level overrides for save policy
 - [`package.json` "lpm" key](/docs/reference/package-json-lpm) — project-shared LPM config
 - [Environment variables](/docs/reference/env-vars) — sits above this file in precedence for many settings

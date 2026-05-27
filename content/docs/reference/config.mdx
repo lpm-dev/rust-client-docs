@@ -7,7 +7,7 @@ description: "Get, set, delete, or list user-level CLI configuration."
 lpm config <action> [key] [value]
 ```
 
-Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. A thin convenience layer over editing the file by hand.
+Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. For ordinary keys it is a convenience layer over editing the file by hand. For security-sensitive keys, it is also the approved path for persisting a weaker machine posture.
 
 ## Examples
 
@@ -47,6 +47,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `minimum-release-age-secs` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age` |
 | `audit-after-install` | [Audit after install](/docs/packages/install#audit-after-install) |
 | `[sandbox] mode` | [Sandbox](/docs/packages/install#sandbox) — only writable via `lpm config sandbox` (nested key) |
+| `[sigstore] verify` | [Provenance](/docs/packages/security-audit#layer-4-provenance--cooldown) — recommended setup surface is `lpm config sigstore` |
 
 The full reference for these keys, their types, defaults, and precedence chain is on [`~/.lpm/config.toml`](/docs/reference/config-toml).
 
@@ -71,11 +72,32 @@ lpm config release-age                      # pick default / 3d / off / custom
 lpm config release-age --set 3d             # non-interactive
 ```
 
-`lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra confirmation prompt, and picking `off` in `lpm config sigstore` does the same — the `--set` forms trust the operator and skip those confirmations.
+`lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore` does the same. The `--set` forms still persist through the same guarded flow: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
 
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default.
 
 All five wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must always pass `--set <value>`.
+
+## Security-sensitive writes
+
+Lowering machine-wide security posture through `lpm config` is guarded.
+
+Examples:
+
+```bash
+lpm config scripts --set allow
+lpm config release-age --set 0
+lpm config sandbox --set none
+lpm config sigstore --set off
+```
+
+In an interactive TTY, LPM asks for confirmation before persisting the weaker value.
+
+In `--json`, CI, or any non-TTY shell, the same write fails with `error_code: "security_approval_required"` instead of silently lowering the machine floor.
+
+If a managed policy owns that control (`/etc/lpm/security-policy.toml` on Unix/macOS, `C:\ProgramData\lpm\security-policy.toml` on Windows), the write fails with `error_code: "security_floor"` instead.
+
+Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` or `"off"` is surfaced as an active runtime override and requires a `provenance-unverified` unlock before mutating install or trust flows proceed.
 
 ## File location
 
@@ -90,5 +112,6 @@ The file is created on demand the first time you `set` a key.
 ## See also
 
 - [`~/.lpm/config.toml`](/docs/reference/config-toml) — the file itself, with full key reference
+- [`lpm security`](/docs/reference/security) — temporary approvals and floor status
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level alternative
 - [Save policy](/docs/packages/save-policy)
