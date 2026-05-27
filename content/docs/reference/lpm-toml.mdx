@@ -1,27 +1,35 @@
 ---
 title: lpm.toml
-description: "Project-level CLI defaults committed to the repo."
+description: "Project-level CLI defaults and sandbox posture committed to the repo."
 ---
 
-`lpm.toml` is an **optional** TOML file that sits next to `package.json`. It pins per-project defaults for behaviors that aren't part of publishable package metadata — most notably the [save policy](/docs/packages/save-policy).
+`lpm.toml` is an **optional** TOML file that sits next to `package.json`. It pins per-project defaults for behaviors that aren't part of publishable package metadata — most notably the [save policy](/docs/packages/save-policy) and the project sandbox posture.
 
-The file is intentionally separate from `package.json > lpm` because save-policy keys are tool behavior, not publishable metadata. Mixing them into the manifest creates avoidable diff churn whenever someone tweaks a personal preference. Keeping them in `lpm.toml` lets each team decide whether to commit the file or `.gitignore` it.
+The file is intentionally separate from `package.json > lpm` because these keys are tool behavior, not publishable metadata. Mixing them into the manifest creates avoidable diff churn whenever someone tweaks a personal preference. Keeping them in `lpm.toml` lets each team decide whether to commit the file or `.gitignore` it.
 
 ## Today's keys
 
 ```toml title="lpm.toml"
 save-prefix = "^"     # one of "^", "~", or "" (empty for exact, no prefix)
 save-exact  = false   # bool; true forces exact regardless of save-prefix
+
+[sandbox]
+mode = "default"      # "default" | "strict" | "none"
+allow-degraded = false
 ```
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix applied when `lpm install <pkg>` saves to `package.json`. `*` is **not** accepted. |
 | `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix`. |
+| `sandbox.mode` | `"default"` \| `"strict"` \| `"none"` | `"default"` | Project-default lifecycle-script sandbox posture. CLI flags still win per invocation. |
+| `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this repo on hosts that cannot provide the full posture. |
 
 Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the offending file. Unknown keys are accepted silently for forward compatibility.
 
 ## Precedence
+
+### Save policy
 
 Save policy resolves in this order, highest first:
 
@@ -32,9 +40,22 @@ Save policy resolves in this order, highest first:
 
 See [Save policy](/docs/packages/save-policy) for the full table of how each combination flows into `package.json`.
 
+### Sandbox
+
+Sandbox mode resolves in this order, highest first:
+
+1. **CLI flag** — `--no-sandbox`, `--strict-sandbox`, or `--paranoid`
+2. **`LPM_STRICT_SANDBOX`** — strict-mode env override
+3. **`./lpm.toml > [sandbox]`** — this file
+4. **`~/.lpm/config.toml > [sandbox]`** — user-level fallback
+5. **Built-in default** — `mode = "default"`, `allow-degraded = false`
+
+If this repo asks for a weaker sandbox than the machine currently allows, install or rebuild does **not** silently obey the file. It fails with `error_code: "security_approval_required"` and points you at [`lpm security unlock`](/docs/reference/security#unlock) instead.
+
 ## See also
 
 - [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults (broader surface)
 - [`package.json` "lpm" key](/docs/reference/package-json-lpm) — publishable / project-shared LPM config
+- [`lpm security`](/docs/reference/security) — temporary approvals and floor status
 - [`lpm.json`](/docs/reference/lpm-json) — dev-server, task-runner, and publish config
 - [Save policy](/docs/packages/save-policy) — full rules and edge cases
