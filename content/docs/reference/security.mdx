@@ -39,10 +39,10 @@ lpm security status --json
 
 ## Subcommands
 
-| Subcommand | What it does |
-| --- | --- |
-| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening in one project or for the global trust surface |
-| `lpm security status` | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
+| Subcommand                    | What it does                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening in one project or for the global trust surface        |
+| `lpm security status`         | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
 
 ## `unlock`
 
@@ -54,24 +54,26 @@ Creates a temporary approval under `~/.lpm/security/unlocks/` for one project ro
 
 Default TTL is `10m`. Maximum TTL is `30m`.
 
+Accepted TTL inputs use the shared duration parser, so `m`, `h`, `d`, and raw seconds are recognized. For `lpm security unlock`, the parsed value must still resolve to at most `30m`, so practical examples are values such as `5m`, `10m`, `30m`, or `600`.
+
 Use `--package <name>` to scope the unlock to one or more packages when the weakening is package-specific. Repeat `--package` to cover more than one package. A package-scoped unlock only covers requests for those package names; it does not cover blanket all-package flags such as `--ignore-provenance-drift-all` or `--unverified-provenance-all`.
 
 ### Common scopes
 
 Copy the exact scope from the error's `suggested_command` whenever possible. The most common ones today are:
 
-| Scope | Typical trigger |
-| --- | --- |
-| `sandbox-none` | `lpm install --no-sandbox` or `lpm.toml > [sandbox] mode = "none"` |
-| `sandbox-allow-degraded` | `lpm.toml` or `~/.lpm/config.toml` enables `[sandbox].allow-degraded = true` beyond the current floor |
-| `cooldown-bypass` | `lpm install --allow-new`, `--min-release-age=0`, or a lower `minimumReleaseAge` |
-| `scripts-allow` | `lpm install --yolo`, `--policy=allow`, or `scriptPolicy = "allow"` |
-| `scripts-triage` | `lpm install --triage` or `scriptPolicy = "triage"` when that weakens the current floor |
-| `trust-bulk-approve` | `lpm approve-scripts --yes`, `lpm approve-scripts --global --yes`, or direct `trustedDependencies` widening |
-| `trust-scope-widen` | direct `trustedScopes` widening in `package.json` |
-| `capability-widen` | direct widening of `passEnv`, `readProject`, or `sandboxLimits` in `package.json` |
-| `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all` |
-| `provenance-unverified` | `LPM_PROVENANCE_ENFORCE=warn|off`, raw or persisted `[sigstore].verify = "warn"|"off"`, or `--unverified-provenance*` |
+| Scope                     | Typical trigger                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sandbox-none`            | `lpm install --no-sandbox` or `lpm.toml > [sandbox] mode = "none"`                                                                                   |
+| `sandbox-allow-degraded`  | `lpm.toml` or `~/.lpm/config.toml` enables `[sandbox].allow-degraded = true` beyond the current floor                                                |
+| `cooldown-bypass`         | `lpm install --allow-new`, `--min-release-age=0`, or a lower `minimumReleaseAge`                                                                     |
+| `scripts-allow`           | `lpm install --yolo`, `--policy=allow`, or `scriptPolicy = "allow"`                                                                                  |
+| `scripts-triage`          | `lpm install --triage` or `scriptPolicy = "triage"` when that weakens the current floor                                                              |
+| `trust-bulk-approve`      | `lpm approve-scripts --yes`, `lpm approve-scripts --global --yes`, or direct `trustedDependencies` widening                                          |
+| `trust-scope-widen`       | direct `trustedScopes` widening in `package.json`                                                                                                    |
+| `capability-widen`        | direct widening of `passEnv`, `readProject`, or `sandboxLimits` in `package.json`                                                                    |
+| `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`                                                                                 |
+| `provenance-unverified`   | `LPM_PROVENANCE_ENFORCE=warn`, `LPM_PROVENANCE_ENFORCE=off`, raw or persisted `[sigstore].verify = "warn"` or `"off"`, or `--unverified-provenance*` |
 
 ### Interactive vs automation
 
@@ -85,7 +87,7 @@ In any of these modes, it refuses instead of prompting:
 
 The refusal uses `error_code: "security_approval_required"` and includes a `suggested_command`.
 
-Every guarded attempt and granted unlock is appended to `~/.lpm/security/audit.jsonl` as a signed hash-chained entry. Production builds also store the audit head in the OS keyring so local truncation or rewrite attempts can be detected on the next append. This is local tamper evidence, not a remote immutable log.
+Guarded install/config attempts plus interactive unlock decisions are appended to `~/.lpm/security/audit.jsonl` as signed hash-chained entries. The fast refusal path for `lpm security unlock` in `--json`, CI, or other non-interactive mode returns the structured error immediately and does not append a separate unlock-declined entry. Production builds also store the audit head in the OS keyring so local truncation or rewrite attempts can be detected on the next append. This is local tamper evidence, not a remote immutable log.
 
 ## `status`
 
@@ -98,7 +100,7 @@ Shows the effective security floor for the selected project root, or for the glo
 Human output includes:
 
 - the selected target (`project` or `global`)
-- the current project root when applicable
+- the selected root for that target: `project` in project mode, `global-root` in global mode
 - the effective values for script policy, release-age floor, sandbox mode, sandbox degraded mode, and Sigstore verification
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
@@ -147,6 +149,8 @@ With `--json`, the envelope looks like:
   }
 }
 ```
+
+The JSON field name stays `project_root` for envelope stability even under `--global`; in that mode it points at the canonical global trust root.
 
 ## How guarded approvals work
 
