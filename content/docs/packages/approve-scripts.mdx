@@ -74,6 +74,12 @@ Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-m
 
 `approve-scripts --global` fetches the candidate's Sigstore attestation at approval time (best-effort — network failure or no-attestation degrades to `provenanceAtApproval = null`). On the next `lpm install -g`, the drift gate compares the freshly-fetched provenance against this snapshot. The project's `package.json` is not touched.
 
+### Provenance posture during approval
+
+Mutating approval flows use the same Sigstore posture chain as install: `LPM_PROVENANCE_ENFORCE` > `~/.lpm/config.toml > [sigstore].verify` > default `deny`. If that chain weakens verification to `warn` or `off`, `approve-scripts` requires a `provenance-unverified` unlock before it writes trust. Project approvals use a project unlock; `approve-scripts --global` uses a global unlock and suggests `lpm security unlock provenance-unverified --global --ttl 10m`.
+
+`--list` and `--dry-run` are read-only and do not need that unlock. Under `--json`, CI, or non-TTY mode, LPM refuses deterministically with `security_approval_required` instead of opening a native approval prompt.
+
 ### Drift semantics (both scopes)
 
 The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events for project trust.)

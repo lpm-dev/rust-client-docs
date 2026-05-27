@@ -28,6 +28,7 @@ lpm security unlock sandbox-none --project . --ttl 10m
 lpm security unlock cooldown-bypass --project . --ttl 10m
 lpm security unlock scripts-allow --project . --ttl 10m
 lpm security unlock provenance-ignore-drift --project . --package esbuild --ttl 10m
+lpm security unlock provenance-unverified --global --ttl 10m
 lpm security unlock trust-bulk-approve --global --ttl 10m
 
 lpm security status
@@ -53,7 +54,7 @@ Creates a temporary approval under `~/.lpm/security/unlocks/` for one project ro
 
 Default TTL is `10m`. Maximum TTL is `30m`.
 
-Use `--package <name>` to scope the unlock to one or more packages when the weakening is package-specific. Repeat `--package` to cover more than one package.
+Use `--package <name>` to scope the unlock to one or more packages when the weakening is package-specific. Repeat `--package` to cover more than one package. A package-scoped unlock only covers requests for those package names; it does not cover blanket all-package flags such as `--ignore-provenance-drift-all` or `--unverified-provenance-all`.
 
 ### Common scopes
 
@@ -70,7 +71,7 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `trust-scope-widen` | direct `trustedScopes` widening in `package.json` |
 | `capability-widen` | direct widening of `passEnv`, `readProject`, or `sandboxLimits` in `package.json` |
 | `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all` |
-| `provenance-unverified` | `LPM_PROVENANCE_ENFORCE=warn|off`, `--unverified-provenance*`, or weaker persistent Sigstore verification settings |
+| `provenance-unverified` | `LPM_PROVENANCE_ENFORCE=warn|off`, raw or persisted `[sigstore].verify = "warn"|"off"`, or `--unverified-provenance*` |
 
 ### Interactive vs automation
 
@@ -84,7 +85,7 @@ In any of these modes, it refuses instead of prompting:
 
 The refusal uses `error_code: "security_approval_required"` and includes a `suggested_command`.
 
-Every guarded attempt and granted unlock is also appended as a signed entry in `~/.lpm/security/audit.jsonl`.
+Every guarded attempt and granted unlock is appended to `~/.lpm/security/audit.jsonl` as a signed hash-chained entry. Production builds also store the audit head in the OS keyring so local truncation or rewrite attempts can be detected on the next append. This is local tamper evidence, not a remote immutable log.
 
 ## `status`
 
@@ -102,7 +103,7 @@ Human output includes:
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
 - the active managed policy file, if one is present
-- any active runtime overrides such as `LPM_PROVENANCE_ENFORCE`
+- any active runtime overrides such as `LPM_PROVENANCE_ENFORCE` or raw `~/.lpm/config.toml > [sigstore].verify`
 - the active unlocks for that scope, including package scoping and min-release-age limits when present
 
 With `--json`, the envelope looks like:
@@ -160,7 +161,7 @@ lpm install --yolo
 LPM_PROVENANCE_ENFORCE=off lpm install
 ```
 
-LPM may ask inline for confirmation in an interactive terminal. If you approve, it mints the same temporary unlock internally and continues the command.
+LPM may ask inline for confirmation in an interactive terminal. If you approve, it mints the same temporary unlock internally and continues the command. Global guarded flows, such as `lpm install -g` and `lpm approve-scripts --global`, use global unlocks and suggest `lpm security unlock <scope> --global`.
 
 ### 2. CLI weakeners in CI, `--json`, or non-TTY mode
 
@@ -175,6 +176,7 @@ Examples:
 - `package.json > lpm.scriptPolicy = "allow"`
 - `package.json > lpm.minimumReleaseAge = 0`
 - `lpm.toml > [sandbox] mode = "none"`
+- direct `trustedDependencies`, `trustedScopes`, `passEnv`, `readProject`, or `sandboxLimits` widening
 
 LPM does not prompt inline for those repo-file changes. Instead, install or rebuild fails and points you at `lpm security unlock ...` for a temporary project exception, or at a persistent machine-level config change if that is what you want.
 
@@ -207,7 +209,8 @@ If the file asks for something weaker than the currently approved floor, LPM tre
 Managed machines and headless CI can provide a higher-authority floor at:
 
 ```text
-/etc/lpm/security-policy.toml
+Unix/macOS: /etc/lpm/security-policy.toml
+Windows:    C:\ProgramData\lpm\security-policy.toml
 ```
 
 Example:
@@ -228,7 +231,7 @@ allow-degraded = false
 verify = "deny"
 ```
 
-When this file owns a control, weaker repo or user changes do not win. They fail with `error_code: "security_floor"` instead. In production, LPM only loads managed policy from the managed path itself and validates that the file and its parent directories are authority-owned rather than user-writable.
+When this file owns a control, weaker repo or user changes do not win. They fail with `error_code: "security_floor"` instead. In production, LPM only loads managed policy from the managed path itself. On Unix/macOS, the file and parent directories must be root-owned and not group/world writable. On Windows, the file and parent directory must resolve to the ProgramData path, must not be reparse points, must be owned by SYSTEM or Administrators, and must not grant write access to non-administrator principals.
 
 Use `lpm security status` to see exactly which controls are currently coming from managed policy.
 
