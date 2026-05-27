@@ -143,6 +143,45 @@ Persistent strict mode: `~/.lpm/config.toml > [sandbox] mode = "strict"` (or `LP
 
 `--no-sandbox` is reserved for debugging a sandbox false-positive — scripts run with full host access including credential-bearing env (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.). The three flags are mutually exclusive. See the [filesystem sandbox reference](/docs/reference/package-json-lpm#the-lpmscripts-block) for declaring extra write directories per-package.
 
+## Guarded weakeners and approvals
+
+Some install-time weakeners are approval-gated:
+
+- `--yolo` / `--policy=allow`
+- `--triage` when it weakens the current approved machine floor
+- `--allow-new` or a lower `--min-release-age`
+- `--no-sandbox`
+
+Interactive TTY behavior:
+
+```bash
+lpm install --no-sandbox
+```
+
+In an interactive shell, LPM can ask inline for confirmation and continue the install if you approve.
+
+Automation behavior:
+
+```bash
+lpm install --no-sandbox --json
+```
+
+With `--json`, in CI, or in any non-TTY shell, LPM does **not** prompt. It fails with `error_code: "security_approval_required"` and includes a `suggested_command`, for example:
+
+```bash
+lpm security unlock sandbox-none --project . --ttl 10m
+```
+
+Repo-file weakeners are treated differently. If a repo asks for a weaker posture through:
+
+- `package.json > lpm.scriptPolicy`
+- `package.json > lpm.minimumReleaseAge`
+- `lpm.toml > [sandbox]`
+
+install or rebuild does **not** prompt inline. LPM treats those file values as proposals, fails the command, and points you at `lpm security unlock ...` for a temporary project exception.
+
+Use [`lpm security`](/docs/reference/security) to create the unlock explicitly or to inspect the current floor with `lpm security status`.
+
 ## Workspaces
 
 In a monorepo, target a specific member or the workspace root:

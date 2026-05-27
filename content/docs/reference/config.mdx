@@ -7,7 +7,7 @@ description: "Get, set, delete, or list user-level CLI configuration."
 lpm config <action> [key] [value]
 ```
 
-Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. A thin convenience layer over editing the file by hand.
+Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. For ordinary keys it is a convenience layer over editing the file by hand. For security-sensitive keys, it is also the approved path for persisting a weaker machine posture.
 
 ## Examples
 
@@ -47,6 +47,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `minimum-release-age-secs` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age` |
 | `audit-after-install` | [Audit after install](/docs/packages/install#audit-after-install) |
 | `[sandbox] mode` | [Sandbox](/docs/packages/install#sandbox) — only writable via `lpm config sandbox` (nested key) |
+| `[sigstore] verify` | [Provenance](/docs/packages/security-audit#layer-4-provenance--cooldown) — recommended setup surface is `lpm config sigstore` |
 
 The full reference for these keys, their types, defaults, and precedence chain is on [`~/.lpm/config.toml`](/docs/reference/config-toml).
 
@@ -77,6 +78,27 @@ lpm config release-age --set 3d             # non-interactive
 
 All five wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must always pass `--set <value>`.
 
+## Security-sensitive writes
+
+Lowering machine-wide security posture through `lpm config` is guarded.
+
+Examples:
+
+```bash
+lpm config scripts --set allow
+lpm config release-age --set 0
+lpm config sandbox --set none
+lpm config sigstore --set off
+```
+
+In an interactive TTY, LPM asks for confirmation before persisting the weaker value.
+
+In `--json`, CI, or any non-TTY shell, the same write fails with `error_code: "security_approval_required"` instead of silently lowering the machine floor.
+
+If a managed policy at `/etc/lpm/security-policy.toml` owns that control, the write fails with `error_code: "security_floor"` instead.
+
+Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; LPM may ignore it or refuse with `security_approval_required` / `security_floor` when the value is weaker than the current approved floor.
+
 ## File location
 
 `~/.lpm/config.toml` (or `%USERPROFILE%\.lpm\config.toml` on Windows). Override the entire `~/.lpm/` root with [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout).
@@ -90,5 +112,6 @@ The file is created on demand the first time you `set` a key.
 ## See also
 
 - [`~/.lpm/config.toml`](/docs/reference/config-toml) — the file itself, with full key reference
+- [`lpm security`](/docs/reference/security) — temporary approvals and floor status
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level alternative
 - [Save policy](/docs/packages/save-policy)
