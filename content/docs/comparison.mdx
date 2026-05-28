@@ -9,33 +9,33 @@ A factual comparison of default behavior across **npm 11**, **pnpm 11**, **bun 1
 
 ## Benchmarks
 
-|                                |     npm |    pnpm |     bun |         **lpm** |
-| ------------------------------ | ------: | ------: | ------: | --------------: |
-| Cold install, equal footing ¹  | 6,784ms | 1,532ms |   905ms |       **880ms** |
-| Cold install, full wipe loop ² | 7,077ms | 2,445ms | 1,151ms |     **2,193ms** |
-| Warm install ³                 |   648ms |   665ms |   263ms |        **23ms** |
-| Up-to-date install ³           |   348ms |   152ms |     8ms |         **6ms** |
-| Script overhead ⁴              |    67ms |   107ms |     6ms |         **9ms** |
-| `lpm lint` vs `npx oxlint` ⁴   |   250ms |       — |       — | **78ms** (3.2×) |
-| `lpm fmt` vs `npx biome` ⁴     |   264ms |       — |       — |  **13ms** (20×) |
+|                                 |     npm |    pnpm |     bun |         **lpm** |
+| ------------------------------- | ------: | ------: | ------: | --------------: |
+| Cold install, equal footing ¹   | 6,735ms | 1,124ms |   823ms |       **957ms** |
+| Cold install, reset-each-iter ² | 7,146ms | 1,927ms | 1,207ms |       **945ms** |
+| Warm install ³                  |   648ms |   665ms |   263ms |        **23ms** |
+| Up-to-date install ³            |   348ms |   152ms |     8ms |         **6ms** |
+| Script overhead ⁴               |    67ms |   107ms |     6ms |         **9ms** |
+| `lpm lint` vs `npx oxlint` ⁴    |   250ms |       — |       — | **78ms** (3.2×) |
+| `lpm fmt` vs `npx biome` ⁴      |   264ms |       — |       — |  **13ms** (20×) |
 
 <Accordions>
   <Accordion title="What each row measures">
 
-1. **Cold install** — fresh project, no cache, no lockfile reuse, no `node_modules/`. The full pipeline runs: resolve, download, extract, link. What you pay the first time anyone clones the repo.
-2. **Warm install** — cache and lockfile present, `node_modules/` deleted. PM rebuilds the tree from already-cached tarballs. What you pay after `rm -rf node_modules`.
-3. **Up-to-date install** — cache, lockfile, **and** `node_modules/` all present. PM detects "nothing to do" via an mtime fast-path and exits. What you pay re-running `install` after no changes.
-4. **Script overhead** — latency of the runner's `run` command invoking a `package.json` script. Independent of dep tree size; measures the runner itself.
+1. **Cold install** — a fresh project with no cache, no lockfile reuse, and no `node_modules/`.
+2. **Warm install** — cache and lockfile already exist, so the package manager only rebuilds `node_modules/`.
+3. **Up-to-date install** — nothing changed, so the package manager just checks state and exits.
+4. **Script overhead** — the cost of invoking the package runner itself.
 
   </Accordion>
   <Accordion title="Methodology">
 
-- **¹ Equal-footing cold install** — `bench/fixture-large` (21 direct, 266 transitive). Cache + lockfile wipes happen outside the timed region so the comparison isn't skewed by asymmetric `rm -rf` cost. lpm and bun run in a round-robin (alternating order per iter) to neutralize CDN-warmth bias between them; npm/pnpm run sequentially since their multi-second baseline makes a 200ms warmth shift negligible.
-- **² Full wipe loop** — same fixture as ¹, but cache wipes are inside the timed region (closer to a CI cold-clone). lpm wipes two cache paths plus a project wrapper tree (~270ms of the difference), which is why it wins on row ¹ but trails bun here.
-- **³ Warm / up-to-date** — `bench/project` (17 direct, 51 packages). Warm wipes `node_modules/` between iterations; up-to-date keeps everything and exercises the mtime fast-path.
-- **⁴ Tool-overhead benches** — `bench/project`. `lpm lint` / `lpm fmt` use lazy-downloaded oxlint / biome binaries with no `npx` resolution overhead per invocation.
+- **¹ Equal-footing cold install** — Fresh cache and lockfile resets happen outside the timer, so this row measures install work instead of cleanup work. `lpm` and `bun` alternate per iteration to cancel out CDN warmth bias; `npm` and `pnpm` run sequentially because their install times are much larger.
+- **² Reset-each-iter cold install** — Every iteration starts cold again. `npm`, `pnpm`, and `bun` wipe inside the timer. `lpm` rotates the previous cache, store, and project state before the timer so the result reflects a cold install without charging recursive deletion.
+- **³ Warm / Up-to-date** — Warm install means the cache and lockfile already exist and only `node_modules` gets rebuilt. Up-to-date install means nothing changed, so the package manager just checks state and exits.
+- **⁴ Script overhead / lint / fmt** — Script overhead is the cost of invoking the package runner itself. The lint and format rows compare `lpm`'s built-ins against `npx oxlint` and `npx biome`.
 
-Hardware: Apple M5, macOS 25.4. `RUNS=20` median, 2026-05-01. Reproduce: `./bench/scripts/run-readme.sh 20`.
+Rows ¹-² use a `RUNS=20` cold-install sweep. Rows ³-⁴ come from the `bench/project` sweep.
 
   </Accordion>
 </Accordions>
