@@ -24,6 +24,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
     "strictDeps": "warn",
     "strictPeerDependencies": false,
     "catalogMode": "manual",
+    "cleanupUnusedCatalogs": false,
 
     "scriptPolicy": "deny",
     "triageAdvisor": "none",
@@ -120,6 +121,16 @@ How `lpm install <pkg>` saves dependencies that match the root default catalog.
 | `"strict"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
 
 This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the root catalog set, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
+
+### `cleanupUnusedCatalogs`
+
+```json
+{ "lpm": { "cleanupUnusedCatalogs": true } }
+```
+
+Prune root catalog entries that no root or workspace-member manifest references after a successful `lpm install`.
+
+**Default:** `false`. When enabled, LPM scans `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies` for `"catalog:"` and `"catalog:<name>"` references, then removes unreferenced entries from root `package.json > catalogs`. In pnpm-style workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` enables the same policy for `pnpm-workspace.yaml > catalog` / `catalogs`; an explicit `package.json > lpm.cleanupUnusedCatalogs` value wins when both are present.
 
 ### `scriptPolicy`
 
@@ -391,6 +402,7 @@ LPM reads catalogs from root `package.json > catalogs` and from pnpm-style `pnpm
 ```yaml title="pnpm-workspace.yaml"
 packages:
   - "packages/*"
+cleanupUnusedCatalogs: true
 catalog:
   react: ^18.2.0
 catalogs:
@@ -402,7 +414,7 @@ catalogs:
 
 Catalog entry values must be concrete package ranges. A catalog entry cannot point at another catalog entry with `"catalog:"` or `"catalog:<name>"`; LPM rejects recursive catalog definitions during install.
 
-Set `package.json > lpm > catalogMode` to control whether `lpm install <pkg>` writes matching default-catalog entries back as `"catalog:"`.
+Set `package.json > lpm > catalogMode` to control whether `lpm install <pkg>` writes matching default-catalog entries back as `"catalog:"`. Set `cleanupUnusedCatalogs` to prune unused catalog entries after successful installs.
 
 ## See also
 
