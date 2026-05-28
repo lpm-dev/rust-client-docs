@@ -23,6 +23,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
     "linker": "isolated",
     "strictDeps": "warn",
     "strictPeerDependencies": false,
+    "catalogMode": "manual",
 
     "scriptPolicy": "deny",
     "triageAdvisor": "none",
@@ -103,6 +104,22 @@ How strictly LPM enforces declared dependencies (no implicit access to phantom d
 Whether peer-dependency diagnostics fail the install. Default `false`: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings and the install continues. Set to `true` when those diagnostics should be hard failures, especially in CI. Optional peers that are absent still do not fail.
 
 Precedence: `lpm install --strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > `false`.
+
+### `catalogMode`
+
+```json
+{ "lpm": { "catalogMode": "prefer" } }
+```
+
+How `lpm install <pkg>` saves dependencies that match the root default catalog.
+
+| Value | Behavior |
+| --- | --- |
+| `"manual"` (default) | Keep normal raw save specs such as `"^4.3.6"` or the explicit range you typed. |
+| `"prefer"` | Save `"catalog:"` when `catalogs.default[pkg]` satisfies the resolved version; warn and save the direct spec when it does not. |
+| `"strict"` | Save `"catalog:"` when `catalogs.default[pkg]` satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+
+This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the `catalogs` field below.
 
 ### `scriptPolicy`
 
@@ -368,6 +385,8 @@ Standard npm fields — LPM reads them as you'd expect.
 ```
 
 Centralized version catalogs for monorepos. Members reference catalog versions with `"catalog:"` or `"catalog:<name>"`.
+
+Set `package.json > lpm > catalogMode` to control whether `lpm install <pkg>` writes matching default-catalog entries back as `"catalog:"`.
 
 ## See also
 
