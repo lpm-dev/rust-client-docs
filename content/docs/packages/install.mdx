@@ -47,12 +47,14 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 
 1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
-3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages default to **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
+3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 ## Peer dependency strict mode
 
 By default, LPM follows pnpm's non-strict install posture: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings, then install continues.
+
+When those warnings include a cross-consumer peer conflict, the default linker auto-switches to isolated for that project. Explicit linker choices (`--linker`, `~/.lpm/config.toml > linker`, `LPM_LINKER`, or `package.json > lpm.linker`) are respected and do not auto-switch.
 
 Use strict mode when peer diagnostics should gate CI:
 
@@ -344,7 +346,7 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
 | `--strict-peer-dependencies` | Fail when required peers are missing, peer ranges mismatch, or peer requirements conflict |
 | `--no-strict-peer-dependencies` | Disable strict peer failures for this invocation, overriding project or user config |
-| `--linker <isolated\|hoisted>` | Linking layout (default: `hoisted`; workspaces auto-default to `isolated`) |
+| `--linker <isolated\|hoisted>` | Linking layout (default starts `hoisted`; workspaces and default peer-conflict installs use `isolated`) |
 | `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |
 | `--triage` | Alias for `--policy=triage` |
