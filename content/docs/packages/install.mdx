@@ -66,6 +66,49 @@ Strict mode fails after resolution if a required peer is missing, an installed p
 
 Precedence: `--strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > default (`false`). On `-g`, the `package.json` tier is not present, so CLI flags override `~/.lpm/config.toml`.
 
+Under `--json`, peer diagnostics are always attached to the success envelope as `peer_issues`. Missing required peers land in `missing`, installed peers that do not satisfy the declared range land in `bad`, and cross-consumer resolver conflicts land in `conflicts`. Each list has a matching `*_count`, and `total_count` is the combined issue count. The legacy `peer_conflicts` array is still emitted and matches `peer_issues.conflicts`.
+
+```json
+{
+  "success": true,
+  "peer_issues": {
+    "missing": [
+      {
+        "type": "missing",
+        "package": "required-peer-host",
+        "version": "1.0.0",
+        "peer": "missing-peer",
+        "required_range": "^1.0.0",
+        "resolved_version": null
+      }
+    ],
+    "bad": [
+      {
+        "type": "bad",
+        "package": "peer-consumer-a",
+        "version": "1.0.0",
+        "peer": "shared-peer",
+        "required_range": "^1.0.0",
+        "resolved_version": "2.0.0"
+      }
+    ],
+    "conflicts": [
+      {
+        "canonical": "shared-peer",
+        "chosen_version": "2.0.0",
+        "unsatisfied_consumers": [{ "consumer": "peer-consumer-a", "range": "^1.0.0" }]
+      }
+    ],
+    "intersections": [],
+    "missing_count": 1,
+    "bad_count": 1,
+    "conflicts_count": 1,
+    "intersections_count": 0,
+    "total_count": 3
+  }
+}
+```
+
 ## Save policy
 
 When you run `lpm install <pkg>` without an explicit version, LPM saves `^resolvedVersion` to `package.json`. If you typed an explicit version or range, LPM preserves what you typed. Prereleases are saved exact for safety.
