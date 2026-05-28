@@ -26,6 +26,7 @@ lpm install -D vitest         # save under devDependencies
 lpm install -g typescript     # install into ~/.lpm/global/
 lpm install --offline         # never touch the network
 lpm install --force           # full re-install, bypass every fast path
+lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --verbose         # append per-phase timings + lockfile size
 ```
 
@@ -48,6 +49,20 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
 3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages default to **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
+
+## Peer dependency strict mode
+
+By default, LPM follows pnpm's non-strict install posture: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings, then install continues.
+
+Use strict mode when peer diagnostics should gate CI:
+
+```bash
+lpm install --strict-peer-dependencies
+```
+
+Strict mode fails after resolution if a required peer is missing, an installed peer does not satisfy the declared range, or the resolver found incompatible peer requirements across consumers. Optional peers that are absent still do not fail.
+
+Precedence: `--strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > default (`false`). On `-g`, the `package.json` tier is not present, so CLI flags override `~/.lpm/config.toml`.
 
 ## Save policy
 
@@ -274,12 +289,13 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 | `--min-release-age=<DUR>` | Overrides the cooldown window |
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
 | `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the script-policy |
+| `--strict-peer-dependencies` / `--no-strict-peer-dependencies` | Overrides the peer-dependency strictness setting for the synthesized install |
 | `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted for global installs. Also useful under `deny` with an established global trust set. |
 
 Two things differ from project installs:
 
 - **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
-- **The script-policy chain collapses.** With no project-level `package.json > lpm > scriptPolicy` to read, the precedence chain on `-g` is CLI flag > `~/.lpm/config.toml > script-policy` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
+- **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
 
 Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
 
@@ -326,6 +342,8 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--allow-new` | Skip the minimum-release-age cooldown |
 | `--min-release-age <DUR>` | Override the cooldown (`<N>h`, `<N>d`, or seconds; `0` disables) |
 | `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
+| `--strict-peer-dependencies` | Fail when required peers are missing, peer ranges mismatch, or peer requirements conflict |
+| `--no-strict-peer-dependencies` | Disable strict peer failures for this invocation, overriding project or user config |
 | `--linker <isolated\|hoisted>` | Linking layout (default: `hoisted`; workspaces auto-default to `isolated`) |
 | `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |

@@ -31,6 +31,9 @@ minimum-release-age-secs = 86400
 # Engine constraints (engines.lpm + engines.node)
 engine-strict = true
 
+# Peer-dependency diagnostics
+strict-peer-dependencies = false
+
 # Run `lpm audit` after every successful install and print a one-line advisory
 audit-after-install = false
 
@@ -66,6 +69,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this machine when full containment is unavailable. |
 | `sigstore.verify` | `"deny"` \| `"warn"` \| `"off"` | `"deny"` | Provenance verification posture used by installs and related flows. Set with [`lpm config sigstore`](/docs/reference/config#setup-wizards). |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
+| `strict-peer-dependencies` | bool | `false` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. Per-invocation overrides: `--strict-peer-dependencies` / `--no-strict-peer-dependencies`. Project override: `package.json > lpm.strictPeerDependencies`. |
 | `audit-after-install` | bool | `false` | Run [`lpm audit`](/docs/packages/audit) silently after every successful `lpm install` and emit a one-line advisory (`! Audited N packages, V vulnerabilities, S suspicious in Tms — run \`lpm audit\``). Informational only — findings never fail the install. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Per-process env: `LPM_AUDIT_AFTER_INSTALL`. See [Audit after install](/docs/packages/install#audit-after-install). |
 | `linker` | `"isolated"` \| `"hoisted"` | `"hoisted"` (workspaces auto-default to `"isolated"`) | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
 | `script-read-allow` | array of strings | `[]` | Project-relative paths the sandbox should let lifecycle scripts read despite matching the [secret-file deny list](/docs/packages/rebuild#project-secret-files). Each entry is joined to the current `project_dir` at install time; traversal escapes (`..`) and absolute paths outside the project are rejected. Unioned with the per-project [`package.json > lpm > scripts > sandboxReadAllow`](/docs/reference/package-json-lpm#scripts) — duplicates are deduplicated. Use this when the same secret file (`.env`, `.npmrc`) is consistently needed by your builds across every project. |
@@ -111,12 +115,12 @@ For short-lived exceptions, use [`lpm security unlock`](/docs/reference/security
 For most settings, the precedence chain is (highest first):
 
 1. **CLI flag** — e.g. `--exact`, `--policy=allow`, `--min-release-age=1h`, `--no-engine-strict`
-2. **`package.json > lpm`** — for keys that exist there (`scriptPolicy`, `minimumReleaseAge`, `engineStrict`)
+2. **`package.json > lpm`** — for keys that exist there (`scriptPolicy`, `minimumReleaseAge`, `engineStrict`, `strictPeerDependencies`)
 3. **`./lpm.toml`** — project-level (today: `save-prefix`, `save-exact`)
 4. **`~/.lpm/config.toml`** — this file
 5. **Built-in default**
 
-On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, and the script-policy aliases (`--yolo` / `--triage`). Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
+On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, `strict-peer-dependencies`, and the script-policy aliases (`--yolo` / `--triage`). Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
 
 ### Exception — `linker`
 
