@@ -4,7 +4,7 @@ description: "Temporary approvals, effective machine floor, and managed security
 ---
 
 ```bash
-lpm security <unlock|status>
+lpm security <unlock|lock|status>
 ```
 
 LPM treats some security-lowering requests as guarded operations. Examples:
@@ -18,18 +18,22 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 
 `lpm security` is the command surface for two related jobs:
 
-- `unlock` creates a short-lived approval for one guarded weakening, either for one project or for the machine-global trust surface.
-- `status` shows the effective security floor, active runtime overrides, and whichever unlock scope you asked to inspect.
+- `unlock` creates a short-lived approval for one guarded weakening. Manual `unlock` defaults to the machine-global target unless you pass `--project`.
+- `lock` revokes one active temporary unlock. Manual `lock` also defaults to the machine-global target unless you pass `--project`.
+- `status` shows the effective security floor, active runtime overrides, and whichever unlock scope you asked to inspect. `status` still defaults to the current project.
 
 ## Examples
 
 ```bash
+lpm security unlock default --ttl 10m
 lpm security unlock sandbox-none --project . --ttl 10m
-lpm security unlock cooldown-bypass --project . --ttl 10m
-lpm security unlock scripts-allow --project . --ttl 10m
 lpm security unlock provenance-ignore-drift --project . --package esbuild --ttl 10m
 lpm security unlock provenance-unverified --global --ttl 10m
-lpm security unlock trust-bulk-approve --global --ttl 10m
+lpm security unlock all --global --ttl 1h
+
+lpm security lock default
+lpm security lock provenance-ignore-drift --project . --package esbuild
+lpm security lock all --global
 
 lpm security status
 lpm security status --project /path/to/repo
@@ -41,22 +45,31 @@ lpm security status --json
 
 | Subcommand                    | What it does                                                                                                |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening in one project or for the global trust surface        |
+| `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening, defaulting to the global trust surface               |
+| `lpm security lock <scope>`   | Revoke one active temporary approval, defaulting to the global trust surface                                |
 | `lpm security status`         | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
 
 ## `unlock`
 
 ```bash
-lpm security unlock <scope> (--project . | --global) --ttl 10m
+lpm security unlock <scope|all|default> [--project PATH | --global] [--ttl 10m]
 ```
 
-Creates a temporary approval under `~/.lpm/security/unlocks/` for one project root, or for the machine-global trust surface when you pass `--global`. The command does **not** run the risky action itself. It only creates the unlock so you can rerun the original install, rebuild, or trust command.
+Creates a temporary approval under `~/.lpm/security/unlocks/`. If you pass `--project`, the unlock is tied to that project root. If you pass `--global`, or omit both target flags, the unlock applies to the machine-global trust surface. The command does **not** run the risky action itself. It only creates the unlock so you can rerun the original install, rebuild, or trust command.
 
-Default TTL is `10m`. Maximum TTL is `30m`.
+Default TTL is `10m`. Maximum TTL is `365d`.
 
-Accepted TTL inputs use the shared duration parser, so `m`, `h`, `d`, and raw seconds are recognized. For `lpm security unlock`, the parsed value must still resolve to at most `30m`, so practical examples are values such as `5m`, `10m`, `30m`, or `600`.
+Accepted TTL inputs use the shared duration parser, so `m`, `h`, `d`, and raw seconds are recognized. For `lpm security unlock`, the parsed value must still resolve to at most `365d`, so examples such as `5m`, `1h`, `30d`, `365d`, and `600` all work.
 
-Use `--package <name>` to scope the unlock to one or more packages when the weakening is package-specific. Repeat `--package` to cover more than one package. A package-scoped unlock only covers requests for those package names; it does not cover blanket all-package flags such as `--ignore-provenance-drift-all` or `--unverified-provenance-all`.
+Manual `unlock` defaults global, but suggested commands coming from guarded install/config errors stay explicit (`--project .` or `--global`) so you can see the intended scope before approving it.
+
+Use `--package <name>` only with a concrete scope when the weakening is package-specific. Repeat `--package` to cover more than one package. A package-scoped unlock only covers requests for those package names; it does not cover blanket all-package flags such as `--ignore-provenance-drift-all` or `--unverified-provenance-all`. Bundle selectors `all` and `default` reject `--package`.
+
+### Bundle selectors
+
+- `all` expands to every concrete unlock scope.
+- `default` expands to the common install/runtime weakeners: `cooldown-bypass`, `cooldown-window`, `provenance-ignore-drift`, `provenance-unverified`, `scripts-triage`, `scripts-allow`, `sandbox-default`, `sandbox-none`, and `sandbox-allow-degraded`.
+- `default` intentionally excludes `trust-bulk-approve`, `trust-scope-widen`, `capability-widen`, and `floor-edit`.
 
 ### Common scopes
 
@@ -74,6 +87,18 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `capability-widen`        | direct widening of `passEnv`, `readProject`, or `sandboxLimits` in `package.json`                                                                    |
 | `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`                                                                                 |
 | `provenance-unverified`   | `LPM_PROVENANCE_ENFORCE=warn`, `LPM_PROVENANCE_ENFORCE=off`, raw or persisted `[sigstore].verify = "warn"` or `"off"`, or `--unverified-provenance*` |
+
+## `lock`
+
+```bash
+lpm security lock <scope|all|default> [--project PATH | --global]
+```
+
+Revokes active temporary unlocks from `~/.lpm/security/unlocks/`. If you pass `--project`, `lock` inspects that project's unlocks. If you pass `--global`, or omit both target flags, it inspects machine-global unlocks.
+
+`lock` is non-interactive. If a matched unlock contains multiple scopes, `lock` removes only the requested scopes and leaves the rest active. `lock` only touches temporary unlock grants; it does not rewrite the approved machine posture, project policy approvals, or managed policy.
+
+Use `--package <name>` only with a concrete scope. For `lock`, package filters match unlocks created with that exact package filter set.
 
 ### Interactive vs automation
 
