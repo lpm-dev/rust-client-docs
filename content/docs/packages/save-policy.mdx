@@ -19,20 +19,24 @@ This page is the reference for the rules. For the CLI flag surface, see [`lpm in
 | `lpm install zod@beta` | `"zod": "4.4.0-beta.2"` | Prerelease — saved exact for safety |
 | `lpm install zod@*` | `"zod": "*"` | Explicit wildcard — preserved (only allowed when explicit) |
 | `lpm install zod@workspace:*` | `"zod": "workspace:*"` | Workspace protocol — preserved verbatim |
+| `lpm install --catalog zod` | `"zod": "catalog:"` | Explicit default-catalog save when `catalogs.default.zod` matches the resolved version |
+| `lpm install --catalog=ui zod` | `"zod": "catalog:ui"` | Explicit named-catalog save when `catalogs.ui.zod` matches the resolved version |
 
 The throughline: **what you typed wins**. The default kicks in only when you didn't say anything.
 
 ## Precedence
 
-Five layers, highest first:
+Seven layers, highest first:
 
-1. **Explicit user spec in `pkg@spec`.** Exact, range, wildcard, workspace — preserved verbatim, never reinterpreted.
-2. **CLI flag override.** `--exact`, `--tilde`, `--save-prefix '<p>'`. Mutually exclusive (clap enforces).
-3. **Prerelease-exact safety.** If the resolved version is a prerelease and no CLI flag forced something else, save the exact resolved version. Prereleases shouldn't auto-widen under a forgotten `save-prefix` config setting.
-4. **Persistent config.** `save-exact = true`, then `save-prefix = "^|~|"`. Reads from `./lpm.toml` first, then `~/.lpm/config.toml`.
-5. **Default.** `^resolvedVersion`.
+1. **Explicit catalog save.** `--catalog` or `--catalog=<name>` writes `catalog:` or `catalog:<name>` when the selected root catalog entry exists and satisfies the resolved version.
+2. **Explicit user spec in `pkg@spec`.** Exact, range, wildcard, workspace — preserved verbatim, never reinterpreted.
+3. **CLI flag override.** `--exact`, `--tilde`, `--save-prefix '<p>'`. Mutually exclusive (clap enforces).
+4. **Prerelease-exact safety.** If the resolved version is a prerelease and no CLI flag forced something else, save the exact resolved version. Prereleases shouldn't auto-widen under a forgotten `save-prefix` config setting.
+5. **Persistent config.** `save-exact = true`, then `save-prefix = "^|~|"`. Reads from `./lpm.toml` first, then `~/.lpm/config.toml`.
+6. **Catalog mode.** `package.json > lpm.catalogMode = "prefer"` or `"strict"` can save matching default-catalog entries as `catalog:`; strict mode fails on missing or mismatched default entries.
+7. **Default.** `^resolvedVersion`.
 
-Each tier feeds the next only when the higher one is silent. Your `lpm.toml` doesn't override what you typed; your `--exact` flag doesn't override what you typed. **You typed `zod@4.3.6`? You get `"4.3.6"`. Period.**
+Each tier feeds the next only when the higher one is silent. Direct save-prefix controls do not override what you typed; `--catalog` is the deliberate exception because it explicitly asks LPM to save a catalog reference after verifying the selected catalog matches the resolved version.
 
 ## CLI flags
 
@@ -42,11 +46,15 @@ lpm install zod --tilde                 # save with ~ prefix
 lpm install zod --save-prefix ''        # same as --exact (empty prefix)
 lpm install zod --save-prefix '~'       # same as --tilde
 lpm install zod --save-prefix '^'       # explicit caret (the default)
+lpm install --catalog zod               # save as catalog:
+lpm install --catalog=ui zod            # save as catalog:ui
 ```
 
-`--exact`, `--tilde`, and `--save-prefix` are **mutually exclusive**. `*` is **not** a valid `--save-prefix` value — wildcards must be requested per-package via `pkg@*`.
+`--exact`, `--tilde`, `--save-prefix`, and `--catalog[=<name>]` are **mutually exclusive** save-policy flags. `*` is **not** a valid `--save-prefix` value — wildcards must be requested per-package via `pkg@*`.
 
 Setting any of these flags forces a rewrite (see [Bare reinstall](#bare-reinstall) below).
+
+`--catalog` is a save policy, not a catalog editor. The target entry must already exist in root `package.json > catalogs`, and the resolved version must satisfy that catalog range. On mismatch or missing entry, LPM rolls `package.json` back and exits with an error.
 
 ## Persistent config
 
