@@ -116,10 +116,10 @@ How `lpm install <pkg>` saves dependencies that match the root default catalog.
 | Value | Behavior |
 | --- | --- |
 | `"manual"` (default) | Keep normal raw save specs such as `"^4.3.6"` or the explicit range you typed. |
-| `"prefer"` | Save `"catalog:"` when `catalogs.default[pkg]` satisfies the resolved version; warn and save the direct spec when it does not. |
-| `"strict"` | Save `"catalog:"` when `catalogs.default[pkg]` satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+| `"prefer"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; warn and save the direct spec when it does not. |
+| `"strict"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
 
-This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the `catalogs` field below, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
+This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the root catalog set, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
 
 ### `scriptPolicy`
 
@@ -385,6 +385,20 @@ Standard npm fields — LPM reads them as you'd expect.
 ```
 
 Centralized version catalogs for monorepos. Members reference catalog versions with `"catalog:"` or `"catalog:<name>"`.
+
+LPM reads catalogs from root `package.json > catalogs` and from pnpm-style `pnpm-workspace.yaml`:
+
+```yaml title="pnpm-workspace.yaml"
+packages:
+  - "packages/*"
+catalog:
+  react: ^18.2.0
+catalogs:
+  testing:
+    vitest: ^1.0.0
+```
+
+`pnpm-workspace.yaml > catalog` becomes LPM's default catalog. `pnpm-workspace.yaml > catalogs` becomes the named catalog map. When both files define the same catalog package entry, `package.json > catalogs` wins and LPM keeps the pnpm-workspace entry only for non-conflicting packages.
 
 Catalog entry values must be concrete package ranges. A catalog entry cannot point at another catalog entry with `"catalog:"` or `"catalog:<name>"`; LPM rejects recursive catalog definitions during install.
 
