@@ -22,6 +22,9 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
   "lpm": {
     "linker": "isolated",
     "strictDeps": "warn",
+    "strictPeerDependencies": false,
+    "catalogMode": "manual",
+    "cleanupUnusedCatalogs": false,
 
     "scriptPolicy": "deny",
     "triageAdvisor": "none",
@@ -75,9 +78,9 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
 | `"isolated"` | pnpm-style strict layout — each package sees only its declared deps |
 | `"hoisted"` | npm-style flat layout — phantom-deps accessible |
 
-**Default:** `"hoisted"` for single-package projects. LPM auto-detects workspace roots (a `package.json > workspaces` glob or a `pnpm-workspace.yaml`) and defaults those projects to `"isolated"`. There is no auto-promotion from a single package to a workspace — declare workspaces explicitly to opt in.
+**Default:** `"hoisted"` for single-package projects. LPM auto-detects workspace roots (a `package.json > workspaces` glob or a `pnpm-workspace.yaml`) and defaults those projects to `"isolated"`. If a default-hoisted install detects incompatible peer requirements, LPM switches that project to `"isolated"` for the install and records the decision in `lpm.lock` for warm installs.
 
-CLI flag: `lpm install --linker <isolated\|hoisted>` overrides per-invocation. Precedence: `--linker` flag > `~/.lpm/config.toml > linker` > `LPM_LINKER` > this `package.json` value > built-in default (`"hoisted"`, or `"isolated"` if a workspace is detected). Unknown values fail loudly at install time — there is no silent fallback.
+CLI flag: `lpm install --linker <isolated\|hoisted>` overrides per-invocation. Precedence: `--linker` flag > `~/.lpm/config.toml > linker` > `LPM_LINKER` > this `package.json` value > built-in default (`"hoisted"`, or `"isolated"` if a workspace is detected). The peer-conflict auto-switch only applies at the built-in default tier, so any explicit value here opts out. Unknown values fail loudly at install time — there is no silent fallback.
 
 ### `strictDeps`
 
@@ -92,6 +95,42 @@ How strictly LPM enforces declared dependencies (no implicit access to phantom d
 | `"strict"` | Hard error on undeclared imports |
 | `"warn"` | Print a warning, continue |
 | `"loose"` | Permit silently |
+
+### `strictPeerDependencies`
+
+```json
+{ "lpm": { "strictPeerDependencies": true } }
+```
+
+Whether peer-dependency diagnostics fail the install. Default `false`: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings and the install continues. Set to `true` when those diagnostics should be hard failures, especially in CI. Optional peers that are absent still do not fail.
+
+Precedence: `lpm install --strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > `false`.
+
+### `catalogMode`
+
+```json
+{ "lpm": { "catalogMode": "prefer" } }
+```
+
+How `lpm install <pkg>` saves dependencies that match the root default catalog.
+
+| Value | Behavior |
+| --- | --- |
+| `"manual"` (default) | Keep normal raw save specs such as `"^4.3.6"` or the explicit range you typed. |
+| `"prefer"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; warn and save the direct spec when it does not. |
+| `"strict"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+
+This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the root catalog set, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
+
+### `cleanupUnusedCatalogs`
+
+```json
+{ "lpm": { "cleanupUnusedCatalogs": true } }
+```
+
+Prune root catalog entries that no root or workspace-member manifest references after a successful `lpm install`.
+
+**Default:** `false`. When enabled, LPM scans `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies` for `"catalog:"` and `"catalog:<name>"` references, then removes unreferenced entries from root `package.json > catalogs`. In pnpm-style workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` enables the same policy for `pnpm-workspace.yaml > catalog` / `catalogs`; an explicit `package.json > lpm.cleanupUnusedCatalogs` value wins when both are present.
 
 ### `scriptPolicy`
 
@@ -357,6 +396,25 @@ Standard npm fields — LPM reads them as you'd expect.
 ```
 
 Centralized version catalogs for monorepos. Members reference catalog versions with `"catalog:"` or `"catalog:<name>"`.
+
+LPM reads catalogs from root `package.json > catalogs` and from pnpm-style `pnpm-workspace.yaml`:
+
+```yaml title="pnpm-workspace.yaml"
+packages:
+  - "packages/*"
+cleanupUnusedCatalogs: true
+catalog:
+  react: ^18.2.0
+catalogs:
+  testing:
+    vitest: ^1.0.0
+```
+
+`pnpm-workspace.yaml > catalog` becomes LPM's default catalog. `pnpm-workspace.yaml > catalogs` becomes the named catalog map. When both files define the same catalog package entry, `package.json > catalogs` wins and LPM keeps the pnpm-workspace entry only for non-conflicting packages.
+
+Catalog entry values must be concrete package ranges. A catalog entry cannot point at another catalog entry with `"catalog:"` or `"catalog:<name>"`; LPM rejects recursive catalog definitions during install.
+
+Set `package.json > lpm > catalogMode` to control whether `lpm install <pkg>` writes matching default-catalog entries back as `"catalog:"`. Set `cleanupUnusedCatalogs` to prune unused catalog entries after successful installs.
 
 ## See also
 

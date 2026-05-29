@@ -47,12 +47,13 @@ lpm install -D typescript -w
 
 ## 3. The filter grammar
 
-`--filter` is the most-used flag in monorepo workflows. Same grammar across `install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `deploy`, and the standalone [`lpm filter`](/docs/packages/workspaces) preview command.
+`--filter` is the most-used flag in monorepo workflows. `--filter-prod` accepts the same grammar but skips `devDependencies` during closure expansion. Both are available across `install`, `uninstall`, `run`, `lint`, `fmt`, `check`, `deploy`, and the standalone [`lpm filter`](/docs/packages/workspaces) preview command.
 
 | Filter | Matches |
 | --- | --- |
 | `web` | The member literally named `web` |
 | `@scope/*` | Every member with a name under a scope |
+| `@scope/*{./apps/web}` | Members matching both the name atom and exact path |
 | `./apps/*` | Every member under a path glob |
 | `{./apps/web}` | Exact path match (path with literal characters) |
 | `[origin/main]` | Members changed since a git ref |
@@ -64,12 +65,17 @@ lpm install -D typescript -w
 
 Filters compose: `--filter web --filter api` unions the two sets. `--filter web --filter '!web-tests'` selects `web` minus `web-tests`.
 
+Use `--filter-prod ...shared` for production-only dependent closures: members that reach `shared` only through `devDependencies` are not selected.
+
 > **Substring matching is not supported.** `--filter core` does NOT match `@babel/core`. Write `--filter '*/core'` for that.
 
 Preview what a filter expression would select without running anything:
 
 ```bash
 lpm filter web...
+lpm filter --filter-prod ...shared
+lpm filter '[main]' --changed-files-ignore-pattern '**/README.md'
+lpm filter '...[main]' --test-pattern '**/*.test.js'
 lpm filter web... --explain      # full per-package trace (which filter matched, how)
 ```
 
@@ -83,9 +89,21 @@ Selects only members affected by changes vs the base branch (default `main`). Pa
 
 ```bash
 lpm run test --affected --base develop
+lpm run test --affected --changed-files-ignore-pattern '**/README.md'
+lpm run test --affected --test-pattern '**/*.test.js'
 ```
 
 Saves CI minutes — a one-line README change in `apps/marketing` doesn't trigger a full-monorepo test run.
+
+Persist noisy git-diff paths and test-only globs in `lpm.toml` when every CI run should use them:
+
+```toml
+[workspace]
+changed-files-ignore-pattern = ["**/README.md", "docs/**"]
+test-pattern = ["**/*.test.js", "**/*.spec.ts"]
+```
+
+`--test-pattern` keeps the directly changed package selected, but it stops test-only changes from expanding to every dependent package.
 
 `--fail-if-no-match` makes a typo'd filter exit non-zero. Recommended in CI:
 
@@ -134,7 +152,7 @@ CMD ["node", "server.js"]
 
 Constraints:
 
-- `--filter` is required and must match exactly one member.
+- `--filter` or `--filter-prod` is required and must match exactly one member.
 - The output directory must be outside the workspace tree.
 - Workspace members referenced via `workspace:*` must be published to the registry. Local-only deps aren't injected into deploy outputs yet — publish internal members first.
 

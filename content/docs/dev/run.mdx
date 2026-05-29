@@ -33,6 +33,8 @@ lpm run dev -- --port 4000        # forward args to the script
 lpm run build --filter web        # workspaces: build only the web member
 lpm run build --all               # build every workspace member
 lpm run test --affected           # only members affected by recent changes
+lpm run test --filter web --no-bail  # keep running selected members after a failure
+lpm run build --filter './packages/*' --workspace-concurrency 2
 lpm run test --watch              # re-run on file changes
 lpm run --env=staging start       # load .env.staging before running
 ```
@@ -52,7 +54,7 @@ lpm run dev -- --port 4000 --host 0.0.0.0
 lpm run -p lint test typecheck
 ```
 
-Runs all three scripts concurrently, respecting any task dependencies declared in `lpm.json`. Output is buffered per task by default — pass `--stream` for live prefixed output. With `--continue-on-error`, the runner keeps going past failed tasks and reports the failures at the end.
+Runs all three scripts concurrently, respecting any task dependencies declared in `lpm.json`. Output is buffered per task by default — pass `--stream` for live prefixed output. With `--no-bail`, the runner keeps going past failed tasks and reports the failures at the end.
 
 ## Workspaces
 
@@ -60,21 +62,34 @@ Runs all three scripts concurrently, respecting any task dependencies declared i
 lpm run build --all                    # every member, topological order
 lpm run build --filter web             # one member
 lpm run build --filter web --filter api # two members (union)
+lpm run build --filter-prod ...shared  # prod graph closure only
 lpm run test --affected                # members touched since base branch
 lpm run test --affected --base develop # change base branch (default: main)
+lpm run test --affected --changed-files-ignore-pattern '**/README.md'
+lpm run test --affected --test-pattern '**/*.test.js'
 ```
 
-`--filter` accepts the [filter grammar](/docs/packages/workspaces): exact name (`foo`), glob (`@scope/*`), path glob (`./apps/*`), forward closure (`foo...`), reverse closure (`...foo`), exclusion (`!foo`).
+`--filter` accepts the [filter grammar](/docs/packages/workspaces): exact name (`foo`), glob (`@scope/*`), combined name/path (`@scope/*{./apps/web}`), path glob (`./apps/*`), forward closure (`foo...`), reverse closure (`...foo`), exclusion (`!foo`).
 
 Full grammar also includes path exact (`{./apps/web}`), git ref (`[origin/main]`), and the dependency/dependent-closure variants `foo^...` and `...^foo`.
 
-`--all` is mutually exclusive with `--filter` and `--affected`; `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+`--filter-prod <EXPR>` accepts the same grammar, but closure operators ignore `devDependencies` edges. Use it when a production deploy/build/test selection should include runtime workspace dependents without pulling in test-only packages.
 
-`--all`, `--filter`, and `--affected` require a workspace.
+`--all` is mutually exclusive with `--filter`, `--filter-prod`, and `--affected`; filters compose with `--affected` (the affected set is unioned with the filter result).
+
+`--all`, filters, and `--affected` require a workspace.
 
 `--filter core` does **not** match `@babel/core` — substring matching is not supported. Use `--filter '*/core'` for that.
 
 `--fail-if-no-match` makes a typo'd filter exit non-zero — recommended in CI.
+
+`--no-bail` keeps running the remaining selected workspace members after a member fails. The command still exits non-zero after the batch if any selected member failed.
+
+`--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level. The command reads persistent defaults from `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then falls back to the host's available parallelism.
+
+`--changed-files-ignore-pattern <glob>` drops matching paths before `[git-ref]` filters or `--affected` map changed files to workspace members. It also reads project defaults from `lpm.toml > [workspace].changed-files-ignore-pattern`.
+
+`--test-pattern <glob>` marks matching changed files as test-only. Directly changed packages still run, but those packages do not seed dependent fan-out when all their changes match the test pattern. It also reads project defaults from `lpm.toml > [workspace].test-pattern`.
 
 ## Caching
 
@@ -104,20 +119,24 @@ Re-runs one script in one package on file changes.
 
 If the task declares `inputs` globs in `lpm.json`, only matching file changes retrigger the run. Otherwise, relevant project-file changes retrigger it.
 
-`--watch` is single-package today: it does not support multiple script names or workspace-selection flags like `--all`, `--filter`, or `--affected`. Watch runs fresh on every change; the task cache is not used.
+`--watch` is single-package today: it does not support multiple script names or workspace-selection flags like `--all`, `--filter`, `--filter-prod`, or `--affected`. Watch runs fresh on every change; the task cache is not used.
 
 ## Flags
 
 | Flag                  | Effect                                                                                               |
 | --------------------- | ---------------------------------------------------------------------------------------------------- |
 | `-p`, `--parallel`    | Run scripts concurrently (respects task deps from `lpm.json`)                                        |
-| `--continue-on-error` | Keep running remaining tasks after a failure                                                         |
+| `--no-bail`           | Keep running remaining tasks or selected workspace members after a failure                           |
 | `--stream`            | Live prefixed output instead of buffered per-task in task-graph / parallel runs                      |
-| `--all`               | Run in every workspace member (topological order); mutually exclusive with `--filter` / `--affected` |
+| `--all`               | Run in every workspace member (topological order); mutually exclusive with filters / `--affected` |
 | `--filter <EXPR>`     | Filter workspace members (repeatable; unions)                                                        |
+| `--filter-prod <EXPR>` | Filter workspace members with production-only dependency closures                                    |
 | `--fail-if-no-match`  | Exit non-zero if the selected workspace set is empty                                                 |
+| `--workspace-concurrency <N>` | Limit concurrent workspace members for `--all`, `--filter`, or `--affected` runs           |
 | `--affected`          | Only members affected by changes vs `--base`                                                         |
 | `--base <REF>`        | Git base ref for `--affected` (default: `main`)                                                      |
+| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters                |
+| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions        |
 | `--no-cache`          | Bypass the task cache for cache-enabled tasks; ignored in watch mode                                 |
 | `--no-env-check`      | Skip env-var schema validation                                                                       |
 | `--env=<MODE>`        | Load `.env`, `.env.local`, `.env.<MODE>`, and `.env.<MODE>.local`                                    |

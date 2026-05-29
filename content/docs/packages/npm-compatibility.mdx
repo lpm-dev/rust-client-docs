@@ -20,7 +20,7 @@ This page is the explicit scope: what carries over verbatim, what's different, a
 | `package.json > workspaces` (array or object form) | Both shapes accepted |
 | `package.json > overrides` | npm-style overrides honored (lower precedence than `lpm.overrides`) |
 | `package.json > resolutions` | yarn-style resolutions honored |
-| `package.json > catalogs` | Centralized version catalogs |
+| `package.json > catalogs` and `pnpm-workspace.yaml > catalog` / `catalogs` | Centralized version catalogs |
 | `.npmrc` | Read for `registry=`, `@scope:registry=`, and `//host/:_authToken=` lines |
 | Semver dialect | `^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, dist-tags (`latest`, `beta`, `next`) |
 | Lifecycle script names | `preinstall`, `install`, `postinstall` execute (see [Differences](#differences)). `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` are recognized for detection — declaring them puts the package in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue, but the install pipeline never runs them. |
@@ -50,16 +50,16 @@ To approve packages for the default deny path: [`lpm approve-scripts`](/docs/pac
 
 This is the single biggest behavioral difference. See [Security & audit](/docs/packages/security-audit) for why.
 
-### `node_modules` layout: hoisted by default, isolated for workspaces
+### `node_modules` layout: hoisted by default, isolated for workspaces and peer conflicts
 
-LPM matches npm's flat `node_modules/` layout for single-package projects. **Workspaces auto-flip to isolated** (pnpm-style symlinks into the global virtual store) — phantom-dep bugs are most expensive in monorepos, so the safer layout becomes the default there. Force a specific mode:
+LPM starts with npm's flat `node_modules/` layout for single-package projects. **Workspaces auto-flip to isolated** (pnpm-style symlinks into the global virtual store) — phantom-dep bugs are most expensive in monorepos, so the safer layout becomes the default there. If a default-hoisted resolve finds incompatible peer requirements, LPM also auto-switches that project to isolated and records the decision in `lpm.lock`. Force a specific mode:
 
 ```bash
 lpm install --linker=isolated      # opt into pnpm-style for non-workspaces
 lpm install --linker=hoisted       # keep npm-style flat for workspaces
 ```
 
-Or persistent in `package.json > lpm > linker` / `~/.lpm/config.toml > linker`.
+Or persist it in `package.json > lpm > linker` / `~/.lpm/config.toml > linker`. Explicit linker settings opt out of peer-conflict auto-switching.
 
 Under isolated layout, code that imports a dep it didn't declare in `dependencies` (phantom-dep access) breaks. npm's hoisting silently allowed it; isolated doesn't. Add the missing entries to `dependencies` — the fix is one-line per package.
 
