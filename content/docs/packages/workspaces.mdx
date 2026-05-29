@@ -3,7 +3,7 @@ title: Workspaces
 description: "Monorepo support — workspace declaration, filter grammar, workspace:* protocol, catalogs, deploy."
 ---
 
-LPM treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`, `deploy`) accepts `--filter` / `--filter-prod`, `--all`, and `--affected` to scope work. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
+LPM treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`, `deploy`) accepts `--filter` / `--filter-prod`, `--all`, and `--affected` to scope work. Git-diff selectors can also ignore noisy paths with `--changed-files-ignore-pattern`. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
 
 This page covers the conceptual model. For a step-by-step setup walkthrough, see the [Monorepo setup guide](/docs/guides/monorepo-setup).
 
@@ -49,6 +49,7 @@ Preview what an expression selects without running anything:
 ```bash
 lpm filter web...                     # terse name list
 lpm filter --filter-prod ...shared    # prod dependents of shared
+lpm filter '[main]' --changed-files-ignore-pattern '**/README.md'
 lpm filter web... --explain           # full per-package trace (which filter matched, how)
 lpm filter web --fail-if-no-match     # exit non-zero if empty (useful in CI)
 ```
@@ -60,11 +61,19 @@ lpm filter web --fail-if-no-match     # exit non-zero if empty (useful in CI)
 ```bash
 lpm run test --affected              # default base = main
 lpm run test --affected --base develop
+lpm run test --affected --changed-files-ignore-pattern '**/README.md'
 ```
 
 Selects only members affected by changes vs the base branch. Saves CI minutes — a one-line README change in `apps/marketing` doesn't trigger a full-monorepo test run.
 
 Affected-ness is computed by walking the git diff against the base ref, then expanding through dep edges (a change in `packages/shared` triggers everything that imports it).
+
+`--changed-files-ignore-pattern <glob>` drops matching paths from the git diff before LPM maps files to workspace members. Pass it more than once for multiple globs, or set a project default:
+
+```toml title="lpm.toml"
+[workspace]
+changed-files-ignore-pattern = ["**/README.md", "docs/**"]
+```
 
 ## `--fail-if-no-match`
 
@@ -172,7 +181,7 @@ CMD ["node", "server.js"]
 
 Constraints:
 
-- `--filter` or `--filter-prod` is required and must match exactly one member.
+- `--filter` or `--filter-prod` is required and must match exactly one member. `--changed-files-ignore-pattern` applies when the filter contains a `[git-ref]` atom.
 - The output directory must be outside the workspace tree.
 - Workspace members referenced via `workspace:*` must be **published to the registry** today. Local-package injection into deploy outputs is not supported yet — publish internal members first.
 
