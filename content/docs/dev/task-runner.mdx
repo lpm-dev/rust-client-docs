@@ -139,24 +139,26 @@ lpm run -p lint test typecheck
 
 `-p` / `--parallel` runs scripts concurrently — the runner enforces `dependsOn` edges but otherwise lets independent tasks proceed in parallel. Output is buffered per-task by default; `--stream` prefixes live output instead.
 
-`--continue-on-error` keeps the runner going past failed tasks and reports the failures at the end. Without it, the first failure stops the run.
+`--no-bail` keeps the runner going past failed tasks and reports the failures at the end. Without it, the first failure stops the run.
+
+Workspace fan-out is separate from per-package task parallelism. `lpm run`, `lpm test`, and `lpm bench` accept `--workspace-concurrency <N>` in workspace mode to cap how many selected members run at once within a topological level. The persistent chain is CLI flag, then `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then available host parallelism.
 
 ## Workspaces
 
-Workspace-aware commands accept `--filter`, `--all`, and `--affected`. The set today:
+Workspace-aware commands accept `--filter`, `--filter-prod`, `--all`, and `--affected`. The set today:
 
-| Command                        | `--all` | `--filter` | `--affected` |
-| ------------------------------ | ------- | ---------- | ------------ |
-| [`lpm run`](/docs/dev/run)     | ✓       | ✓          | ✓            |
-| [`lpm lint`](/docs/dev/lint)   | ✓       | ✓          | ✓            |
-| [`lpm fmt`](/docs/dev/fmt)     | ✓       | ✓          | ✓            |
-| [`lpm check`](/docs/dev/check) | ✓       | ✓          | ✓            |
-| [`lpm test`](/docs/dev/test)   | ✓       | ✓          | ✓            |
-| [`lpm bench`](/docs/dev/bench) | ✓       | ✓          | ✓            |
+| Command                        | `--all` | `--filter` | `--filter-prod` | `--affected` |
+| ------------------------------ | ------- | ---------- | --------------- | ------------ |
+| [`lpm run`](/docs/dev/run)     | ✓       | ✓          | ✓               | ✓            |
+| [`lpm lint`](/docs/dev/lint)   | ✓       | ✓          | ✓               | ✓            |
+| [`lpm fmt`](/docs/dev/fmt)     | ✓       | ✓          | ✓               | ✓            |
+| [`lpm check`](/docs/dev/check) | ✓       | ✓          | ✓               | ✓            |
+| [`lpm test`](/docs/dev/test)   | ✓       | ✓          | ✓               | ✓            |
+| [`lpm bench`](/docs/dev/bench) | ✓       | ✓          | ✓               | ✓            |
 
 `lpm test` and `lpm bench` claim the same flag names from any underlying runner that uses them (notably bun's `--filter`); to forward those to the runner instead of LPM, prefix with `--` — see [Test & bench runners](/docs/dev/test-bench-runners#forwarding-the-same-flag-names-to-the-runner).
 
-Across workspace-aware commands, `--all` is the broad selector and is mutually exclusive with `--filter` and `--affected`. `--filter` may compose with `--affected`.
+Across workspace-aware commands, `--all` is the broad selector and is mutually exclusive with filters and `--affected`. Filters may compose with `--affected`.
 
 The runner walks the workspace graph and selects matching members in topological order:
 
@@ -164,15 +166,18 @@ The runner walks the workspace graph and selects matching members in topological
 lpm run build --all                         # every member, deps-first
 lpm run test --filter web                   # one member
 lpm run test --filter './apps/*'            # path glob
+lpm run test --filter '@scope/*{./apps/web}' # combined name + exact path
 lpm run test --filter web --filter api      # union
+lpm run test --filter-prod ...shared        # prod graph closure
 lpm run test --filter '!web-tests'          # exclusion
+lpm run test --filter './apps/*' --workspace-concurrency 2
 
 lpm lint --filter './apps/*' --fail-if-no-match
 lpm fmt --filter '@scope/*' --check
 lpm check --affected --base develop
 ```
 
-`lpm lint`, `lpm fmt`, and `lpm check` add `--fail-if-no-match` for CI pipelines that want to catch typo'd filters early. They don't expose `--parallel` or `--continue-on-error` — workspace fan-out is parallel by default within each topological level. The run continues across all levels even if individual members fail; the overall command exits non-zero after aggregation when any member failed.
+`lpm lint`, `lpm fmt`, and `lpm check` add `--fail-if-no-match` for CI pipelines that want to catch typo'd filters early. They don't expose `--parallel` or `--no-bail` — workspace fan-out is parallel by default within each topological level. The run continues across all levels even if individual members fail; the overall command exits non-zero after aggregation when any member failed.
 
 Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
 
@@ -181,6 +186,8 @@ Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-gr
 ```bash
 lpm run test --affected                     # default base = main
 lpm run test --affected --base develop
+lpm run test --affected --changed-files-ignore-pattern '**/README.md'
+lpm run test --affected --test-pattern '**/*.test.js'
 ```
 
 Computed by:
@@ -191,6 +198,10 @@ Computed by:
 4. Expand the directly-changed set through dep edges to include transitive dependents.
 
 That last step is what gives you "the API package changed, so the web package that imports it also runs." Use `--filter '[origin/main]'` (the git-ref filter atom) for the directly-changed-only set without the dependents expansion — see [Workspaces](/docs/packages/workspaces#filter-grammar).
+
+Use `--changed-files-ignore-pattern <glob>` to drop noise paths from the git diff before this mapping step. The same setting can be persisted as `lpm.toml > [workspace].changed-files-ignore-pattern`.
+
+Use `--test-pattern <glob>` to mark matching changed files as test-only. The directly changed package still runs, but dependents are not added when a package only changed in test files. Persist defaults as `lpm.toml > [workspace].test-pattern`.
 
 ## Watch mode
 

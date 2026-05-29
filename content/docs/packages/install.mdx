@@ -23,9 +23,12 @@ lpm install zod               # add latest, save as ^x.y.z
 lpm install zod@4.3.6         # add exact, save as 4.3.6
 lpm install zod@^4.3.0        # add with explicit range
 lpm install -D vitest         # save under devDependencies
+lpm install --catalog react   # save as "catalog:" when the default catalog matches
+lpm install --catalog=ui react # save as "catalog:ui" when the named catalog matches
 lpm install -g typescript     # install into ~/.lpm/global/
 lpm install --offline         # never touch the network
 lpm install --force           # full re-install, bypass every fast path
+lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --verbose         # append per-phase timings + lockfile size
 ```
 
@@ -46,8 +49,67 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 
 1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
-3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages default to **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
+3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
+
+## Peer dependency strict mode
+
+By default, LPM follows pnpm's non-strict install posture: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings, then install continues.
+
+When those warnings include a cross-consumer peer conflict, the default linker auto-switches to isolated for that project. Explicit linker choices (`--linker`, `~/.lpm/config.toml > linker`, `LPM_LINKER`, or `package.json > lpm.linker`) are respected and do not auto-switch.
+
+Use strict mode when peer diagnostics should gate CI:
+
+```bash
+lpm install --strict-peer-dependencies
+```
+
+Strict mode fails after resolution if a required peer is missing, an installed peer does not satisfy the declared range, or the resolver found incompatible peer requirements across consumers. Optional peers that are absent still do not fail.
+
+Precedence: `--strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > default (`false`). On `-g`, the `package.json` tier is not present, so CLI flags override `~/.lpm/config.toml`.
+
+Under `--json`, peer diagnostics are always attached to the success envelope as `peer_issues`. Missing required peers land in `missing`, installed peers that do not satisfy the declared range land in `bad`, and cross-consumer resolver conflicts land in `conflicts`. Each list has a matching `*_count`, and `total_count` is the combined issue count. The legacy `peer_conflicts` array is still emitted and matches `peer_issues.conflicts`.
+
+```json
+{
+  "success": true,
+  "peer_issues": {
+    "missing": [
+      {
+        "type": "missing",
+        "package": "required-peer-host",
+        "version": "1.0.0",
+        "peer": "missing-peer",
+        "required_range": "^1.0.0",
+        "resolved_version": null
+      }
+    ],
+    "bad": [
+      {
+        "type": "bad",
+        "package": "peer-consumer-a",
+        "version": "1.0.0",
+        "peer": "shared-peer",
+        "required_range": "^1.0.0",
+        "resolved_version": "2.0.0"
+      }
+    ],
+    "conflicts": [
+      {
+        "canonical": "shared-peer",
+        "chosen_version": "2.0.0",
+        "unsatisfied_consumers": [{ "consumer": "peer-consumer-a", "range": "^1.0.0" }]
+      }
+    ],
+    "intersections": [],
+    "missing_count": 1,
+    "bad_count": 1,
+    "conflicts_count": 1,
+    "intersections_count": 0,
+    "total_count": 3
+  }
+}
+```
 
 ## Save policy
 
@@ -71,6 +133,18 @@ save-exact = false  # bool; true forces exact regardless of prefix
 ```
 
 Re-installing an existing dep without a version or override flag refreshes the lockfile and store but **does not** rewrite the existing range — `"zod": "~4.3.6"` stays put.
+
+Use `--catalog` to force a catalog reference for this invocation. `--catalog <pkg>` writes `"catalog:"`; `--catalog=<name> <pkg>` writes `"catalog:<name>"`. The entry must already exist in the selected root catalog and the resolved version must satisfy that catalog range, otherwise the install fails before committing `package.json`. This flag is mutually exclusive with `--exact`, `--tilde`, and `--save-prefix`.
+
+Catalogs can override the saved spec for packages that exist in the root default catalog. Set `package.json > lpm > catalogMode`:
+
+| Mode | Behavior for `lpm install <pkg>` |
+| --- | --- |
+| `"manual"` (default) | Keep the raw save policy above. Existing `catalog:` entries still resolve, but new installs do not auto-save `catalog:`. |
+| `"prefer"` | Save `"catalog:"` when the resolved version satisfies the root default catalog entry; warn and keep the direct spec on mismatch. |
+| `"strict"` | Save `"catalog:"` when the resolved version satisfies the root default catalog entry; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+
+Set `package.json > lpm.cleanupUnusedCatalogs = true` or `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` to prune unused root catalog entries after successful installs. The default is to preserve catalog entries exactly as written.
 
 Full details in [Save policy](/docs/packages/save-policy).
 
@@ -195,9 +269,10 @@ In a monorepo, target a specific member or the workspace root:
 lpm install react --filter web    # add react to packages/web/
 lpm install -w typescript -D      # add to the root package.json
 lpm install --filter './apps/*'   # any glob the workspace filter accepts
+lpm install react --filter-prod ...web # prod dependency closure only
 ```
 
-`--filter` and `-w` are mutually exclusive. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM prompts for confirmation; pass `-y` to skip the prompt.
+`--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM prompts for confirmation; pass `-y` to skip the prompt.
 
 See [Workspaces](/docs/packages/workspaces) for filter grammar.
 
@@ -274,12 +349,13 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 | `--min-release-age=<DUR>` | Overrides the cooldown window |
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
 | `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the script-policy |
+| `--strict-peer-dependencies` / `--no-strict-peer-dependencies` | Overrides the peer-dependency strictness setting for the synthesized install |
 | `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted for global installs. Also useful under `deny` with an established global trust set. |
 
 Two things differ from project installs:
 
 - **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
-- **The script-policy chain collapses.** With no project-level `package.json > lpm > scriptPolicy` to read, the precedence chain on `-g` is CLI flag > `~/.lpm/config.toml > script-policy` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
+- **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
 
 Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
 
@@ -326,7 +402,9 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--allow-new` | Skip the minimum-release-age cooldown |
 | `--min-release-age <DUR>` | Override the cooldown (`<N>h`, `<N>d`, or seconds; `0` disables) |
 | `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
-| `--linker <isolated\|hoisted>` | Linking layout (default: `hoisted`; workspaces auto-default to `isolated`) |
+| `--strict-peer-dependencies` | Fail when required peers are missing, peer ranges mismatch, or peer requirements conflict |
+| `--no-strict-peer-dependencies` | Disable strict peer failures for this invocation, overriding project or user config |
+| `--linker <isolated\|hoisted>` | Linking layout (default starts `hoisted`; workspaces and default peer-conflict installs use `isolated`) |
 | `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |
 | `--triage` | Alias for `--policy=triage` |
@@ -338,9 +416,13 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--exact` | Save exact version (no prefix) |
 | `--tilde` | Save with `~` prefix |
 | `--save-prefix <P>` | Override save prefix (`^`, `~`, or `""`) |
+| `--catalog[=<NAME>]` | Save through the default or named root catalog when the catalog entry matches |
 | `--filter <EXPR>` | Workspace filter (mutually exclusive with `-w`) |
+| `--filter-prod <EXPR>` | Workspace filter with production-only dependency closures (mutually exclusive with `-w`) |
+| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `[git-ref]` filters |
+| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `[git-ref]` fan-out decisions |
 | `-w`, `--workspace-root` | Target the root `package.json` |
-| `--fail-if-no-match` | Exit non-zero if `--filter` matches nothing |
+| `--fail-if-no-match` | Exit non-zero if filters match nothing |
 | `-y`, `--yes` | Skip the interactive multi-member confirm |
 | `--no-skills` | Skip skills auto-install |
 | `--no-editor-setup` | Skip editor auto-integration |

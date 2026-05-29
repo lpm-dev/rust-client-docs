@@ -60,18 +60,22 @@ lpm test --filter web                     # exact name
 lpm test --filter '@scope/*'              # glob
 lpm test --filter './apps/*'              # path glob
 lpm test --filter web --filter api        # union
+lpm test --filter-prod ...shared          # prod graph closure
 lpm test --affected                       # only members touched since main
 lpm test --affected --base develop
 lpm test --filter web --fail-if-no-match  # exit non-zero on typo'd filter
+lpm test --filter '@scope/*' --workspace-concurrency 2
 ```
 
 Detection runs per member, so a workspace can mix runners (one member uses vitest, another uses jest) and each gets the right command. A member with no installed runner and no `scripts.test` becomes a per-member detection failure in the JSON envelope rather than aborting the whole run.
 
-`--all` is mutually exclusive with `--filter` and `--affected`. `--filter` composes with `--affected` (the affected set is unioned with the filter result).
+`--all` is mutually exclusive with filters and `--affected`. `--filter` and `--filter-prod` compose with `--affected` (the affected set is unioned with the filter result). `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
+
+`--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level.
 
 ### Forwarding runner flags with the same names
 
-The five workspace flags (`--all`, `--filter`, `--affected`, `--base`, `--fail-if-no-match`) are claimed by LPM. To pass any of them through to the underlying runner (e.g. bun's `--filter`, jest's `--all`), put them after `--`:
+The workspace flags (`--all`, `--filter`, `--filter-prod`, `--affected`, `--base`, `--fail-if-no-match`, `--workspace-concurrency`) are claimed by LPM. To pass any of them through to the underlying runner (e.g. bun's `--filter`, jest's `--all`), put them after `--`:
 
 ```bash
 lpm test -- --filter pattern              # forwards --filter to bun/vitest/etc
@@ -102,9 +106,13 @@ When the filter resolves to exactly one member, `lpm test` runs against that mem
 | -------------------- | ----------------------------------------------------------------------------------------------------- |
 | `--all`              | Run in every workspace member                                                                         |
 | `--filter <expr>`    | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable) |
+| `--filter-prod <expr>` | Select workspace members with production-only dependency closures                                    |
 | `--affected`         | Run only in members affected by changes vs `--base`                                                   |
 | `--base <REF>`       | Git base ref for `--affected` (default: `main`)                                                       |
+| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
+| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions        |
 | `--fail-if-no-match` | Exit non-zero if no member matches the filter set                                                     |
+| `--workspace-concurrency <N>` | Limit concurrent workspace members for `--all`, `--filter`, or `--affected` runs           |
 
 Anything after `--` (or trailing) is forwarded to the runner.
 
