@@ -1,11 +1,12 @@
 ---
-title: lpm patch / patch-commit
-description: "Edit an installed package's source and persist the change as a patch (patch-package style)."
+title: lpm patch / patch-commit / patch-remove
+description: "Create, finalize, and remove local dependency patches with integrity binding."
 ---
 
 ```bash
 lpm patch <selector>                  # step 1 — extract for editing
 lpm patch-commit <staging_dir>        # step 2 — finalize as a .patch file
+lpm patch-remove <selector>           # remove a registered patch
 ```
 
 Two-step workflow for fixing a bug in a dependency without forking it. The patch travels with your repo under `patches/<name>@<version>.patch` and re-applies automatically on every subsequent `lpm install`.
@@ -83,6 +84,20 @@ The on-disk `package.json > lpm > patchedDependencies` entry looks like:
 }
 ```
 
+## `lpm patch-remove <selector>`
+
+```bash
+lpm patch-remove lodash@4.17.21
+lpm patch-remove lodash --dry-run
+lpm patch-remove lodash@4.17.21 --keep-file
+```
+
+Removes entries from `package.json > lpm > patchedDependencies`. Exact pins (`lodash@4.17.21`) match one manifest entry. Bare names (`lodash`) work only when they uniquely match a single patched version; if multiple patched versions exist, use the exact key.
+
+By default, LPM also deletes the patch file when it is safely inside the project and no remaining patch entry references it. Use `--keep-file` to leave the file on disk. Use `--dry-run` to preview the manifest and file changes without writing.
+
+After removing a patch, run `lpm install` to refresh `node_modules`.
+
 ## Drift safety
 
 On every install, the patch engine verifies the store entry's integrity matches `originalIntegrity`. **Drift is a hard error** — your install will refuse to apply the patch if the underlying package's content changed (re-publish under the same version, tampering, etc.). Bump the patched dep, regenerate the patch.
@@ -100,5 +115,6 @@ For larger or longer-lived divergence, prefer forking + publishing your own scop
 ## See also
 
 - [`lpm install`](/docs/packages/install) — auto-applies patches after linking
+- [`lpm sbom`](/docs/packages/sbom) — includes patch metadata in generated SBOMs
 - [`package.json` "lpm.patchedDependencies"](/docs/reference/package-json-lpm#patcheddependencies) — the file format
 - [Content-addressable store](/docs/packages/content-addressable-store) — what the patch is generated against
