@@ -1,0 +1,88 @@
+---
+title: lpm sbom
+description: "Export a CycloneDX or SPDX Software Bill of Materials from lpm.lock."
+---
+
+```bash
+lpm sbom
+lpm sbom --format spdx
+lpm sbom --output bom.cdx.json
+lpm sbom --registry-metadata
+```
+
+`lpm sbom` exports a Software Bill of Materials for the current project. An SBOM is a machine-readable inventory of the packages in a build: names, versions, package URLs, dependency edges, sources, integrity hashes, licenses when local metadata is available, patch metadata, and provenance metadata when cached or fetched.
+
+Security teams, enterprise customers, release pipelines, and vulnerability scanners use SBOMs to answer "what shipped?" after a build. Generate one in CI and attach it to releases or container images.
+
+## Formats
+
+Default output is CycloneDX 1.7 JSON:
+
+```bash
+lpm sbom > bom.cdx.json
+```
+
+SPDX 2.3 JSON is available with `--format spdx`:
+
+```bash
+lpm sbom --format spdx > bom.spdx.json
+```
+
+Both formats are generated from `lpm.lock`, so run `lpm install` first.
+
+## Enrichment
+
+By default, SBOM generation is local-first and does not depend on the network. It reads:
+
+- `lpm.lock` for the resolved package graph
+- `package.json` for root metadata and direct dependency scopes
+- installed package manifests from `node_modules/` and the LPM store when present
+- `package.json > lpm.patchedDependencies` and patch file hashes
+- cached Sigstore provenance snapshots under `~/.lpm/cache/metadata/attestations`
+
+Use `--registry-metadata` when you want live registry metadata and provenance attestation checks during SBOM generation:
+
+```bash
+lpm sbom --registry-metadata --output bom.cdx.json
+```
+
+The flag respects the same registry routing and `.npmrc` behavior as metadata-reading commands. Plain `lpm sbom` stays deterministic and offline-friendly.
+
+## Output file
+
+```bash
+lpm sbom --output bom.cdx.json
+lpm sbom --format spdx --output bom.spdx.json
+```
+
+When `--output` is set, LPM writes the SBOM to that path and does not duplicate the JSON to stdout.
+
+## Patch and provenance fields
+
+CycloneDX output carries LPM-specific metadata as component `properties`, for example:
+
+```json
+{
+  "name": "lpm:patch:path",
+  "value": "patches/lodash@4.17.21.patch"
+}
+```
+
+SPDX output carries the same LPM details in package `attributionTexts`. This keeps the documents valid while preserving the information needed to audit patched dependencies.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--format <cyclonedx\|spdx>` | Choose the SBOM format. Default: `cyclonedx` |
+| `-o`, `--output <FILE>` | Write to a file instead of stdout |
+| `--registry-metadata` | Fetch live registry metadata and provenance attestations |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — produces the lockfile SBOMs read
+- [`lpm patch`](/docs/packages/patch) — patch metadata included in SBOM output
+- [`lpm audit`](/docs/packages/audit) — vulnerability and behavioral analysis
+- [Lockfile](/docs/packages/lockfile) — resolved graph source of truth
