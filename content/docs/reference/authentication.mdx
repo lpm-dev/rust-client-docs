@@ -3,7 +3,7 @@ title: Authentication
 description: "Log in, log out, check identity, rotate tokens, and configure CI auth."
 ---
 
-LPM stores auth tokens in your **local secure store**. It prefers the OS keychain — Keychain on macOS, Credential Manager on Windows, Secret Service-compatible keyrings on Linux — and falls back to encrypted file storage under `~/.lpm/.credentials` when the system store is unavailable. Tokens never land in plain text on disk. Multi-registry: separate tokens for lpm.dev, npm, GitHub Packages, GitLab Packages, and any custom registries you've added.
+LPM stores its own auth tokens in your **local secure store**. It prefers the OS keychain — Keychain on macOS, Credential Manager on Windows, Secret Service-compatible keyrings on Linux — and falls back to encrypted file storage under `~/.lpm/.credentials` when the system store is unavailable. Tokens never land in plain text on disk. Multi-registry: separate stored tokens for lpm.dev, npm, and any explicit third-party fallbacks. GitHub and GitLab can also use tokens already managed by `gh` / `glab` without copying them into LPM storage.
 
 This page covers every command in the auth surface: [`login`](#lpm-login), [`logout`](#lpm-logout), [`whoami`](#lpm-whoami), [`token-rotate`](#lpm-token-rotate), [`setup ci`](#lpm-setup-ci), [`setup local`](#lpm-setup-local), and [`ci`](#lpm-ci).
 
@@ -19,17 +19,21 @@ lpm login --login-registry https://npm.my-co.com --token <T>
 
 Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in local secure storage (OS keychain when available, encrypted file fallback otherwise). CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
 
-For other registries (npm, GitHub, GitLab, custom), there's no browser flow — the CLI takes the token directly. In a TTY without `--token`, it prompts with masked input and follows up with two interactive questions: a **token-expiry reminder** (in days, defaults to 30) and whether the account uses **2FA/OTP** for publishing (stored so `lpm publish` prompts for OTP up-front). In `--json` mode (or non-TTY), `--token <T>` is required.
+For npm, `lpm login --npm` uses npm's browser login by default: LPM asks `registry.npmjs.org` for a web-login URL, opens it, polls the registry for completion, then stores the returned npm token. This requires an interactive terminal. In `--json` mode or non-TTY shells, pass `--token <T>` or set `NPM_TOKEN` as the explicit fallback.
+
+For GitHub and GitLab, `lpm login --github` / `--gitlab` validates your existing host CLI session instead of asking you to paste a token. GitHub uses `gh auth token --hostname github.com`; GitLab.com uses `glab auth token`. When that succeeds, LPM stores nothing. Passing `--token <T>` remains available as an explicit fallback and stores that token in LPM's secure storage. Self-managed GitLab instances use env or stored fallback tokens in this version.
+
+Custom registries stay token-based. Use `lpm login --login-registry <URL> --token <T>` in scripts; in an interactive TTY without `--token`, LPM prompts with masked input. Explicit token fallbacks can still record a **token-expiry reminder** and **2FA/OTP** preference for publishing.
 
 | Flag                     | Effect                                                                                              |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
-| `--npm`                  | Log in to `registry.npmjs.org` with a granular access token                                         |
-| `--github`               | Log in to GitHub Packages with a personal access token                                              |
-| `--gitlab`               | Log in to GitLab Packages with a personal/deploy/job token                                          |
-| `--login-registry <URL>` | Log in to a custom npm-compatible registry                                                          |
-| `--token <T>`            | Provide the token non-interactively. Required in `--json` mode; in a TTY it skips the masked prompt |
+| `--npm`                  | Browser-login to `registry.npmjs.org`; `--token` / `NPM_TOKEN` are explicit fallbacks               |
+| `--github`               | Use existing `gh` auth for GitHub Packages, or store an explicit fallback token with `--token`       |
+| `--gitlab`               | Use existing `glab` auth for GitLab.com Packages, or store an explicit fallback token with `--token` |
+| `--login-registry <URL>` | Log in to a custom npm-compatible registry with a token                                             |
+| `--token <T>`            | Explicit token fallback for npm, GitHub, GitLab, or a custom registry                               |
 
-If you're already logged in to the target registry, `lpm login` reports the existing identity and exits without re-authenticating. To force a re-login, run `lpm logout` first.
+For lpm.dev, if you're already logged in, `lpm login` reports the existing identity and exits without re-authenticating. Third-party login commands refresh or re-check the selected auth source.
 
 ## `lpm logout`
 
@@ -44,6 +48,8 @@ lpm logout --all                             # clear every stored registry token
 ```
 
 **Scope rule for per-registry flags.** With no flags, `lpm logout` clears the lpm.dev session only. Passing one of `--npm` / `--github` / `--gitlab` / `--logout-registry <URL>` clears **only that target** — your lpm.dev session stays signed in. Use `--all` to clear everything in one shot.
+
+For GitHub and GitLab, logout clears only LPM-stored fallback tokens. `gh` and `glab` sessions remain managed by those tools.
 
 `--revoke` (lpm.dev only) also unpairs any browser/desktop sessions paired against your current LPM token. The unpair is best-effort — it won't fail the logout if the registry can't reach the pairing endpoint.
 
@@ -65,7 +71,7 @@ Prints the currently logged-in identity for lpm.dev, plus:
 - **Plan tier**, MFA status, pool access flag
 - **Storage / private-package usage** against your plan's limits — with an OVER LIMIT warning when usage exceeds them (publishing and invites are restricted in that state)
 - **Available Scopes** — your personal `@lpm.dev/<profile>.*` plus one row per organization you belong to (`@lpm.dev/<org-slug>.*`) with your role
-- **External Registries** — every npm / GitHub / GitLab / custom registry you've logged into with `lpm login`, with stored-token status
+- **External Registries** — npm, GitHub, GitLab, and custom registry auth sources, including host-CLI-backed GitHub/GitLab auth when available
 - **Token expiry warnings** if any registry token is approaching the reminder window you set during `lpm login`
 
 `--json` returns the same data structurally: `{username, email, plan, mfa_enabled, has_pool_access, usage{storage_bytes, private_packages}, limits{storage_bytes, private_packages}, orgs[{slug, name, role}], registries[{name, status}]}`.
@@ -76,7 +82,7 @@ Prints the currently logged-in identity for lpm.dev, plus:
 lpm token-rotate
 ```
 
-Server-side rotation for the **lpm.dev token only**: creates a new token, invalidates the old one, and stores the new one in local secure storage. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system. There's no equivalent for npm / GitHub / GitLab — rotate those by re-running `lpm login --<target>` with a fresh token.
+Server-side rotation for the **lpm.dev token only**: creates a new token, invalidates the old one, and stores the new one in local secure storage. Use after any suspected leak. The new token's expiry (if the server returns one) is recorded for `lpm whoami`'s warning system. There's no equivalent for npm / GitHub / GitLab — rotate npm through `lpm login --npm`, rotate host-CLI-backed GitHub/GitLab auth in `gh` / `glab`, or replace an explicit fallback with `lpm login --<target> --token <T>`.
 
 `lpm setup` has two explicit subcommands:
 
