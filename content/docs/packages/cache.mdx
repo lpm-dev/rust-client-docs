@@ -20,6 +20,9 @@ lpm cache clean metadata                # only wipe registry metadata
 lpm cache clean tasks                   # only wipe task-runner cache
 lpm cache clean dlx                     # only wipe dlx tarball cache
 
+lpm cache status                        # local task cache usage + remote status
+lpm cache status --json                 # structured status for CI
+
 lpm cache prune                         # preview orphan store entries (dry-run)
 lpm cache prune --apply                 # actually remove orphans
 lpm cache prune --max-age 30d --apply   # only entries last touched > 30d ago
@@ -32,9 +35,16 @@ lpm cache prune --project ./my-app      # manual repair: walk one project only
 | --- | --- |
 | `path` | Print the cache root (`~/.lpm/cache/`) or one of its subcategories |
 | `clean` | Wipe ephemeral caches (`~/.lpm/cache/`). `lpm cache clear` is an alias. |
+| `status` | Report local task-cache usage and hosted remote-cache status for the current project |
 | `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) plus a sweep of deferred global-install tombstones |
 
 `clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`); without one, all three are wiped. `clean` never touches the global package store — for that, use `prune`.
+
+## Status
+
+`lpm cache status` reports the local task-cache path and size. If the current project has `lpm.json > remoteCache.enabled`, it also calls the hosted cache status endpoint and reports the remote status, usage, and quota when the server returns them.
+
+Remote status failures do not make `lpm cache status` fail; the JSON envelope includes `remote.error` so CI can decide whether to warn or ignore.
 
 ## Prune
 
@@ -75,11 +85,22 @@ Plus the [global flags](/docs/commands#global-flags).
 ## JSON output
 
 ```bash
+lpm cache status --json
+
 lpm cache prune --json            # dry-run report
 lpm cache prune --apply --json    # post-apply report (same shape, mutations recorded)
 ```
 
-The envelope reports both the orphan walk and the tombstone sweep:
+`status --json` emits:
+
+| Field | Meaning |
+| --- | --- |
+| `local.path` / `local.bytes` / `local.size` | Local task-cache location and usage |
+| `remote.enabled` / `remote.status` | Hosted cache configuration and server status |
+| `remote.usage_bytes` / `remote.limit_bytes` | Hosted usage and included quota when the server returns them |
+| `remote.error` | Status lookup error, if any |
+
+`prune --json` reports both the orphan walk and the tombstone sweep:
 
 | Field | Meaning |
 | --- | --- |

@@ -122,11 +122,42 @@ lpm run build --no-cache       # bypass for one invocation
 
 Or remove the `cache: true` from `lpm.json` to disable persistently.
 
+### Remote cache
+
+```json title="lpm.json"
+{
+  "remoteCache": {
+    "enabled": true,
+    "team": "acme",
+    "signature": true
+  },
+  "tasks": {
+    "build": {
+      "cache": true,
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+Remote cache is opt-in on top of the local task cache. A run checks:
+
+1. Local task cache under `~/.lpm/cache/tasks/`
+2. Hosted cache at `remoteCache.url` (default: configured registry + `/v8`)
+3. The actual script
+
+Successful scripts always write the local cache first. If remote cache is enabled and not `readOnly`, LPM uploads a portable artifact containing task metadata, stdout, stderr, and `outputs/`. Downloads restore outputs with the same archive hardening as the local cache and replay the captured logs.
+
+Use `LPM_REMOTE_CACHE_TOKEN` in CI, or rely on the token from `lpm login`. When `signature: true`, set `LPM_REMOTE_CACHE_SIGNATURE_KEY` on every machine that reads or writes the cache. A missing or invalid signature is a cache miss.
+
+Loaded env vars with secret-looking names block remote uploads by default. Use `remoteCache.env.include` only for values that are safe to fold into a shared build cache.
+
 ### Manage
 
 ```bash
 lpm cache path tasks           # print cache root
 lpm cache clean tasks          # drop the task cache
+lpm cache status --json        # local usage + hosted cache status
 ```
 
 See [`lpm cache`](/docs/packages/cache).
