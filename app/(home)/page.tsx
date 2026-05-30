@@ -97,8 +97,10 @@ export default function HomePage() {
           {appTagline}
         </p>
         <p className="text-sm sm:text-base text-fd-muted-foreground max-w-xl mb-10 leading-relaxed">
-          Modern apps are a patchwork of npm, nvm, ngrok, mkcert, dotenv-vault,
-          and shadcn-cli. LPM-cli collapses all of it into one Rust binary.
+          Modern apps are a patchwork of npm, nvm, Turborepo, ngrok, mkcert,
+          dotenv-vault, and shadcn-cli. LPM-cli brings install, task cache,
+          runtime, env, HTTPS, tunnels, and source delivery into one Rust
+          binary.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Link
