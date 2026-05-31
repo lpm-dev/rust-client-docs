@@ -19,6 +19,8 @@ lpm login --login-registry https://npm.my-co.com --token <T>
 
 Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in local secure storage (OS keychain when available, encrypted file fallback otherwise). CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
 
+On success, human output stays on stderr and ends with a compact summary: browser authentication complete, the user, the registry host, and the local secure-store destination. `--json` keeps the machine envelope on stdout.
+
 For npm, `lpm login --npm` uses npm's browser login by default: LPM asks `registry.npmjs.org` for a web-login URL, opens it, polls the registry for completion, then stores the returned npm token. This requires an interactive terminal. In `--json` mode or non-TTY shells, pass `--token <T>` or set `NPM_TOKEN` as the explicit fallback.
 
 For GitHub and GitLab, `lpm login --github` / `--gitlab` validates your existing host CLI session instead of asking you to paste a token. GitHub uses `gh auth token --hostname github.com`; GitLab.com uses `glab auth token`. When that succeeds, LPM stores nothing. Passing `--token <T>` remains available as an explicit fallback and stores that token in LPM's secure storage. Self-managed GitLab instances use env or stored fallback tokens in this version.
@@ -52,6 +54,8 @@ lpm logout --all                             # clear every stored registry token
 For GitHub and GitLab, logout clears only LPM-stored fallback tokens. `gh` and `glab` sessions remain managed by those tools.
 
 `--revoke` (lpm.dev only) also unpairs any browser/desktop sessions paired against your current LPM token. The unpair is best-effort — it won't fail the logout if the registry can't reach the pairing endpoint.
+
+Human output shows the local-session cleanup first, then prints `Revoked server-side token` only when `--revoke` succeeds, and finishes with `Done · signed out of lpm.dev`.
 
 | Flag                              | Effect                                                                             |
 | --------------------------------- | ---------------------------------------------------------------------------------- |
@@ -125,6 +129,7 @@ lpm setup local --proxy        # route ALL npm traffic through lpm.dev
 ```
 
 Generates a **read-only** `.npmrc` token for local development — narrower scope than the full session token, with a configurable validity window. Useful when you want a teammate or local tool to install LPM packages without granting publish capability. The command also adds `.npmrc` to `.gitignore` automatically so the embedded token can't get committed by accident.
+Human output includes the token expiry timestamp and validity window.
 
 | Flag               | Effect                                          |
 | ------------------ | ----------------------------------------------- |
