@@ -1,10 +1,10 @@
 ---
 title: lpm security
-description: "Temporary approvals, effective machine floor, and managed security policy."
+description: "Temporary approvals, effective machine floor, managed policy, and local security-state repair."
 ---
 
 ```bash
-lpm security <unlock|lock|status>
+lpm security <unlock|lock|status|repair>
 ```
 
 LPM treats some security-lowering requests as guarded operations. Examples:
@@ -21,6 +21,7 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 - `unlock` creates a short-lived approval for one guarded weakening. Manual `unlock` defaults to the machine-global target unless you pass `--project`.
 - `lock` revokes one active temporary unlock. Manual `lock` also defaults to the machine-global target unless you pass `--project`.
 - `status` shows the effective security floor, active runtime overrides, and whichever unlock scope you asked to inspect. `status` still defaults to the current project.
+- `repair` quarantines signed local security-state files that can no longer be verified.
 
 ## Examples
 
@@ -39,6 +40,9 @@ lpm security status
 lpm security status --project /path/to/repo
 lpm security status --global
 lpm security status --json
+
+lpm security repair
+lpm security repair --json
 ```
 
 ## Subcommands
@@ -48,6 +52,7 @@ lpm security status --json
 | `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening, defaulting to the global trust surface               |
 | `lpm security lock <scope>`   | Revoke one active temporary approval, defaulting to the global trust surface                                |
 | `lpm security status`         | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
+| `lpm security repair`         | Quarantine signed local security state that fails verification                                             |
 
 ## `unlock`
 
@@ -176,6 +181,42 @@ With `--json`, the envelope looks like:
 ```
 
 The JSON field name stays `project_root` for envelope stability even under `--global`; in that mode it points at the canonical global trust root.
+
+## `repair`
+
+```bash
+lpm security repair
+```
+
+Quarantines signed local security-state files under `~/.lpm/security/` when LPM cannot verify them with the current signing secret. This is the recovery path for errors such as:
+
+```text
+security approval store refused: signed security state file ~/.lpm/security/approved-posture.json failed signature verification
+```
+
+Typical causes are OS keyring reset, machine restore without the matching keyring secret, copying `~/.lpm/security/` from another machine, or manual edits to signed files.
+
+`repair` is explicit by design: ordinary commands fail closed instead of silently trusting or deleting unverified state. The command moves unverified state aside with a `.unverified-...` suffix and does not create a replacement signing secret. After repair, `lpm security status` falls back to the built-in floor plus any managed policy until you intentionally approve new local state.
+
+The repair pass checks signed posture, project/global approval state, unlock grants, and the signed audit log. If the signing secret exists but the OS keyring cannot be read, repair stops rather than quarantining files it could not actually verify.
+
+With `--json`, the envelope looks like:
+
+```json
+{
+  "success": true,
+  "repair": {
+    "security_dir": "/Users/alice/.lpm/security",
+    "quarantined": [
+      {
+        "original_path": "/Users/alice/.lpm/security/approved-posture.json",
+        "quarantine_path": "/Users/alice/.lpm/security/approved-posture.json.unverified-20260531T121314.000Z",
+        "reason": "signature verification failed"
+      }
+    ]
+  }
+}
+```
 
 ## How guarded approvals work
 
