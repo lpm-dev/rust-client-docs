@@ -31,10 +31,24 @@ In order:
 1. **Pack** — assemble the tarball from `files`, `main`, `bin`, etc. Tarballs over **500 MB** are rejected outright.
 2. **Workspace protocol rewrite** — in monorepos, `workspace:*` and `catalog:` specifiers in `dependencies` get replaced with their resolved versions before hashing. Registries can't resolve those protocols; the rewrite happens on the in-memory tarball so the on-disk `package.json` stays untouched.
 3. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
-4. **Quality score** — compute readme/license/types/tests/maintenance signals. Print the report. With `--min-score N`, abort if the score is below the threshold.
+4. **Quality score** — compute readme/license/types/tests/maintenance signals. The publish path prints one compact score line and lists only failing checks. With `--min-score N`, abort if the score is below the threshold.
 5. **Skills validation** (LPM target only) — when the project ships `.lpm/skills/`, validate every skill file and run a security pattern check on the content; either failing aborts the publish.
 6. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
 7. **Upload** — push the tarball to each target registry with the appropriate auth.
+
+Successful human output is a compact status stream:
+
+```text
+✓ Secret scan passed
+✓ Quality score: 91/100
+› Uploading tarball to lpm.dev
+    target     @lpm.dev/owner.pkg@1.2.3
+    visibility private
+    dist-tag   latest
+✓ Done · published @lpm.dev/owner.pkg@1.2.3 in 2.41s
+```
+
+If quality checks fail or are missing, only those rows are shown beneath the score. The full per-category breakdown lives in [`lpm quality`](/docs/packages/quality).
 
 `--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
 
