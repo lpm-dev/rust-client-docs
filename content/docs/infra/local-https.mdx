@@ -19,10 +19,11 @@ This page covers the design — what gets generated, where it lives, how trust-s
    └─ Linux:   /usr/local/share/ca-certificates/ + update-ca-certificates (sudo)
    └─ Windows: certutil -addstore Root (UAC)
 
-3. Generate a per-project certificate signed by the root CA
+3. Generate a per-project certificate
    └─ <project>/.lpm/certs/cert.pem
    └─ <project>/.lpm/certs/key.pem (mode 0o600)
    └─ SAN includes localhost, 127.0.0.1, and any --host arguments
+   └─ Custom-host cert.pem files include a constrained project intermediate
 
 4. Inject env vars into the dev server process
    └─ HTTPS=true
@@ -43,7 +44,7 @@ You only do steps 1 and 2 once per machine (`lpm cert trust`). Steps 3–5 happe
 └── rootCA-key.pem                    ← private key, mode 0o600
 
 <project>/.lpm/certs/                 ← per-project
-├── cert.pem                          ← server certificate
+├── cert.pem                          ← server certificate, or leaf + intermediate chain
 └── key.pem                           ← private key, mode 0o600
 ```
 
@@ -99,7 +100,9 @@ Pair with a `/etc/hosts` entry:
 
 Now `https://my-app.local:3000` works in any browser. Useful for projects that need a real hostname (cookies scoped to a domain, OAuth callbacks, etc.).
 
-`lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. If you need both `my-app.local` and `localhost`, list both in the same `--host` invocation.
+`lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. The default `localhost`, `127.0.0.1`, and `::1` SANs are always included.
+
+When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, `cert.pem` is written as a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. If your root CA was created before intermediate support, LPM may ask you to run `lpm cert rotate` before issuing custom-host certificates.
 
 ## Framework integration
 

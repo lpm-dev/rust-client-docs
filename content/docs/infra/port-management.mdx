@@ -38,17 +38,20 @@ Before starting any service, `lpm dev` walks every declared port and checks whet
 TcpListener::bind(("127.0.0.1", port))
 ```
 
-If the bind fails, LPM reports who's holding the port. On macOS / Linux, `lsof -ti :{port}` produces the PID and process name. LPM does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
+If the bind fails, LPM reports who's holding the port. Availability probes both IPv4 and IPv6 loopback, so an `::1` listener is not treated as a free port. Linux reads `/proc`, macOS / BSD use `lsof` and `ps`, and Windows uses the native IP Helper API plus documented process APIs. LPM does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
 
 That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. To reclaim the original port later:
 
 ```bash
 lpm ports kill 3000        # kill the process holding the port
+lpm ports inspect 3000     # inspect PID, command, cwd, project, and framework
 lpm ports reset            # forget this project's persisted override
 lpm dev                    # retry
 ```
 
 `lpm ports kill <port>` includes a TOCTOU mitigation — after finding the PID, it re-checks that the **same PID** still owns the **same port** before sending SIGTERM. If the owner changed in the 50ms gap, the kill is aborted. Defends against PID-reuse races.
+
+For broader cleanup, `lpm ports kill <start>-<end>` snapshots listeners in the inclusive range, dedupes PIDs, prompts for confirmation unless `--yes` is passed, then re-checks ownership before terminating. PID kills are explicit: use `lpm ports kill --pid <pid>` so a bare number always means a port.
 
 ## `lpm ports list`
 
@@ -57,9 +60,11 @@ lpm ports list
 lpm ports                    # default action
 ```
 
-Reads `lpm.json > services`, then for each declared `port` runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the declared port, a `ready` or `listening` status dot, and (when listening) the owning PID + process name. Services with only `readyPort` and no declared `port` are omitted.
+Reads `lpm.json > services`, then for each declared `port` runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the declared port, a `ready` or `listening` status dot, and (when listening) the owning PID + process name. Host-only services appear after `lpm dev` has persisted their assigned port. Services with only `readyPort` and no declared `port` or assigned host port are omitted.
 
 Important: `list` shows the declared `lpm.json` ports, not the current persisted override map. If `lpm dev` previously remapped `web` from `3000` to `3001`, `lpm ports list` still reports the declared `3000` row and whether `:3000` is currently free or occupied.
+
+If the current directory has no `lpm.json` services, `lpm ports` falls back to visible listening processes whose cwd is under the current project directory. Use `lpm ports all` or `lpm ports --all` for a system-wide table of listening TCP ports. On Windows, generic process cwd is not available through a stable public API, so system-wide rows show PID/process/image path/uptime but leave cwd/project/framework blank unless future LPM-owned process tracking can provide them.
 
 ## `lpm ports reset`
 
