@@ -68,6 +68,8 @@ Generates a fresh project certificate whose SAN includes the defaults — `local
 
 `.local` hostnames are not added implicitly to the leaf certificate. If you want `my-app.local` or `api.my-app.local` in the SAN, pass each one explicitly with `--host`.
 
+When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, the project `cert.pem` is a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. Existing roots created before intermediate support may need `lpm cert rotate` before LPM can issue custom-host certificates.
+
 ## CA rotation and cleanup
 
 ```bash
@@ -78,7 +80,7 @@ lpm cert reconcile
 lpm cert reconcile --dry-run
 ```
 
-`rotate` stages a new root CA, reissues every reachable project leaf, then either removes the old root immediately or schedules removal through `--keep-old-trusted <DAYS>`. Use `--project <DIR>` to include extra project directories beyond the registered set, and `--fail-on-missing` if vanished project paths should fail the run instead of being skipped.
+`rotate` stages a new root CA, reissues every reachable project certificate, then either removes the old root immediately or schedules removal through `--keep-old-trusted <DAYS>`. Use `--project <DIR>` to include extra project directories beyond the registered set, and `--fail-on-missing` if vanished project paths should fail the run instead of being skipped.
 
 `reconcile` is the maintenance pass for interrupted rotations and grace-window expiry. It removes expired old-root trust entries, retries unresolved `ca.reconcile_required` cleanup, and prunes stale `.next` / `.previous` CA artifacts. `--dry-run` reports what would be cleaned up without mutating anything.
 

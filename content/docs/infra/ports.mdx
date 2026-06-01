@@ -1,42 +1,74 @@
 ---
 title: lpm ports
-description: "List, kill, or reset dev-service port assignments."
+description: "List, inspect, kill, or reset local dev ports."
 ---
 
 ```bash
-lpm ports <action> [port]
+lpm ports [action] [target]
 ```
 
-Lists declared `lpm.json > services.<name>.port` entries, kills the process currently bound to a port, or clears this project's persisted port overrides. Useful when a previous `lpm dev` run left a process on a dev port, or when you want a quick view of which service maps to which declared number.
+Lists declared `lpm.json > services.<name>.port` entries, inspects listening TCP ports, kills stale listeners, or clears this project's persisted port overrides. Useful when a previous `lpm dev` run left a process on a dev port, or when you need the system-wide "what is listening?" view without reaching for platform-specific tools.
 
 ## Examples
 
 ```bash
-lpm ports                # default — list ports declared in lpm.json
-lpm ports list           # same
-lpm ports kill 3000      # kill whatever's listening on :3000
-lpm ports reset          # clear this project's persisted port overrides
+lpm ports                  # project-scoped list
+lpm ports list             # same
+lpm ports all              # all listening TCP ports
+lpm ports --all            # same
+lpm ports 3000             # inspect port 3000
+lpm ports inspect 3000     # same
+lpm ports kill 3000        # kill whatever is listening on :3000
+lpm ports kill 3000-3010   # kill listeners in a range, with confirmation
+lpm ports kill --pid 48213 # kill an explicit PID
+lpm ports reset            # clear this project's persisted port overrides
 ```
 
 ## Subcommands
 
-| Subcommand         | Effect                                                                     |
-| ------------------ | -------------------------------------------------------------------------- |
-| (default) / `list` | List `services.<name>.port` entries from `lpm.json`                        |
-| `kill <port>`      | Kill the process listening on the given port (any process, not just LPM's) |
-| `reset`            | Remove this project's persisted port overrides from `~/.lpm/ports.toml`    |
+| Subcommand              | Effect                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------- |
+| (default) / `list`      | List `services.<name>.port` entries from `lpm.json`; host-only services appear after `lpm dev` has persisted an assigned port. Without services, fall back to cwd ports |
+| `all` / `--all`         | List every visible listening TCP port on the machine                                         |
+| `<port>` / `inspect`    | Inspect one port: PID, process, command, cwd, project, framework, uptime                     |
+| `kill <port>`           | Kill the process listening on the given port after re-checking ownership                     |
+| `kill <start>-<end>`    | Kill listeners in an inclusive range, deduping PIDs and prompting unless `--yes`             |
+| `kill --pid <pid>`      | Kill an explicit PID; bare numeric kill targets are always ports                             |
+| `reset`                 | Remove this project's persisted port overrides from `~/.lpm/ports.toml`                     |
 
-`list` is read-only. `kill` requires a port number — it errors out if you forget. `reset` is the "I have no idea why my dev server won't start" escape hatch.
+`list`, `all`, and `inspect` are read-only. `kill` is intentionally explicit: a bare number is a port, while PID kills require `--pid`.
 
 ## When to use each
 
 - **`list`** — Quick check: "which service is on which port in this project?"
+- **`all`** — System-wide inventory of visible TCP listeners, with project/framework labels when LPM can read the process cwd.
+- **`inspect <port>`** — Detailed single-port debugging: full command, cwd, project, framework, and uptime.
 - **`kill <port>`** — Stale process from a crashed `lpm dev` is still bound. Faster than `lsof -i :3000` + `kill`.
+- **`kill <range>`** — Clean up a batch of dev-server ports after reviewing one confirmation.
+- **`kill --pid <pid>`** — Kill a known PID without pretending it is a port number.
 - **`reset`** — You want `lpm dev` to forget an auto-assigned replacement port and fall back to the ports declared in `lpm.json`.
 
 ## Flags
 
-`lpm ports` takes no flags besides the [global flags](/docs/commands#global-flags).
+| Flag          | Applies to | Effect                                                         |
+| ------------- | ---------- | -------------------------------------------------------------- |
+| `--all`       | `list`     | Alias for `lpm ports all`                                      |
+| `--yes`, `-y` | `kill`     | Confirm range kills without an interactive prompt              |
+| `--pid <pid>` | `kill`     | Kill a PID explicitly; avoids ambiguity with numeric port args |
+
+`--json` is a [global flag](/docs/commands#global-flags). In JSON mode, machine-readable output stays on stdout.
+
+## Platform details
+
+LPM uses the native listener table for each supported OS:
+
+| Platform    | Backend                                            | Attribution notes                                                             |
+| ----------- | -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Linux       | `/proc/net/tcp*` plus `/proc/<pid>`                | Includes cwd/project/framework when the current user can read process cwd     |
+| macOS / BSD | `lsof` and `ps`                                    | Includes cwd/project/framework when those tools expose the process cwd        |
+| Windows     | Windows IP Helper API plus documented process APIs | Shows PID/process/image path/uptime; cwd/project/framework are blank for generic processes |
+
+Windows does not expose another process's current working directory through a stable public API, so LPM does not scrape private process internals. Future LPM-owned process tracking can fill project attribution for dev servers started by LPM.
 
 ## See also
 

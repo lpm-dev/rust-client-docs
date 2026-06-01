@@ -1,0 +1,79 @@
+---
+title: lpm proxy
+description: "Inspect the local-domain proxy daemon and route table."
+---
+
+```bash
+lpm proxy [action]
+```
+
+Inspects the local-domain proxy state used by friendly development hostnames such as `app.localhost`. The route registry, foreground/background control daemon, `lpm dev` route leases, config-backed listener defaults, explicit plain-HTTP, HTTPS, and HTTP-to-HTTPS redirect listeners, streaming forwarding, WebSocket/HMR upgrade tunnel, TLS project-cert-chain preparation on route registration, `lpm dev` managed hosts-file entries, and user-scoped persistent service install are available now on macOS, Linux, and Windows. On Unix, `install --privileged-ports` adds a root-owned loopback forwarder so 80/443 can relay to the user's high-port proxy daemon.
+
+## Examples
+
+```bash
+lpm proxy status        # daemon status and active routes
+lpm proxy list          # active routes table
+lpm proxy start         # run the control daemon in the foreground
+lpm proxy start --detach
+lpm proxy start --http-port 8080
+lpm proxy start --tls-port 9443
+lpm proxy start --tls-port 9443 --http-redirect-port 9080
+lpm proxy install --tls-port 9443
+lpm proxy install --privileged-ports
+lpm proxy install --privileged-ports --replace
+lpm proxy uninstall
+lpm proxy uninstall --privileged-ports
+lpm proxy stop          # stop the control daemon
+lpm proxy status --json # machine-readable status
+lpm hosts clean         # remove orphaned LPM hosts-file blocks
+```
+
+When `lpm dev` sees configured local-domain hosts and no daemon is running, it starts `lpm proxy start --detach` automatically, then registers configured `host` routes for the lifetime of that dev session. You can still start `lpm proxy start` in another terminal or `lpm proxy start --detach` ahead of time. When no listener flags are provided, `start` reads local-domain `lpm.json` config: `proxy.port` chooses the HTTPS port, defaulting to 443, and `proxy.httpRedirect` controls the HTTP redirect listener, defaulting to true on port 80. On Unix, use `lpm proxy install --privileged-ports` to persist those low-port defaults; a control-only daemon, or one started only with `--http-port`, is not enough for local-domain HTTPS routes.
+
+If binding port 80 or 443 fails with a permission error in a foreground start, install the privileged forwarder or use high ports such as `9443` and `9080`. Do not run the per-user proxy with `sudo`; the privileged path keeps route ownership, certificates, and LPM state in the user's daemon while a root-owned loopback forwarder owns only 80/443. `lpm proxy install` installs a user-scoped service by default and refuses privileged Unix listener ports unless `--privileged-ports` is passed.
+
+`lpm proxy install` persists the proxy for your current user: LaunchAgent on macOS, systemd user service on Linux, and a logon Scheduled Task on Windows. With no listener flags, it resolves listener settings from the current `lpm.json`, just like `lpm proxy start`; explicit `--tls-port`, `--http-port`, and `--http-redirect-port` flags override that config for the installed service. On Unix, `--privileged-ports` maps external 443/80 to high backend listeners, installs the normal user service, then uses `sudo` to install a Linux systemd service or macOS LaunchDaemon for the root forwarder. If your config used a high `proxy.port` such as `9443`, privileged install keeps that as backend intent and still exposes 443 externally. Only one user can own those low ports at a time; install refuses to replace a forwarder config owned by a different UID unless `--replace` is also passed, and uninstall always refuses to remove another user's forwarder config. Run the command as your user, not under `sudo`.
+
+Manual flags still work as exact overrides. `lpm proxy start --http-port <PORT>` binds a loopback-only plain HTTP listener for registered routes. `lpm proxy start --tls-port <PORT>` binds a loopback-only HTTPS listener that prepares or refreshes project certificate chains for registered route hosts, then selects matching project certificates from `.lpm/certs/` by SNI. Both listeners support streaming responses and WebSocket/HMR upgrades. Add `--http-redirect-port <PORT>` alongside `--tls-port` to bind a loopback-only HTTP listener that redirects registered hosts to HTTPS.
+
+When `lpm dev` sees configured local-domain hosts and the daemon has an HTTPS listener, it prepares the project certificate chain for those host SANs using the normal CA trust consent flow. Custom-host chains are leaf-first and include a project-scoped constrained intermediate; legacy roots created before this support may require `lpm cert rotate` before custom-host issuance. The daemon also refreshes missing or stale project certificate chains during route registration, but it does not install the root CA into the trust store. That proxy-only preparation does not inject framework HTTPS env vars into the app; `lpm dev --https` / `https: true` remains the explicit app-HTTPS mode.
+
+For hosts outside `localhost` / `*.localhost`, `lpm dev` writes a project-scoped managed block to the system hosts file with consent and removes it when the dev session exits. Use [`lpm hosts clean`](/docs/infra/hosts) to remove orphaned LPM-managed blocks after an interrupted session. On Unix, LPM uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. The proxy daemon's `start`/`stop` commands intentionally do not manage hosts-file entries; route serving and hosts-file cleanup have separate ownership.
+
+## Subcommands
+
+| Subcommand  | Effect                                                                                 |
+| ----------- | -------------------------------------------------------------------------------------- |
+| `status`    | Show whether the local proxy daemon is running and list active routes                   |
+| `list`      | Alias for the active route table                                                       |
+| `start`     | Run the local proxy control daemon in the foreground, or in the background with `--detach`. With no listener flags, reads local-domain `lpm.json` listener defaults. `--http-port <PORT>` binds a plain HTTP loopback listener; `--tls-port <PORT>` binds an HTTPS loopback listener that prepares matching project cert chains on route registration; `--http-redirect-port <PORT>` binds an HTTP-to-HTTPS redirect listener |
+| `stop`      | Ask the control daemon to stop; exits cleanly when no daemon is running      |
+| `install`   | Install and start a user-scoped persistent proxy service. With no listener flags, reads local-domain `lpm.json` listener defaults. On Unix, add `--privileged-ports` to install the root-owned 80/443 loopback forwarder |
+| `uninstall` | Stop and remove the user-scoped persistent proxy service. On Unix, add `--privileged-ports` to remove the root-owned forwarder artifacts too |
+
+`--json` is a [global flag](/docs/commands#global-flags). In JSON mode, status/list output stays on stdout and stderr stays clean.
+
+`lpm proxy status --json` includes `httpAddr`, `httpRedirectAddr`, and `tlsAddr` when those listeners are bound. They are `null` when the daemon is stopped or the listener was not requested.
+
+## Flags
+
+| Flag                 | Applies to | Effect                                                                                      |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| `--http-port <PORT>` | `start`, `install` | Bind a plain HTTP listener on `127.0.0.1:<PORT>` for registered routes. `0` lets the OS pick |
+| `--http-redirect-port <PORT>` | `start`, `install` | Bind a plain HTTP redirect listener on `127.0.0.1:<PORT>` for registered routes. Requires `--tls-port`; `0` lets the OS pick |
+| `--tls-port <PORT>`  | `start`, `install` | Bind an HTTPS listener on `127.0.0.1:<PORT>` for registered routes, preparing matching project cert chains when routes register. `0` lets the OS pick |
+| `--detach`           | `start`    | Start the same proxy daemon in the background and wait until it reports ready |
+| `--privileged-ports` | `install`, `uninstall` | Unix only. Install or remove the root-owned loopback forwarder for low-port HTTPS and HTTP redirect traffic |
+| `--replace`          | `install --privileged-ports` | Unix only. Intentionally replace an existing privileged forwarder owned by another UID |
+
+## Related config
+
+`lpm.json > proxy.host` and `services.<name>.host` are parsed and validated today. When `lpm proxy start` is run with no listener flags and local-domain hosts are configured, it uses `proxy.port` for HTTPS and `proxy.httpRedirect` for the HTTP redirect listener. When the proxy daemon has an HTTPS listener, `lpm dev` prepares constrained project cert-chain coverage for those hosts, updates the hosts file when needed, registers routes against the final assigned service ports, and releases both the route lease and managed hosts block when the dev session exits. A service can omit `port`; `lpm dev` then auto-assigns a stable local port, persists it in `~/.lpm/ports.toml`, and injects it as `PORT`. The startup banner shows configured proxy hosts, exact route lines print after registration, and dashboard service rows include the host URLs.
+
+## See also
+
+- [`lpm dev`](/docs/dev/dev) — proxy config in `lpm.json`
+- [`lpm cert`](/docs/infra/cert) — local CA and SAN generation
+- [`lpm hosts`](/docs/infra/hosts) — cleanup for managed hosts-file blocks
+- [`lpm ports`](/docs/infra/ports) — inspect local listeners
