@@ -27,6 +27,8 @@ lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
 lpm audit --fail-on behavior        # CI: exit non-zero only on critical behaviors
 lpm audit --secrets --fail-on secrets # CI: exit non-zero only on hardcoded secrets
 lpm audit --fail-on all             # CI: exit non-zero on either (default)
+lpm audit fix                       # bump vulnerable direct deps and reinstall
+lpm audit --fix --dry-run           # plan the same fixes without writing files
 lpm audit --json                    # structured output for tooling
 ```
 
@@ -43,6 +45,18 @@ lpm audit --json                    # structured output for tooling
 | `all` (explicit)            | Vulnerabilities + critical behaviors + high behaviors + secrets — the strict union                                                                                                   |
 
 For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like selectors target individual flags or combinations.
+
+## Fixing vulnerabilities
+
+```bash
+lpm audit fix
+lpm audit --fix
+lpm audit fix --dry-run
+```
+
+`lpm audit fix` is the canonical form; `lpm audit --fix` is an alias for npm-compatible muscle memory. Both inspect OSV fixed-version data, update vulnerable direct dependencies in `dependencies` and `devDependencies`, then run `lpm install` to refresh `lpm.lock` and `node_modules`.
+
+The fix pass currently operates only in LPM-managed projects. It does not rewrite npm / pnpm / yarn / bun lockfiles, and it skips transitive-only vulnerabilities, private/custom-registry packages, or advisories without a usable fixed version. `--dry-run` reports the plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
 
 ## Severity levels
 
@@ -74,6 +88,8 @@ Requires `node_modules/` to exist (errors with a `run \`lpm install\` first`hint
 | `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`)                                                                    |
 | `--fail-on <vuln\|behavior\|secrets\|all>` | CI exit-code policy (`secrets` applies to `--secrets`; `all` includes secret findings too)                      |
 | `--secrets`                                | Scan installed source for hardcoded secrets (separate scan mode; consults `--fail-on`, still ignores `--level`) |
+| `--fix`                                    | Alias for `lpm audit fix`                                                                                       |
+| `--dry-run`                                | With `--fix`, show the fix plan without changing files                                                          |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
 
