@@ -26,6 +26,9 @@ lpm global list --outdated               # which globals have updates available
 lpm global list --verbose                # add install date, size, root path
 lpm global bin                           # print ~/.lpm/bin/  (add this to PATH)
 lpm global path eslint                   # print eslint's install root
+lpm global link                          # expose the current package's bins globally
+lpm global link ../my-cli                # expose a local checkout globally
+lpm global unlink my-cli                 # remove a local global link
 lpm global remove eslint                 # uninstall a global package
 lpm global update                        # update every globally-installed package
 lpm global update eslint                 # update one
@@ -48,7 +51,7 @@ Lists every globally-installed package with its active version and exposed bin c
 | `--outdated` | Resolve each install's saved spec against the registry; flag packages with newer matching versions. Uses batch metadata, so checking dozens of globals doesn't fan out one round-trip per package. |
 | `--verbose` | Add install date, on-disk size, and the absolute install root for each row |
 
-With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest version that still satisfies the global install's saved spec; `Latest` is the registry's absolute latest version, so major-version jumps are visible even when the saved range would not select them.
+With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest version that still satisfies the global install's saved spec; `Latest` is the registry's absolute latest version, so major-version jumps are visible even when the saved range would not select them. Local links are skipped because their source of truth is your checkout, not the registry.
 
 ### `bin`
 
@@ -69,6 +72,27 @@ lpm global path eslint
 ```
 
 Prints the install root for one specific globally-installed package. Useful for tooling that needs to find the package's `node_modules/`, `package.json`, or files.
+
+For local links, this prints the linked source checkout.
+
+### `link [path]`
+
+```bash
+lpm global link
+lpm global link ../my-cli
+```
+
+Links a local package into the global manifest and exposes its `bin` commands through `~/.lpm/bin/`. Omit `path` to link the current working directory.
+
+The linked package must have `name`, `version`, and at least one valid `bin` entry in `package.json`; each bin target must exist inside the package directory. LPM refuses command-name collisions with existing global packages so a local checkout cannot silently take over a command you already installed.
+
+### `unlink <package>`
+
+```bash
+lpm global unlink my-cli
+```
+
+Removes a local global link, its shims, and its global manifest entry. Registry-backed global packages are removed with `lpm global remove` or `lpm uninstall -g`.
 
 ### `remove <package>`
 
@@ -91,8 +115,8 @@ Three behaviors based on the argument:
 
 | Argument | Behavior |
 | --- | --- |
-| (none) | Iterate every globally-installed package. Re-resolve each one against its persisted `saved_spec`. Upgrade any that have a newer matching version. |
-| `<pkg>` | Same flow scoped to one package |
+| (none) | Iterate every registry-backed global package. Re-resolve each one against its persisted `saved_spec`. Upgrade any that have a newer matching version. Local links are skipped. |
+| `<pkg>` | Same flow scoped to one registry-backed package. Local links are edited in place in their checkout. |
 | `<pkg>@<spec>` | Rewrite the saved spec using the [save policy](/docs/packages/save-policy) decision logic, then upgrade. Same precedence as `lpm install <pkg>@<spec>` in a project context. |
 
 | Flag | Effect |
