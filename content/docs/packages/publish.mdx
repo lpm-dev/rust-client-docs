@@ -22,6 +22,9 @@ lpm publish --github                         # publish to GitHub Packages
 lpm publish --publish-registry https://r.example.com   # custom npm-compatible
 lpm publish --provenance                     # require Sigstore provenance (CI)
 lpm publish --min-score 80                   # gate on quality score
+lpm stage publish --tag next                 # stage a version on npm
+lpm stage list @scope/pkg                    # list staged npm versions
+lpm stage approve <stage-id> --otp 123456    # promote the staged version
 ```
 
 ## What runs before upload
@@ -53,6 +56,37 @@ If quality checks fail or are missing, only those rows are shown beneath the sco
 `--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
 
 `--dry-run` runs everything `--check` does, plus an LPM-side preflight: OIDC exchange (when LPM is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM-trust misconfiguration — it won't tell you whether the upload itself would land.
+
+## npm staged publish
+
+```bash
+lpm stage publish [--tag next] [--access public] [-y]
+lpm stage list [package]
+lpm stage view <stage-id>
+lpm stage download <stage-id>
+lpm stage approve <stage-id> [--otp 123456]
+lpm stage reject <stage-id> [--otp 123456]
+```
+
+`lpm stage` wraps npm staged publishing for the current project. It is npm-only in this release: there is no lpm.dev, GitHub Packages, GitLab Packages, custom publish registry, workspace-recursive, or tarball/package-spec staging mode yet.
+
+Stage publish reuses the normal npm publish preparation path: pack, workspace dependency rewrite, secret scan, quality gate, npm name/access/tag config, optional npm-name tarball rewrite, and optional `--provenance` over the final tarball. The upload goes to npm's staging endpoint instead of the live publish endpoint, so the version is not installable until it is approved.
+
+Auth uses the same npm token sources as `lpm publish --npm`:
+
+| Source order |
+| --- |
+| `NPM_TOKEN` |
+| token stored by `lpm login --npm` |
+| locked `.npmrc` token |
+
+Publishing to staging does not prompt for OTP. npm defers proof-of-presence to `lpm stage approve` and `lpm stage reject`, where `--otp` or the usual npm web-auth retry flow is used.
+
+`lpm stage publish` validates npm's version/tag safety rules before the real upload: the package must already exist on npm, an already-published version is blocked, prerelease versions require an explicit tag, and implicit `latest` is blocked when npm already has a higher stable version. `--dry-run` stays local-only and does not contact npm, so those remote version checks run only for a real stage publish.
+
+Use `--npm-registry <URL>` to target a compatible npm staging registry. The global `--registry` flag still means the lpm.dev registry and is rejected on `lpm stage` commands with a message to use `--npm-registry`.
+
+Every `lpm stage` subcommand supports `--json`. JSON output uses LPM envelopes with `success`, `target: "npm"`, `registry`, `stageId` when a single staged package is involved, and `data` for the registry response.
 
 ## Provenance
 
@@ -116,6 +150,8 @@ LPM advertises npm web auth on npm-compatible publish requests (`npm-auth-type: 
 | `--allow-secrets` | Skip pre-publish secret scanning (not recommended) |
 | `--npm` / `--lpm` / `--github` / `--gitlab` | Target a specific registry |
 | `--publish-registry <URL>` | Custom npm-compatible registry (`https://` only) |
+| `stage --npm-registry <URL>` | npm staging registry for `lpm stage` subcommands |
+| `stage --otp <CODE>` | One-time password for `lpm stage approve` / `reject` |
 
 Plus the [global flags](/docs/commands#global-flags).
 
