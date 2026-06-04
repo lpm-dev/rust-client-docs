@@ -91,7 +91,7 @@ The script-hash binding is what makes drift detectable. If the next install reso
 | (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows `name@version`, integrity, script hash, the lifecycle phases the package declares, the [static tier](/docs/packages/security-audit#layer-5-triage) (green / amber / red), and a binding-drift warning when this package was previously approved and the script content has changed since. Approve / skip / inspect per package. |
 | `--list` | Read-only — print the blocked set, no prompts, no mutations. Mutually exclusive with `--yes`. |
 | `--yes` | Bulk approve everything. Emits a warning banner. **Refuses to bulk-approve any package classified outside the green tier** — amber / amber-llm / red entries each require explicit per-package review via the interactive walk or `<pkg>` argument. Error message starts with `--yes refuses` so agents can branch on it. Mutually exclusive with `--list`. |
-| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name` or `name@version`. This is the correct non-interactive path for single-package approvals. |
+| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name` or `name@version`. Bare `name` must match exactly one blocked row; if multiple versions or bindings match, LPM exits non-zero and lists the `name@version` candidates to disambiguate. This is the correct non-interactive path for single-package approvals. |
 | `--dry-run` | Run the review flow normally, but skip every write. JSON envelopes carry `"dry_run": true` so agents can detect the mode. |
 
 `--dry-run` composes with `--yes`, `<pkg>`, the interactive walk, and `--global` / `--json`. It's a no-op when combined with `--list` (already read-only).
@@ -114,6 +114,8 @@ lpm approve-scripts --global --group
 
 When the global blocked set exceeds 10 entries (auto-enabled at that threshold), `--group` clusters list and review output by top-level globally-installed package. Persisted approvals still record per-dependency-binding rows under the hood.
 
+If any global install root has a missing or unreadable `.lpm/build-state.json`, `--global --list` reports it in `unreadable_origins`. Mutating blanket approval (`--global --yes`) refuses while the aggregate is incomplete, because otherwise it could claim every global script was reviewed while some install roots were skipped. Reinstall the named globals to refresh their build-state, then approve again.
+
 After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins`. `--dry-run` omits `next_step` since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
 
 ## JSON output
@@ -127,7 +129,7 @@ lpm approve-scripts --list --json --dry-run  # preview plan, no writes
 
 `--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
 
-The envelope carries `schema_version`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in) and successful `--global --yes` runs add a `next_step: {kind: "reinstall_globals", origins: [...]}` payload telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits `next_step` since no mutation happened.
+The envelope carries `schema_version`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in), list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add a `next_step: {kind: "reinstall_globals", origins: [...]}` payload telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits `next_step` since no mutation happened.
 
 ## Flags
 
