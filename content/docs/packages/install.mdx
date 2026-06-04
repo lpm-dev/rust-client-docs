@@ -160,6 +160,8 @@ LPM does not execute lifecycle scripts during `lpm install` by default — the i
 
 Triage auto-runs only when every unbuilt scripted package classifies green. If any amber or red remains, scripts defer to `lpm approve-scripts` review unless an explicit auto-build signal is set: `--auto-build` on the command line, or — on project installs — `package.json > lpm > scripts.autoBuild = true`. Global installs (`-g`) only honor `--auto-build`; the synthesized package.json doesn't project per-project script knobs.
 
+Auto-build runs after dependency resolution/linking. If any trusted lifecycle script exits non-zero, `lpm install` exits non-zero and surfaces the failing package/script instead of treating the install as successful.
+
 Set per-invocation:
 
 ```bash
@@ -356,6 +358,8 @@ Two things differ from project installs:
 
 - **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
 - **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
+
+A global install commits only after LPM has materialized at least one safe, executable bin shim for the package. If the package exposes no usable bins, declares unsafe bin names, or the install cannot write its ready marker, LPM rolls the pending global entry back instead of leaving a half-installed package in `~/.lpm/global/`.
 
 Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
 
