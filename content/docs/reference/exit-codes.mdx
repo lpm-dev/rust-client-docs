@@ -72,12 +72,12 @@ The `error_code` field is the canonical short name for the error variant. Use it
 | `self_update_rate_limited` | Self-update hit a per-IP probe rate limit |
 | `exit_code` | Subprocess passthrough — the exit code came from a wrapped tool (vitest, oxlint, etc.); see [Subprocess passthrough](#subprocess-passthrough) above |
 
-For single-package subprocess passthrough (`lpm run script`, `lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON.
+For single-package subprocess passthrough (`lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON. `lpm run --json` is different: it emits an LPM task metadata envelope even for one script.
 
 Workspace and multi-task aggregation DOES emit an LPM envelope on stdout, but the envelope shape varies by command:
 
 - **`lpm lint` / `fmt` / `check` / `test` / `bench` workspace mode** (`--all` / `--filter` / `--affected`) capture each member's subprocess stdout/stderr and surface them inside the envelope only on failure (truncated at 10 MB). Spawn / config / plugin / detection failures appear as `exit_code: null` paired with an `error` string, distinguishing "ran and exited non-zero" from "couldn't even launch." For `test` / `bench`, a member with no installed runner (no vitest/jest/mocha for `test`, no vitest or `scripts.bench` for `bench`) shows up as a per-member detection failure rather than aborting the entire run.
-- **`lpm run --all` / `--filter` / `--affected`** and **`lpm run` with multiple scripts** emit a metadata-only envelope — each member's status, exit code, duration, cache hit, skip reason — but never the captured subprocess stdout/stderr. To debug a failing member, re-run that member without `--json`.
+- **`lpm run`** emits a metadata-only envelope for single-script, multi-script, and workspace runs — each task/member's status, exit code, duration, cache hit, skip reason — but never the captured subprocess stdout/stderr. If a workspace filter matches no packages and `--fail-if-no-match` is not set, JSON mode emits a successful zero-package envelope. To debug a failing member, re-run that member without `--json`.
 
 ## Common scenarios
 
