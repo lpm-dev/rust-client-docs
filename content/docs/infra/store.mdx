@@ -61,9 +61,9 @@ The fast pass walks every store entry and confirms three things: the directory e
 `--deep` extends the pass with two extra checks per entry:
 
 - **Parses `package.json`** and confirms the on-disk `name` and `version` match the directory's coordinates.
-- **Cross-checks the integrity hash** against `lpm.lock` in the current directory. Mismatches surface as `integrity mismatch` errors — they catch a re-published version with different bytes, accidental edits, or partial extraction. Run from a project root for this to do anything; without a lockfile, the cross-check is a no-op.
+- **Cross-checks the integrity hash** against `lpm.lock` in the current directory. Mismatches surface as `integrity mismatch` errors — they catch a re-published version with different bytes, accidental edits, or partial extraction. Run from a project root for this to do anything; without a lockfile, the cross-check is a no-op. If `lpm.lock` exists but cannot be read or parsed, deep verification exits non-zero instead of silently skipping the cross-check.
 
-`--fix` writes one specific thing: missing or stale `.lpm-security.json` behavioral-analysis caches alongside each package. It does **not** repair integrity mismatches, restore missing directories, or fix invalid `package.json` — those are reported as corrupted regardless. Use `lpm store clean` for the blunt repair.
+`--fix` writes one specific thing: missing or stale `.lpm-security.json` behavioral-analysis caches alongside each package. It implies the deep/cache-analysis path even when `--deep` is omitted. If a cache cannot be written, the command exits non-zero and the failed `.lpm-security.json` write appears in `issues[]`. It does **not** repair integrity mismatches, restore missing directories, or fix invalid `package.json` — those are reported as corrupted regardless. Use `lpm store clean` for the blunt repair.
 
 The output distinguishes **entries** (one per directory on disk; may double-count during a v1↔v2 migration or under cross-project graph-key splits where the same `name@version` legitimately lives at multiple paths) from **unique coordinates** (deduped on `name@version`). Both counts appear in human + JSON output so an in-flight migration doesn't look like an inflated package count.
 
@@ -89,12 +89,16 @@ lpm store clean --json    # bytes freed across v1 + v2 subdirectories
 
 | Field | Meaning |
 | --- | --- |
+| `success` | `false` when any integrity/sidecar/lockfile/cache-write issue prevents a clean verify |
+| `check_kind` | `presence` for the fast pass, `lockfile_marker_consistency` for `--deep` or `--fix` |
+| `bytes_integrity_recomputed` | Always `false` today — verify checks markers/metadata, not a Merkle hash of extracted bytes |
 | `entries_verified` | Number of store entries walked (one per directory on disk) |
 | `verified` | Legacy alias of `entries_verified` for older consumers |
 | `unique_coords` | Deduped count over `name@version` — different from `entries_verified` during v1↔v2 migration |
 | `duplicated_entries` | `entries_verified − unique_coords` |
 | `corrupted` | Number of entries with at least one failed check |
 | `issues[]` | Per-entry human-readable issue strings (e.g., `"sharp@0.34.4 — integrity mismatch: stored 'sha512-aaa...' != lockfile 'sha512-bbb...'"`) |
+| `securityMismatches` / `securityReanalyzed` | Present on deep/fix runs; cache mismatches found vs. caches successfully refreshed |
 
 `clean` envelope:
 
@@ -109,8 +113,8 @@ lpm store clean --json    # bytes freed across v1 + v2 subdirectories
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--deep` | `verify` | Also parse package.json, validate name/version |
-| `--fix` | `verify` | Auto-fix issues (e.g., refresh stale caches) |
+| `--deep` | `verify` | Also parse package.json, validate name/version, and cross-check lockfile integrity markers |
+| `--fix` | `verify` | Refresh stale/missing security caches; implies the deep/cache-analysis path |
 
 Plus the [global flags](/docs/commands#global-flags).
 
