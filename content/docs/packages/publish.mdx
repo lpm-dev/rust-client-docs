@@ -57,6 +57,21 @@ If quality checks fail or are missing, only those rows are shown beneath the sco
 
 `--dry-run` runs everything `--check` does, plus an LPM-side preflight: OIDC exchange (when LPM is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM-trust misconfiguration — it won't tell you whether the upload itself would land.
 
+## npm Trusted Publishing
+
+`lpm publish --npm` and `lpm stage publish` automatically use npm Trusted Publishing when a supported CI OIDC token is available. LPM exchanges the CI identity token with npm for a short-lived registry token, then uses that token only for the publish or stage-publish upload.
+
+Supported inputs:
+
+| CI source | Configure |
+| --- | --- |
+| GitHub Actions | `permissions: id-token: write`; LPM fetches the runtime token with audience `npm:registry.npmjs.org` |
+| GitLab CI / CircleCI / other supported providers | Set `NPM_ID_TOKEN` to an OIDC ID token minted with audience `npm:registry.npmjs.org` |
+
+Trusted Publishing is attempted only for npm's public registry (`https://registry.npmjs.org`; HTTP loopback is accepted for local test registries). Custom npm-compatible registries, GitHub Packages, GitLab Packages, and `--publish-registry` targets keep using token auth. If npm's OIDC exchange fails and a normal npm token is available, LPM falls back to the token path; otherwise the OIDC error is surfaced.
+
+OIDC is publish-only. `lpm stage list`, `view`, `download`, `approve`, and `reject` still require normal npm auth because npm limits Trusted Publishing authentication to publish operations.
+
 ## npm staged publish
 
 ```bash
@@ -72,21 +87,22 @@ lpm stage reject <stage-id> [--otp 123456]
 
 Stage publish reuses the normal npm publish preparation path: pack, workspace dependency rewrite, secret scan, quality gate, npm name/access/tag config, optional npm-name tarball rewrite, and optional `--provenance` over the final tarball. The upload goes to npm's staging endpoint instead of the live publish endpoint, so the version is not installable until it is approved.
 
-Auth uses the same npm token sources as `lpm publish --npm`:
+Auth for `lpm stage publish` uses npm Trusted Publishing first when available, then the normal npm token sources:
 
 | Source order |
 | --- |
+| npm Trusted Publishing (`NPM_ID_TOKEN` or GitHub Actions OIDC, audience `npm:registry.npmjs.org`) |
 | `NPM_TOKEN` |
 | token stored by `lpm login --npm` |
 | locked `.npmrc` token |
 
-Publishing to staging does not prompt for OTP. npm defers proof-of-presence to `lpm stage approve` and `lpm stage reject`, where `--otp` or the usual npm web-auth retry flow is used.
+Publishing to staging does not prompt for OTP. npm defers proof-of-presence to `lpm stage approve` and `lpm stage reject`, where `--otp` or the usual npm web-auth retry flow is used. Those approval commands are token-authenticated; `NPM_ID_TOKEN` alone is not enough.
 
 `lpm stage publish` validates npm's version/tag safety rules before the real upload: the package must already exist on npm, an already-published version is blocked, prerelease versions require an explicit tag, and implicit `latest` is blocked when npm already has a higher stable version. `--dry-run` stays local-only and does not contact npm, so those remote version checks run only for a real stage publish.
 
 Use `--npm-registry <URL>` to target a compatible npm staging registry. The global `--registry` flag still means the lpm.dev registry and is rejected on `lpm stage` commands with a message to use `--npm-registry`.
 
-Every `lpm stage` subcommand supports `--json`. JSON output uses LPM envelopes with `success`, `target: "npm"`, `registry`, `stageId` when a single staged package is involved, and `data` for the registry response.
+Every `lpm stage` subcommand supports `--json`. JSON output uses LPM envelopes with `success`, `target: "npm"`, `registry`, `auth` on stage publish (`"oidc"` or `"token"`), `stageId` when a single staged package is involved, and `data` for the registry response.
 
 ## Provenance
 
@@ -130,7 +146,7 @@ Token resolution for npm-compatible targets:
 
 | Target | Resolution order |
 | --- | --- |
-| npm | `NPM_TOKEN` → token stored by `lpm login --npm` → locked `.npmrc` token |
+| npm | npm Trusted Publishing for `publish --npm` / `stage publish` → `NPM_TOKEN` → token stored by `lpm login --npm` → locked `.npmrc` token |
 | GitHub Packages | `GITHUB_TOKEN` → valid `gh` auth for `github.com` → LPM-stored fallback token |
 | GitLab.com Packages | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → valid `glab` auth → LPM-stored fallback token |
 | Self-managed GitLab | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → LPM-stored fallback token |
