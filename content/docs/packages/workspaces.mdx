@@ -166,26 +166,28 @@ lpm catalog show --resolved --json
 
 ## `lpm deploy`
 
-For Docker / serverless — materialize one member's production closure into a self-contained directory:
+For Docker / serverless — materialize one member's deploy closure into a self-contained directory:
 
 ```bash
 lpm deploy /prod/api --filter api               # build the deploy output
 lpm deploy /prod/api --filter api --dry-run     # preview, no filesystem changes
 lpm deploy /prod/api --filter api --force       # overwrite a non-empty output dir
+lpm deploy /prod/api --filter api --no-optional # omit optionalDependencies
+lpm deploy /prod/api --filter api --dev         # deploy devDependencies instead
 ```
 
 Output dir contains:
 
-- The member's source files, copied via hardlink when possible (zero disk cost on the same filesystem; falls back to byte-copy for cross-device)
-- A `package.json` with `workspace:*` references rewritten to concrete versions
+- The member's publishable source files, copied via hardlink when possible (zero disk cost on the same filesystem; falls back to byte-copy for cross-device)
+- Local workspace dependencies copied under `.lpm/deploy-workspace/` and referenced with relative `file:` specs
 - A populated `node_modules/` (install pipeline runs at the output dir)
-- A `lpm.lock` for the deploy tree
+- A deploy-local `.lpm/store/` and `lpm.lock` for the deploy tree
 
-The source copy applies a deny list at **every level** (not just the root). Excluded basenames:
+The source copy honors package publishing rules: `files` when present, otherwise `.npmignore`, otherwise `.gitignore`. It also applies a deny list at **every level** (not just the root). Excluded basenames:
 
 - **LPM internal state** that the install pipeline recreates: `node_modules`, `.lpm`, `lpm.lock`, `lpm.lockb`
 - **Secrets** — every `.env*` variant: `.env`, `.env.local`, `.env.development[.local]`, `.env.production[.local]`, `.env.test[.local]`. Critical: a developer-only `.env.local` riding into a Docker image is a credential leak
-- **Version control**: `.git`, `.gitignore`, `.gitattributes`, `.svn`, `.hg`
+- **Version control / packaging control files**: `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, `.hg`
 - **OS / editor cruft**: `.DS_Store`, `Thumbs.db`
 
 In a Dockerfile:
@@ -204,7 +206,7 @@ Constraints:
 
 - `--filter` or `--filter-prod` is required and must match exactly one member. `--changed-files-ignore-pattern` and `--test-pattern` apply when the filter contains a `[git-ref]` atom.
 - The output directory must be outside the workspace tree.
-- Workspace members referenced via `workspace:*` must be **published to the registry** today. Local-package injection into deploy outputs is not supported yet — publish internal members first.
+- `--prod` is the default dependency mode. `--dev` deploys dev dependencies instead, and `--no-optional` omits optional dependencies from the manifest and resolver graph.
 
 ## See also
 
