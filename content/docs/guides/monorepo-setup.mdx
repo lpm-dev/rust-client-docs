@@ -123,20 +123,22 @@ lpm run test --filter web --fail-if-no-match
 
 `workspace:*` tells the resolver "use the local workspace member, not a published version." LPM links the two via symlink (in isolated layout) and respects topological order in tasks (`dependsOn: ["^build"]` waits for upstream member's `build` task to finish first).
 
-## 6. Production builds with `lpm deploy`
+## 6. Deploy builds with `lpm deploy`
 
-For Docker / serverless deploys, you don't want to ship the entire monorepo. [`lpm deploy`](/docs/packages/workspaces) materializes one member's production closure into a self-contained directory:
+For Docker / serverless deploys, you don't want to ship the entire monorepo. [`lpm deploy`](/docs/packages/workspaces) materializes one member's deploy closure into a self-contained directory:
 
 ```bash
 lpm deploy /prod/api --filter api
+lpm deploy /prod/api --filter api --no-optional
+lpm deploy /prod/api --filter api --dev
 ```
 
 The output dir has:
 
-- The targeted member's source files (excluding `.env*`, `node_modules`, `.git`, etc.)
-- A `package.json` with `workspace:*` references rewritten to concrete versions
+- The targeted member's publishable source files (honors `files`, `.npmignore`, then `.gitignore`, while still excluding `.env*`, `node_modules`, `.git`, etc.)
+- Local workspace dependencies copied under `.lpm/deploy-workspace/` and referenced with relative `file:` specs
 - A populated `node_modules/`
-- A `lpm.lock` for the deploy tree
+- A deploy-local `.lpm/store/` and `lpm.lock` for the deploy tree
 
 In a Dockerfile:
 
@@ -154,13 +156,13 @@ Constraints:
 
 - `--filter` or `--filter-prod` is required and must match exactly one member.
 - The output directory must be outside the workspace tree.
-- Workspace members referenced via `workspace:*` must be published to the registry. Local-only deps aren't injected into deploy outputs yet — publish internal members first.
+- `--prod` is the default dependency mode. Use `--dev` for a dev-dependency deploy tree, and `--no-optional` to omit optional dependencies.
 
 ## Common pitfalls
 
 - **`--filter core` doesn't match `@babel/core`.** Substring matching is not supported. Use `--filter '*/core'`.
 - **Multi-member install prompts you for confirmation by default.** If a `--filter` expression would mutate more than one member's `package.json`, `lpm install` asks before writing. Use `-y` in scripts.
-- **`workspace:*` deps in `lpm deploy` output must be published.** Unpublished workspace dep injection isn't supported yet — the pre-deploy build needs to publish internal members first.
+- **`lpm deploy` targets one member.** If your filter matches more than one workspace package, narrow it before deploying.
 
 ## See also
 
