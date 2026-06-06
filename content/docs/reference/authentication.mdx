@@ -19,7 +19,7 @@ lpm login --login-registry https://npm.my-co.com --token <T>
 
 Browser-based OAuth flow for lpm.dev. Starts a local HTTP server on a random port, opens your browser to the registry's `/cli/login?port=<N>` page, captures the redirect token, verifies it via `whoami`, and stores it in local secure storage (OS keychain when available, encrypted file fallback otherwise). CSRF state is verified end-to-end. The flow times out after **2 minutes** waiting for the browser callback.
 
-On success, human output stays on stderr and ends with a compact summary: browser authentication complete, the user, the registry host, and the local secure-store destination. `--json` keeps the machine envelope on stdout.
+On success, human output stays on stderr and ends with a compact summary: browser authentication complete, the user, the registry host, and the active secure-storage backend. `--json` keeps the machine envelope on stdout and includes `storage_backend` plus `storage_degraded`.
 
 For npm, `lpm login --npm` uses npm's browser login by default: LPM asks `registry.npmjs.org` for a web-login URL, opens it, polls the registry for completion, then stores the returned npm token. This requires an interactive terminal. In `--json` mode or non-TTY shells, pass `--token <T>` or set `NPM_TOKEN` as the explicit fallback.
 
@@ -79,8 +79,9 @@ Prints the currently logged-in identity for lpm.dev, plus:
 - **Available Scopes** — your personal `@lpm.dev/<profile>.*` plus one row per organization you belong to (`@lpm.dev/<org-slug>.*`) with your role
 - **External Registries** — npm, GitHub, GitLab, and custom registry auth sources, including host-CLI-backed GitHub/GitLab auth when available
 - **Token expiry warnings** if any registry token is approaching the reminder window you set during `lpm login`
+- **Secure storage backend** for the active stored lpm.dev session, with a warning when the encrypted file fallback is active
 
-`--json` returns the same data structurally: `{username, email, plan, mfa_enabled, has_pool_access, usage{storage_bytes, private_packages}, limits{storage_bytes, private_packages}, orgs[{slug, name, role}], registries[{name, status}]}`.
+`--json` returns the same data structurally: `{username, email, plan, mfa_enabled, has_pool_access, usage{storage_bytes, private_packages}, limits{storage_bytes, private_packages}, orgs[{slug, name, role}], registries[{name, status, storage_backend, storage_degraded}], storage_backend, storage_degraded}`. `storage_backend` is `"keychain"`, `"encrypted_file_fallback"`, or `null` when the active auth source is not stored by LPM.
 
 ## `lpm token-rotate`
 
@@ -120,7 +121,7 @@ Generates an `.npmrc` in the current project directory for CI/CD environments. O
 
 When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
 
-Under `--json`, `lpm setup ci` still writes the on-disk `.npmrc`. The JSON envelope (`{success, path, content, uses_env_var, oidc, proxy}`) is safe for logs and templating because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`.
+Under `--json`, `lpm setup ci` still writes the on-disk `.npmrc`. The JSON envelope (`{success, path, content, uses_env_var, oidc, proxy, storage_backend, storage_degraded}`) is safe for logs and templating because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`. `storage_backend` is `null` for OIDC, env-var, or placeholder auth sources, and reports the stored-auth backend when the token came from a local LPM session.
 
 ## `lpm setup local`
 
@@ -164,6 +165,8 @@ CI/CD helpers, with two complementary subcommands:
 Service name: `lpm-cli`. Account names are scoped per registry — lpm.dev, npm, GitHub, GitLab, and custom registries each get their own keychain entry. `lpm logout --all` walks every stored entry and clears them.
 
 If the system keychain is unavailable (sandboxed environment, headless Linux without D-Bus, locked store), the CLI falls back to encrypted file storage at `~/.lpm/.credentials` instead of storing tokens in plaintext.
+
+You can see the active backend in `lpm login`, `lpm whoami`, `lpm whoami --json`, `lpm setup ci --json`, and `lpm doctor`. The exact human wording is `secure storage backend: keychain` or `secure storage backend: encrypted file fallback`. The encrypted fallback is valid and encrypted, but `lpm doctor` treats it as degraded because it does not have the same OS-managed per-app protections as the keychain-backed path.
 
 ## See also
 
