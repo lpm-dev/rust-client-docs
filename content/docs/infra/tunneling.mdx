@@ -44,20 +44,21 @@ Precedence is `LPM_TUNNEL_RELAY` env > `~/.lpm/config.toml` > built-in default. 
 
 The CLI pins each relay's certificate independently — see [Certificate pinning](#certificate-pinning) below.
 
-## Per-plan limits
+## Plan and relay limits
 
-Tunnels are gated by plan tier across **six** dimensions:
+Tunnels are gated by plan tier and relay-wide abuse controls:
 
 | Dimension               | Free            | Pro       | Org       |
 | ----------------------- | --------------- | --------- | --------- |
 | Concurrent tunnels      | **1**           | **3**     | **10**    |
-| Rate limit              | **100 req/min** | unlimited | unlimited |
-| Max body size           | **10 MB**       | 100 MB    | 100 MB    |
-| Max session length      | **2 hours**     | unlimited | unlimited |
+| Per-tunnel rate limit   | **100 req/min** | unlimited | unlimited |
+| Global per-IP cap       | 600 req/min/IP  | 600 req/min/IP | 600 req/min/IP |
+| Max request body size   | **10 MB**       | 100 MB    | 100 MB    |
+| Max session length      | **1 hour**      | unlimited | unlimited |
 | Custom subdomain claims | **0**           | 3 total   | 10 total  |
 | `--tunnel-auth` flag    | not available   | available | available |
 
-Limits are enforced at the relay (the Cloudflare Worker), not the CLI. They're documented in [`workers/tunnel/src/limits.js`](https://github.com/lpm-dev/a-package-manager/blob/main/workers/tunnel/src/limits.js).
+Limits are enforced at the relay (the Cloudflare Worker), not the CLI. Product constants live in [`config/plans.js`](https://github.com/lpm-dev/a-package-manager/blob/main/config/plans.js), and the Worker derives its runtime limit table from [`workers/tunnel/src/limits.js`](https://github.com/lpm-dev/a-package-manager/blob/main/workers/tunnel/src/limits.js).
 
 ### Reconnecting to your own domain
 
@@ -95,17 +96,17 @@ k8f2m9x1ab.lpm.fyi
 
 Generated cryptographically per session with rejection sampling over a 36-symbol alphabet, so the distribution is uniform. Different on every reconnect — free random subdomains are not claimed and aren't preserved across restarts, so each one hands you a fresh URL.
 
-These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (capped at 2 hours under the free session cap) and then they're gone.
+These domains are **not stored in any database** — they exist for the lifetime of the WebSocket connection (capped at 1 hour under the free session cap) and then they're gone.
 
 ## Free-tier session cap
 
-Free tunnels are capped at **2 hours per session**. The relay enforces this by scheduling a Cloudflare Durable Object alarm when the WebSocket opens; once the alarm fires, the relay closes the WebSocket with reason `session time limit reached` and any in-flight HTTP request gets a `503 Service Unavailable` with a `Retry-After: 5` header.
+Free tunnels are capped at **1 hour per session**. The relay enforces this by scheduling a Cloudflare Durable Object alarm when the WebSocket opens; once the alarm fires, the relay closes the WebSocket with reason `session time limit reached` and any in-flight HTTP request gets a `503 Service Unavailable` with a `Retry-After: 5` header.
 
 When this happens:
 
 - The CLI surfaces the close reason in its retry/backoff log.
 - Reconnecting starts a fresh session with a new random subdomain (free tier has no reconnect-grace window).
-- The relay tracks `session_expires_at` and sends it in the WebSocket `hello` frame, so future CLI versions can show a countdown.
+- The relay tracks `session_expires_at` and sends it in the WebSocket `hello` frame; current CLI versions show the remaining time in the startup block.
 
 Pro and Org tunnels are uncapped.
 
@@ -152,7 +153,7 @@ Without it, anyone could spin up a free tunnel and aim it at a phishing site tha
 
 - **Host-only.** No `Domain=` attribute — the cookie is keyed to the exact subdomain that set it. Trusting `acme.lpm.fyi` does NOT propagate to `bravo.lpm.fyi` or any other free tunnel.
 - **Session-bound nonce.** The cookie value is a per-session UUID minted in the relay when the WebSocket opens, not the static `=1` of older versions. When the session ends (clean disconnect or session-cap alarm), the relay clears its nonce; any cookie a previous visitor still holds is no longer valid against a new session, even if the random subdomain happens to repeat.
-- **TTL clamped to session length.** The cookie's `Max-Age` is set to the remaining session time (free tier: ≤ 2 hours, capped at 4 hours hard ceiling), with a 60-second floor so a visit seconds before expiry doesn't waste the cookie.
+- **TTL clamped to session length.** The cookie's `Max-Age` is set to the remaining session time (free tier: ≤ 1 hour, capped at 4 hours hard ceiling), with a 60-second floor so a visit seconds before expiry doesn't waste the cookie.
 - `SameSite=Lax`, `Secure`, `HttpOnly`.
 
 ## Claiming a domain
@@ -186,7 +187,7 @@ The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discri
 | Direction      | Type            | Purpose                                                                           |
 | -------------- | --------------- | --------------------------------------------------------------------------------- |
 | Client → relay | `hello`         | Initial handshake — token, requested domain (wire field: `subdomain`), local port |
-| Relay → client | `hello`         | Handshake response — assigned domain, full `tunnel_url`, `session_id`             |
+| Relay → client | `hello`         | Handshake response — assigned domain, full `tunnel_url`, `session_id`, plan, expiry, and limits |
 | Relay → client | `http_request`  | Incoming HTTP request to proxy                                                    |
 | Client → relay | `http_response` | The local server's response                                                       |
 | Relay → client | `ws_upgrade`    | Incoming WebSocket upgrade request from a remote client                           |
@@ -195,6 +196,8 @@ The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discri
 | Client → relay | `ping`          | Keepalive                                                                         |
 
 Bodies are base64-encoded for binary safety. The CLI maintains a request-ID map so concurrent requests don't conflict.
+
+The relay `hello` frame includes additive metadata fields when the relay knows them: `plan`, `base_domain`, `domain_kind`, `session_expires_at`, `session_max_ms`, and a `limits` object with concurrency, per-tunnel rate, global per-IP rate, request body, custom-domain, and tunnel-auth availability. Older relays may omit these fields; the CLI treats them as optional.
 
 The protocol is purposely simple. There's no streaming-body support today; large requests are buffered up to the per-plan body cap (10 MB free / 100 MB Pro+Org) before forwarding. Most webhook payloads are small enough that this is fine; large file uploads are the edge case.
 
@@ -207,7 +210,7 @@ When the CLI's WebSocket connects to the relay, the `hello` message includes the
 3. On miss: calls back to the lpm.dev origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, plan tier, and org memberships.
 4. Caches the result for 60s.
 
-Plan tier from `whoami` is what selects the right `PLAN_LIMITS` row.
+Plan tier from `whoami` is what selects the right tunnel limit row.
 
 ## Domain ownership verification
 
@@ -304,7 +307,7 @@ Sessions persist on disk under `<project>/.lpm/tunnel/sessions/`. Old sessions s
 
 ## CI / scripted
 
-Tunnels aren't a CI primitive — they need an interactive process to hold the WebSocket open, and the per-session timeout (2h on free, unlimited on Pro/Org) doesn't fit a typical CI lifecycle. For CI integrations that need to receive webhooks, look at provider-side options (Stripe webhook signing + delivery logs, GitHub webhook delivery logs, etc.) rather than tunneling.
+Tunnels aren't a CI primitive — they need an interactive process to hold the WebSocket open, and the per-session timeout (1h on free, unlimited on Pro/Org) doesn't fit a typical CI lifecycle. For CI integrations that need to receive webhooks, look at provider-side options (Stripe webhook signing + delivery logs, GitHub webhook delivery logs, etc.) rather than tunneling.
 
 ## See also
 
