@@ -526,6 +526,8 @@ function validateRouteWiring() {
     '"@type": "BreadcrumbList"',
     '"@type": "WebSite"',
     '"@type": "SoftwareApplication"',
+    "datePublished",
+    "dateModified",
   ]) {
     requireSnippet(
       violations,

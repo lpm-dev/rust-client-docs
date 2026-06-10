@@ -1,3 +1,4 @@
+import { contentDatesFor } from "@/lib/content-dates";
 import {
   appName,
   homeSeoDescription,
@@ -296,6 +297,7 @@ export function docsBreadcrumbJsonLd(slug: string[]): object {
 
 export function docsPageJsonLd(page: DocsPage): object {
   const canonicalUrl = docsCanonicalUrl(page.slugs);
+  const { published, modified } = contentDatesFor(page.path);
 
   return {
     "@context": "https://schema.org",
@@ -304,6 +306,8 @@ export function docsPageJsonLd(page: DocsPage): object {
     headline: docsSeoTitle(page),
     description: docsSeoDescription(page),
     url: canonicalUrl,
+    ...(published && { datePublished: published }),
+    ...(modified && { dateModified: modified }),
     image: `${siteUrl}/og/docs/${[...page.slugs, "image.png"].join("/")}`,
     inLanguage: "en",
     isPartOf: {
