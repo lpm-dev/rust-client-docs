@@ -1,7 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { homeJsonLd, safeJsonLd } from "@/lib/seo";
-import { gitConfig, registryUrl } from "@/lib/shared";
+import {
+  appName,
+  gitConfig,
+  homeSeoDescription,
+  homeSeoTitle,
+  registryUrl,
+  siteUrl,
+} from "@/lib/shared";
 import { CopyButton } from "./_components/copy-button";
 import { Reveal } from "./_components/reveal";
 import { TypedHero } from "./_components/typed-hero";
@@ -10,6 +18,37 @@ import "./home.css";
 const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
 
 const INSTALL_CMD = "curl -fsSL https://cli.lpm.dev/install | sh";
+
+export const metadata: Metadata = {
+  title: {
+    absolute: homeSeoTitle,
+  },
+  description: homeSeoDescription,
+  alternates: {
+    canonical: siteUrl,
+  },
+  openGraph: {
+    type: "website",
+    siteName: appName,
+    title: homeSeoTitle,
+    description: homeSeoDescription,
+    url: siteUrl,
+    images: [
+      {
+        url: "/og/home",
+        width: 1200,
+        height: 630,
+        alt: homeSeoTitle,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: homeSeoTitle,
+    description: homeSeoDescription,
+    images: ["/og/home"],
+  },
+};
 
 type Feature = {
   title: string;
@@ -105,7 +144,7 @@ const FOOTER: { heading: string; links: FootLink[] }[] = [
   {
     heading: "Get started",
     links: [
-      { label: "LPM-cli", href: "/docs" },
+      { label: "LPM CLI", href: "/docs" },
       { label: "How to install", href: "/docs/installation" },
       { label: "Migration to LPM", href: "/docs/migrating" },
       { label: "Comparison", href: "/docs/comparison" },
@@ -217,7 +256,7 @@ export default function HomePage() {
           <TypedHero />
           <p className="hero-sub">
             Modern apps are a patchwork of npm, nvm, Turborepo, ngrok, mkcert,
-            dotenv-vault, and shadcn-cli. LPM-cli brings install, task cache,
+            dotenv-vault, and shadcn-cli. LPM CLI brings install, task cache,
             runtime, env, HTTPS, tunnels, and source delivery into one Rust
             binary.
           </p>
@@ -253,7 +292,7 @@ export default function HomePage() {
               <div className="sec-label">More</div>
               <h2>
                 Beyond install.{" "}
-                <span className="light">What LPM-cli unlocks.</span>
+                <span className="light">What LPM CLI unlocks.</span>
               </h2>
             </div>
           </Reveal>
