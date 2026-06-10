@@ -3,7 +3,13 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import PostHogProvider from "@/components/posthog-provider";
 import { SiteHeader } from "@/components/site-header";
-import { appName, appTagline, siteUrl } from "@/lib/shared";
+import {
+  appName,
+  appTagline,
+  homeSeoDescription,
+  homeSeoTitle,
+  siteUrl,
+} from "@/lib/shared";
 import "./global.css";
 
 const inter = Inter({
@@ -13,16 +19,19 @@ const inter = Inter({
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: `${appName} — ${appTagline}`,
+    default: homeSeoTitle,
     template: `%s — ${appName}`,
   },
-  description: appTagline,
+  description: homeSeoDescription,
+  alternates: {
+    canonical: siteUrl,
+  },
   applicationName: appName,
   openGraph: {
     type: "website",
     siteName: appName,
-    title: `${appName} — ${appTagline}`,
-    description: appTagline,
+    title: homeSeoTitle,
+    description: homeSeoDescription,
     url: siteUrl,
     images: [
       {
@@ -35,8 +44,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: `${appName} — ${appTagline}`,
-    description: appTagline,
+    title: homeSeoTitle,
+    description: homeSeoDescription,
     images: ["/og/home"],
   },
   robots: {

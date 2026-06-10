@@ -1,5 +1,9 @@
-export const appName = "LPM-cli";
+export const appName = "LPM CLI";
 export const appTagline = "The fast, all-in-one toolkit for modern software.";
+export const homeSeoTitle =
+  "LPM CLI package manager and developer toolkit for npm";
+export const homeSeoDescription =
+  "Install, run, audit, publish, and manage JavaScript or Swift packages with lpm's Rust CLI, npm-compatible registries, secure scripts, and dev infrastructure.";
 export const siteUrl = "https://cli.lpm.dev";
 
 export const docsRoute = "/docs";

@@ -3,7 +3,7 @@ import { appName, docsRoute, siteUrl } from "../../lib/shared";
 
 describe("shared config", () => {
   it("exposes the LPM cli app name", () => {
-    expect(appName).toBe("LPM cli");
+    expect(appName).toBe("LPM CLI");
   });
 
   it("points docs under /docs", () => {
