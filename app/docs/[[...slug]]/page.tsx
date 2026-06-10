@@ -88,6 +88,9 @@ export async function generateMetadata(
     description,
     alternates: {
       canonical,
+      types: {
+        "text/markdown": getPageMarkdownUrl(page).url,
+      },
     },
     openGraph: {
       type: "article",

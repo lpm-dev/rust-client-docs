@@ -13,7 +13,9 @@ const ARIA_LABEL = FULL_TEXT.replace(/\n/g, " ");
 const STEP_MS = 34;
 
 export function TypedHero() {
-  const [count, setCount] = useState(0);
+  // Server-render the full text so crawlers and the first paint get the
+  // complete headline; the typing animation only starts after hydration.
+  const [count, setCount] = useState(TOTAL);
   const [showCursor, setShowCursor] = useState(true);
 
   useEffect(() => {
@@ -22,10 +24,11 @@ export function TypedHero() {
     ).matches;
 
     if (reduced) {
-      setCount(TOTAL);
       setShowCursor(false);
       return;
     }
+
+    setCount(0);
 
     let typed = 0;
     const id = window.setInterval(() => {
@@ -56,11 +59,6 @@ export function TypedHero() {
           </span>
         );
       })}
-      <noscript>
-        The fast,
-        <br />
-        all-in-one toolkit <span className="light">for modern software.</span>
-      </noscript>
       {showCursor ? (
         <span className="cursor hero-cursor" aria-hidden="true" />
       ) : null}

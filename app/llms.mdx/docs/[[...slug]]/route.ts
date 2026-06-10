@@ -13,7 +13,10 @@ export async function GET(
 
   return new Response(await getLLMText(page), {
     headers: {
-      "Content-Type": "text/markdown",
+      "Content-Type": "text/markdown; charset=utf-8",
+      // Keep the markdown mirror out of search indexes so it never competes
+      // with the canonical HTML page; crawlers and LLM agents can still fetch it.
+      "X-Robots-Tag": "noindex",
     },
   });
 }
