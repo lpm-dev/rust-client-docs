@@ -13,6 +13,7 @@ import {
 import { CopyButton } from "./_components/copy-button";
 import { Reveal } from "./_components/reveal";
 import { TypedHero } from "./_components/typed-hero";
+import { switzer } from "./fonts";
 import "./home.css";
 
 const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
@@ -243,13 +244,7 @@ export default function HomePage() {
         dangerouslySetInnerHTML={safeJsonLd(homeJsonLd())}
       />
 
-      <link rel="preconnect" href="https://api.fontshare.com" />
-      <link
-        rel="stylesheet"
-        href="https://api.fontshare.com/v2/css?f[]=switzer@400,500,600,700&display=swap"
-      />
-
-      <div className="home-root">
+      <div className={`home-root ${switzer.variable}`}>
         <div className="grain" aria-hidden="true" />
 
         <header className="home-hero">
