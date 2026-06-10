@@ -338,7 +338,7 @@ export function homeJsonLd(): object {
       {
         "@type": "WebSite",
         "@id": `${siteUrl}/#website`,
-        url: `${siteUrl}/`,
+        url: siteUrl,
         name: appName,
         description: homeSeoDescription,
         publisher: { "@id": `${siteUrl}/#organization` },
@@ -368,7 +368,11 @@ export function homeJsonLd(): object {
         description: homeSeoDescription,
         url: siteUrl,
         downloadUrl: "https://github.com/lpm-dev/rust-client/releases/latest",
-        softwareVersion: "latest",
+        // Resolved at build time in next.config.mjs; omitted when unknown
+        // rather than claiming a fake version.
+        ...(process.env.LPM_CLI_VERSION && {
+          softwareVersion: process.env.LPM_CLI_VERSION,
+        }),
         offers: {
           "@type": "Offer",
           price: "0",

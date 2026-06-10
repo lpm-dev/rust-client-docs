@@ -34,7 +34,7 @@ function priorityFor(url: string): number {
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const homeRoute: MetadataRoute.Sitemap[number] = {
-    url: `${siteUrl}/`,
+    url: siteUrl,
     lastModified: BUILD_TIME,
     changeFrequency: "weekly",
     priority: 1,

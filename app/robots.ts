@@ -7,6 +7,8 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
+        // /og/ stays crawlable — JSON-LD image fields point there.
+        disallow: ["/api/", "/a/"],
       },
     ],
     sitemap: `${siteUrl}/sitemap.xml`,
