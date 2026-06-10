@@ -23,9 +23,6 @@ export const metadata: Metadata = {
     template: `%s — ${appName}`,
   },
   description: homeSeoDescription,
-  alternates: {
-    canonical: siteUrl,
-  },
   applicationName: appName,
   openGraph: {
     type: "website",
