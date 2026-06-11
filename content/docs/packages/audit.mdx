@@ -17,6 +17,8 @@ Walks every installed package and reports:
 
 Works in any project, not just LPM-published ones. Discovery walks `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (text form); falls back to walking `node_modules/` in degraded mode.
 
+The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
+
 ## Examples
 
 ```bash
@@ -27,6 +29,8 @@ lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
 lpm audit --fail-on behavior        # CI: exit non-zero only on critical behaviors
 lpm audit --secrets --fail-on secrets # CI: exit non-zero only on hardcoded secrets
 lpm audit --fail-on all             # CI: exit non-zero on either (default)
+lpm audit signatures                # verify npm registry package signatures
+lpm audit signatures --json         # machine-readable signature report
 lpm audit fix                       # bump vulnerable direct deps and reinstall
 lpm audit --fix --dry-run           # plan the same fixes without writing files
 lpm audit --json                    # structured output for tooling
@@ -57,6 +61,52 @@ lpm audit fix --dry-run
 `lpm audit fix` is the canonical form; `lpm audit --fix` is an alias for npm-compatible muscle memory. Both inspect OSV fixed-version data, update vulnerable direct dependencies in `dependencies` and `devDependencies`, then run `lpm install` to refresh `lpm.lock` and `node_modules`.
 
 The fix pass currently operates only in LPM-managed projects. It does not rewrite npm / pnpm / yarn / bun lockfiles, and it skips transitive-only vulnerabilities, private/custom-registry packages, or advisories without a usable fixed version. `--dry-run` reports the plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
+
+## Registry signatures
+
+```bash
+lpm audit signatures
+```
+
+Verifies npm registry package signatures for the installed tree. LPM reads `lpm.lock` when present; for non-LPM lockfiles it uses the discovered installed package list and hydrates npm metadata as needed.
+
+Human output is intentionally compact:
+
+```text
+! Registry signatures · 1 verified · 1 not verified
+  unsigned-pkg@1.0.0  missing dist.signatures
+```
+
+A clean tree exits zero:
+
+```text
+✓ Registry signatures verified · 247 verified
+```
+
+Under `--json`, the envelope includes aggregate counts and one row per package:
+
+```json
+{
+  "success": false,
+  "scanned": 2,
+  "verified": 1,
+  "not_verified": 1,
+  "skipped": 0,
+  "packages": [
+    { "name": "signed-pkg", "version": "1.0.0", "status": "verified", "signatures_verified": 1 },
+    {
+      "name": "unsigned-pkg",
+      "version": "1.0.0",
+      "status": "not_verified",
+      "reason": "missing_signatures",
+      "reason_detail": "missing dist.signatures",
+      "signatures_verified": 0
+    }
+  ]
+}
+```
+
+Statuses are `verified`, `not_verified`, or `skipped`. Skipped rows cover packages outside this signature surface, such as non-registry sources and `@lpm.dev/*` packages. Any `not_verified` row makes the command exit with code `1`.
 
 ## Severity levels
 
@@ -92,6 +142,13 @@ Requires `node_modules/` to exist (errors with a `run \`lpm install\` first`hint
 | `--dry-run`                                | With `--fix`, show the fix plan without changing files                                                          |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
+
+## Subcommands
+
+| Subcommand | Effect |
+| --- | --- |
+| `fix` | Update vulnerable direct dependencies to patched versions, then reinstall |
+| `signatures` | Verify npm registry package signatures for the installed tree |
 
 ## See also
 

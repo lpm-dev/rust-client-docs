@@ -7,7 +7,7 @@ description: "Convert a project from npm, pnpm, yarn, or bun to LPM."
 lpm migrate
 ```
 
-Detects which package manager a project currently uses, parses the foreign lockfile, converts it to `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` scripts still pass.
+Detects which package manager a project currently uses, parses the foreign lockfile, converts it to `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` scripts still pass.
 
 `lpm migrate` is non-destructive: every file it touches is backed up first (`package-lock.json.backup`, `.npmrc.backup`, etc.), and `--rollback` restores them.
 
@@ -31,7 +31,7 @@ The flow is non-interactive — there are no prompts to skip and `-y` is reserve
 1. **Pre-flight** — confirm `package.json` exists; refuse if `lpm.lock` already exists (unless `--force` or `--dry-run`).
 2. **Detect + parse + convert** — identify source PM (npm / pnpm / yarn / bun), read its lockfile, convert to LPM format.
 3. **Translate `pnpm.*` blocks** — auto-translate `pnpm.overrides`, `pnpm.patchedDependencies`, and `pnpm.peerDependencyRules` into the matching `lpm.*` fields. Validation runs up-front: range parse errors, conflicting keys / ranges, unsupported value shapes, missing patch integrity bindings — all surface BEFORE any disk mutation. The original `pnpm.*` block stays in place after migration so a parallel `pnpm install` keeps working during the transition. See [Migrating from pnpm](/docs/guides/migrating-from-pnpm) for per-block details.
-4. **Write** — emit `lpm.lock` + `lpm.lockb`. Back up the source lockfile, the existing `lpm.lock` / `lpm.lockb` (if any), `.gitattributes`, and — when the `pnpm.*` translations have entries to apply — `package.json` plus any patch destinations the migration is about to clobber.
+4. **Write** — emit `lpm.lock` and, when supported by the binary format, `lpm.lockb`. Back up the source lockfile, the existing `lpm.lock` / `lpm.lockb` (if any), `.gitattributes`, and — when the `pnpm.*` translations have entries to apply — `package.json` plus any patch destinations the migration is about to clobber.
 5. **`.npmrc`** — optionally append `@lpm.dev:registry=https://lpm.dev/api/registry/` to `.npmrc` (or create one). Backs up the original on touch. **No-op** if the file already declares an `@lpm.dev:registry` scope. Skip the whole step with `--no-npmrc`.
 6. **Install** — run `lpm install` against the new lockfile (lockfile fast-path, no re-resolution). Skip with `--no-install`.
 7. **Verify** — run `build` + `test` scripts to confirm nothing broke. Skip with `--skip-verify`.

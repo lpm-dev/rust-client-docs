@@ -3,7 +3,7 @@ title: Migrating from npm
 description: "Convert a package-lock.json project to LPM with rollback safety."
 ---
 
-`lpm migrate` converts an npm project to LPM in one command. It detects the source package manager, parses `package-lock.json`, writes `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` still pass. Every file it touches is backed up first — `--rollback` restores the original state.
+`lpm migrate` converts an npm project to LPM in one command. It detects the source package manager, parses `package-lock.json`, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install` against the new lockfile, and (optionally) verifies that `build` + `test` still pass. Every file it touches is backed up first — `--rollback` restores the original state.
 
 This guide is the migration walkthrough. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
 
@@ -33,7 +33,7 @@ What runs, in order:
 
 1. **Pre-flight** — confirms `package.json` exists, refuses to clobber an existing `lpm.lock`.
 2. **Detect, parse, convert** — reads `package-lock.json`, converts entries to LPM's lockfile shape.
-3. **Write** — emits `lpm.lock` + `lpm.lockb`. Backs up `package-lock.json` to `package-lock.json.backup`.
+3. **Write** — emits `lpm.lock` and, when supported by the binary format, `lpm.lockb`. Backs up `package-lock.json` to `package-lock.json.backup`.
 4. **`.npmrc`** — adds LPM-aware config to `.npmrc` (or creates one). Backs up the original to `.npmrc.backup`.
 5. **Install** — runs `lpm install` against the new lockfile (lockfile fast-path, no re-resolution).
 6. **Verify** — runs `build` + `test` if those scripts exist, to confirm nothing broke.
@@ -58,7 +58,8 @@ If anything's broken, see [Rollback](#rollback) below.
 ## 4. Commit
 
 ```bash
-git add lpm.lock lpm.lockb .npmrc package.json
+git add lpm.lock .npmrc package.json
+test ! -f lpm.lockb || git add lpm.lockb
 git rm package-lock.json package-lock.json.backup .npmrc.backup     # if you don't want them committed
 git commit -m "Migrate to LPM"
 ```
@@ -96,13 +97,13 @@ Walks the backups created by the previous run and restores `package-lock.json`, 
 ## What stays the same
 
 - `package.json` — `dependencies`, `devDependencies`, `scripts`, `workspaces` are read as-is. No renames, no deletions.
-- `node_modules/` — gets rebuilt by the install step. The on-disk shape may change (npm-flat → LPM's isolated layout); your imports continue to work because LPM's resolver respects the same semver semantics npm does.
+- `node_modules/` — gets rebuilt by the install step. The on-disk shape may change from npm's flat tree to LPM's v2 hoisted layout, or to LPM's isolated layout for workspaces and peer-conflict installs; declared imports continue to work because LPM's resolver respects the same semver semantics npm does.
 - `.npmrc` — any existing `@scope:registry=` lines for private registries survive the migration. The migration additively appends `@lpm.dev:registry=https://lpm.dev/api/registry/` (unless you pass `--no-npmrc`); if your `.npmrc` already declared that scope, the step is a no-op. LPM honors `.npmrc` for routing — see [Registries](/docs/registries).
 
 ## What changes
 
-- `package-lock.json` → `lpm.lock` + `lpm.lockb`. Both are committed, both should travel with the repo.
-- `node_modules/` layout stays **hoisted** (npm-style flat) for single packages — same shape your project is on today. **Workspaces auto-flip to isolated** (pnpm-style symlinks) for phantom-dep catching; force-flat with `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
+- `package-lock.json` → `lpm.lock` plus `lpm.lockb` when the graph fits the binary format. Commit `lpm.lock` always and `lpm.lockb` when present.
+- `node_modules/` layout starts **hoisted** for single packages in LPM's v2 virtual-store layout. **Workspaces auto-flip to isolated** (pnpm-style symlinks) for phantom-dep catching; force hoisted with `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
 - New `.gitattributes` line: `lpm.lockb binary` (so git doesn't try to text-merge the binary lockfile).
 
 ## Common pitfalls

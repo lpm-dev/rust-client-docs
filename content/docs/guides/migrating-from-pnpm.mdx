@@ -3,7 +3,7 @@ title: Migrating from pnpm
 description: "Convert a pnpm-lock.yaml project to LPM, isolated layout preserved."
 ---
 
-`lpm migrate` converts a pnpm project to LPM in one command. It detects pnpm, parses `pnpm-lock.yaml`, writes `lpm.lock` + `lpm.lockb`, optionally configures `.npmrc`, runs `lpm install`, and (optionally) verifies that `build` + `test` still pass. Backups are taken first, so `--rollback` restores the original state.
+`lpm migrate` converts a pnpm project to LPM in one command. It detects pnpm, parses `pnpm-lock.yaml`, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and (optionally) verifies that `build` + `test` still pass. Backups are taken first, so `--rollback` restores the original state.
 
 The migration shape is the same as [migrating from npm](/docs/guides/migrating-from-npm). This page covers the pnpm-specific differences.
 
@@ -24,7 +24,7 @@ lpm migrate             # do it
 Same flow as the npm path:
 
 1. Detect pnpm, parse `pnpm-lock.yaml`, convert.
-2. Write `lpm.lock` + `lpm.lockb`. Back up `pnpm-lock.yaml` to `pnpm-lock.yaml.backup`.
+2. Write `lpm.lock` and, when supported, `lpm.lockb`. Back up `pnpm-lock.yaml` to `pnpm-lock.yaml.backup`.
 3. Touch `.npmrc` (with `--no-npmrc` to skip), backing up the original.
 4. Run `lpm install` against the new lockfile.
 5. Run `build` + `test` to verify (skip with `--skip-verify`).
@@ -54,7 +54,8 @@ lpm fmt --check
 ```
 
 ```bash
-git add lpm.lock lpm.lockb .npmrc package.json
+git add lpm.lock .npmrc package.json
+test ! -f lpm.lockb || git add lpm.lockb
 git rm pnpm-lock.yaml pnpm-lock.yaml.backup .npmrc.backup
 git commit -m "Migrate to LPM"
 ```
@@ -72,7 +73,7 @@ After migration, `lpm install` is silent for projects whose `lpm.overrides`, `lp
 ## pnpm-specific gotchas
 
 - **`pnpm-workspace.yaml`** is read as a fallback when `package.json > workspaces` is absent, and its `catalog` / `catalogs` blocks are read as root catalogs. If the same catalog package entry exists in both `package.json > catalogs` and `pnpm-workspace.yaml`, LPM uses the `package.json` value. `cleanupUnusedCatalogs: true` is honored unless `package.json > lpm.cleanupUnusedCatalogs` explicitly says otherwise.
-- **`shamefully-hoist`** in `.npmrc` is pnpm-specific. LPM's equivalent for the npm-flat layout is `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
+- **`shamefully-hoist`** in `.npmrc` is pnpm-specific. LPM's closest equivalent is `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`; hoisted mode still uses LPM's v2 virtual-store layout instead of flattening every transitive dependency to the project root.
 
 ## Rollback
 
