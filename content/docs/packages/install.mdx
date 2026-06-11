@@ -52,7 +52,7 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
 3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** in LPM's v2 virtual-store layout: root direct dependencies are surfaced at the project root, while package-local dependency links live inside shared link entries. Workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
-4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
+4. **Run root lifecycle, gate dependency scripts.** Bare installs run the root project's install lifecycle (`pnpm:devPreinstall` before dependency work, then `preinstall` / `install` / `postinstall` / `preprepare` / `prepare` / `postprepare` after a successful install). Dependency package scripts stay blocked by default; when policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only dependency `preinstall`, `install`, and `postinstall` fire. Other recognized dependency phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
 
@@ -169,12 +169,21 @@ lpm install --omit=dev,optional # compose both
 
 ## Lifecycle scripts
 
-LPM does not execute lifecycle scripts during `lpm install` by default — the install pipeline materializes the closure, then stops. To run scripts, choose a policy:
+Bare `lpm install` runs the root project's install lifecycle:
+
+| Timing | Root project scripts |
+| --- | --- |
+| Before dependency install | `pnpm:devPreinstall` |
+| After successful dependency install | `preinstall`, `install`, `postinstall`, `preprepare`, `prepare`, `postprepare` |
+
+This root lifecycle applies to bare installs only. `lpm install <pkg>` adds the requested packages and does not auto-run the root `prepare` lifecycle.
+
+Dependency package lifecycle scripts are separate and deny-by-default. To run dependency scripts, choose a policy:
 
 | Policy | Behavior |
 | --- | --- |
-| `deny` (default) | Scripts blocked. `lpm install` lists what wanted to run; approve them with `lpm approve-scripts` |
-| `allow` (`--yolo`) | Run every lifecycle script during install — matches npm/pnpm/bun default |
+| `deny` (default) | Dependency scripts blocked. `lpm install` lists what wanted to run; approve them with `lpm approve-scripts` |
+| `allow` (`--yolo`) | Run every dependency lifecycle script during install |
 | `triage` (`--triage`) | Tiered gate: greens auto-run in a sandbox; ambers and reds require manual review |
 
 Triage auto-runs only when every unbuilt scripted package classifies green. If any amber or red remains, scripts defer to `lpm approve-scripts` review unless an explicit auto-build signal is set: `--auto-build` on the command line, or — on project installs — `package.json > lpm > scripts.autoBuild = true`. Global installs (`-g`) only honor `--auto-build`; the synthesized package.json doesn't project per-project script knobs.
@@ -226,7 +235,7 @@ See [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/pa
 
 ### Sandbox
 
-When a lifecycle script does run (greens under `triage`, or anything under `allow`), it executes inside the filesystem sandbox by default — Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Default mode allows the project read, the package's own directory write, and outbound network. Strict mode adds env scrubbing and denies outbound network.
+When a dependency lifecycle script does run (greens under `triage`, or anything under `allow`), it executes inside the filesystem sandbox by default — Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Default mode allows the project read, the package's own directory write, and outbound network. Strict mode adds env scrubbing and denies outbound network.
 
 ```bash
 lpm install --strict-sandbox          # engage strict mode for this install
@@ -396,7 +405,7 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 | `--allow-new` | Bypasses the cooldown |
 | `--min-release-age=<DUR>` | Overrides the cooldown window |
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
-| `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the script-policy |
+| `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the dependency script-policy |
 | `--strict-peer-dependencies` / `--no-strict-peer-dependencies` | Overrides the peer-dependency strictness setting for the synthesized install |
 | `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted for global installs. Also useful under `deny` with an established global trust set. |
 
@@ -462,9 +471,9 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--triage` | Alias for `--policy=triage` |
 | `--advisor <none\|claude-cli\|codex\|ollama>` | Triage advisor override (only consulted under `--policy=triage`) |
 | `--auto-build` | Auto-run `lpm rebuild` for trusted packages after install |
-| `--strict-sandbox` | Engage strict sandbox for this install's lifecycle scripts (filesystem containment + env scrubbing + outbound network denial) |
+| `--strict-sandbox` | Engage strict sandbox for this install's dependency lifecycle scripts (filesystem containment + env scrubbing + outbound network denial) |
 | `--paranoid` | Alias for `--strict-sandbox` |
-| `--no-sandbox` | Drop all sandbox containment for this install's lifecycle scripts (debug only — also drops env scrubbing) |
+| `--no-sandbox` | Drop all sandbox containment for this install's dependency lifecycle scripts (debug only — also drops env scrubbing) |
 | `--exact` | Save exact version (no prefix) |
 | `--tilde` | Save with `~` prefix |
 | `--save-prefix <P>` | Override save prefix (`^`, `~`, or `""`) |
@@ -493,7 +502,7 @@ Plus the [global flags](/docs/commands#global-flags): `--token`, `--registry`, `
 
 - [`lpm uninstall`](/docs/packages/uninstall) — remove a dependency
 - [`lpm upgrade`](/docs/packages/upgrade) — bump eligible LPM and npm deps to their latest matching range
-- [`lpm rebuild`](/docs/packages/rebuild) — run lifecycle scripts after install
+- [`lpm rebuild`](/docs/packages/rebuild) — run dependency lifecycle scripts after install
 - [`lpm approve-scripts`](/docs/packages/approve-scripts) — approve packages to run scripts
 - [Save policy](/docs/packages/save-policy) — full details of the save-prefix system
 - [Resolver](/docs/packages/resolver) — how versions are picked

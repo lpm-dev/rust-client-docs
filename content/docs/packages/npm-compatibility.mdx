@@ -23,7 +23,7 @@ This page is the explicit scope: what carries over verbatim, what's different, a
 | `package.json > catalogs` and `pnpm-workspace.yaml > catalog` / `catalogs` | Centralized version catalogs |
 | `.npmrc` | Read for `registry=`, `@scope:registry=`, and `//host/:_authToken=` lines |
 | Semver dialect | `^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, dist-tags (`latest`, `beta`, `next`) |
-| Lifecycle script names | `preinstall`, `install`, `postinstall` execute (see [Differences](#differences)). `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` are recognized for detection — declaring them puts the package in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue, but the install pipeline never runs them. |
+| Lifecycle script names | Bare root installs run `pnpm:devPreinstall`, then `preinstall`, `install`, `postinstall`, `preprepare`, `prepare`, and `postprepare`. Dependency packages execute only `preinstall`, `install`, and `postinstall` through the trust-gated rebuild path (see [Differences](#differences)); dependency `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, and `postuninstall` are recognized for detection but not executed. |
 
 If a project's only contract with npm is "I have a `package.json` with deps and scripts," that project works unchanged.
 
@@ -31,16 +31,16 @@ If a project's only contract with npm is "I have a `package.json` with deps and 
 
 The differences are deliberate — LPM defaults differ where npm's defaults aren't safe, and a handful of legacy npm behaviors are simplified.
 
-### Lifecycle scripts: deny by default
+### Dependency lifecycle scripts: deny by default
 
-npm runs `preinstall` / `install` / `postinstall` for every package by default. LPM **doesn't**.
+npm runs `preinstall` / `install` / `postinstall` for every dependency package by default. LPM **doesn't**. Bare `lpm install` still runs the root project's install lifecycle, including `prepare`; dependency package scripts stay behind the approval gate.
 
 ```bash
-lpm install        # downloads + links, no script execution
+lpm install        # root lifecycle + downloads + links; dependency scripts blocked
 lpm rebuild        # runs scripts for trusted packages (second step)
 ```
 
-To match npm's behavior:
+To run dependency scripts during install:
 
 ```bash
 lpm install --policy=allow      # or --yolo
