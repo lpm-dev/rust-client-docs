@@ -45,23 +45,25 @@ export function TypedHero() {
   return (
     // `white-space: pre-wrap` (in home.css) turns the literal "\n" in the
     // first segment into the line break, so the typed text needs no <br> nodes.
-    <h1 className="hero" aria-label={ARIA_LABEL}>
-      {SEGMENTS.map((segment) => {
-        const take = Math.max(0, Math.min(segment.text.length, remaining));
-        remaining -= take;
-        return (
-          <span
-            key={segment.text}
-            className={segment.muted ? "light" : undefined}
-            aria-hidden="true"
-          >
-            {segment.text.slice(0, take)}
-          </span>
-        );
-      })}
-      {showCursor ? (
-        <span className="cursor hero-cursor" aria-hidden="true" />
-      ) : null}
+    // data-text feeds the invisible ::before sizer that holds the finished
+    // height while the absolutely-positioned .hero-typed layer types, so the
+    // page below never reflows during the animation.
+    <h1 className="hero" aria-label={ARIA_LABEL} data-text={FULL_TEXT}>
+      <span className="hero-typed" aria-hidden="true">
+        {SEGMENTS.map((segment) => {
+          const take = Math.max(0, Math.min(segment.text.length, remaining));
+          remaining -= take;
+          return (
+            <span
+              key={segment.text}
+              className={segment.muted ? "light" : undefined}
+            >
+              {segment.text.slice(0, take)}
+            </span>
+          );
+        })}
+        {showCursor ? <span className="cursor hero-cursor" /> : null}
+      </span>
     </h1>
   );
 }
