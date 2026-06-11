@@ -11,7 +11,7 @@ With no arguments, installs every dependency declared in `package.json` against 
 
 ## Project discovery
 
-`lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock` / `lpm.lockb`, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
+`lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock`, `lpm.lockb` when representable, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
 
 If `lpm i <pkg>` runs in a directory with no `package.json` anywhere up the tree, LPM auto-creates a minimal `{"dependencies": {}}` manifest in the current directory before installing — matching `npm i <pkg>`'s fresh-dir behavior. Bare `lpm install` (no package args) still errors when nothing can be found, since it has nothing to install against.
 
@@ -23,6 +23,8 @@ lpm install zod               # add latest, save as ^x.y.z
 lpm install zod@4.3.6         # add exact, save as 4.3.6
 lpm install zod@^4.3.0        # add with explicit range
 lpm install -D vitest         # save under devDependencies
+lpm install --prod            # install production deps only
+lpm install --omit=optional   # skip optionalDependencies
 lpm install --catalog react   # save as "catalog:" when the default catalog matches
 lpm install --catalog=ui react # save as "catalog:ui" when the named catalog matches
 lpm install -g typescript     # install into ~/.lpm/global/
@@ -49,7 +51,7 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 
 1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
-3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** (npm-style flat); workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
+3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** in LPM's v2 virtual-store layout: root direct dependencies are surfaced at the project root, while package-local dependency links live inside shared link entries. Workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Skip scripts.** Lifecycle scripts do **not** run by default. When policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only `preinstall`, `install`, and `postinstall` fire — other recognized phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
@@ -151,6 +153,19 @@ Catalogs can override the saved spec for packages that exist in the root default
 Set `package.json > lpm.cleanupUnusedCatalogs = true` or `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` to prune unused root catalog entries after successful installs. The default is to preserve catalog entries exactly as written.
 
 Full details in [Save policy](/docs/packages/save-policy).
+
+## Production and omitted deps
+
+Use `--prod` (alias: `--production`) to install the production dependency closure only. It omits `devDependencies` from `node_modules` while keeping the lockfile graph reproducible.
+
+```bash
+lpm install --prod
+lpm install --omit=dev          # same dev-dep omission
+lpm install --omit=optional     # skip optionalDependencies
+lpm install --omit=dev,optional # compose both
+```
+
+`--omit` accepts `dev` and `optional`, comma-separated or repeated. Production filtering keeps peer packages needed by retained production packages, so production installs do not accidentally drop a peer that a kept package can resolve.
 
 ## Lifecycle scripts
 
@@ -294,7 +309,7 @@ lpm install --offline --strict-integrity
 
 ## Recently published packages
 
-LPM blocks installs of packages published in the last **24 hours** by default — the [minimum release age](/docs/reference/env-vars) gate.
+LPM applies a **24-hour** minimum release age by default. For version ranges, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
 
 ```bash
 lpm install foo --allow-new                # bypass the cooldown for this command
@@ -303,6 +318,33 @@ lpm install foo --min-release-age=0        # disable the cooldown for this comma
 ```
 
 Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — `--allow-new` proceeds with the install but a recent-publish package whose script body matches an identity-Green shape stays Amber. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
+
+## Registry signatures and trust policy
+
+Registry package signatures are off on the install path by default so the hot path stays lean. Audit them on demand:
+
+```bash
+lpm audit signatures
+lpm audit signatures --json
+```
+
+Enable install-time verification when you want the install itself to fail closed on unsigned or unverifiable npm registry packages:
+
+```bash
+lpm config signatures --set true
+# or, for one process:
+LPM_VERIFY_REGISTRY_SIGNATURES=1 lpm install
+```
+
+The verifier checks npm-compatible `dist.signatures` against registry signing keys and the package integrity hash. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check; they still pass through the normal integrity, provenance, script, and behavioral layers.
+
+`trust-policy = "no-downgrade"` is a separate resolver policy:
+
+```bash
+lpm config trust-policy --set no-downgrade
+```
+
+When enabled, LPM refuses npm versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can fall back to an older allowed candidate; an exact pin to a blocked version fails with the trust-policy reason.
 
 ## Audit after install
 
@@ -405,6 +447,8 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | --- | --- |
 | `-D`, `--save-dev` | Save under `devDependencies` |
 | `-g`, `--global` | Install into `~/.lpm/global/` instead of the project (exposes bins on PATH) |
+| `--omit <dev\|optional>` | Omit dependency types from `node_modules` (comma-separated or repeatable) |
+| `--prod`, `--production` | Production install; equivalent to omitting dev dependencies |
 | `--offline` | Never touch the network |
 | `--force` | Bypass fast-exit hash check, skip the lockfile, re-download, re-link from scratch |
 | `--allow-new` | Skip the minimum-release-age cooldown |
@@ -412,7 +456,7 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
 | `--strict-peer-dependencies` | Fail when required peers are missing, peer ranges mismatch, or peer requirements conflict |
 | `--no-strict-peer-dependencies` | Disable strict peer failures for this invocation, overriding project or user config |
-| `--linker <isolated\|hoisted>` | Linking layout (default starts `hoisted`; workspaces and default peer-conflict installs use `isolated`) |
+| `--linker <isolated\|hoisted>` | Linking layout (default starts `hoisted` in the v2 virtual-store layout; workspaces and default peer-conflict installs use `isolated`) |
 | `--policy <deny\|allow\|triage>` | Lifecycle-script policy for this invocation |
 | `--yolo` | Alias for `--policy=allow` |
 | `--triage` | Alias for `--policy=triage` |

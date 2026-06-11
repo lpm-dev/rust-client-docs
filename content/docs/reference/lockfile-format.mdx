@@ -3,9 +3,9 @@ title: lpm.lock format
 description: "TOML lockfile schema — what every field means and why it's there."
 ---
 
-`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, and SRI integrity hash, so the next install — on any machine, with any cache state — produces a byte-identical `node_modules/`.
+`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, SRI integrity hash, platform metadata, and any registry-signature evidence LPM saw, so the next install can reproduce the same graph without trusting ambient registry state.
 
-The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile holds the same data in a mmap-friendly format for zero-parse warm starts. Both files should be committed.
+The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is generated when the current binary wire format can represent the graph. `lpm.lock` is always authoritative; commit `lpm.lockb` when LPM writes it.
 
 ## File location
 
@@ -15,7 +15,7 @@ The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile holds 
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 2
+lockfile-version = 4
 resolved-with = "greedy-fusion"
 # Only present when the default linker auto-switched to isolated
 # after detecting incompatible peer requirements.
@@ -28,12 +28,21 @@ source = "registry+https://registry.npmjs.org"
 integrity = "sha512-..."
 dependencies = ["scheduler@0.25.0"]
 tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
+registry-published-at = "2025-01-01T00:00:00.000Z"
+
+[[packages.registry-signatures]]
+keyid = "SHA256:..."
+sig = "MEUCIQ..."
 
 [[packages]]
 name = "scheduler"
 version = "0.25.0"
 source = "registry+https://registry.npmjs.org"
 integrity = "sha512-..."
+os = ["darwin", "linux"]
+cpu = ["arm64", "x64"]
+libc = ["glibc"]
+optional = true
 
 # Only present when at least one root dep uses npm:<target>@<range>
 [root-aliases]
@@ -48,7 +57,7 @@ ambient-peer-installs = ["loose-envify"]
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `2` (bumped from `1` when the per-entry `tarball` hint + `peers` array landed). Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. |
+| `lockfile-version` | u32 | Schema version. Current: `4`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 | `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
 
@@ -62,6 +71,12 @@ One entry per resolved package. Sorted by `name` for deterministic diffs and min
 | `version` | string | Exact resolved version |
 | `source` | string \| absent | Source registry, e.g. `registry+https://registry.npmjs.org`. Absent for packages without a known source. |
 | `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated when the registry provides it. Always trusted on subsequent installs. |
+| `registry-signatures` | table[] | npm-compatible `dist.signatures` entries persisted as nested `[[packages.registry-signatures]]` tables. Skipped when absent. |
+| `registry-published-at` | string \| absent | Publish timestamp used to verify npm registry signing-key expiry without rehydrating package metadata. |
+| `os` | string[] | `package.json > os` restrictions for this version. Skipped when empty. |
+| `cpu` | string[] | `package.json > cpu` restrictions for this version. Skipped when empty. |
+| `libc` | string[] | `package.json > libc` restrictions for this version. Skipped when empty. |
+| `optional` | bool | Present as `true` when the package is reachable only through optional dependency edges. Used with platform filtering so warm installs can skip incompatible optional packages and fail incompatible required packages. |
 | `dependencies` | string[] | Direct deps as `<local_name>@<version>` entries. Skipped from output when empty. |
 | `alias-dependencies` | `[string, string][]` | npm-alias edges as `[local_name, target_canonical_name]` pairs. Only present when the package uses `npm:<target>@<range>` aliases. |
 | `peers` | string[] | Resolved peer dependencies as `<peer_name>@<resolved_version>` entries (same format as `dependencies`). Each entry is one of the package's declared `peerDependencies` intersected with the install set's resolved versions. **Load-bearing for warm-install correctness** — the v2 store's link-entry identity hashes peer pinning, so dropping these would let the warm install compute a different graph key than the cold install. Sorted by peer name; skipped from output when empty (the common case). |
@@ -90,6 +105,31 @@ tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
 ```
 
 A dist-URL hint cache for `Source::Registry` packages. Lets the warm-install fast path skip the per-package metadata round-trip. For non-Registry sources (`Source::Tarball`, `Source::Git`), the URL is part of source identity (lives inside the source variant) — pairing them with this field is rejected at parse time.
+
+### Platform fields
+
+```toml
+os = ["darwin", "linux"]
+cpu = ["arm64", "x64"]
+libc = ["glibc"]
+optional = true
+```
+
+LPM records `os`, `cpu`, and `libc` restrictions from the package version's manifest. Empty arrays are omitted. Warm installs replay the same host filtering as fresh installs: incompatible optional packages are skipped; incompatible required packages fail loudly.
+
+The `optional = true` bit means this package is only reachable through optional dependency edges. It is what lets the lockfile fast path distinguish "safe to skip on this host" from "required package cannot run here."
+
+### Registry signatures
+
+```toml
+registry-published-at = "2025-01-01T00:00:00.000Z"
+
+[[packages.registry-signatures]]
+keyid = "SHA256:..."
+sig = "MEUCIQ..."
+```
+
+When npm metadata includes `dist.signatures`, LPM persists the signature payloads and the version publish timestamp. Install-time signature verification can then run from the lockfile fast path without fetching the full package metadata again. The verifier still checks the package integrity hash and registry signing keys; the lockfile stores evidence, not a cached pass/fail verdict.
 
 ## `[root-aliases]`
 

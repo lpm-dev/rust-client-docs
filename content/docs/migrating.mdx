@@ -5,7 +5,7 @@ description: "Convert an existing npm, pnpm, yarn, or bun project to LPM with on
 
 import { Card, Cards } from "fumadocs-ui/components/card";
 
-[`lpm migrate`](/docs/packages/migrate) is the one-command path from any npm-ecosystem project to LPM. It auto-detects the source package manager, converts its lockfile to LPM's dual-format lockfile (`lpm.lock` + `lpm.lockb`), preserves your config, and runs a fresh install to verify nothing broke. Every file it touches is backed up first — `lpm migrate --rollback` reverts everything.
+[`lpm migrate`](/docs/packages/migrate) is the one-command path from any npm-ecosystem project to LPM. It auto-detects the source package manager, converts its lockfile to LPM's TOML lockfile (`lpm.lock`) plus `lpm.lockb` when the graph fits the binary format, preserves your config, and runs a fresh install to verify nothing broke. Every file it touches is backed up first — `lpm migrate --rollback` reverts everything.
 
 The migration shape is the same for every source. What differs is the lockfile parser and any source-specific config (most notably `pnpm.*` blocks → `lpm.*`).
 
@@ -42,7 +42,7 @@ These behave differently than your previous PM:
 | Difference | What to do |
 | --- | --- |
 | **Lifecycle scripts deny-by-default.** `lpm install` doesn't run `postinstall` etc. | Run [`lpm rebuild`](/docs/packages/rebuild) once after migration, then [`lpm approve-scripts`](/docs/packages/approve-scripts) to whitelist packages that need to run scripts. Or set `package.json > lpm > scriptPolicy = "allow"` for npm-classic semantics. |
-| **`node_modules` layout differs.** Single packages start **hoisted** (npm-flat). Workspaces auto-flip to **isolated** (pnpm-style symlinks), and default installs with peer conflicts also auto-switch to isolated. | Phantom-dep code (importing a package you didn't declare in `dependencies`) breaks under isolated. Add the missing entries; or override per-project with `package.json > lpm > linker = "hoisted"`. |
+| **`node_modules` layout differs.** Single packages start in LPM's v2 **hoisted** virtual-store layout. Workspaces auto-flip to **isolated** (pnpm-style symlinks), and default installs with peer conflicts also auto-switch to isolated. | Phantom-dep code (importing a package you didn't declare in `dependencies`) breaks under isolated. Add the missing entries; or override per-project with `package.json > lpm > linker = "hoisted"`. |
 | **Cooldown on recent versions.** LPM blocks installs of versions published less than 24h ago by default. | `lpm install --allow-new` per-invocation, or `package.json > lpm > minimumReleaseAge` per-project. |
 | **`engines` enforced by default.** npm reads `engines` but only enforces with `engine-strict=true` in `.npmrc`. | Set `package.json > lpm > engineStrict = false` if you want npm's read-but-don't-enforce behavior. |
 | **`pnpm.overrides` / `pnpm.patchedDependencies` / `pnpm.peerDependencyRules`** | Auto-translated by `lpm migrate` to `lpm.overrides` / `lpm.patchedDependencies` / `lpm.peerDependencyRules`. The original `pnpm.*` blocks stay in place so a parallel `pnpm install` keeps working during transition. |
@@ -56,12 +56,12 @@ lpm lint
 lpm fmt --check
 ```
 
-Commit `lpm.lock`, `lpm.lockb`, the updated `.npmrc`, and the (possibly mutated) `package.json`. Discard the source lockfile (`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock*`) only after everyone on the team has switched over — leaving it in place during transition lets developers keep using the old PM until they cut over.
+Commit `lpm.lock`, `lpm.lockb` when present, the updated `.npmrc`, and the (possibly mutated) `package.json`. Discard the source lockfile (`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock*`) only after everyone on the team has switched over — leaving it in place during transition lets developers keep using the old PM until they cut over.
 
 ## Walkthroughs
 
 <Cards>
-  <Card title="Migrating from npm" href="/docs/guides/migrating-from-npm" description="package-lock.json → lpm.lock + lpm.lockb, with rollback safety." />
+  <Card title="Migrating from npm" href="/docs/guides/migrating-from-npm" description="package-lock.json → lpm.lock, plus lpm.lockb when representable." />
   <Card title="Migrating from pnpm" href="/docs/guides/migrating-from-pnpm" description="pnpm-lock.yaml + pnpm.* blocks → LPM equivalents. Isolated layout preserved." />
 </Cards>
 
@@ -71,5 +71,5 @@ The Yarn and Bun paths use the same `lpm migrate` command and produce the same e
 
 - [`lpm migrate`](/docs/packages/migrate) — full flag reference (`--dry-run`, `--force`, `--rollback`, `--no-install`, `--skip-verify`, `--no-npmrc`, `--ci`, `--no-ci`)
 - [npm compatibility](/docs/packages/npm-compatibility) — what carries over, what differs, what LPM adds
-- [Lockfile](/docs/packages/lockfile) — what the dual-format lockfile actually pins
+- [Lockfile](/docs/packages/lockfile) — what the lockfile actually pins
 - [Project setup](/docs/project-setup) — where post-migration config lives

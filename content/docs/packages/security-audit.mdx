@@ -14,7 +14,7 @@ The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm q
 | **Lifecycle script gate** | Postinstall script supply-chain attacks                 | At install time, blocks until approval                 |
 | **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time (cached forever per `(name, version)`) |
 | **Vulnerability data**    | Known CVEs from OSV.dev + registry advisories           | At `lpm audit` time                                    |
-| **Provenance + cooldown** | Recently-published or publisher-identity-drift attacks  | At install time                                        |
+| **Publisher trust + cooldown** | Recently-published versions, registry-signature failures, trust downgrades, or publisher-identity drift | At install time and via `lpm audit signatures` |
 | **Triage**                | Tiered automation for the script gate                   | At install time, per-package                           |
 
 Each layer is independent — a package can pass one and fail another. Most attacks in the wild trip more than one.
@@ -111,9 +111,31 @@ The vulnerability check is **online** — it hits OSV/registry. Cache hits keep 
 
 ## Layer 4: Provenance + cooldown
 
-Two install-time gates that catch attacks against the publisher identity itself. Both apply to `lpm install` and `lpm install -g`.
+Install-time and audit-time gates that catch attacks against the publisher identity and registry metadata itself. They apply to both `lpm install` and `lpm install -g` unless noted.
 
-**Minimum release age** — newly-published versions can't install for 24 hours by default. Defends against the "race a malicious version into a maintained dep" attack pattern. Configurable per-invocation (`--min-release-age=<DUR>`), per-project (`package.json > lpm > minimumReleaseAge`), or per-user (`~/.lpm/config.toml > minimum-release-age-secs`). Bypass for one install with `--allow-new`. On `-g` the project-level tier is N/A (the synthesized package.json doesn't carry `lpm.minimumReleaseAge`); the chain collapses to CLI flag > `~/.lpm/config.toml` > 24h default.
+**Minimum release age** — newly-published versions are avoided for 24 hours by default. For ranges, the resolver skips too-new matching versions and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version fail. Configurable per-invocation (`--min-release-age=<DUR>`), per-project (`package.json > lpm > minimumReleaseAge`), or per-user (`~/.lpm/config.toml > minimum-release-age-secs`). Bypass for one install with `--allow-new`. On `-g` the project-level tier is N/A (the synthesized package.json doesn't carry `lpm.minimumReleaseAge`); the chain collapses to CLI flag > `~/.lpm/config.toml` > 24h default.
+
+**Registry signatures** — npm packages can carry detached registry signatures in `dist.signatures`. Run [`lpm audit signatures`](/docs/packages/audit#registry-signatures) to verify the installed tree on demand. Install-time verification is disabled by default; enable it with:
+
+```bash
+lpm config signatures --set true
+```
+
+or for one process:
+
+```bash
+LPM_VERIFY_REGISTRY_SIGNATURES=1 lpm install
+```
+
+When enabled on install, LPM verifies registry signatures after resolution and before the install commits. A missing signature, missing integrity hash, missing signing key, expired key, or invalid signature fails the install for npm registry packages. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check and still pass through the other layers.
+
+**Trust policy** — optional no-downgrade policy for npm trust evidence:
+
+```bash
+lpm config trust-policy --set no-downgrade
+```
+
+When enabled, the resolver refuses versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can choose an older allowed version; exact pins to a downgraded version fail. This is separate from Sigstore bundle verification: it decides whether a candidate is acceptable based on the package's current and historical npm trust evidence.
 
 **Provenance drift** — when a previously-approved package is re-resolved, LPM compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
 
@@ -128,7 +150,7 @@ Two install-time gates that catch attacks against the publisher identity itself.
 
 A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. The reference snapshot lives in `package.json > lpm > trustedDependencies > <pkg>@<ver> > provenanceAtApproval` for project trust and in `~/.lpm/global/trusted-dependencies.json` for global trust.
 
-`--allow-new` and `--ignore-provenance-drift[-all]` are independent — `--allow-new` only skips the cooldown; drift still applies unless you also waive it.
+`--allow-new`, registry signatures, trust-policy, and `--ignore-provenance-drift[-all]` are independent. `--allow-new` only skips the cooldown; signature verification and drift still apply unless their own controls are disabled or waived.
 
 The cooldown threshold also gates the Layer 5 [identity widening](#layer-5-triage) — a recent-publish package whose script body matches an identity-Green shape still stays Amber until the publish age clears the cooldown. The two axes are independently bypassable: `--allow-new` skips the cooldown halt, `--policy=allow` skips the script-tier review.
 
@@ -256,6 +278,7 @@ The recommended CI gate stack:
 
 ```yaml
 - run: lpm install --offline --strict-integrity
+- run: lpm audit signatures
 - run: lpm trust diff --assert-none
 - run: lpm audit --fail-on vuln # confirmed vulns
 - run: lpm audit --secrets --fail-on secrets # hardcoded credentials
@@ -263,7 +286,7 @@ The recommended CI gate stack:
 - run: lpm query ":eval:scripts" --assert-none # eval + scripts is a yellow flag
 ```
 
-`lpm audit --fail-on` covers the broad-strokes gate; `lpm query --assert-none` covers your project's specific concerns; `lpm trust diff --assert-none` gates reviewed script-trust drift directly. Together they're cheap and they catch most real classes of supply-chain trouble.
+`lpm audit --fail-on` covers the broad-strokes gate; `lpm audit signatures` checks npm registry signatures; `lpm query --assert-none` covers your project's specific concerns; `lpm trust diff --assert-none` gates reviewed script-trust drift directly. Together they're cheap and they catch most real classes of supply-chain trouble.
 
 ## See also
 
