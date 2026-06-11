@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -100,17 +100,39 @@ function existingDocPaths() {
   );
 }
 
+// The output file is committed: builds without usable git history (e.g. a
+// shallow or .git-less deploy container) fall back to the committed snapshot
+// instead of an empty map. Only a full clone regenerates it.
+function keepSnapshot(reason) {
+  if (existsSync(OUTPUT_FILE)) {
+    console.warn(`content-dates: ${reason}; keeping the committed snapshot.`);
+    return;
+  }
+
+  writeFileSync(OUTPUT_FILE, "{}\n");
+  console.warn(
+    `content-dates: ${reason} and no committed snapshot exists; wrote an empty map — sitemap falls back to BUILD_TIME.`,
+  );
+}
+
 function main() {
   mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 
   let log;
-  let shallow;
   try {
-    shallow =
+    const shallow =
       execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
         cwd: ROOT_DIR,
         encoding: "utf8",
       }).trim() === "true";
+
+    // A shallow clone truncates history: every file appears created at the
+    // clone boundary, so both dates would lie.
+    if (shallow) {
+      keepSnapshot("shallow clone");
+      return;
+    }
+
     log = execFileSync(
       "git",
       [
@@ -124,10 +146,7 @@ function main() {
       { cwd: ROOT_DIR, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );
   } catch (error) {
-    writeFileSync(OUTPUT_FILE, "{}\n");
-    console.warn(
-      `content-dates: git history unavailable (${error.message ?? error}); wrote empty map — sitemap falls back to BUILD_TIME.`,
-    );
+    keepSnapshot(`git history unavailable (${error.message ?? error})`);
     return;
   }
 
@@ -140,19 +159,14 @@ function main() {
     const relativePath = key.slice(DOCS_PREFIX.length);
     if (!existing.has(relativePath)) continue;
     const entry = dates.get(key);
-    // A shallow clone truncates history: the oldest visible commit is the
-    // clone boundary, not the real creation commit, so publish dates lie.
-    output[relativePath] = shallow
-      ? { modified: entry.modified }
-      : { published: entry.published, modified: entry.modified };
+    output[relativePath] = {
+      published: entry.published,
+      modified: entry.modified,
+    };
   }
 
   writeFileSync(OUTPUT_FILE, `${JSON.stringify(output, null, 2)}\n`);
-  console.log(
-    `content-dates: wrote ${Object.keys(output).length} entries${
-      shallow ? " (shallow clone — publish dates omitted)" : ""
-    }.`,
-  );
+  console.log(`content-dates: wrote ${Object.keys(output).length} entries.`);
 }
 
 if (
