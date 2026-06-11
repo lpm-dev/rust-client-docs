@@ -1,9 +1,6 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createMDX } from "fumadocs-mdx/next";
 
 const withMDX = createMDX();
-const PROJECT_ROOT = dirname(fileURLToPath(import.meta.url));
 
 // Captured when `next build` evaluates this config. The value is then inlined
 // into `process.env.BUILD_TIME` everywhere it's read (sitemap, etc.). If
@@ -40,9 +37,6 @@ const RESOLVED_CLI_VERSION = await resolveCliVersion();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  turbopack: {
-    root: PROJECT_ROOT,
-  },
   env: {
     BUILD_TIME: RESOLVED_BUILD_TIME,
     LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
