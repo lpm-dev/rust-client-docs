@@ -1,5 +1,5 @@
 import { RootProvider } from "fumadocs-ui/provider/next";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import PostHogProvider from "@/components/posthog-provider";
 import { SiteHeader } from "@/components/site-header";
@@ -15,6 +15,10 @@ import "./global.css";
 const inter = Inter({
   subsets: ["latin"],
 });
+
+export const viewport: Viewport = {
+  themeColor: "#2376E3",
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
