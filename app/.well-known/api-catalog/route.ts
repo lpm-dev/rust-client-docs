@@ -1,4 +1,5 @@
 import {
+  agentSkillsRoute,
   apiCatalogRoute,
   docsRoute,
   homeContentRoute,
@@ -36,6 +37,11 @@ const catalog = {
           href: `${siteUrl}${homeContentRoute}`,
           type: "text/markdown",
           title: "Homepage as markdown",
+        },
+        {
+          href: `${siteUrl}${agentSkillsRoute}/index.json`,
+          type: "application/json",
+          title: "Agent Skills discovery index",
         },
       ],
     },

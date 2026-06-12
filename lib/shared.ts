@@ -13,6 +13,7 @@ export const homeContentRoute = "/llms.mdx/home";
 export const llmsIndexRoute = "/llms.txt";
 export const llmsFullRoute = "/llms-full.txt";
 export const apiCatalogRoute = "/.well-known/api-catalog";
+export const agentSkillsRoute = "/.well-known/agent-skills";
 
 export const gitConfig = {
   user: "lpm-dev",
