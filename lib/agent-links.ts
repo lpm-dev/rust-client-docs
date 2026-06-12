@@ -1,8 +1,14 @@
-import { apiCatalogRoute, docsRoute, llmsIndexRoute } from "./shared";
+import {
+  apiCatalogRoute,
+  docsRoute,
+  homeContentRoute,
+  llmsIndexRoute,
+} from "./shared";
 
 const markdownType = 'type="text/markdown"';
 
 const homeLinkHeader = [
+  `<${homeContentRoute}>; rel="alternate"; ${markdownType}`,
   `<${apiCatalogRoute}>; rel="api-catalog"`,
   `<${docsRoute}>; rel="service-doc"`,
   `<${llmsIndexRoute}>; rel="describedby"; ${markdownType}`,

@@ -1,7 +1,7 @@
 import { isMarkdownPreferred, rewritePath } from "fumadocs-core/negotiation";
 import { type NextRequest, NextResponse } from "next/server";
 import { agentLinkHeader } from "@/lib/agent-links";
-import { docsContentRoute, docsRoute } from "@/lib/shared";
+import { docsContentRoute, docsRoute, homeContentRoute } from "@/lib/shared";
 
 const { rewrite: rewriteDocs } = rewritePath(
   `${docsRoute}{/*path}`,
@@ -28,17 +28,22 @@ export default function proxy(request: NextRequest) {
   }
 
   if (isMarkdownPreferred(request)) {
-    const result = rewriteDocs(pathname);
+    const target = pathname === "/" ? homeContentRoute : rewriteDocs(pathname);
 
-    if (result) {
-      return NextResponse.rewrite(new URL(result, request.nextUrl));
+    if (target) {
+      const response = NextResponse.rewrite(new URL(target, request.nextUrl));
+      response.headers.append("Vary", "Accept");
+      return response;
     }
   }
 
+  // agentLinkHeader returns a value exactly for the negotiable HTML paths
+  // (/ and /docs/*), which therefore also need Vary: Accept.
   const linkHeader = agentLinkHeader(pathname);
   if (linkHeader) {
     const response = NextResponse.next();
     response.headers.set("Link", linkHeader);
+    response.headers.append("Vary", "Accept");
     return response;
   }
 

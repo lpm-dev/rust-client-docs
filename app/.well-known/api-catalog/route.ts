@@ -1,6 +1,7 @@
 import {
   apiCatalogRoute,
   docsRoute,
+  homeContentRoute,
   llmsFullRoute,
   llmsIndexRoute,
   siteUrl,
@@ -30,6 +31,11 @@ const catalog = {
           href: `${siteUrl}${docsRoute}.mdx`,
           type: "text/markdown",
           title: "Markdown mirror — append .mdx to any /docs page URL",
+        },
+        {
+          href: `${siteUrl}${homeContentRoute}`,
+          type: "text/markdown",
+          title: "Homepage as markdown",
         },
       ],
     },

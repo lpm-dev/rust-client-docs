@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { markdownResponse } from "@/lib/markdown-response";
 import { getLLMText, getPageMarkdownUrl, source } from "@/lib/source";
 
 export const revalidate = false;
@@ -11,14 +12,7 @@ export async function GET(
   const page = source.getPage(slug?.slice(0, -1));
   if (!page) notFound();
 
-  return new Response(await getLLMText(page), {
-    headers: {
-      "Content-Type": "text/markdown; charset=utf-8",
-      // Keep the markdown mirror out of search indexes so it never competes
-      // with the canonical HTML page; crawlers and LLM agents can still fetch it.
-      "X-Robots-Tag": "noindex",
-    },
-  });
+  return markdownResponse(await getLLMText(page));
 }
 
 export function generateStaticParams() {
