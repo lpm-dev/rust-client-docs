@@ -15,11 +15,22 @@ The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is gen
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 4
+lockfile-version = 5
 resolved-with = "greedy-fusion"
 # Only present when the default linker auto-switched to isolated
 # after detecting incompatible peer requirements.
 auto-isolated-peer-conflicts = true
+
+[importers.".".dependencies]
+react = "^19.0.0"
+
+[importers.".".dev-dependencies]
+vite = "^6.0.0"
+
+[patches."left-pad@1.3.0"]
+path = "patches/left-pad@1.3.0.patch"
+sha256 = "sha256-..."
+original-integrity = "sha512-..."
 
 [[packages]]
 name = "react"
@@ -57,9 +68,65 @@ ambient-peer-installs = ["loose-envify"]
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `4`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata. |
+| `lockfile-version` | u32 | Schema version. Current: `5`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots for frozen-lockfile installs and patch checksum records. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 | `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
+
+## `[importers]`
+
+```toml
+[importers.".".dependencies]
+react = "^19.0.0"
+
+[importers.".".dev-dependencies]
+vite = "^6.0.0"
+
+[importers.".".lpm-overrides]
+"left-pad" = "1.3.0"
+
+[importers.".".catalogs.default]
+react = "^19.0.0"
+
+[importers."."]
+patches-fingerprint = "sha256-..."
+peer-dependency-rules-fingerprint = "sha256-..."
+auto-install-peers = true
+```
+
+Importer snapshots record the manifest inputs that must match before a frozen install can replay the lockfile. LPM currently writes the root importer as `"."`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `dependencies` | table | `package.json > dependencies` exactly as declared. |
+| `dev-dependencies` | table | `package.json > devDependencies` exactly as declared. |
+| `optional-dependencies` | table | `package.json > optionalDependencies` exactly as declared. |
+| `peer-dependencies` | table | `package.json > peerDependencies` exactly as declared. |
+| `lpm-overrides` | table | `package.json > lpm.overrides` after catalog references are resolved. |
+| `overrides` | table | npm-style `package.json > overrides` after catalog references are resolved. |
+| `resolutions` | table | yarn-style `package.json > resolutions` after catalog references are resolved. |
+| `catalogs` | nested table | Catalog ranges visible to this importer. |
+| `patches-fingerprint` | string | Hash of `lpm.patchedDependencies`; absent when no patches are declared. |
+| `peer-dependency-rules-fingerprint` | string | Hash of `lpm.peerDependencyRules`; absent when default/empty. |
+| `auto-install-peers` | bool | Effective `autoInstallPeers` value captured for frozen replay. |
+
+## `[patches]`
+
+```toml
+[patches."left-pad@1.3.0"]
+path = "patches/left-pad@1.3.0.patch"
+sha256 = "sha256-..."
+original-integrity = "sha512-..."
+```
+
+Patch records bind `package.json > lpm.patchedDependencies` to the exact patch file bytes LPM is allowed to replay. The table key is the exact patched package selector (`<name>@<version>`).
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `path` | string | Patch file path relative to the project root. |
+| `sha256` | string | SHA-256 digest of the patch file contents. Install hard-errors if the current file hash differs from this value. |
+| `original-integrity` | string | SRI integrity of the pristine package bytes the patch was authored against. Install also verifies this before applying the patch. |
+
+`[patches]` is TOML-only metadata. Projects with patch records skip `lpm.lockb` and remove any stale binary companion.
 
 ## `[[packages]]`
 

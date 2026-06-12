@@ -27,9 +27,10 @@ vim /tmp/lpm-patch-XXXXXX/node_modules/lodash/index.js
 lpm patch-commit /tmp/lpm-patch-XXXXXX
 # → patches/lodash@4.17.21.patch
 # → package.json :: lpm.patchedDependencies updated
+# → lpm.lock :: [patches] checksum updated when a lockfile exists
 ```
 
-After `patch-commit`, **commit `patches/` and `package.json`** to your repo. The next `lpm install` (yours, your teammates', CI's) auto-applies the patch after linking.
+After `patch-commit`, **commit `patches/`, `package.json`, and `lpm.lock`** to your repo. The next `lpm install` (yours, your teammates', CI's) verifies the lockfile-recorded patch checksum, then auto-applies the patch after linking.
 
 ## `lpm patch <selector>`
 
@@ -67,7 +68,8 @@ Steps:
 3. Generates a unified diff between the staging directory and the pristine baseline. Aborts if the diff is **empty** ("no changes detected") or contains **binary file edits** (patches must be text-only — `originalIntegrity` already covers binary drift on install).
 4. Writes `<project>/patches/<key>.patch` atomically (`.tmp` then rename). Scoped names have `/` translated to `__` for cross-platform portability — `@scope/pkg@1.0.0` lands at `patches/@scope__pkg@1.0.0.patch`. Mirrors pnpm.
 5. Updates `package.json > lpm > patchedDependencies` with an entry recording the patch path and the original SRI integrity hash.
-6. Cleans up the staging directory (best-effort).
+6. Updates `lpm.lock > [patches]` when a lockfile exists, recording the patch path, patch-file SHA-256, and original integrity.
+7. Cleans up the staging directory (best-effort).
 
 The on-disk `package.json > lpm > patchedDependencies` entry looks like:
 
@@ -92,7 +94,7 @@ lpm patch-remove lodash --dry-run
 lpm patch-remove lodash@4.17.21 --keep-file
 ```
 
-Removes entries from `package.json > lpm > patchedDependencies`. Exact pins (`lodash@4.17.21`) match one manifest entry. Bare names (`lodash`) work only when they uniquely match a single patched version; if multiple patched versions exist, use the exact key.
+Removes entries from `package.json > lpm > patchedDependencies` and removes matching `lpm.lock > [patches]` records when a lockfile exists. Exact pins (`lodash@4.17.21`) match one manifest entry. Bare names (`lodash`) work only when they uniquely match a single patched version; if multiple patched versions exist, use the exact key.
 
 By default, LPM also deletes the patch file when it is safely inside the project and no remaining patch entry references it. Use `--keep-file` to leave the file on disk. Use `--dry-run` to preview the manifest and file changes without writing.
 
@@ -100,7 +102,12 @@ After removing a patch, run `lpm install` to refresh `node_modules`.
 
 ## Drift safety
 
-On every install, the patch engine verifies the store entry's integrity matches `originalIntegrity`. **Drift is a hard error** — your install will refuse to apply the patch if the underlying package's content changed (re-publish under the same version, tampering, etc.). Bump the patched dep, regenerate the patch.
+On every install, LPM verifies both patch inputs before applying anything:
+
+- The current patch file's SHA-256 must match `lpm.lock > [patches].sha256`.
+- The store entry's integrity must match `originalIntegrity`.
+
+**Drift is a hard error** — your install will refuse to apply the patch if the patch file changed outside `lpm patch-commit`, or if the underlying package's content changed (re-publish under the same version, tampering, etc.). Restore the recorded patch file, or re-author it through `lpm patch` + `lpm patch-commit`.
 
 This is the key safety property versus stock `patch-package`: a republished `lodash@4.17.21` with different bytes can't silently slip past your patch.
 
