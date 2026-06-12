@@ -16,7 +16,7 @@ const HOME_ROUTE_FILE = path.join(ROOT_DIR, "app", "(home)", "page.tsx");
 const SHARED_FILE = path.join(ROOT_DIR, "lib", "shared.ts");
 const SEO_FILE = path.join(ROOT_DIR, "lib", "seo.ts");
 const SITEMAP_FILE = path.join(ROOT_DIR, "app", "sitemap.ts");
-const ROBOTS_FILE = path.join(ROOT_DIR, "app", "robots.ts");
+const ROBOTS_FILE = path.join(ROOT_DIR, "app", "robots.txt", "route.ts");
 
 const TITLE_MIN_LENGTH = 50;
 const TITLE_MAX_LENGTH = 60;
@@ -549,8 +549,15 @@ function validateRouteWiring() {
     violations,
     ROBOTS_FILE,
     robots,
-    "sitemap:",
-    "Robots metadata must advertise the sitemap",
+    "Sitemap:",
+    "robots.txt must advertise the sitemap",
+  );
+  requireSnippet(
+    violations,
+    ROBOTS_FILE,
+    robots,
+    "Content-Signal:",
+    "robots.txt must declare content signals",
   );
 
   return violations;
