@@ -9,6 +9,9 @@ export const siteUrl = "https://cli.lpm.dev";
 export const docsRoute = "/docs";
 export const docsImageRoute = "/og/docs";
 export const docsContentRoute = "/llms.mdx/docs";
+export const llmsIndexRoute = "/llms.txt";
+export const llmsFullRoute = "/llms-full.txt";
+export const apiCatalogRoute = "/.well-known/api-catalog";
 
 export const gitConfig = {
   user: "lpm-dev",

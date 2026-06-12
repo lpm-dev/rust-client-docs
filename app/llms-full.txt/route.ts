@@ -8,6 +8,7 @@ export async function GET() {
 
   return new Response(scanned.join("\n\n"), {
     headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
       "X-Robots-Tag": "noindex",
     },
   });

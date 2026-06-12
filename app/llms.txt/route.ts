@@ -6,6 +6,7 @@ export const revalidate = false;
 export function GET() {
   return new Response(llms(source).index(), {
     headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
       "X-Robots-Tag": "noindex",
     },
   });
