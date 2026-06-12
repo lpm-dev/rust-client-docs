@@ -37,20 +37,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: npm install -g @lpm-registry/cli
-      - run: lpm setup ci --oidc # writes .npmrc by exchanging OIDC token at install time
-      - run: lpm install --offline --strict-integrity
+      - run: lpm setup ci npmrc --oidc # writes .npmrc by exchanging OIDC token at install time
+      - run: lpm ci --offline --strict-integrity
 ```
 
-    `lpm setup ci --oidc` exchanges the workflow's OIDC token for an LPM session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
+    `lpm setup ci npmrc --oidc` exchanges the workflow's OIDC token for an LPM session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
 
 ### Static token (the universal fallback)
 
 ```yaml
 - run: npm install -g @lpm-registry/cli
-- run: lpm setup ci # writes .npmrc with ${LPM_TOKEN} placeholder
+- run: lpm setup ci npmrc # writes .npmrc with ${LPM_TOKEN} placeholder
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
-- run: lpm install --offline --strict-integrity
+- run: lpm ci --offline --strict-integrity
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
 ```
@@ -63,13 +63,13 @@ lpm setup local -d 30        # 30-day read-only token
 
 Store the printed token as `LPM_TOKEN` in your CI's secret store.
 
-For GitLab CI, mint `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev` — `lpm ci setup gitlab` emits a ready-to-paste snippet. The legacy `LPM_GITLAB_OIDC_TOKEN` env var is accepted as a back-compat alias. See [Environment variables](/docs/reference/env-vars#auth-and-routing).
+For GitLab CI, mint `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev` — `lpm setup ci gitlab` emits a ready-to-paste snippet. The legacy `LPM_GITLAB_OIDC_TOKEN` env var is accepted as a back-compat alias. See [Environment variables](/docs/reference/env-vars#auth-and-routing).
 
-## 3. Generate the workflow with `lpm ci setup`
+## 3. Generate the workflow with `lpm setup ci`
 
 ```bash
-lpm ci setup github-actions       # prints a starter workflow snippet + auth command
-lpm ci setup gitlab               # GitLab equivalent
+lpm setup ci github-actions       # prints a starter workflow snippet + auth command
+lpm setup ci gitlab               # GitLab equivalent
 ```
 
 Prints a starter snippet (OIDC permissions, `lpm env pull`, a deploy step) to stdout, followed by the `lpm env oidc allow` command you need to run once to authorize the repo. No files are written — copy the snippet into `.github/workflows/<name>.yml` (or `.gitlab-ci.yml`) yourself and adapt. `--env=<mode>` controls which env mode the snippet references (default `production`).
@@ -77,25 +77,25 @@ Prints a starter snippet (OIDC permissions, `lpm env pull`, a deploy step) to st
 ## 4. Reproducible installs
 
 ```bash
-lpm install --offline --strict-integrity --no-skills --no-editor-setup --no-security-summary
+lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-summary
 ```
 
 | Flag                    | What it does in CI                                                                                                                                        |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--offline`             | No network. Resolves entirely from `lpm.lock` + the global store. Errors if anything is missing — turns "lockfile drift went unnoticed" into a hard fail. |
+| `--offline`             | No network. Replays entirely from `lpm.lock` + the global store. Errors if anything is missing. |
 | `--strict-integrity`    | Refuse to install tarball-URL deps that don't declare an inline SRI. Disables trust-on-first-use for fresh installs.                                      |
 | `--no-skills`           | Skip skills auto-install. Saves time.                                                                                                                     |
 | `--no-editor-setup`     | Skip editor auto-integration. CI has no editor.                                                                                                           |
 | `--no-security-summary` | Skip the post-install security report. Pair with `lpm audit` as a separate explicit step.                                                                 |
 
-If `--offline` fails, the lockfile is out of date. Run `lpm install` locally without `--offline`, commit the updated lockfile.
+If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM writes it.
 
 ## 5. Gating
 
 The standard gate sequence:
 
 ```yaml
-- run: lpm install --offline --strict-integrity
+- run: lpm ci --offline --strict-integrity
 - run: lpm trust diff --assert-none
 - run: lpm audit --fail-on vuln # fail on vulnerabilities (not behavior signals)
 - run: lpm test # forwards vitest/jest exit code
@@ -133,7 +133,7 @@ The cache key is the lockfile hash. Typical CI runners are short-lived enough th
 ## 7. Publishing from CI
 
 ```yaml
-- run: lpm setup ci --oidc
+- run: lpm setup ci npmrc --oidc
 - run: lpm publish --provenance --min-score 80 -y
 ```
 
@@ -151,9 +151,10 @@ For multi-registry publishing in one job, configure `lpm.json > publish.registri
 
 ## See also
 
-- [`lpm setup ci`](/docs/reference/authentication#lpm-setup-ci) — generate `.npmrc` for CI
-- [`lpm ci`](/docs/reference/authentication#lpm-ci) — env-var emission, OIDC workflow generation
-- [`lpm install --offline`](/docs/packages/install) — reproducible installs
+- [`lpm setup ci npmrc`](/docs/reference/authentication#lpm-setup-ci) — generate `.npmrc` for CI
+- [`lpm setup ci <platform>`](/docs/reference/authentication#lpm-setup-ci) — generate OIDC workflow snippets
+- [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) — frozen lockfile install
+- [`lpm env print --ci`](/docs/reference/authentication#ci-env-helpers) — CI-native env output
 - [`lpm audit`](/docs/packages/audit) — security gating
 - [Exit codes](/docs/reference/exit-codes) — what each non-zero code means
 - [Environment variables](/docs/reference/env-vars) — `LPM_TOKEN`, `LPM_OIDC_TOKEN`

@@ -52,7 +52,7 @@ All numeric fields are little-endian. Packages are sorted by name so reads can b
 
 ## Wire-format version
 
-Current: `v2` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`. This binary wire version is independent from the TOML `lockfile-version`, which is currently `4`.
+Current: `v2` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`. This binary wire version is independent from the TOML `lockfile-version`, which is currently `5`.
 
 The binary reader rejects any file whose header `version` is not exactly `BINARY_VERSION` — strict by design. Per-entry layout differs across versions, so a v2 reader interpreting v1 30-byte entries as 36-byte entries would slip a half-package every time and produce garbage. `lpm.lock` remains the authoritative input; the next compatible `write_all` rewrites `lpm.lockb` as the current version.
 
@@ -67,6 +67,8 @@ To keep this sentinel unambiguous, the writer **rejects empty strings at insert 
 The binary format is intentionally smaller than the TOML format. These fields are not represented:
 
 - **`alias-dependencies`** — npm-alias edges
+- **`importers`** — manifest snapshots used by frozen installs
+- **`patches`** — patch paths and patch-file SHA-256 records
 - **`root-aliases`** — root-level npm-alias map
 - **`ambient-peer-installs`** — root-level auto-installed peer links
 - **`peers`** — per-package resolved peer pinning
@@ -77,7 +79,7 @@ The binary format is intentionally smaller than the TOML format. These fields ar
 
 Lockfiles that use any unsupported field are written as TOML-only — the binary file is skipped entirely, and any stale binary file is removed. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile.
 
-If your project uses npm aliases, peer pinning, platform-specific optional packages, catalogs, or registry signatures, seeing only `lpm.lock` is correct.
+If your project uses frozen-install importer snapshots, npm aliases, peer pinning, platform-specific optional packages, catalogs, or registry signatures, seeing only `lpm.lock` is correct.
 
 ## Reading the file
 

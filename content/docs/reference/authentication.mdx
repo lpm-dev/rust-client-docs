@@ -5,7 +5,7 @@ description: "Log in, log out, check identity, rotate tokens, and configure CI a
 
 LPM stores its own auth tokens in your **local secure store**. It prefers the OS keychain — Keychain on macOS, Credential Manager on Windows, Secret Service-compatible keyrings on Linux — and falls back to encrypted file storage under `~/.lpm/.credentials` when the system store is unavailable. Tokens never land in plain text on disk. Multi-registry: separate stored tokens for lpm.dev, npm, and any explicit third-party fallbacks. GitHub and GitLab can also use tokens already managed by `gh` / `glab` without copying them into LPM storage.
 
-This page covers every command in the auth surface: [`login`](#lpm-login), [`logout`](#lpm-logout), [`whoami`](#lpm-whoami), [`token-rotate`](#lpm-token-rotate), [`setup ci`](#lpm-setup-ci), [`setup local`](#lpm-setup-local), and [`ci`](#lpm-ci).
+This page covers every command in the auth surface: [`login`](#lpm-login), [`logout`](#lpm-logout), [`whoami`](#lpm-whoami), [`token-rotate`](#lpm-token-rotate), [`setup ci`](#lpm-setup-ci), and [`setup local`](#lpm-setup-local).
 
 ## `lpm login`
 
@@ -93,19 +93,21 @@ Server-side rotation for the **lpm.dev token only**: creates a new token, invali
 
 `lpm setup` has two explicit subcommands:
 
-- `lpm setup ci` writes a project `.npmrc` for CI/CD use.
+- `lpm setup ci npmrc` writes a project `.npmrc` for CI/CD use.
 - `lpm setup local` mints a read-only local-development token and writes it into `.npmrc`.
 
-This is separate from `lpm ci setup <platform>`, which only prints workflow snippets. It does **not** write `.npmrc`.
+This is separate from `lpm setup ci <platform>`, which only prints workflow snippets. It does **not** write `.npmrc`.
 
 ## `lpm setup ci`
 
 ```bash
-lpm setup ci                       # generate .npmrc with stored token
-lpm setup ci --oidc                # exchange a CI OIDC token at runtime
-lpm setup ci --proxy               # route ALL npm traffic through lpm.dev (Pro/Org)
-lpm setup ci --scoped              # only @lpm.dev/* through lpm.dev (default)
-lpm setup ci -r https://lpm.dev    # override the registry URL
+lpm setup ci npmrc                       # generate .npmrc with stored token
+lpm setup ci npmrc --oidc                # exchange a CI OIDC token at runtime
+lpm setup ci npmrc --proxy               # route ALL npm traffic through lpm.dev (Pro/Org)
+lpm setup ci npmrc --scoped              # only @lpm.dev/* through lpm.dev (default)
+lpm setup ci npmrc -r https://lpm.dev    # override the registry URL
+lpm setup ci github-actions              # print an OIDC workflow snippet
+lpm setup ci gitlab                      # GitLab equivalent
 ```
 
 Generates an `.npmrc` in the current project directory for CI/CD environments. Other tools (npm, pnpm, yarn) can then install `@lpm.dev/*` packages from CI. On Unix, the file is set to `0o600` (owner read/write only) since it embeds the auth token.
@@ -121,7 +123,9 @@ Generates an `.npmrc` in the current project directory for CI/CD environments. O
 
 When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
 
-Under `--json`, `lpm setup ci` still writes the on-disk `.npmrc`. The JSON envelope (`{success, path, content, uses_env_var, oidc, proxy, storage_backend, storage_degraded}`) is safe for logs and templating because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`. `storage_backend` is `null` for OIDC, env-var, or placeholder auth sources, and reports the stored-auth backend when the token came from a local LPM session.
+Under `--json`, `lpm setup ci npmrc` still writes the on-disk `.npmrc`. The JSON envelope (`{success, path, content, uses_env_var, oidc, proxy, storage_backend, storage_degraded}`) is safe for logs and templating because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`. `storage_backend` is `null` for OIDC, env-var, or placeholder auth sources, and reports the stored-auth backend when the token came from a local LPM session.
+
+`lpm setup ci github-actions` and `lpm setup ci gitlab` **print** OIDC-wired starter workflow snippets plus the `lpm env oidc allow` authorization command to run after committing the workflow. They do not write `.npmrc`; use `lpm setup ci npmrc` for that. The GitLab snippet mints `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
 
 ## `lpm setup local`
 
@@ -140,19 +144,19 @@ Human output includes the token expiry timestamp and validity window.
 | `--proxy`          | Route ALL npm traffic through lpm.dev (Pro/Org) |
 | `--scoped`         | Default scoped routing                          |
 
-## `lpm ci`
+## CI Env Helpers
 
 ```bash
-lpm ci env                              # auto-detect CI platform, output env vars
-lpm ci env --env=staging                # use the staging env file
-lpm ci env --output=ci-env.txt          # write to a file
-lpm ci setup github-actions             # print an OIDC workflow snippet + auth command
+lpm env print --ci --env=staging        # auto-detect CI platform, output env vars
+lpm env export --ci --env=staging ci.env # write dotenv output to a file
 ```
 
-CI/CD helpers, with two complementary subcommands:
+Env output for CI lives under the `lpm env` command family:
 
-- **`lpm ci env`** — emits the loaded env vars in a CI-native format. Auto-detection: GitHub Actions runners get GitHub's masked-output format (`echo "::add-mask::…"`-style); Vercel gets dotenv (key=value); everything else (GitLab CI, CircleCI, Bitbucket, generic POSIX runners) gets shell-export lines that work in any CI. `--env=<mode>` selects which env file is loaded; `--output=<file>` writes a **dotenv-formatted** copy to the given path regardless of the auto-detected CI format (the stdout stream still uses the CI-native shape). Secret-marked vars from `lpm.json > envSchema` are masked in the CI-native output where the platform supports it.
-- **`lpm ci setup <platform>`** — **prints** an OIDC-wired starter workflow snippet plus the `lpm env oidc allow` authorization command to run after committing it. It does **not** write `.npmrc`; use `lpm setup ci` for that. Currently supports `github-actions` (aliases: `github`, `gha`) and `gitlab` (alias: `gitlab-ci`). The GitLab snippet mints `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
+- **`lpm env print --ci`** emits the loaded env vars in a CI-native format. Auto-detection: GitHub Actions runners get GitHub's masked-output format; Vercel gets dotenv; everything else gets shell-export lines that work in generic CI.
+- **`lpm env export --ci <file>`** writes a dotenv-formatted copy to the given path. `--env=<mode>` selects which env file is loaded. Secret-marked vars from `lpm.json > envSchema` are masked in the CI-native output where the platform supports it.
+
+`lpm ci` itself is the frozen-lockfile install command. See [`lpm install`](/docs/packages/install#frozen-lockfile-and-ci).
 
 ## Token storage
 
@@ -166,7 +170,7 @@ Service name: `lpm-cli`. Account names are scoped per registry — lpm.dev, npm,
 
 If the system keychain is unavailable (sandboxed environment, headless Linux without D-Bus, locked store), the CLI falls back to encrypted file storage at `~/.lpm/.credentials` instead of storing tokens in plaintext.
 
-You can see the active backend in `lpm login`, `lpm whoami`, `lpm whoami --json`, `lpm setup ci --json`, and `lpm doctor`. The exact human wording is `secure storage backend: keychain` or `secure storage backend: encrypted file fallback`. The encrypted fallback is valid and encrypted, but `lpm doctor` treats it as degraded because it does not have the same OS-managed per-app protections as the keychain-backed path.
+You can see the active backend in `lpm login`, `lpm whoami`, `lpm whoami --json`, `lpm setup ci npmrc --json`, and `lpm doctor`. The exact human wording is `secure storage backend: keychain` or `secure storage backend: encrypted file fallback`. The encrypted fallback is valid and encrypted, but `lpm doctor` treats it as degraded because it does not have the same OS-managed per-app protections as the keychain-backed path.
 
 ## See also
 

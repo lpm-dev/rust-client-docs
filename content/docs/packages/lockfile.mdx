@@ -14,7 +14,7 @@ This page is the conceptual overview — when each file gets read, what the dual
 | `lpm.lock` | Humans, git diffs, authoritative install input | Read by install, audit, graph, and review workflows |
 | `lpm.lockb` | Generated binary companion for the representable subset | Used for binary validation/writeback and cheap generated-cache inspection when present |
 
-The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary companion is intentionally smaller: it can only represent fields in its fixed-width v2 wire format. If the TOML lockfile contains aliases, peer pinning, platform metadata, optional-reachability state, catalogs, or registry signatures, LPM skips `lpm.lockb` and removes any stale binary file.
+The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary companion is intentionally smaller: it can only represent fields in its fixed-width v2 wire format. If the TOML lockfile contains importer snapshots, patch records, aliases, peer pinning, platform metadata, optional-reachability state, catalogs, or registry signatures, LPM skips `lpm.lockb` and removes any stale binary file.
 
 You don't choose the mode manually. Edit `lpm.lock` by hand if you ever need to (humans do that sometimes); the next install either regenerates a compatible `lpm.lockb` or leaves the project TOML-only.
 
@@ -27,8 +27,10 @@ Each entry in the lockfile records:
 - **SRI integrity hash** (`sha512-…`) — verified on every install
 - **Platform metadata** (`os`, `cpu`, `libc`) and optional reachability
 - **Registry signature evidence** (`registry-signatures`, `registry-published-at`) when npm metadata provides it
+- **Patch records** (`path`, patch-file `sha256`, `original-integrity`) when `lpm.patchedDependencies` changes installed bytes
 - **Direct dep names + versions** — for transitive walking
 - **Tarball URL hint** — cached resolved URL that lets warm installs skip the per-package metadata round-trip
+- **Importer snapshot** — the package.json dependency sections and resolver-affecting settings that frozen installs compare before replaying the lockfile
 - **(if any)** npm-alias edges — `local_name → target_canonical_name` pairs
 
 After `lpm install`, two further files exist:
@@ -72,13 +74,13 @@ This is the slow path, but "slow" is relative — cold install on a 266-package 
 
 ## Lockfile-version
 
-The TOML lockfile is **schema-versioned** (current: `4`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage.
+The TOML lockfile is **schema-versioned** (current: `5`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots for frozen-lockfile installs and patch checksum records.
 
 The binary lockfile has its own wire-format version (current: `2`, bumped from `1` when the per-entry `tarball_off`/`tarball_len` pair was added). On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
 
 ## When the binary lockfile is skipped
 
-`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — npm-alias metadata, ambient peer installs, per-package peers, platform metadata, optional reachability, catalogs, and registry signatures live only in TOML. Projects with any of those fields write **only `lpm.lock`**.
+`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — importer snapshots, patch records, npm-alias metadata, ambient peer installs, per-package peers, platform metadata, optional reachability, catalogs, and registry signatures live only in TOML. Projects with any of those fields write **only `lpm.lock`**.
 
 Why: silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile. Skipping the write and removing stale binary state is the safe behavior.
 

@@ -29,6 +29,7 @@ lpm install --catalog react   # save as "catalog:" when the default catalog matc
 lpm install --catalog=ui react # save as "catalog:ui" when the named catalog matches
 lpm install -g typescript     # install into ~/.lpm/global/
 lpm install --offline         # never touch the network
+lpm install --frozen-lockfile # fail if package.json and lpm.lock differ
 lpm install --force           # full re-install, bypass every fast path
 lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --verbose         # append per-phase timings + lockfile size
@@ -306,15 +307,20 @@ lpm install react --filter-prod ...web # prod dependency closure only
 
 See [Workspaces](/docs/packages/workspaces) for filter grammar.
 
-## Reproducible installs (CI)
+## Frozen Lockfile And CI
 
 ```bash
-lpm install --offline --strict-integrity
+lpm ci --offline --strict-integrity
 ```
 
-- `--offline` — never touches the network. Resolves entirely from the lockfile + global store. Errors out if anything is missing.
+- `lpm ci` — frozen install. Requires `lpm.lock`, validates that the lockfile's importer snapshot matches `package.json`, and never rewrites `lpm.lock` or `lpm.lockb`.
+- `--offline` — never touches the network. Replays entirely from the lockfile + global store. Errors out if anything is missing.
 - `--strict-integrity` — fail on tarball-URL deps that don't declare an inline SRI hash. Disables trust-on-first-use for fresh installs.
 - `--no-skills`, `--no-editor-setup`, `--no-security-summary` — skip the soft-side-effects to shave CI time.
+
+`lpm install --frozen-lockfile` gives the same frozen behavior on the regular install command. On CI providers that set `CI=true` (or a provider-specific CI env var), plain `lpm install` automatically becomes frozen when `lpm.lock` exists. Pass `--no-frozen-lockfile` only when you intentionally want a mutable install in CI.
+
+Frozen means frozen: package specs are rejected, `--force` is rejected, missing lockfiles fail, stale manifest ranges or dependency sections fail, and drift in overrides, catalogs, patches, peer rules, or `autoInstallPeers` fails before install work proceeds.
 
 ## Recently published packages
 
@@ -459,6 +465,8 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--omit <dev\|optional>` | Omit dependency types from `node_modules` (comma-separated or repeatable) |
 | `--prod`, `--production` | Production install; equivalent to omitting dev dependencies |
 | `--offline` | Never touch the network |
+| `--frozen-lockfile` | Refuse to update lockfiles; fail if `package.json` and `lpm.lock` disagree |
+| `--no-frozen-lockfile` | Disable the CI auto-frozen default for this invocation |
 | `--force` | Bypass fast-exit hash check, skip the lockfile, re-download, re-link from scratch |
 | `--allow-new` | Skip the minimum-release-age cooldown |
 | `--min-release-age <DUR>` | Override the cooldown (`<N>h`, `<N>d`, or seconds; `0` disables) |

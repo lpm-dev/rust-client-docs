@@ -37,7 +37,7 @@ By default, SBOM generation is local-first and does not depend on the network. I
 - `lpm.lock` for the resolved package graph
 - `package.json` for root metadata and direct dependency scopes
 - installed package manifests from `node_modules/` and the LPM store when present
-- `package.json > lpm.patchedDependencies` and patch file hashes
+- `lpm.lock > [patches]` for patch paths, original integrity bindings, and patch-file SHA-256 records
 - cached Sigstore provenance snapshots under `~/.lpm/cache/metadata/attestations`
 
 Use `--registry-metadata` when you want live registry metadata and provenance attestation checks during SBOM generation:
@@ -71,12 +71,26 @@ Progress is still printed to stderr, so stdout stays reserved for the SBOM docum
 
 ## Patch and provenance fields
 
-CycloneDX output carries LPM-specific metadata as component `properties`, for example:
+CycloneDX output uses the native `component.pedigree.patches` field for patched dependencies. LPM also carries checksum and integrity details as component `properties`, for example:
 
 ```json
 {
-  "name": "lpm:patch:path",
-  "value": "patches/lodash@4.17.21.patch"
+  "pedigree": {
+    "patches": [
+      {
+        "type": "unofficial",
+        "diff": {
+          "url": "patches/lodash@4.17.21.patch"
+        }
+      }
+    ]
+  },
+  "properties": [
+    {
+      "name": "lpm:patch:sha256",
+      "value": "sha256-..."
+    }
+  ]
 }
 ```
 
