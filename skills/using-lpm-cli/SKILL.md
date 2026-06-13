@@ -59,6 +59,7 @@ lpm dev                  # start the orchestrated dev environment
 - **Dependency lifecycle scripts are blocked by default** (supply-chain protection). After an install reports blocked scripts, run `lpm approve-scripts` to review and approve, then `lpm rebuild` to execute them sandboxed. Do not switch package managers to "fix" this.
 - **`lpm rebuild` runs lifecycle scripts; there is no `lpm build` command.**
 - **Saved ranges:** `lpm install zod` saves `"^x.y.z"`. Explicit input (`zod@4.3.6`, `zod@^4.3.0`) is preserved verbatim; prereleases save exact.
+- **Typosquat guard:** new direct names that look like popular packages fail in CI/non-TTY/`--json`/`--yes` runs with `error_code: "typosquat_suspected"`. Use the suggested package or commit a `lpm.toml > policy.typosquat.allow` entry with a reason; do not add a one-off bypass flag.
 - **Lockfiles are committed:** always commit `lpm.lock` (TOML, diffable). Commit `lpm.lockb` when LPM writes it; do not synthesize it for TOML-only lockfiles.
 - **Monorepos auto-use isolated (pnpm-style) linking;** single-package projects use hoisted (npm-style). Override with `--linker=isolated|hoisted`.
 - **Registry auth setup is `lpm setup-npmrc`** (writes scoped `.npmrc` entries).

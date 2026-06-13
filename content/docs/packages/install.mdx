@@ -9,6 +9,8 @@ lpm install [packages...]   # alias: lpm i
 
 With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
 
+Before a new direct dependency enters the project, LPM checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM can switch to the suggested package or write a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy). Existing lockfile replays are not blocked by this check.
+
 ## Project discovery
 
 `lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock`, `lpm.lockb` when representable, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
@@ -142,6 +144,23 @@ save-exact = false  # bool; true forces exact regardless of prefix
 ```
 
 Re-installing an existing dep without a version or override flag refreshes the lockfile and store but **does not** rewrite the existing range — `"zod": "~4.3.6"` stays put.
+
+## Typosquat guard
+
+`lpm install <pkg>` and bare `lpm install` both guard **new direct dependency names** before resolution. The detector covers low-noise cases such as adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`), and flag-shaped package names after `--` (`--legacy-peer-deps`). Transitive dependencies are not blocked by this guard.
+
+In interactive terminals, a single suspicious CLI package can be replaced with the suggested package or committed to the project allow-list. In CI, `--json`, non-TTY, and `--yes` runs, LPM exits `1` with `error_code: "typosquat_suspected"` and leaves the manifest untouched.
+
+Intentional names belong in `lpm.toml`:
+
+```toml title="lpm.toml"
+[[policy.typosquat.allow]]
+package = "axois"
+similar-to = "axios"
+reason = "Intentional internal compatibility package"
+```
+
+The guard only fires when a name is newly entering the project. If `lpm.lock` already records the direct dependency, `CI=true lpm install` and `lpm install --frozen-lockfile` replay the lockfile normally.
 
 Use `--catalog` to force a catalog reference for this invocation. `--catalog <pkg>` writes `"catalog:"`; `--catalog=<name> <pkg>` writes `"catalog:<name>"`. The entry must already exist in the selected root catalog and the resolved version must satisfy that catalog range, otherwise the install fails before committing `package.json`. This flag is mutually exclusive with `--exact`, `--tilde`, and `--save-prefix`.
 

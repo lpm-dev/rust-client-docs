@@ -26,6 +26,11 @@ allow-degraded = false
 ignore-unused = ["eslint-config-next"]
 ignore-phantom = ["virtual:*"]
 ignore-paths = ["generated/**"]
+
+[[policy.typosquat.allow]]
+package = "axois"
+similar-to = "axios"
+reason = "Intentional internal compatibility package"
 ```
 
 | Key | Type | Default | Notes |
@@ -40,6 +45,7 @@ ignore-paths = ["generated/**"]
 | `tidy.ignore-unused` | string or string array | `[]` | Suppress [`lpm tidy`](/docs/packages/tidy) unused-dependency findings by package-name glob. |
 | `tidy.ignore-phantom` | string or string array | `[]` | Suppress `lpm tidy` phantom-import findings by package-name glob. |
 | `tidy.ignore-paths` | string or string array | `[]` | Ignore source imports from matching project-relative path globs during `lpm tidy`. |
+| `policy.typosquat.allow[]` | table array | `[]` | Reviewable exceptions for intentional suspicious direct package names. Each entry needs `package`, `reason`, and optionally `similar-to`. |
 
 Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the offending file. Unknown keys are accepted silently for forward compatibility.
 
@@ -84,6 +90,19 @@ If this repo asks for a weaker sandbox than the machine currently allows, instal
 ### Tidy ignores
 
 `[tidy]` keys are project-local only. They affect [`lpm tidy`](/docs/packages/tidy) report and fix mode; `ignore-unused` and `ignore-phantom` match package names, while `ignore-paths` matches project-relative source paths before imports are analyzed.
+
+### Typosquat policy
+
+`policy.typosquat.allow` is the committed exception list for suspicious direct package names. It is consulted by [`lpm install`](/docs/packages/install#typosquat-guard) and [`lpm add`](/docs/packages/add) before network access or manifest mutation.
+
+```toml title="lpm.toml"
+[[policy.typosquat.allow]]
+package = "crossenv"
+similar-to = "cross-env"
+reason = "Internal migration package kept for compatibility"
+```
+
+`package` is the exact direct dependency name to allow. `similar-to` narrows the exception to the popular package LPM detected; omit it only when the same local name may intentionally resemble more than one popular package. `reason` is required so the exception is reviewable in code review.
 
 ## See also
 

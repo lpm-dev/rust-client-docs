@@ -11,7 +11,7 @@ LPM splits project configuration across three files. Each owns a different kind 
 | --- | --- | --- |
 | [`package.json`](#packagejson) | Standard npm fields (dependencies, scripts, engines) **plus** an `"lpm"` block for project-shared LPM behavior (script policy, trust, linker, sandbox, overrides) | Yes |
 | [`lpm.json`](#lpmjson) | Dev-server, task-runner, env-file mapping, env schema, services, publish targets — runtime infrastructure that isn't publishable metadata | Yes |
-| [`lpm.toml`](#lpmtoml) | Per-project CLI defaults (today: save-prefix, save-exact) — tool behavior, not publishable | Team's call |
+| [`lpm.toml`](#lpmtoml) | Per-project CLI defaults and reviewable local policy exceptions — tool behavior, not publishable | Team's call |
 
 The split is deliberate: anything that ships to consumers of your package lives in `package.json`. Anything that's about running the project locally lives in `lpm.json`. Anything that's about which way you personally (or the team) prefer the CLI to behave lives in `lpm.toml`.
 
@@ -88,11 +88,16 @@ The `$schema` line is optional but enables inline validation and field completio
 
 ## `lpm.toml`
 
-Optional. Sits next to `package.json` and pins per-project CLI defaults. Today it owns the [save policy](/docs/packages/save-policy):
+Optional. Sits next to `package.json` and pins per-project CLI defaults. It owns the [save policy](/docs/packages/save-policy), workspace/test defaults, tidy ignores, sandbox defaults, and reviewable local policy exceptions:
 
 ```toml title="lpm.toml"
 save-prefix = "~"     # team prefers tilde over caret
 save-exact  = false
+
+[[policy.typosquat.allow]]
+package = "crossenv"
+similar-to = "cross-env"
+reason = "Internal migration package kept for compatibility"
 ```
 
 Commit it for team-shared CLI defaults; `.gitignore` it if save policy should stay per-developer. The keys here override `~/.lpm/config.toml` (user-level) but lose to CLI flags.
@@ -114,6 +119,7 @@ Quick decision table when you're not sure where a setting belongs:
 | Map `lpm run dev` to a specific `.env` file | `lpm.json > env.dev` |
 | Configure dev services with readiness checks | `lpm.json > services` |
 | Set a save-prefix that overrides every developer's preference | `lpm.toml > save-prefix` |
+| Allow an intentional suspicious package name | `lpm.toml > policy.typosquat.allow` |
 | Set your personal default save prefix machine-wide | `~/.lpm/config.toml > save-prefix` |
 | Publish to multiple registries from one `lpm publish` | `lpm.json > publish.registries` |
 
