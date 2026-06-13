@@ -1,0 +1,117 @@
+---
+title: lpm tidy
+description: "Find unused dependency declarations and undeclared imports."
+---
+
+```bash
+lpm tidy [--fix]
+```
+
+`lpm tidy` scans the current package for two dependency hygiene issues:
+
+- declared dependencies that are not imported, referenced by scripts, or found in common config files
+- phantom imports: source imports for packages that are not declared in `package.json`
+
+By default it only reports findings. It does not rewrite `package.json`, `lpm.lock`, or `node_modules`.
+
+## Examples
+
+```bash
+lpm tidy
+lpm tidy --json
+lpm tidy --fix
+```
+
+Use `lpm tidy` in CI when dependency drift should fail the build. Findings exit `1`; a clean package exits `0`.
+
+## What `--fix` changes
+
+`--fix` removes unused entries from:
+
+- `dependencies`
+- `devDependencies`
+- `optionalDependencies`
+
+After editing `package.json`, LPM reconciles `lpm.lock`, `lpm.lockb`, and `node_modules` through the normal install and uninstall cleanup paths.
+
+`peerDependencies` are report-only. They may describe a library contract for consumers even when the package does not import the peer itself.
+
+Phantom imports are also report-only. `lpm tidy --fix` does not auto-add dependencies, because adding a package needs an explicit version/range and save-policy decision.
+
+## What counts as used
+
+A dependency is treated as used when LPM sees it in any of these places:
+
+- source imports from `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, or `.cjs` files
+- package scripts, including installed `bin` names when `node_modules` is present
+- common tool config files such as `eslint.config.js`, `vite.config.ts`, `tsconfig.json`, `jest.config.js`, `tailwind.config.js`, and `webpack.config.js`
+- matching TypeScript declaration packages, such as `@types/react` for `react`
+
+Generated directories, nested packages, `node_modules`, build output, and local import aliases are skipped by the same source scanner used by install-time phantom dependency warnings.
+
+## Ignore config
+
+Use `[tidy]` in `lpm.toml` when a dependency is intentionally indirect or loaded by a framework convention the scanner cannot see.
+
+```toml title="lpm.toml"
+[tidy]
+ignore-unused = ["eslint-config-next", "@types/node"]
+ignore-phantom = ["virtual:*"]
+ignore-paths = ["generated/**", "fixtures/**"]
+```
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| `ignore-unused` | string or string array | Suppress unused-dependency findings by package-name glob |
+| `ignore-phantom` | string or string array | Suppress phantom-import findings by package-name glob |
+| `ignore-paths` | string or string array | Ignore source imports from matching project-relative paths |
+
+## JSON output
+
+```bash
+lpm tidy --json
+```
+
+```json
+{
+  "success": false,
+  "fixed": false,
+  "manifest": "package.json",
+  "counts": {
+    "declared": 3,
+    "imported": 2,
+    "unused": 1,
+    "phantoms": 1,
+    "ignored": 0,
+    "removed": 0,
+    "remaining": 2
+  },
+  "unused": [
+    {
+      "name": "lodash",
+      "section": "dependencies",
+      "spec": "^4.17.21",
+      "fixable": true,
+      "reason": "not imported, referenced by scripts, or found in known config files"
+    }
+  ],
+  "phantoms": [
+    {
+      "name": "left-pad",
+      "file": "src/index.js",
+      "line": 2,
+      "import_count": 1
+    }
+  ],
+  "removed": [],
+  "ignored": [],
+  "elapsed_ms": 8
+}
+```
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — install and lockfile reconciliation
+- [`lpm uninstall`](/docs/packages/uninstall) — explicit dependency removal
+- [`lpm audit`](/docs/packages/audit) — vulnerability and behavior findings
+- [`lpm.toml`](/docs/reference/lpm-toml) — project-level tidy ignore config
