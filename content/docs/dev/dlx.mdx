@@ -1,54 +1,57 @@
 ---
-title: lpm dlx / lpx
+title: lpx / lpm dlx
 description: "Run a package binary without installing it into the project."
 ---
 
 ```bash
-lpm dlx <package> [-- args...]
-lpx <package> [-- args...]
+lpx [--refresh] [--allow-new] [--min-release-age=<dur>] <package> [-- args...]
+lpm dlx [--refresh] [--allow-new] [--min-release-age=<dur>] <package> [-- args...]
 ```
 
 Fetches a package's binary, caches it under `~/.lpm/cache/dlx/`, and runs it without touching your project's `package.json` or `node_modules`. The LPM equivalent of `npx`, `pnpm dlx`, and `bunx`.
 
-`lpx` is a shorthand alias for the same command. `lpm dlx` remains the canonical long form.
+`lpx` is the short form for `lpm dlx`; both run the same command.
 
 ## Examples
 
 ```bash
-lpm dlx cowsay "hello"
 lpx cowsay "hello"
-lpm dlx create-next-app@latest my-app
-lpm dlx prettier --check .
-lpm dlx http-server -p 8080
-lpm dlx --refresh create-next-app   # bypass the dlx cache
+lpx dlx cowsay "hello"
+lpx create-next-app@latest my-app
+lpx prettier --check .
+lpx http-server -p 8080
+lpx --refresh create-next-app   # bypass the dlx cache
+lpx --min-release-age=0 create-next-app@latest
 ```
 
 ## How it works
 
-1. Resolve the spec against the appropriate registry. `lpm dlx` calls into the full install pipeline, so routing follows the same rules as [`lpm install`](/docs/packages/install): `@lpm.dev/*` packages go to lpm.dev, `.npmrc`-declared scopes go to the registry that scope points at, and everything else goes to `registry.npmjs.org`.
-2. Materialize the package into a cache directory under `~/.lpm/cache/dlx/`. The cache entry is keyed by the requested package spec, not by a post-resolution `name@version` string.
-3. Read the installed package's `bin` metadata and choose the default executable. If the package exposes exactly one bin, LPM uses it. If it exposes multiple bins, LPM prefers the one matching the package's short name (`eslint` for `eslint`, `foo` for `@scope/foo`). If there is still no unambiguous default, `lpm dlx` errors instead of guessing.
+1. Resolve the spec. If the package already exists in the caller project's `lpm.lock` and the locked version satisfies the requested spec, `lpx` uses that exact version first. Otherwise it resolves against the appropriate registry. `lpx` calls into the full install pipeline, so routing follows the same rules as [`lpm install`](/docs/packages/install): `@lpm.dev/*` packages go to lpm.dev, `.npmrc`-declared scopes go to the registry that scope points at, and everything else goes to `registry.npmjs.org`.
+2. Materialize the package into a cache directory under `~/.lpm/cache/dlx/`. Lockfile-selected entries are keyed by resolved `name@version` plus integrity; registry-resolved entries keep the requested spec as their cache key. Every run prints the resolved `name@version`, integrity, and source before executing the binary.
+3. Read the installed package's `bin` metadata and choose the default executable. If the package exposes exactly one bin, LPM uses it. If it exposes multiple bins, LPM prefers the one matching the package's short name (`eslint` for `eslint`, `foo` for `@scope/foo`). If there is still no unambiguous default, `lpx` errors instead of guessing.
 
-`lpm dlx <pkg>@<version>` pins the requested version. `lpm dlx <pkg>` reuses the cached entry while it is fresh and prints `Reusing dlx cache entry (fresh)`; once the TTL expires, the next run reinstalls against the current resolution of that spec and reports that it is refreshing the expired cache entry.
+`lpx <pkg>@<version>` pins the requested version. `lpx <pkg>` prefers the project lockfile when available, then reuses the dlx cache while the cache entry is fresh and auditable. Once the TTL expires, the next run reinstalls against the current resolution of that spec and reports that it is refreshing the expired cache entry.
 
 ## Cache TTL
 
-dlx cache entries live for **24 hours**. After that, the next invocation reinstalls (loudly — you see a `cache expired for <pkg>, reinstalling...` line) so you don't keep running an old binary forever. Within the TTL window, repeat invocations are essentially free — the cache entry already has `node_modules/.bin/` populated and the binary spawns directly.
+dlx cache entries live for **24 hours** from install or explicit refresh. After that, the next invocation reinstalls so you don't keep running an old binary forever. Within the TTL window, repeat invocations are essentially free — the cache entry already has `node_modules/.bin/` populated and the binary spawns directly.
 
-Each successful run refreshes the cache mtime, so the TTL is measured from the last successful use, not only from the original install.
+Cache hits do **not** extend the TTL. A frequently used dlx entry is still revalidated after 24 hours.
 
 `--refresh` forces an immediate reinstall regardless of the TTL.
 
 ## Trust model
 
-`lpm dlx` runs a third-party binary on your machine with no sandbox. LPM strips common secret-bearing env vars and runtime-hijack env vars before spawn, but you should still treat `lpm dlx <pkg>` as running arbitrary code from that package.
+Dependency lifecycle scripts under `lpx` go through the same install policy chain as [`lpm install`](/docs/packages/install): release-age cooldown, provenance checks, script policy, trusted dependencies, and sandbox policy are all evaluated by the install pipeline. `lpx` also carries the caller project's `package.json > lpm` policy into the temporary install root.
+
+The package binary itself still runs as a third-party command in your project directory. LPM strips common secret-bearing env vars and runtime-hijack env vars before spawn, but you should still treat `lpx <pkg>` as running arbitrary code from that package.
 
 ## Argument forwarding
 
 Anything after the package name is forwarded to the binary:
 
 ```bash
-lpm dlx prettier --write src/
+lpx prettier --write src/
 # runs: prettier --write src/
 ```
 
@@ -64,7 +67,7 @@ lpm cache path dlx      # print the cache root
 Bypass the cache for one invocation with `--refresh`:
 
 ```bash
-lpm dlx --refresh create-next-app
+lpx --refresh create-next-app
 ```
 
 ## Flags
@@ -72,6 +75,8 @@ lpm dlx --refresh create-next-app
 | Flag        | Effect                                         |
 | ----------- | ---------------------------------------------- |
 | `--refresh` | Force a fresh download, ignoring the dlx cache |
+| `--allow-new` | Bypass the minimum-release-age cooldown for this run, subject to the same security approval boundary as install |
+| `--min-release-age=<DUR>` | Override the cooldown window for this run (`<N>h`, `<N>d`, `<N>m`, or seconds; `0` disables), subject to the same security approval boundary as install |
 
 Plus the [global flags](/docs/commands#global-flags).
 
