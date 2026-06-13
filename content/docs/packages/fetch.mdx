@@ -1,0 +1,87 @@
+---
+title: lpm fetch
+description: "Populate the package store from lpm.lock without installing."
+---
+
+```bash
+lpm fetch [--platform OS/ARCH[/LIBC]]
+```
+
+`lpm fetch` reads `lpm.lock` and downloads the remote package tarballs it names into the global LPM store. It does not read `package.json`, does not resolve versions, does not create `node_modules`, and does not rewrite the lockfile.
+
+Use it to build a reusable Docker or CI cache layer from the lockfile before the rest of the source tree is copied in.
+
+## Docker layer cache
+
+```dockerfile
+COPY lpm.lock ./
+RUN lpm fetch --platform linux/x64/glibc
+
+COPY package.json ./
+RUN lpm install --offline --frozen-lockfile --prod
+```
+
+The first layer depends only on `lpm.lock`, so ordinary source changes do not invalidate package downloads. The later install is offline and frozen: it links from the warmed store and fails if `package.json` does not match the importer snapshot in `lpm.lock`.
+
+## What gets fetched
+
+`lpm fetch` considers every package entry in the lockfile, not only the current workspace member. That matches pnpm-style fetch behavior for monorepos: one lockfile can warm the store for the whole workspace graph.
+
+Remote registry and tarball URL entries must have an SRI integrity string in the lockfile. Missing integrity is a hard error. Integrity mismatch during download is also a hard error, and the bytes are not stored.
+
+Local sources are skipped:
+
+- `file:` directory packages
+- `link:` packages
+- local tarball paths
+
+Those sources live in the project checkout, so they cannot be downloaded from a lockfile-only Docker layer. When the full project is copied in, `lpm install --offline --frozen-lockfile` reads them locally.
+
+Git sources are not materialized by `lpm fetch`; run `lpm install` while online for projects that still depend on git sources.
+
+## Platform selection
+
+By default, `lpm fetch` uses the current machine's platform. Pass `--platform` when warming a cache for a different target image:
+
+```bash
+lpm fetch --platform linux/x64/glibc
+lpm fetch --platform linux/arm64/musl
+lpm fetch --platform darwin/arm64
+```
+
+The filter applies to lockfile `os`, `cpu`, and `libc` metadata using npm semantics. Packages with no platform restriction are always fetched. Packages restricted to another platform are reported as skipped.
+
+## JSON output
+
+```bash
+lpm fetch --platform linux/x64/glibc --json
+```
+
+```json
+{
+  "success": true,
+  "lockfile": "lpm.lock",
+  "platform": { "os": "linux", "cpu": "x64", "libc": "glibc" },
+  "counts": { "total": 247, "fetched": 180, "cached": 65, "skipped": 2 },
+  "packages": [
+    { "name": "react", "version": "19.2.4", "source": "registry", "status": "cached" }
+  ],
+  "elapsed_ms": 412
+}
+```
+
+`status` is one of `fetched`, `cached`, or `skipped`. Skipped entries include a `reason` such as `platform`, `local_source`, or `local_tarball`.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--platform OS/ARCH[/LIBC]` | Target platform for `os`, `cpu`, and `libc` lockfile filters. Accepts npm-style values such as `linux/x64/glibc`, `linux/arm64/musl`, `darwin/arm64`, and `win32/x64`. |
+
+Plus the [global flags](/docs/commands#global-flags). `--json` emits the envelope above. `--registry` is still accepted as a global flag for client configuration, but fetch uses the tarball URLs already pinned in `lpm.lock` instead of resolving metadata.
+
+## See also
+
+- [`lpm install`](/docs/packages/install) — full install and frozen-lockfile behavior
+- [Lockfile](/docs/packages/lockfile) — what `lpm.lock` pins
+- [Content-addressable store](/docs/packages/content-addressable-store) — where fetched package bytes live
