@@ -30,6 +30,7 @@ lpm install --catalog=ui react # save as "catalog:ui" when the named catalog mat
 lpm install -g typescript     # install into ~/.lpm/global/
 lpm install --offline         # never touch the network
 lpm install --frozen-lockfile # fail if package.json and lpm.lock differ
+lpm fetch                     # warm the store from lpm.lock, no node_modules
 lpm install --force           # full re-install, bypass every fast path
 lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --verbose         # append per-phase timings + lockfile size
@@ -321,6 +322,16 @@ lpm ci --offline --strict-integrity
 `lpm install --frozen-lockfile` gives the same frozen behavior on the regular install command. On CI providers that set `CI=true` (or a provider-specific CI env var), plain `lpm install` automatically becomes frozen when `lpm.lock` exists. Pass `--no-frozen-lockfile` only when you intentionally want a mutable install in CI.
 
 Frozen means frozen: package specs are rejected, `--force` is rejected, missing lockfiles fail, stale manifest ranges or dependency sections fail, and drift in overrides, catalogs, patches, peer rules, or `autoInstallPeers` fails before install work proceeds.
+
+For Docker layers keyed only by the lockfile, warm the store before copying the rest of the project:
+
+```dockerfile
+COPY lpm.lock ./
+RUN lpm fetch --platform linux/x64/glibc
+
+COPY package.json ./
+RUN lpm install --offline --frozen-lockfile
+```
 
 ## Recently published packages
 
