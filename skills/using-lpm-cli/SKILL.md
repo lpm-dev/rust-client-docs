@@ -13,6 +13,7 @@ Match the task to a row below, then **fetch the linked page** — every page is 
 
 - `lpm install <pkg>` — adds a **dependency** (writes package.json, resolves, links into node_modules). This is what `npm install` / `pnpm add` do.
 - `lpm fetch` — reads `lpm.lock` only and warms the store; use before offline frozen installs in Docker layers.
+- `lpm tidy` — reports unused dependency declarations and undeclared imports; `--fix` prunes unused dependency entries.
 - `lpm add <pkg>` — **copies a package's source files into the repo** (shadcn-style source delivery). It does NOT install a dependency.
 
 Never use `lpm add` to add a dependency. Details: [install](https://cli.lpm.dev/docs/packages/install.mdx) · [add](https://cli.lpm.dev/docs/packages/add.mdx)
@@ -35,7 +36,7 @@ lpm dev                  # start the orchestrated dev environment
 |------|-------|
 | Install the CLI itself | [Installation](https://cli.lpm.dev/docs/installation.mdx) |
 | First install in an existing project | [First install](https://cli.lpm.dev/docs/first-install.mdx) |
-| Add / remove / upgrade dependencies | [install](https://cli.lpm.dev/docs/packages/install.mdx) · [fetch](https://cli.lpm.dev/docs/packages/fetch.mdx) · [uninstall](https://cli.lpm.dev/docs/packages/uninstall.mdx) · [upgrade](https://cli.lpm.dev/docs/packages/upgrade.mdx) · [outdated](https://cli.lpm.dev/docs/packages/outdated.mdx) |
+| Add / remove / upgrade dependencies | [install](https://cli.lpm.dev/docs/packages/install.mdx) · [fetch](https://cli.lpm.dev/docs/packages/fetch.mdx) · [tidy](https://cli.lpm.dev/docs/packages/tidy.mdx) · [uninstall](https://cli.lpm.dev/docs/packages/uninstall.mdx) · [upgrade](https://cli.lpm.dev/docs/packages/upgrade.mdx) · [outdated](https://cli.lpm.dev/docs/packages/outdated.mdx) |
 | Copy a package's source into the repo | [add](https://cli.lpm.dev/docs/packages/add.mdx) |
 | Audit dependencies (vulns, behaviors, CI gates) | [audit](https://cli.lpm.dev/docs/packages/audit.mdx) · [query](https://cli.lpm.dev/docs/packages/query.mdx) · [security model](https://cli.lpm.dev/docs/packages/security-audit.mdx) |
 | Lifecycle scripts blocked after install | [approve-scripts](https://cli.lpm.dev/docs/packages/approve-scripts.mdx) · [rebuild](https://cli.lpm.dev/docs/packages/rebuild.mdx) |
