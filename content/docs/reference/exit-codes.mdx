@@ -37,6 +37,8 @@ With `--json`, every error path also emits a structured JSON object on stdout be
 
 The `error_code` field is the canonical short name for the error variant. Use it for programmatic dispatch in CI / agents (the `error` message text is human-facing and subject to change; `error_code` is the stable contract).
 
+Most errors put a human-facing string in `error`; rich diagnostics may use an object with a `message` field plus machine-readable context. Resolver failures use `error_code: "resolution_failed"` and include `package`, `requested`, `required_by`, `kind`, and candidate-summary fields; see [Resolver failures](/docs/packages/resolver#resolution-failures).
+
 ### Full `error_code` catalog
 
 | `error_code` | Emitted when |
@@ -49,6 +51,7 @@ The `error_code` field is the canonical short name for the error variant. Use it
 | `network` | Underlying network failure (DNS, TCP, TLS) before the server replied |
 | `http` | Server replied but the response was malformed or an unhandled HTTP status |
 | `registry` | Registry-side error not covered by a more specific code |
+| `resolution_failed` | Dependency resolution could not find a compatible package version, platform, policy-allowed candidate, or complete solution graph |
 | `invalid_package_name` | Argument doesn't match the package-name grammar (e.g., bad scope, invalid chars) |
 | `invalid_integrity` | An SRI string is structurally malformed |
 | `integrity_mismatch` | A downloaded tarball's hash differs from the lockfile / manifest expectation |
@@ -85,6 +88,7 @@ Workspace and multi-task aggregation DOES emit an LPM envelope on stdout, but th
 | --- | --- |
 | `lpm install` succeeds | `0` |
 | `lpm install` finds an unresolvable dep | `1` |
+| `lpm install --json` finds an unresolvable dep | `1` (and `error_code: "resolution_failed"`) |
 | `lpm audit` finds a vulnerability under the default `--fail-on=all` | `1` |
 | `lpm audit` finds nothing (or a finding excluded by `--fail-on`) | `0` |
 | `lpm tidy` finds unused dependencies or phantom imports | `1` |

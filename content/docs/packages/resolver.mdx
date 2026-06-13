@@ -49,6 +49,41 @@ The resolver walks available versions newest-first. Semver range satisfaction is
 
 This split keeps lockfiles reviewable and portable across hosts while still avoiding known-bad candidates before the graph is committed.
 
+## Resolution failures
+
+When no compatible package version exists, LPM fails before writing the lockfile or touching `node_modules/`. The error names the dependency edge that failed, the package that required it when that context is available, and the newest published version LPM saw.
+
+```text
+✗ Could not resolve dependencies
+  package missing-leaf@^2.0.0
+  required by parent-pkg@1.0.0
+  reason no published version satisfies ^2.0.0
+  available 1 version, newest 1.0.0
+```
+
+`--json` uses the stable top-level `error_code: "resolution_failed"` and puts resolver-specific fields in the `error` object:
+
+```json
+{
+  "success": false,
+  "error_code": "resolution_failed",
+  "error": {
+    "code": "RESOLUTION_FAILED",
+    "message": "failed to resolve missing-leaf@^2.0.0 required by parent-pkg@1.0.0: no published version satisfies ^2.0.0",
+    "package": "missing-leaf",
+    "requested": "^2.0.0",
+    "dependency": "missing-leaf",
+    "kind": "no_matching_version",
+    "reason": "no published version satisfies ^2.0.0",
+    "required_by": "parent-pkg@1.0.0",
+    "available_versions": 1,
+    "newest_version": "1.0.0"
+  }
+}
+```
+
+`kind` distinguishes the class of resolver failure (`no_matching_version`, `platform_incompatible`, `policy_blocked`, `fetch_failed`, `no_solution`, or `peer_conflict`). Use that field for automation that needs to decide whether to relax a range, change a platform target, approve a policy exception, or retry a registry lookup.
+
 ## Streaming dispatch
 
 The resolver loop is single-threaded — bun's PackageManager event loop runs on one thread, and parallelism comes from I/O fan-out. Each iteration:
