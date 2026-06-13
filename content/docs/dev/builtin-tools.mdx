@@ -1,9 +1,9 @@
 ---
 title: Built-in tools
-description: "How LPM ships Oxlint and Biome, plus how `lpm check`, `lpm pack`, and `lpm bundle` pick their backends."
+description: "How LPM ships Oxlint, Biome, and Rolldown, plus how `lpm check` and `lpm pack` pick their backends."
 ---
 
-LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), a package-build wrapper for [`lpm pack`](/docs/dev/pack), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint and Biome are **plugin-backed**: lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` and `lpm bundle` use a separate **managed engine** cache under `~/.lpm/engines`.
+LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), a package-build wrapper for [`lpm pack`](/docs/dev/pack), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint, Biome, and Rolldown are managed through [`lpm plugin`](/docs/dev/plugin): lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` uses a separate internal managed engine cache under `~/.lpm/engines`.
 
 This page covers the design — how the plugin system works, where binaries land, how versions are resolved, and the security model.
 
@@ -13,21 +13,22 @@ Bundling 50+ MB of toolchains into the LPM binary would bloat every install and 
 
 Measured cost: `lpm lint` is **78 ms** (vs `npx oxlint` 250 ms — 3.2× faster). `lpm fmt` is **13 ms** (vs `npx biome` 264 ms — 20× faster). The win is not the tool itself — it's the resolution overhead `npx` pays per invocation.
 
-## What ships as a plugin today
+## What ships as a managed plugin today
 
 | Plugin | Backs | Source | Format |
 | --- | --- | --- | --- |
 | `oxlint` | [`lpm lint`](/docs/dev/lint) | `oxc-project/oxc` GitHub Releases | `.tar.gz` archive |
 | `biome` | [`lpm fmt`](/docs/dev/fmt) | `biomejs/biome` GitHub Releases | Direct binary |
+| `rolldown` | [`lpm bundle`](/docs/dev/bundle) | npm registry | Verified package graph |
 
-Managed engines sit beside the plugin system:
+Other tool backends sit beside the plugin system:
 
 - `tsc` shells out through the same PATH-injection mechanism `lpm run` uses. PATH-injection prepends `node_modules/.bin` and falls back to the system `PATH`, so a globally-installed `tsc` can run too — but the project-local install is the right answer. [`lpm doctor`](/docs/infra/doctor) flags the system-only case as `typescript_missing_for_tsconfig` (warn).
 - `tsdown` stays project-local. [`lpm pack`](/docs/dev/pack) walks `node_modules/.bin` from the current package up to the workspace root and requires a reachable `tsdown` there. LPM owns the workspace selection, `--json` envelope, and stable top-level flags; the backend version still comes from the repo's own `package.json`.
-- `tsgo` is a managed engine. LPM downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
-- `rolldown` is also a managed engine. [`lpm bundle`](/docs/dev/bundle) installs the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the current platform binding into one verified cached layout under `~/.lpm/engines/rolldown/<version>/<platform>/`.
+- `tsgo` is an internal managed engine. LPM downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
+- `rolldown` is user-facing as a managed plugin, even though its internal cache uses the managed engine layout. [`lpm bundle`](/docs/dev/bundle) installs the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the current platform binding into one verified cached layout under `~/.lpm/engines/rolldown/<version>/<platform>/`.
 
-That split is intentional: `tsc` and `tsdown` preserve repo-local version ownership, while `tsgo` and `rolldown` need managed layouts that do not fit the single-binary plugin model.
+That split is intentional: `tsc` and `tsdown` preserve repo-local version ownership, `tsgo` remains an internal engine choice, and Rolldown gets the public plugin update UX while keeping the package-graph layout it needs internally.
 
 ## Managed engine layout
 
@@ -70,19 +71,19 @@ The engine sidecar records the engine identity, platform, entry path, every pack
 
 Each plugin gets a directory keyed by `{version}/{platform}`. The platform segment is required: a `$LPM_HOME` shared across architectures (cross-arch CI runners, NFS, Docker bind mounts) would otherwise let one host install a binary the next host can't exec.
 
-Multiple versions can coexist; multiple platforms within a version can coexist too. The `.version-cache.json` is the **install-selection cache**: each entry is the highest version that has been successfully verified-and-installed via `lpm plugin update`. Sticky by design — entries never expire by time, and the file is only written after a successful verified install (so a transient missing upstream `.sha256`, parse failure, or download failure cannot poison it and route every future invocation down a permanently-failing install path).
+Multiple versions can coexist; multiple platforms within a version can coexist too. The plugin `.version-cache.json` is the **install-selection cache**: each entry is the highest version that has been successfully verified-and-installed via `lpm plugin update`. Sticky by design — entries never expire by time, and the file is only written after a successful verified install (so a transient missing upstream `.sha256`, parse failure, or download failure cannot poison it and route every future invocation down a permanently-failing install path).
 
 The `.lpm-plugin.json` sidecar records the plugin name, version, platform, asset URL, asset and on-disk binary checksums, and how the install was verified (`bundled`, `upstream`, or `unverified-override`). It is the source of truth for whether a cached binary may be reused — a bare binary with no sidecar, or a sidecar that fails any check, is treated as a cache miss and re-verified.
 
 ## Version resolution
 
-The lookup order, when [`lpm lint`](/docs/dev/lint) or [`lpm fmt`](/docs/dev/fmt) starts:
+The lookup order, when [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), or [`lpm bundle`](/docs/dev/bundle) starts:
 
 1. **Pinned version** in `lpm.json > tools.<name>` — exact match.
 2. **`max(hardcoded, approved-cache)`** — whichever is newer, the version baked into the LPM binary or one a previous successful `lpm plugin update` approved.
 3. **Auto-download** if the resolved version isn't installed for the current platform yet.
 
-`ensure_plugin` never touches the network for version discovery — it only reads the install-selection cache. To check upstream for a newer release, run `lpm plugin update`; that command runs the discovery probe, prints the download and SHA-256 verification phases for human runs, and only then approves the verified new version into the cache.
+Normal tool execution never touches the network for upstream-latest discovery — it only reads the bundled floor and sticky approved cache. To check upstream for newer releases, run `lpm plugin outdated`. To approve a newer version, run `lpm plugin update <name>`; that command runs the discovery probe, prints the download and verification phases for human runs, and only then approves the verified new version into the cache.
 
 Pin a version per-project:
 
@@ -90,7 +91,8 @@ Pin a version per-project:
 {
   "tools": {
     "oxlint": "1.57.0",
-    "biome": "2.4.8"
+    "biome": "2.4.8",
+    "rolldown": "1.1.1"
   }
 }
 ```
@@ -98,8 +100,9 @@ Pin a version per-project:
 Update to the latest (sticky — the new "latest" is cached for future invocations):
 
 ```bash
-lpm plugin update                # all plugins
+lpm plugin update                # installed managed plugins
 lpm plugin update oxlint         # one plugin
+lpm plugin update rolldown       # Rolldown package graph
 ```
 
 Force a fresh download of an existing version (useful for corrupted installs):
@@ -110,7 +113,9 @@ LPM_FORCE_TOOL_INSTALL=1 lpm lint
 
 ## Checksum verification
 
-Every install — whether the registry's pinned `latest_version`, a `lpm.json`-pinned version, or a freshly-fetched `lpm plugin update` result — must pass a SHA-256 checksum gate. The gate tries three sources in order:
+Every install — whether the registry's pinned `latest_version`, a `lpm.json`-pinned version, or a freshly-fetched `lpm plugin update` result — must pass verification before it can be reused. Oxlint and Biome pass a SHA-256 checksum gate. Rolldown verifies npm SRI integrity for each package tarball, records per-package SHA-256s, and hashes the extracted layout.
+
+For Oxlint and Biome, the checksum gate tries three sources in order:
 
 1. **Bundled checksum** — SHA-256 baked into the LPM binary at build time. Used when the requested version equals the registry's hardcoded `latest_version`. The fast path; no network round-trip.
 2. **Upstream sidecar** — SHA-256 fetched from `<asset_url>.sha256` (oxlint via cargo-dist, biome publishes per-asset sidecars). Used for pinned versions and `lpm plugin update` results.
@@ -169,9 +174,11 @@ LPM detects the current platform and downloads the matching asset. Unsupported p
 ## Manage installed plugins
 
 ```bash
-lpm plugin list              # installed plugins, current vs latest
-lpm plugin update            # pull latest for every plugin
+lpm plugin list              # installed plugins and latest locally approved versions
+lpm plugin outdated          # live upstream current vs latest check
+lpm plugin update            # pull latest for every installed managed plugin
 lpm plugin update oxlint     # one plugin
+lpm plugin update rolldown   # Rolldown package graph
 lpm plugin remove biome      # delete cached binaries
 ```
 
@@ -208,6 +215,6 @@ The cache key is the `lpm.json` hash — when `tools` versions change, the cache
 - [`lpm fmt`](/docs/dev/fmt) — backed by biome
 - [`lpm check`](/docs/dev/check) — project-local `tsc` by default, managed `tsgo` when selected
 - [`lpm pack`](/docs/dev/pack) — project-local tsdown with LPM workspace orchestration
-- [`lpm bundle`](/docs/dev/bundle) — managed Rolldown engine
+- [`lpm bundle`](/docs/dev/bundle) — managed Rolldown plugin
 - [`lpm plugin`](/docs/dev/plugin) — manage installed plugins
 - [`lpm.json` tools](/docs/reference/lpm-json#tools) — version pinning per project
