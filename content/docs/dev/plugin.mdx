@@ -1,20 +1,22 @@
 ---
 title: lpm plugin
-description: "Manage built-in tool plugins — list, update, and remove lazy-downloaded binaries."
+description: "Manage built-in tool plugins — list, check, update, and remove lazy-downloaded tools."
 ---
 
 ```bash
 lpm plugin <action> [name]
 ```
 
-Manages the lazy-downloaded binaries that back [`lpm lint`](/docs/dev/lint) (Oxlint), [`lpm fmt`](/docs/dev/fmt) (Biome), and friends. Plugins are downloaded on first use, cached under `~/.lpm/plugins/{name}/{version}/{platform}/`, and SHA-256-verified against either a checksum bundled with the LPM binary or an upstream `<asset_url>.sha256` sidecar.
+Manages the lazy-downloaded tools that back [`lpm lint`](/docs/dev/lint) (Oxlint), [`lpm fmt`](/docs/dev/fmt) (Biome), and [`lpm bundle`](/docs/dev/bundle) (Rolldown). Oxlint and Biome are single-binary plugins cached under `~/.lpm/plugins/{name}/{version}/{platform}/`. Rolldown is user-facing as a plugin, but its verified npm package layout is stored under `~/.lpm/engines/rolldown/{version}/{platform}/`.
 
 ## Examples
 
 ```bash
-lpm plugin list                # show installed plugins, current vs latest
-lpm plugin update              # update every plugin to its latest version
+lpm plugin list                # show installed managed plugins
+lpm plugin outdated            # check upstream for newer managed plugin versions
+lpm plugin update              # update every installed managed plugin
 lpm plugin update oxlint       # update one plugin
+lpm plugin update rolldown     # update Rolldown's verified package graph
 lpm plugin remove biome        # delete cached binaries for one plugin
 ```
 
@@ -24,8 +26,9 @@ lpm plugin remove biome        # delete cached binaries for one plugin
 | --- | --- | --- |
 | `oxlint` | [`lpm lint`](/docs/dev/lint) | Distributed as `.tar.gz` archives by `oxc-project/oxc` |
 | `biome` | [`lpm fmt`](/docs/dev/fmt) | Distributed as direct binaries by `biomejs/biome` |
+| `rolldown` | [`lpm bundle`](/docs/dev/bundle) | Distributed as a verified npm package graph |
 
-`lpm check` is **not** a plugin — it shells out to the project-local `tsc`.
+`tsdown` is project-owned: [`lpm pack`](/docs/dev/pack) uses the repo's local `tsdown` dependency and `lpm plugin update tsdown` does not update it. `lpm check` is also not a plugin — it shells out to project-local `tsc` unless `--engine tsgo` is selected.
 
 ## Pinning per-project
 
@@ -33,12 +36,13 @@ lpm plugin remove biome        # delete cached binaries for one plugin
 {
   "tools": {
     "oxlint": "1.57.0",
-    "biome": "2.4.8"
+    "biome": "2.4.8",
+    "rolldown": "1.1.1"
   }
 }
 ```
 
-When a pinned version isn't in the cache, the next `lpm lint` / `lpm fmt` downloads and verifies it against the upstream `<asset_url>.sha256` sidecar. If the upstream sidecar is unreachable (yanked or very old release), the install fails with an actionable message; set `LPM_ALLOW_UNVERIFIED_PLUGINS=1` to opt out of verification — the override is recorded on the sidecar and re-required on every reuse.
+For Oxlint and Biome, a pinned version downloads on first use and verifies against the upstream `<asset_url>.sha256` sidecar. For Rolldown, the pinned version must already be an approved managed plugin version from `lpm plugin update rolldown`; otherwise `lpm bundle` fails with a clear repair command. Normal `lpm lint`, `lpm fmt`, and `lpm bundle` runs do not check upstream for newer versions.
 
 See [Built-in tools — Checksum verification](/docs/dev/builtin-tools#checksum-verification) for the full verification pipeline.
 
@@ -46,8 +50,9 @@ See [Built-in tools — Checksum verification](/docs/dev/builtin-tools#checksum-
 
 | Subcommand | Aliases | Effect |
 | --- | --- | --- |
-| `list` | `ls` | Print installed plugins, the current version, and the latest available |
-| `update` | `upgrade` | Pull the latest release for one plugin (or all if no name given); human output shows the download phase and SHA-256 verification before the final updated version |
+| `list` | `ls` | Print installed managed plugins and the latest locally approved version |
+| `outdated` | — | Check upstream and print current vs latest for Oxlint, Biome, and Rolldown; notes that tsdown is project-owned |
+| `update` | `upgrade` | Pull the latest release for one plugin (or installed plugins if no name given); human output shows the download and verification phases before the final updated version |
 | `remove` | `rm`, `uninstall` | Delete cached binaries for one plugin |
 
 Plus the [global flags](/docs/commands#global-flags) — `--json` returns a structured listing.
