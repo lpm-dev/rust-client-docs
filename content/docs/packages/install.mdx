@@ -361,9 +361,12 @@ LPM applies a **24-hour** minimum release age by default. For version ranges, th
 lpm install foo --allow-new                # bypass the cooldown for this command
 lpm install foo --min-release-age=1h       # tighten or loosen the window
 lpm install foo --min-release-age=0        # disable the cooldown for this command
+lpm install foo --min-release-age-exclude foo
 ```
 
-Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`) or `~/.lpm/config.toml` (`minimum-release-age-secs`). `--allow-new` skips the cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — `--allow-new` proceeds with the install but a recent-publish package whose script body matches an identity-Green shape stays Amber. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
+Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`, `lpm.minimumReleaseAgeExclude`) or `~/.lpm/config.toml` (`minimum-release-age-secs`, `minimum-release-age-exclude`). Excludes are exact canonical package names only: for `"local": "npm:real-pkg@1.0.0"`, exclude `real-pkg`, not `local`. CLI, package, and global exclude lists merge in that order, with duplicates removed.
+
+`--allow-new` and `--min-release-age-exclude <pkg>` skip the install cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — bypassing the install halt does not make a recent-publish package's scripts trusted. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
 
 ## Registry signatures and trust policy
 
@@ -441,6 +444,7 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 | --- | --- |
 | `--allow-new` | Bypasses the cooldown |
 | `--min-release-age=<DUR>` | Overrides the cooldown window |
+| `--min-release-age-exclude <PKG>` | Exempts one exact package name from the cooldown; repeatable |
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
 | `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the dependency script-policy |
 | `--strict-peer-dependencies` / `--no-strict-peer-dependencies` | Overrides the peer-dependency strictness setting for the synthesized install |
@@ -501,6 +505,7 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--force` | Bypass fast-exit hash check, skip the lockfile, re-download, re-link from scratch |
 | `--allow-new` | Skip the minimum-release-age cooldown |
 | `--min-release-age <DUR>` | Override the cooldown (`<N>h`, `<N>d`, or seconds; `0` disables) |
+| `--min-release-age-exclude <PKG>` | Exempt one exact package name from the cooldown; repeatable |
 | `--strict-integrity` | Require manifest-declared SRI for tarball-URL deps |
 | `--strict-peer-dependencies` | Fail when required peers are missing, peer ranges mismatch, or peer requirements conflict |
 | `--no-strict-peer-dependencies` | Disable strict peer failures for this invocation, overriding project or user config |
