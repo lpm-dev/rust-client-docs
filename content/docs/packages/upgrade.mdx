@@ -7,13 +7,15 @@ description: "Bump dependencies to their latest matching version, with optional 
 lpm upgrade
 ```
 
-Walks `package.json` `dependencies` and `devDependencies`, looks up the latest published version for each eligible package, and updates the lockfile + `node_modules` accordingly. By default it stays within your declared semver — pass `--major` to bump across breaking-change boundaries.
+Walks `package.json` `dependencies` and `devDependencies`, looks up the newest installable version for each eligible package, and updates the lockfile + `node_modules` accordingly. By default it stays within your declared semver — pass `--major` to bump across breaking-change boundaries.
 
 **Default scope: `@lpm.dev/*` plus npm packages already recorded as public npm or LPM-registry-proxy installs in `lpm.lock`.** That means a normal `react`, `lodash`, or `@scope/pkg` install that currently resolves through registry.npmjs.org or the configured LPM registry is eligible for `lpm upgrade` too. Packages without recorded public npm or LPM-registry source attribution are skipped instead of being queried against registry.npmjs.org — this avoids leaking private/custom-registry package names. If you added a public npm package before LPM recorded source metadata, run [`lpm install`](/docs/packages/install) once to refresh `lpm.lock`, then rerun `lpm upgrade`.
 
 In a TTY, `lpm upgrade` shows an interactive multiselect so you can pick which packages to bump. In CI or a non-TTY, it runs non-interactively. Override with `-i` (force interactive) or `-y` (force non-interactive).
 
 The interactive multiselect annotates each candidate with the signals you'd want before saying yes: whether the upgrade target ships install scripts, whether any peer-dependency declaration shifts under your current lockfile, and whether an existing `lpm patch` for this package won't cleanly apply to the new version.
+
+`lpm upgrade` honors the same [minimum release age](/docs/packages/install#minimum-release-age) policy as install. If the registry's latest version is still inside the cooldown window, upgrade selects the newest mature candidate instead of rewriting `package.json` to a version the install step would reject.
 
 ## Examples
 
@@ -42,7 +44,7 @@ After a `--major` run, review the changelog of every bumped package before shipp
 - `lpm.lock` — fully refreshed, with `lpm.lockb` refreshed when the graph fits the binary format.
 - `node_modules/` — re-linked with the new versions.
 
-If your `package.json` says `"react": "^18.0.0"` and the lockfile records `react` as coming from public npm or the configured LPM registry, `lpm upgrade` will land `^18.3.1` when 18.3.1 is the newest matching 18.x release. With `--major` and react 19 available, it would also offer `^19.0.0`.
+If your `package.json` says `"react": "^18.0.0"` and the lockfile records `react` as coming from public npm or the configured LPM registry, `lpm upgrade` will land `^18.3.1` when 18.3.1 is the newest mature matching 18.x release. With `--major` and a mature react 19 release available, it would also offer `^19.0.0`.
 
 ## Flags
 
