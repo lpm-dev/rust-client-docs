@@ -1,0 +1,96 @@
+---
+title: lpm setup
+description: "Generate project .npmrc auth for CI or local development, and print OIDC-ready workflow snippets for supported CI platforms."
+---
+
+Write project auth files or print CI snippets for installing private lpm.dev packages and pulling encrypted environment files.
+
+```bash
+lpm setup ci npmrc
+lpm setup ci github-actions
+lpm setup local
+```
+
+## Examples
+
+```bash
+lpm setup ci npmrc                       # generate .npmrc with stored token or ${LPM_TOKEN}
+lpm setup ci npmrc --oidc                # exchange a CI OIDC token at runtime
+lpm setup ci npmrc --proxy               # route all npm traffic through lpm.dev
+lpm setup ci npmrc --scoped              # only @lpm.dev/* through lpm.dev
+lpm setup ci npmrc -r https://lpm.dev    # override registry URL
+
+lpm setup ci github-actions              # print GitHub Actions OIDC snippet
+lpm setup ci gitlab                      # print GitLab CI OIDC snippet
+
+lpm setup local                          # 30-day read-only .npmrc token
+lpm setup local -d 7                     # 7-day token
+lpm setup local --proxy                  # route all npm traffic through lpm.dev
+```
+
+## `lpm setup ci npmrc`
+
+Generates an `.npmrc` in the current project directory for CI/CD environments. Other npm-compatible clients can then install `@lpm.dev/*` packages from CI. On Unix, the file is set to `0o600` because it can embed auth material.
+
+By default, the generated file uses scoped routing:
+
+```text title=".npmrc"
+//lpm.dev/:_authToken=${LPM_TOKEN}
+@lpm.dev:registry=https://lpm.dev/api/registry/
+```
+
+Pass `--proxy` to route all npm traffic through lpm.dev. Proxy mode is for Pro/Org dependency visibility. Pass `--scoped` to make the default explicit and conflict with `--proxy`.
+
+When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
+
+Under `--json`, `lpm setup ci npmrc` still writes the on-disk `.npmrc`. The JSON envelope is safe for logs because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`.
+
+| Flag | Effect |
+| --- | --- |
+| `-r`, `--registry <URL>` | Override the registry URL written to `.npmrc` |
+| `--oidc` | Exchange an OIDC token at runtime instead of using stored auth |
+| `--proxy` | Route all npm traffic through lpm.dev |
+| `--scoped` | Use scoped `@lpm.dev:registry=` routing; this is the default |
+
+## `lpm setup ci <platform>`
+
+```bash
+lpm setup ci github-actions
+lpm setup ci gitlab
+lpm setup ci github-actions --env=staging
+```
+
+Prints OIDC-wired starter workflow snippets plus the [`lpm env oidc allow`](/docs/dev/env#oidc-policies-ci) command to run after committing the workflow. These targets do not write `.npmrc`; use `lpm setup ci npmrc` for that.
+
+GitHub Actions snippets rely on the GitHub runtime's `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, available when the job declares `permissions: id-token: write`.
+
+GitLab snippets mint `LPM_OIDC_TOKEN` through the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
+
+| Flag | Effect |
+| --- | --- |
+| `--env <name>` | Environment name used in workflow snippets; default `production` |
+
+## `lpm setup local`
+
+Generates a read-only `.npmrc` token for local development. The token has narrower scope than the full session token and a configurable validity window. The command also adds `.npmrc` to `.gitignore` automatically so the embedded token cannot be committed by accident.
+
+```bash
+lpm setup local
+lpm setup local -d 7
+lpm setup local --proxy
+lpm setup local --scoped
+```
+
+| Flag | Effect |
+| --- | --- |
+| `-d`, `--days <N>` | Token validity in days; default `30` |
+| `--proxy` | Route all npm traffic through lpm.dev |
+| `--scoped` | Use scoped `@lpm.dev:registry=` routing; this is the default |
+
+## See also
+
+- [Authentication](/docs/infra/authentication) - how tokens are stored
+- [`lpm login / logout / whoami`](/docs/infra/login) - manage registry sessions
+- [`lpm env`](/docs/dev/env) - environment variables, secret sync, and CI OIDC policies
+- [CI/CD setup](/docs/guides/ci-cd-setup) - full workflow setup
+- [`.npmrc` format](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc)

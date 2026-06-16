@@ -1,0 +1,110 @@
+---
+title: lpm login / logout / whoami
+description: "Sign in to lpm.dev, manage npm-compatible registry tokens, clear stored sessions, and inspect the active account identity."
+---
+
+Manage registry identity for lpm.dev, npm, GitHub Packages, GitLab Packages, and custom npm-compatible registries.
+
+```bash
+lpm login
+lpm whoami
+lpm logout
+```
+
+## Examples
+
+```bash
+lpm login                                      # alias: lpm l
+lpm login --npm
+lpm login --github
+lpm login --gitlab
+lpm login --login-registry https://npm.my-co.com --token <T>
+
+lpm whoami
+lpm whoami --json
+
+lpm logout                                     # alias: lpm lo
+lpm logout --revoke
+lpm logout --npm
+lpm logout --logout-registry https://npm.my-co.com
+lpm logout --all
+```
+
+## `lpm login`
+
+With no registry flags, `lpm login` starts the browser-based OAuth flow for lpm.dev. The CLI starts a local HTTP server on a random port, opens the registry login page, captures the redirect token, verifies it with `whoami`, and stores it in local secure storage. The flow validates CSRF state end-to-end and times out after 2 minutes waiting for the browser callback.
+
+On success, human output stays on stderr and ends with a compact summary: browser authentication complete, the user, the registry host, and the active secure-storage backend. `--json` keeps the machine envelope on stdout and includes `storage_backend` plus `storage_degraded`.
+
+For npm, `lpm login --npm` uses npm web login by default: LPM asks `registry.npmjs.org` for a web-login URL, opens it, polls the registry for completion, then stores the returned npm token. This requires an interactive terminal. In `--json` mode or non-TTY shells, pass `--token <T>` or set `NPM_TOKEN`.
+
+For CI publishes to npm, you can skip long-lived npm publish tokens with npm Trusted Publishing. [`lpm publish --npm`](/docs/packages/publish) and `lpm stage publish` first look for npm OIDC auth: GitHub Actions runtime tokens with `permissions: id-token: write`, or `NPM_ID_TOKEN` from GitLab CI / CircleCI minted with audience `npm:registry.npmjs.org`. LPM exchanges that ID token for npm's short-lived registry token and falls back to `NPM_TOKEN` or stored npm auth only when OIDC is unavailable or rejected.
+
+For GitHub and GitLab, `lpm login --github` / `--gitlab` validates your existing host CLI session instead of asking you to paste a token. GitHub uses `gh auth token --hostname github.com`; GitLab.com uses `glab auth token`. When that succeeds, LPM stores nothing. Passing `--token <T>` stores an explicit fallback token in LPM secure storage.
+
+Custom registries stay token-based. Use `lpm login --login-registry <URL> --token <T>` in scripts. In an interactive TTY without `--token`, LPM prompts with masked input. Explicit token fallbacks can also record a token-expiry reminder and 2FA/OTP preference for publishing.
+
+| Flag | Effect |
+| --- | --- |
+| `--npm` | Log in to `registry.npmjs.org`; `--token` / `NPM_TOKEN` are explicit fallbacks |
+| `--github` | Use existing `gh` auth for GitHub Packages, or store an explicit fallback token with `--token` |
+| `--gitlab` | Use existing `glab` auth for GitLab.com Packages, or store an explicit fallback token with `--token` |
+| `--login-registry <URL>` | Log in to a custom npm-compatible registry with a token |
+| `--token <T>` | Explicit token fallback for npm, GitHub, GitLab, or a custom registry |
+
+For lpm.dev, if you are already logged in, `lpm login` reports the existing identity and exits without re-authenticating. Third-party login commands refresh or re-check the selected auth source.
+
+## `lpm logout`
+
+With no flags, `lpm logout` clears only the lpm.dev session.
+
+```bash
+lpm logout
+lpm logout --revoke
+lpm logout --npm
+lpm logout --github
+lpm logout --gitlab
+lpm logout --logout-registry https://npm.my-co.com
+lpm logout --all
+```
+
+Passing one of `--npm`, `--github`, `--gitlab`, or `--logout-registry <URL>` clears only that target. Your lpm.dev session stays signed in. Use `--all` to clear every stored registry token.
+
+For GitHub and GitLab, logout clears only LPM-stored fallback tokens. `gh` and `glab` sessions remain managed by those tools.
+
+`--revoke` is lpm.dev-only. It also revokes the token on the server and unpairs any browser or desktop sessions paired against your current LPM token. The unpair is best-effort and does not fail logout if the registry cannot reach the pairing endpoint.
+
+| Flag | Effect |
+| --- | --- |
+| `--revoke` | Also revoke the lpm.dev token server-side and unpair browser sessions |
+| `--npm` | Clear the npm token only |
+| `--github` | Clear the GitHub Packages fallback token only |
+| `--gitlab` | Clear the GitLab Packages fallback token only |
+| `--logout-registry <URL>` | Clear a custom registry token only |
+| `--all` | Clear lpm.dev, npm, GitHub, GitLab, and every stored custom registry token |
+
+## `lpm whoami`
+
+```bash
+lpm whoami
+lpm whoami --json
+```
+
+Prints the currently logged-in lpm.dev identity, plus:
+
+- Plan tier, MFA status, and pool access flag
+- Storage and private-package usage against your plan limits
+- Available personal and organization scopes
+- External registry auth sources for npm, GitHub, GitLab, and custom registries
+- Token expiry warnings for registry tokens that are approaching their reminder window
+- Secure-storage backend health for the active stored lpm.dev session
+
+`--json` returns the same data structurally: `{username, email, plan, mfa_enabled, has_pool_access, usage, limits, orgs, registries, storage_backend, storage_degraded}`. `storage_backend` is `"keychain"`, `"encrypted_file_fallback"`, or `null` when the active auth source is not stored by LPM.
+
+## See also
+
+- [Authentication](/docs/infra/authentication) - registry auth model and secure-storage backend details
+- [`lpm setup`](/docs/infra/setup) - write `.npmrc` auth for CI or local development
+- [`lpm token-rotate`](/docs/infra/token-rotate) - rotate the lpm.dev token
+- [`lpm publish`](/docs/packages/publish) - publish to lpm.dev or another registry
+- [Environment variables](/docs/reference/env-vars) - `LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`

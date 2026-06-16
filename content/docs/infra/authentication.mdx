@@ -1,0 +1,52 @@
+---
+title: Authentication
+description: "How LPM stores registry sessions, separates lpm.dev from npm-compatible registries, and reports secure-storage backend health."
+---
+
+LPM stores auth material in your local secure store and keeps each registry separate. A normal [`lpm login`](/docs/infra/login) session authenticates you to lpm.dev, while npm, GitHub Packages, GitLab Packages, and custom npm-compatible registries can each have their own token source.
+
+GitHub and GitLab can use the host CLIs directly. When `gh` or `glab` already has a valid session, LPM can read that token at command time without copying it into LPM storage. Explicit token fallbacks, npm web-login tokens, custom registry tokens, and lpm.dev sessions are stored by LPM.
+
+## Registry model
+
+| Registry target | Auth source |
+| --- | --- |
+| lpm.dev | Browser login stored by LPM, or `LPM_TOKEN` in automation |
+| npm | npm web login, `NPM_TOKEN`, or an explicit `--token` fallback |
+| GitHub Packages | `gh auth token`, `GITHUB_TOKEN`, or an explicit `--token` fallback |
+| GitLab Packages | `glab auth token`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, or an explicit `--token` fallback |
+| Custom registry | Explicit token from `--token` or masked interactive input |
+
+This storage split is why `lpm logout` without flags clears only the lpm.dev session. Use [`lpm logout --all`](/docs/infra/login#lpm-logout) when you want to clear every stored registry token.
+
+## Token storage
+
+| Platform | Backend |
+| --- | --- |
+| macOS | Keychain (`security` framework) |
+| Linux | Secret Service-compatible keyring (via `keyring`) |
+| Windows | Credential Manager |
+
+Service name: `lpm-cli`. Account names are scoped per registry: lpm.dev, npm, GitHub, GitLab, and custom registries each get their own keychain entry.
+
+If the system keychain is unavailable, such as in a sandboxed environment, headless Linux session without D-Bus, or locked store, the CLI falls back to encrypted file storage at `~/.lpm/.credentials`. Tokens still do not land in plaintext on disk.
+
+You can see the active backend in:
+
+```bash
+lpm login
+lpm whoami
+lpm whoami --json
+lpm setup ci npmrc --json
+lpm doctor
+```
+
+The human wording is `secure storage backend: keychain` or `secure storage backend: encrypted file fallback`. The encrypted fallback is valid and encrypted, but [`lpm doctor`](/docs/infra/doctor) treats it as degraded because it does not have the same OS-managed per-app protections as the keychain-backed path.
+
+## See also
+
+- [`lpm login / logout / whoami`](/docs/infra/login) - sign in, sign out, and inspect the active identity
+- [`lpm setup`](/docs/infra/setup) - write `.npmrc` auth for CI or local development
+- [`lpm token-rotate`](/docs/infra/token-rotate) - rotate the lpm.dev session token
+- [Registries](/docs/registries) - how the CLI routes between lpm.dev, npm, and private registries
+- [Environment variables](/docs/reference/env-vars) - `LPM_TOKEN`, `LPM_OIDC_TOKEN`, and registry auth overrides
