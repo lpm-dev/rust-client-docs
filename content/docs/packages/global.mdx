@@ -50,10 +50,10 @@ Lists every globally-installed package with its active version and exposed bin c
 
 | Flag | Effect |
 | --- | --- |
-| `--outdated` | Resolve each install's saved spec against its registry; flag packages with newer matching versions. `@lpm.dev/*` globals use LPM batch metadata, while npm globals use the same npm metadata path as global install/update. |
+| `--outdated` | Resolve each install's saved spec against its registry and active cooldown policy; flag packages with newer installable matching versions. `@lpm.dev/*` globals use LPM batch metadata, while npm globals use the same npm metadata path as global install/update. |
 | `--verbose` | Add install date, on-disk size, and the absolute install root for each row |
 
-With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest version that still satisfies the global install's saved spec; `Latest` is the registry's absolute latest version, so major-version jumps are visible even when the saved range would not select them. Local links are skipped because their source of truth is your checkout, not the registry.
+With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest installable version that still satisfies the global install's saved spec; `Latest` is the registry's newest installable version regardless of the saved range, so mature major-version jumps are visible even when the saved range would not select them. Local links are skipped because their source of truth is your checkout, not the registry.
 
 If registry metadata is missing or the saved spec no longer resolves, `lpm global list --outdated` exits non-zero instead of reporting a clean result. In `--json` mode, inspect `success`, `unresolved`, and `count_unresolved` to distinguish "everything checked" from "some globals could not be compared."
 
@@ -128,6 +128,8 @@ Three behaviors based on the argument:
 | `--dry-run` | Print the upgrade plan without changing any state |
 
 If registry metadata is missing, the selected version is no longer present, or the saved spec cannot resolve, `lpm global update` exits non-zero instead of reporting a clean skip. In `--json` mode, `success` is `false` and the affected row appears as `failed` in `results` or `plan_error` in `plans` for `--dry-run`. Bulk updates remain best-effort: successful package rows may still be applied before the final non-zero exit.
+
+Global update uses the global minimum release age chain: `~/.lpm/config.toml`, then the 24h default. Versions still inside the cooldown window are skipped during planning, including `--dry-run`, so the plan only shows versions the nested install would accept.
 
 ## Bin collisions
 
