@@ -1,0 +1,722 @@
+{
+  "$id": "https://cli.lpm.dev/schemas/lpm.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "lpm.json",
+  "description": "Project-level LPM configuration. Sits alongside package.json and provides runtime pinning, env file mapping, task runner config, hosted task cache settings, dev services, local-domain proxy settings, publish targets, and tunnel/HTTPS settings.",
+  "type": "object",
+  "properties": {
+    "runtime": {
+      "description": "Pinned runtime versions.\ne.g., `{\"node\": \">=22.0.0\", \"deno\": \">=2.0.0\"}`",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "env": {
+      "description": "Env file mapping per script name.\ne.g., `{\"dev\": \".env.development\", \"staging\": \".env.staging\"}`",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "tasks": {
+      "description": "Task configuration for caching, dependency ordering, and outputs.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/TaskConfig"
+      }
+    },
+    "remoteCache": {
+      "description": "Hosted task cache configuration.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RemoteCacheConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tools": {
+      "description": "Pinned managed tool versions.\ne.g., `{\"oxlint\": \"1.57.0\", \"biome\": \"2.4.8\", \"rolldown\": \"1.0.2\"}`",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "services": {
+      "description": "Dev services for multi-process orchestration.\ne.g., `{\"web\": {\"command\": \"next dev\", \"port\": 3000}}`",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServiceConfig"
+      }
+    },
+    "proxy": {
+      "description": "Dev reverse-proxy configuration for friendly local hostnames.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProxyConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "https": {
+      "description": "Enable local HTTPS for `lpm dev`.\nWhen `true`, `lpm dev` auto-generates and trusts a local certificate.\nOverridden by `--no-https` CLI flag.",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "default": null
+    },
+    "tunnel": {
+      "description": "Tunnel configuration for `lpm dev --tunnel`.\ne.g., `{\"domain\": \"acme-api.lpm.llc\"}`",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TunnelConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "publish": {
+      "description": "Publish configuration for multi-registry publishing.\ne.g., `{\"registries\": [\"lpm\", \"npm\"], \"npm\": {\"name\": \"@scope/pkg\"}}`",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublishConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "envSchema": {
+      "description": "Environment variable schema for validation.\nDefines required vars, formats, patterns, defaults, and secrets.\ne.g., `{\"envSchema\": {\"vars\": {\"DATABASE_URL\": {\"required\": true, \"format\": \"url\"}}}}`",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvSchema"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "environments": {
+      "description": "Named environment definitions with inheritance.\ne.g., `{\"environments\": {\"staging\": {\"extends\": \"base\", \"file\": \".env.staging\"}}}`",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnvironmentsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "cert": {
+      "description": "Local-HTTPS certificate configuration.\n\n`extra_permitted_dns` entries are validated at parse time and can be\nconsumed by project-scoped certificate-chain generation.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CertBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "TaskConfig": {
+      "description": "Configuration for a single task in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Command to run (overrides package.json scripts).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "dependsOn": {
+          "description": "Task dependencies. `\"build\"` = same package, `\"^build\"` = upstream workspace deps.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "cache": {
+          "description": "Enable local task caching for this task.",
+          "type": "boolean",
+          "default": false
+        },
+        "outputs": {
+          "description": "Output file globs to cache (e.g., `[\"dist/**\"]`). Required for caching.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "inputs": {
+          "description": "Input file globs that invalidate cache (default: `[\"src/**\", \"package.json\"]`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "env": {
+          "description": "Env mode for this task (e.g., `\"development\"` → loads `.env.development`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "RemoteCacheConfig": {
+      "description": "Hosted cache configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable hosted task cache reads and writes for cache-enabled tasks.",
+          "type": "boolean",
+          "default": false
+        },
+        "team": {
+          "description": "Organization slug/team namespace. Omit for the authenticated personal namespace.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "url": {
+          "description": "Remote cache service URL. Defaults to the configured LPM registry plus `/v8`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "signature": {
+          "description": "Require HMAC tags on downloads and attach them to uploads.",
+          "type": "boolean",
+          "default": false
+        },
+        "readOnly": {
+          "description": "Read remote artifacts but do not upload newly produced artifacts.",
+          "type": "boolean",
+          "default": false
+        },
+        "env": {
+          "description": "Controls which loaded environment variables may be used with remote uploads.",
+          "$ref": "#/$defs/RemoteCacheEnvConfig"
+        }
+      }
+    },
+    "RemoteCacheEnvConfig": {
+      "description": "Env safety controls for hosted task cache uploads.",
+      "type": "object",
+      "properties": {
+        "include": {
+          "description": "Variable-name patterns explicitly allowed for remote uploads.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "exclude": {
+          "description": "Variable-name patterns that block remote uploads.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "allowSecrets": {
+          "description": "Permit secret-looking variable names after explicit project opt-in.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ServiceConfig": {
+      "description": "Configuration for a dev service in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "Shell command to run.",
+          "type": "string"
+        },
+        "port": {
+          "description": "Port this service listens on; omitted host-only services get a stable auto-assigned port.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "dependsOn": {
+          "description": "Services that must be ready before this one starts.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "readyPort": {
+          "description": "TCP port to check for readiness (defaults to `port` if set).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "readyUrl": {
+          "description": "HTTP URL to poll for readiness (2xx = ready).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "readyTimeout": {
+          "description": "Seconds to wait for readiness (default: 30).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 30
+        },
+        "env": {
+          "description": "Extra environment variables for this service.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "restart": {
+          "description": "Auto-restart on crash with exponential backoff.",
+          "type": "boolean",
+          "default": false
+        },
+        "primary": {
+          "description": "This is the primary service (receives --https/--tunnel/--network).",
+          "type": "boolean",
+          "default": false
+        },
+        "host": {
+          "description": "Friendly local hostname routed to this service by the dev proxy.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "cwd": {
+          "description": "Working directory relative to project root.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "ProxyConfig": {
+      "description": "Dev reverse-proxy configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "Top-level host routed by the local dev proxy.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "port": {
+          "description": "Listen port for the HTTPS proxy. Defaults to 443.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": null
+        },
+        "httpRedirect": {
+          "description": "Also listen on :80 and redirect to HTTPS. Defaults to true.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "TunnelConfig": {
+      "description": "Tunnel configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "domain": {
+          "description": "Full tunnel domain (e.g., \"acme-api.lpm.llc\").\nPro/Org only — free users get ephemeral random domains.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "PublishConfig": {
+      "description": "Publish configuration in `lpm.json`.\n\nControls which registries `lpm publish` targets and per-registry settings.\nCLI flags (`--npm`, `--lpm`) override these values.",
+      "type": "object",
+      "properties": {
+        "registries": {
+          "description": "Target registries. e.g., `[\"lpm\", \"npm\"]`.\nIf absent, defaults to `[\"lpm\"]` (backward compatible).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "lpm": {
+          "description": "LPM registry publish settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LpmPublishConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "npm": {
+          "description": "npm-specific publish settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NpmPublishConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "github": {
+          "description": "GitHub Packages publish settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GithubPublishConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gitlab": {
+          "description": "GitLab Packages publish settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitlabPublishConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "LpmPublishConfig": {
+      "description": "LPM registry publish configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Override package name for LPM (must be `@lpm.dev/owner.pkg` format).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "NpmPublishConfig": {
+      "description": "npm-specific publish configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Override package name for npm (e.g., `\"@scope/pkg\"`).\nRequired if the package.json name starts with `@lpm.dev/`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "access": {
+          "description": "Access level: `\"public\"` or `\"restricted\"`.\nScoped packages default to `\"restricted\"`, unscoped to `\"public\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tag": {
+          "description": "dist-tag for the published version (default: `\"latest\"`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "registry": {
+          "description": "Custom npm registry URL (default: `https://registry.npmjs.org`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "otpRequired": {
+          "description": "Prompt for OTP before the first publish attempt (saves a round-trip).",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "GithubPublishConfig": {
+      "description": "GitHub Packages publish configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Override package name for GitHub Packages (must be scoped: `@owner/pkg`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "access": {
+          "description": "Access level: `\"public\"` or `\"restricted\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "GitlabPublishConfig": {
+      "description": "GitLab Packages publish configuration in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Override package name for GitLab Packages.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "access": {
+          "description": "Access level: `\"public\"` or `\"restricted\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "projectId": {
+          "description": "GitLab project ID (required for GitLab npm registry URL).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registry": {
+          "description": "GitLab instance URL (default: `https://gitlab.com`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "EnvSchema": {
+      "description": "The full env schema: a map of variable names to their rules.\n\nDeserialized from `lpm.json`:\n```json\n{ \"env\": { \"schema\": { \"DATABASE_URL\": { \"required\": true, \"format\": \"url\" } } } }\n```",
+      "type": "object",
+      "properties": {
+        "vars": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvVarRule"
+          },
+          "default": {}
+        }
+      }
+    },
+    "EnvVarRule": {
+      "description": "Validation rules for a single environment variable.",
+      "type": "object",
+      "properties": {
+        "required": {
+          "description": "Whether the variable must be set and non-empty.",
+          "type": "boolean",
+          "default": false
+        },
+        "format": {
+          "description": "Built-in format validator.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VarFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pattern": {
+          "description": "Regex pattern the value must match.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "enum": {
+          "description": "Allowlist of valid values.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "default": {
+          "description": "Default value if not set (injected at runtime, not written to files).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "secret": {
+          "description": "Whether this variable contains sensitive data (redacted in logs).",
+          "type": "boolean",
+          "default": false
+        },
+        "client": {
+          "description": "Whether this variable is safe for client-side exposure.",
+          "type": "boolean",
+          "default": false
+        },
+        "description": {
+          "description": "Human-readable description (shown in error messages and .env.example).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "VarFormat": {
+      "description": "Built-in format validators for common value types.",
+      "type": "string",
+      "enum": [
+        "url",
+        "port",
+        "email",
+        "boolean",
+        "integer",
+        "hostname",
+        "ip"
+      ]
+    },
+    "EnvironmentsConfig": {
+      "description": "Named environment definitions with optional inheritance.\n\nDeserialized from `lpm.json`:\n```json\n{ \"environments\": { \"staging\": { \"extends\": \"base\", \"file\": \".env.staging\" } } }\n```",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/EnvDefinition"
+      }
+    },
+    "EnvDefinition": {
+      "description": "A single environment definition — either a file path string or a structured object.",
+      "anyOf": [
+        {
+          "description": "Simple: just a file path (e.g., `\"base\": \".env\"`)",
+          "type": "string"
+        },
+        {
+          "description": "Structured: with optional extends and file",
+          "type": "object",
+          "properties": {
+            "extends": {
+              "description": "Parent environment to inherit from.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "file": {
+              "description": "The .env file for this environment (optional — may inherit everything).",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          }
+        }
+      ]
+    },
+    "CertBlock": {
+      "description": "`cert` configuration block in `lpm.json`.",
+      "type": "object",
+      "properties": {
+        "extraPermittedDns": {
+          "description": "Additional DNS subtrees the project-scoped intermediate may permit.\nEach entry must be a bare multi-label hostname. Wildcards, leading dots,\nand non-local TLDs are rejected at parse time.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "allowPublicDns": {
+          "description": "Permit non-local TLDs (e.g. `staging.example.com`) in\n`extraPermittedDns`. Off by default — public-internet hostnames widen\nthe CA's authority and require explicit opt-in.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

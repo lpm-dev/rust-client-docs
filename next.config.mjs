@@ -41,6 +41,24 @@ const config = {
     BUILD_TIME: RESOLVED_BUILD_TIME,
     LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
   },
+  async headers() {
+    return [
+      {
+        source: "/schemas/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=300, stale-while-revalidate=86400",
+          },
+          {
+            key: "Content-Type",
+            value: "application/schema+json; charset=utf-8",
+          },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     // PostHog reverse-proxy. Routes `/a/*` from the docs origin to the
     // configured PostHog ingest host so ad blockers don't drop our events.

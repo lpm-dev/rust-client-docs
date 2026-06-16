@@ -82,7 +82,7 @@ export const MORE: Feature[] = [
     title: "Deps, visualized",
     body: "Interactive HTML graph, Mermaid output, terminal tree — built offline from your lockfile. --why <pkg> traces any path.",
     cmd: "$ lpm graph",
-    href: "/docs/infra/graph",
+    href: "/docs/packages/graph",
   },
   {
     title: "Monorepo, native",
