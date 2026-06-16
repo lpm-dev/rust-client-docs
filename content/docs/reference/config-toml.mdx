@@ -27,6 +27,7 @@ triage-advisor = "none"
 
 # Recently-published-package cooldown
 minimum-release-age-secs = 86400
+minimum-release-age-exclude = ["react", "@scope/pkg"]
 
 # Engine constraints (engines.lpm + engines.node)
 engine-strict = true
@@ -75,6 +76,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `script-policy` | `"deny"` \| `"allow"` \| `"triage"` | `"deny"` | Lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Machine-wide policy: applies to project and global installs alike. |
 | `triage-advisor` | `"none"` \| `"claude-cli"` \| `"codex"` \| `"ollama"` | `"none"` | Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor). Only active when `script-policy = "triage"`. Approvals are ephemeral — never written to disk. |
 | `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. Applies to both `lpm install` and `lpm install -g`. |
+| `minimum-release-age-exclude` | string array | `[]` | Exact package names exempted from the cooldown. Merged with CLI and package.json excludes. Globs, version selectors, and protocol specifiers are rejected. |
 | `sandbox.mode` | `"default"` \| `"strict"` \| `"none"` | `"default"` | Default lifecycle-script sandbox posture for this machine. Set with [`lpm config sandbox`](/docs/reference/config#setup-wizards). |
 | `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this machine when full containment is unavailable. |
 | `sigstore.verify` | `"deny"` \| `"warn"` \| `"off"` | `"deny"` | Provenance verification posture used by installs and related flows. Set with [`lpm config sigstore`](/docs/reference/config#setup-wizards). |
@@ -98,6 +100,7 @@ Unknown keys are accepted silently — forward-compatible by design.
 ```toml
 minimum-release-age-secs = 86400      # native integer (hand-edit)
 minimum-release-age-secs = "86400"    # string (lpm config set wrote this)
+minimum-release-age-exclude = ["react", "@scope/pkg"]
 workspace-concurrency = 4             # native integer (hand-edit)
 workspace-concurrency = "4"           # string (lpm config set wrote this)
 signatures = true                     # native bool
@@ -130,7 +133,7 @@ For short-lived exceptions, use [`lpm security unlock`](/docs/reference/security
 
 ## Precedence
 
-For most settings, the precedence chain is (highest first):
+For most scalar settings, the precedence chain is (highest first):
 
 1. **CLI flag** — e.g. `--exact`, `--policy=allow`, `--min-release-age=1h`, `--no-engine-strict`
 2. **`package.json > lpm`** — for keys that exist there (`scriptPolicy`, `minimumReleaseAge`, `engineStrict`, `strictPeerDependencies`)
@@ -138,7 +141,9 @@ For most settings, the precedence chain is (highest first):
 4. **`~/.lpm/config.toml`** — this file
 5. **Built-in default**
 
-On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, `strict-peer-dependencies`, `trust-policy`, and the script-policy aliases (`--yolo` / `--triage`). Registry signature verification uses `LPM_VERIFY_REGISTRY_SIGNATURES` > `signatures` > default `false`. Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
+List-valued cooldown excludes are merged instead of replaced: CLI `--min-release-age-exclude` entries first, then `package.json > lpm > minimumReleaseAgeExclude`, then this file's `minimum-release-age-exclude`; duplicates collapse.
+
+On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, `strict-peer-dependencies`, `trust-policy`, and the script-policy aliases (`--yolo` / `--triage`). `minimum-release-age-exclude` still merges with repeated CLI `--min-release-age-exclude` flags. Registry signature verification uses `LPM_VERIFY_REGISTRY_SIGNATURES` > `signatures` > default `false`. Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
 
 ### Exception — `linker`
 
