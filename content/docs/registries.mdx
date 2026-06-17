@@ -22,21 +22,24 @@ The `@lpm.dev/*` scope is the **only** scope that always goes to lpm.dev. Everyt
 
 ## Pointing at a private registry
 
-LPM reads `.npmrc` exactly the way npm does — project-local first, then user-level (`~/.npmrc`).
+LPM reads `.npmrc` project-local first, then user-level (`~/.npmrc`). Keep committed project `.npmrc` files to literal routing data, and put env-backed secrets in user or CI-owned config.
 
 ```ini title=".npmrc"
 # A private registry for one scope
 @my-company:registry=https://npm.my-company.com
-//npm.my-company.com/:_authToken=${NPM_TOKEN}
 
 # Override the default registry for everything else (optional)
 registry=https://my-mirror.example.com
+```
+
+```ini title="~/.npmrc"
+//npm.my-company.com/:_authToken=${NPM_TOKEN}
 //my-mirror.example.com/:_authToken=${MIRROR_TOKEN}
 ```
 
 `@my-company/internal-tool` will be fetched from `npm.my-company.com` with the configured auth token. Public packages still flow through the default registry. No LPM-specific config is required.
 
-For per-environment tokens, prefer `${VAR}` expansion (above) over hardcoded secrets — LPM and npm both support it.
+For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
 
 ## TLS, custom CAs, and mTLS
 
@@ -174,6 +177,9 @@ A `package.json` can pull from npm, lpm.dev, and a private registry simultaneous
 
 ```ini title=".npmrc"
 @my-company:registry=https://npm.my-company.com
+```
+
+```ini title="~/.npmrc"
 //npm.my-company.com/:_authToken=${NPM_TOKEN}
 ```
 
