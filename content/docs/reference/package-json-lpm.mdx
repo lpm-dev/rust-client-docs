@@ -5,9 +5,9 @@ description: "Reference for the LPM-specific configuration block inside package.
 
 LPM reads its project-level configuration from a `"lpm"` block inside the project's `package.json`. Settings here are committed alongside dependencies, so the whole team picks them up automatically.
 
-**Project-only.** Every key in this block — `scriptPolicy`, `trustedDependencies`, `minimumReleaseAge`, `scripts.autoBuild`, `linker`, the rest — applies to `lpm install` (and other commands that run in the project context). `lpm install -g` does **not** read this file: globals synthesize their own package.json and use the equivalent CLI flags plus `~/.lpm/config.toml` for the user-config tier. Global trust lives in a separate file at `~/.lpm/global/trusted-dependencies.json`.
+**Project-only.** Every key in this block — `scriptPolicy`, `trustedDependencies`, `minimumReleaseAge`, `minimumReleaseAgePolicy`, `scripts.autoBuild`, `linker`, the rest — applies to `lpm install` (and other commands that run in the project context). `lpm install -g` does **not** read this file: globals synthesize their own package.json and use the equivalent CLI flags plus `~/.lpm/config.toml` for the user-config tier. Global trust lives in a separate file at `~/.lpm/global/trusted-dependencies.json`.
 
-Security-sensitive project keys such as `scriptPolicy` and `minimumReleaseAge` are treated as project **proposals**, not machine authority. If a repo asks for a weaker posture than this machine currently allows, install or rebuild fails and points you at [`lpm security unlock`](/docs/infra/security#unlock) or a persistent [`lpm config`](/docs/infra/config) change.
+Security-sensitive project keys such as `scriptPolicy`, `minimumReleaseAge`, and `minimumReleaseAgePolicy` are treated as project **proposals**, not machine authority. If a repo asks for a weaker posture than this machine currently allows, install or rebuild fails and points you at [`lpm security unlock`](/docs/infra/security#unlock) or a persistent [`lpm config`](/docs/infra/config) change.
 
 A few related fields live at the **top level** of `package.json` (not inside `"lpm"`) — `workspaces`, `engines`, `scripts`, `bin`, and `overrides` / `resolutions`. Those follow npm/pnpm/yarn conventions and are listed [at the bottom](#related-top-level-fields).
 
@@ -31,6 +31,7 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
     "trustedDependencies": ["esbuild", "sharp"],
 
     "minimumReleaseAge": 86400,
+    "minimumReleaseAgePolicy": "direct",
     "minimumReleaseAgeExclude": ["react", "@scope/pkg"],
     "engineStrict": true,
 
@@ -209,11 +210,28 @@ Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`]
 { "lpm": { "minimumReleaseAge": 86400 } }
 ```
 
-Cooldown in **seconds** before a newly published direct/root dependency version is installable. Default `86400` (24h). For project installs, the resolver applies this to packages declared by the project or passed to `lpm install <pkg>`; transitive dependencies of an allowed direct package are not separately halted. For ranges on direct packages, the resolver skips too-new candidates and can pick an older satisfying version; exact direct pins to too-new versions fail. Bypass per-invocation with `lpm install --allow-new`, override with `lpm install --min-release-age=<DUR>`, or exempt exact package names with [`minimumReleaseAgeExclude`](#minimumreleaseageexclude).
+Cooldown in **seconds** before a newly published dependency version is installable. Default `86400` (24h). By default, project installs apply this to packages declared by the project or passed to `lpm install <pkg>`; transitive dependencies of an allowed direct package are not separately halted. Set [`minimumReleaseAgePolicy: "strict"`](#minimumreleaseagepolicy) to apply the same cooldown to transitive dependencies and lockfile replays. For ranges on checked packages, the resolver skips too-new candidates and can pick an older satisfying version; exact pins to too-new versions fail. Bypass per-invocation with `lpm install --allow-new`, override with `lpm install --min-release-age=<DUR>`, or exempt exact package names with [`minimumReleaseAgeExclude`](#minimumreleaseageexclude).
 
 Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > 24h default.
 
 If the repo lowers the cooldown below the current approved machine floor, install fails with `security_approval_required` and points you at a temporary [`lpm security unlock`](/docs/infra/security#unlock) or a persistent machine-level config change.
+
+### `minimumReleaseAgePolicy`
+
+```json
+{ "lpm": { "minimumReleaseAgePolicy": "strict" } }
+```
+
+Scope for the [`minimumReleaseAge`](#minimumreleaseage) cooldown.
+
+| Value | Behavior |
+| --- | --- |
+| `"direct"` (default) | Check direct/root dependencies only. This keeps normal installs fast and avoids downgrading a mature direct package because one of its children was published recently. |
+| `"strict"` | Check direct and transitive dependencies. Lockfile replays are revalidated from persisted `registry-published-at` timestamps when available. |
+
+Precedence: `package.json > lpm.minimumReleaseAgePolicy` > `~/.lpm/config.toml > release-age-policy` > default (`"direct"`).
+
+If the repo sets a looser policy than the current approved machine posture, install fails with `security_approval_required`. A machine with `force-security-floor = true` suppresses a project-level downgrade back to the stricter policy instead.
 
 ### `minimumReleaseAgeExclude`
 

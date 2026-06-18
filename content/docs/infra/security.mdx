@@ -14,6 +14,7 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 - `lpm install --yolo`
 - `package.json > lpm.scriptPolicy = "allow"`
 - `package.json > lpm.minimumReleaseAge = 0`
+- `package.json > lpm.minimumReleaseAgePolicy = "direct"` on a machine approved for strict cooldown scope
 - `lpm.toml > [sandbox] mode = "none"`
 
 `lpm security` is the command surface for two related jobs:
@@ -85,6 +86,7 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `sandbox-none`            | `lpm install --no-sandbox` or `lpm.toml > [sandbox] mode = "none"`                                                                                   |
 | `sandbox-allow-degraded`  | `lpm.toml` or `~/.lpm/config.toml` enables `[sandbox].allow-degraded = true` beyond the current floor                                                |
 | `cooldown-bypass`         | `lpm install --allow-new`, `--min-release-age=0`, or a lower `minimumReleaseAge`                                                                     |
+| `cooldown-window`         | `minimumReleaseAgePolicy = "direct"` or `release-age-policy = "direct"` when the approved floor requires strict direct+transitive cooldown           |
 | `scripts-allow`           | `lpm install --yolo`, `--policy=allow`, or `scriptPolicy = "allow"`                                                                                  |
 | `scripts-triage`          | `lpm install --triage` or `scriptPolicy = "triage"` when that weakens the current floor                                                              |
 | `trust-bulk-approve`      | `lpm approve-scripts --yes`, `lpm approve-scripts --global --yes`, or direct `trustedDependencies` widening                                          |
@@ -131,7 +133,7 @@ Human output includes:
 
 - the selected target (`project` or `global`)
 - the selected root for that target: `project` in project mode, `global-root` in global mode
-- the effective values for script policy, release-age floor, sandbox mode, sandbox degraded mode, and Sigstore verification
+- the effective values for script policy, release-age floor, release-age policy, sandbox mode, sandbox degraded mode, and Sigstore verification
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
 - the active managed policy file, if one is present
@@ -149,6 +151,7 @@ With `--json`, the envelope looks like:
     "effective_floor": {
       "script_policy": "deny",
       "minimum_release_age_secs": 86400,
+      "release_age_policy": "direct",
       "sandbox_mode": "default",
       "sandbox_allow_degraded": false,
       "sigstore_verify": "deny"
@@ -156,6 +159,7 @@ With `--json`, the envelope looks like:
     "floor_sources": {
       "script_policy": "approved-store",
       "minimum_release_age_secs": "managed-policy",
+      "release_age_policy": "builtin-default",
       "sandbox_mode": "builtin-default",
       "sandbox_allow_degraded": "builtin-default",
       "sigstore_verify": "approved-store"
@@ -245,6 +249,7 @@ Examples:
 
 - `package.json > lpm.scriptPolicy = "allow"`
 - `package.json > lpm.minimumReleaseAge = 0`
+- `package.json > lpm.minimumReleaseAgePolicy = "direct"` on a machine approved for strict cooldown scope
 - `lpm.toml > [sandbox] mode = "none"`
 - direct `trustedDependencies`, `trustedScopes`, `passEnv`, `readProject`, or `sandboxLimits` widening
 
@@ -257,6 +262,7 @@ For security-sensitive `lpm config` mutations such as:
 ```bash
 lpm config scripts --set allow
 lpm config release-age --set 0
+lpm config release-age-policy --set direct
 lpm config sandbox --set none
 lpm config sigstore --set off
 ```
@@ -292,6 +298,7 @@ source = "mdm"
 
 script-policy = "deny"
 minimum-release-age-secs = 86400
+release-age-policy = "strict"
 
 [sandbox]
 mode = "strict"

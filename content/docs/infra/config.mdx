@@ -16,7 +16,10 @@ lpm config list                                 # show every set key
 lpm config get save-prefix                      # → "^"
 lpm config set save-prefix '~'                  # write
 lpm config set script-policy triage             # write
+lpm config get release-age-policy               # read stored cooldown scope
+lpm config set release-age-policy strict        # transitive cooldown scope
 lpm config release-age --set 1d                # human-friendly release cooldown
+lpm config release-age-policy --set strict      # wizard form of the same policy
 lpm config set minimum-release-age-secs 3600    # 1h cooldown
 lpm config signatures --set true                # verify npm registry signatures during install
 lpm config trust-policy --set no-downgrade      # block publisher/provenance trust downgrades
@@ -48,6 +51,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `script-policy` | [Lifecycle scripts](/docs/packages/install#lifecycle-scripts) |
 | `triage-advisor` | [Optional LLM advisor](/docs/packages/security-audit#optional-llm-advisor) |
 | `minimum-release-age-secs` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age` |
+| `release-age-policy` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age-policy` |
 | `minimum-release-age-exclude` | [Recently published packages](/docs/packages/install#recently-published-packages) — native TOML string array of exact package names |
 | `signatures` | [Registry signatures](/docs/packages/install#registry-signatures-and-trust-policy) — recommended setup surface is `lpm config signatures` |
 | `trust-policy` | [Trust policy](/docs/packages/install#registry-signatures-and-trust-policy) — recommended setup surface is `lpm config trust-policy` |
@@ -61,7 +65,7 @@ The full reference for these keys, their types, defaults, and precedence chain i
 
 ## Setup wizards
 
-Seven of the keys above have dedicated interactive wizards that handle picking + validation for you:
+Eight of the keys above have dedicated interactive wizards that handle picking + validation for you:
 
 ```bash
 lpm config scripts                          # pick deny / triage / allow
@@ -84,15 +88,18 @@ lpm config trust-policy --set no-downgrade  # non-interactive
 
 lpm config release-age                      # pick default / 3d / off / custom
 lpm config release-age --set 3d             # non-interactive
+
+lpm config release-age-policy               # pick direct / strict
+lpm config release-age-policy --set strict  # non-interactive
 ```
 
 `lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore` does the same. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
 
 `lpm config signatures` and `lpm config trust-policy` are opt-in hardening controls. Their defaults are disabled, so enabling them does not require a security unlock.
 
-`lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default.
+`lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
-All seven wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must always pass `--set <value>`.
+All eight wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must always pass `--set <value>`.
 
 ## Security-sensitive writes
 
@@ -103,6 +110,7 @@ Examples:
 ```bash
 lpm config scripts --set allow
 lpm config release-age --set 0
+lpm config release-age-policy --set direct
 lpm config sandbox --set none
 lpm config sigstore --set off
 ```
@@ -123,7 +131,7 @@ The file is created on demand the first time you `set` a key.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for every action — `get` / `set` / `delete` / `list` and the seven wizards all emit a `{success, …}` envelope under `--json`.
+`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for every action — `get` / `set` / `delete` / `list` and the eight wizards all emit a `{success, …}` envelope under `--json`.
 
 ## See also
 
