@@ -47,10 +47,10 @@ lpm dev                  # start the orchestrated dev environment
 | Expose localhost via public tunnel | [Tunneling](https://cli.lpm.dev/docs/infra/tunneling.mdx) |
 | Monorepos: workspaces, filters, catalogs | [Workspaces](https://cli.lpm.dev/docs/packages/workspaces.mdx) · [monorepo setup](https://cli.lpm.dev/docs/guides/monorepo-setup.mdx) |
 | Migrate a project from npm or pnpm | [from npm](https://cli.lpm.dev/docs/guides/migrating-from-npm.mdx) · [from pnpm](https://cli.lpm.dev/docs/guides/migrating-from-pnpm.mdx) · [overview](https://cli.lpm.dev/docs/migrating.mdx) |
-| Private registries and auth tokens | [Registries](https://cli.lpm.dev/docs/registries.mdx) · [Authentication](https://cli.lpm.dev/docs/reference/authentication.mdx) |
+| Private registries and auth tokens | [Registries](https://cli.lpm.dev/docs/registries.mdx) · [Authentication](https://cli.lpm.dev/docs/infra/authentication.mdx) |
 | CI/CD installs and publishing | [CI/CD setup](https://cli.lpm.dev/docs/guides/ci-cd-setup.mdx) |
 | Swift / SwiftPM packages | [Using with Swift](https://cli.lpm.dev/docs/guides/using-with-swift.mdx) |
-| Config files and env vars reference | [Config](https://cli.lpm.dev/docs/reference/config.mdx) · [Env vars](https://cli.lpm.dev/docs/reference/env-vars.mdx) |
+| Config files and env vars reference | [Config](https://cli.lpm.dev/docs/infra/config.mdx) · [Env vars](https://cli.lpm.dev/docs/reference/env-vars.mdx) |
 | Something behaves oddly | [doctor](https://cli.lpm.dev/docs/infra/doctor.mdx) · [npm compatibility](https://cli.lpm.dev/docs/packages/npm-compatibility.mdx) |
 | Flat list of every command | [Commands](https://cli.lpm.dev/docs/commands.mdx) |
 

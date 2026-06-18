@@ -307,6 +307,7 @@ Repo-file weakeners are treated differently. If a repo asks for a weaker posture
 
 - `package.json > lpm.scriptPolicy`
 - `package.json > lpm.minimumReleaseAge`
+- `package.json > lpm.minimumReleaseAgePolicy`
 - `lpm.toml > [sandbox]`
 
 install or rebuild does **not** prompt inline. LPM treats those file values as proposals, fails the command, and points you at `lpm security unlock ...` for a temporary project exception.
@@ -355,9 +356,22 @@ RUN lpm install --offline --frozen-lockfile
 
 ## Recently published packages
 
-LPM applies a **24-hour** minimum release age by default. On project installs, the cooldown is enforced for direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on those direct packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. Exact direct pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
+LPM applies a **24-hour** minimum release age by default. On project installs, the default policy checks direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on checked packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
 
-Transitive dependencies of an allowed direct package are not separately halted by this cooldown. That keeps a mature direct package on its normal dependency graph instead of downgrading it only because one of its children was published recently.
+Transitive dependencies of an allowed direct package are not separately halted by the default policy. That keeps a mature direct package on its normal dependency graph instead of downgrading it only because one of its children was published recently.
+
+For stricter supply-chain posture, opt into transitive enforcement:
+
+```json title="package.json"
+{ "lpm": { "minimumReleaseAge": 86400, "minimumReleaseAgePolicy": "strict" } }
+```
+
+```toml title="~/.lpm/config.toml"
+minimum-release-age-secs = 86400
+release-age-policy = "strict"
+```
+
+Strict mode applies the cooldown to direct and transitive dependencies. Lockfile replays are revalidated from the `registry-published-at` timestamps persisted in `lpm.lock`, so a frozen replay cannot silently reintroduce a package that is still inside the configured cooldown window.
 
 ```bash
 lpm install foo --allow-new                # bypass the cooldown for this command
@@ -367,6 +381,8 @@ lpm install foo --min-release-age-exclude foo
 ```
 
 Set persistent defaults via `package.json` (`lpm.minimumReleaseAge`, `lpm.minimumReleaseAgeExclude`) or `~/.lpm/config.toml` (`minimum-release-age-secs`, `minimum-release-age-exclude`). Excludes are exact canonical package names in the direct/root cooldown scope: for `"local": "npm:real-pkg@1.0.0"`, exclude `real-pkg`, not `local`. CLI, package, and global exclude lists merge in that order, with duplicates removed.
+
+Set cooldown scope via `package.json > lpm.minimumReleaseAgePolicy` or `~/.lpm/config.toml > release-age-policy`. Use `lpm config release-age-policy --set strict` for the global wizard, or `lpm config set release-age-policy strict` for the generic setter.
 
 `--allow-new` and `--min-release-age-exclude <pkg>` skip the install cooldown only — the [provenance-drift](/docs/packages/security-audit#layer-4-provenance--cooldown) check still applies unless you also pass `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`. Under `--policy=triage`, the [identity-match widening](/docs/packages/security-audit#layer-5-triage) is also gated by the cooldown — bypassing the install halt does not make a recent-publish package's scripts trusted. Use `--policy=allow` to opt out of the script-tier review as well, or set `minimum-release-age=0` to disable cooldown universally.
 
@@ -455,7 +471,7 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 Two things differ from project installs:
 
 - **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
-- **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` chain works the same way.
+- **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` and `release-age-policy` chains work the same way.
 
 A global install commits only after LPM has materialized at least one safe, executable bin shim for the package. If the package exposes no usable bins, declares unsafe bin names, or the install cannot write its ready marker, LPM rolls the pending global entry back instead of leaving a half-installed package in `~/.lpm/global/`.
 
