@@ -18,20 +18,26 @@ This page covers the design — what the store is, how packages get into it, how
     │   │   ├── index.js
     │   │   └── …
     │   └── …
-    └── links/                              ← per-graph wrapper directories
-        ├── react@19.2.4+a1b2c3d4/
-        │   ├── node_modules/
-        │   │   ├── react/                  ← link from objects/<sri>
-        │   │   ├── scheduler/              ← symlink to a sibling link entry
-        │   │   └── …
-        │   └── .lpm-link-meta.json         ← sidecar (object SRI, dep targets)
+    ├── links/                              ← per-graph wrapper directories
+    │   ├── react@19.2.4+a1b2c3d4/
+    │   │   ├── node_modules/
+    │   │   │   ├── react/                  ← link from objects/<sri>
+    │   │   │   ├── scheduler/              ← symlink to a sibling link entry
+    │   │   │   └── …
+    │   │   └── .lpm-link-meta.json         ← sidecar (object SRI, dep targets)
+    │   └── …
+    └── compat/                             ← macOS cached compatibility islands
+        ├── <island-key>/
+        │   ├── <graph-key>/node_modules/<pkg>/
+        │   └── .lpm-island-complete
         └── …
 ```
 
-Two arms under `v2/`:
+Three arms under `v2/`:
 
 - **`objects/<sri>/`** — content-addressable extracted bytes. One entry per unique tarball content; shared by every package version with that hash. The SRI is the same one verified against the lockfile.
 - **`links/<graph-key>/`** — per-graph wrapper directories. The graph-key folds in the package's name, version, platform tuple, **linker mode** (hoisted vs isolated produces distinct keys), peer-context (empty in hoisted mode), dep edges, alias edges, root-link names, source disambiguator (Registry vs Tarball/Git), and **patch fingerprint** (a `lpm patch`'d install gets its own link directory and never shares bytes with the unpatched coords). Two installations of the same `(name, version)` are interchangeable iff every one of those inputs matches — so projects with compatible graphs share the same link entry, while a hoisted vs isolated install of the same dep set produce two link entries.
+- **`compat/<island-key>/`** — macOS-only cached compatibility islands for framework/tooling bins that need a project-local dependency island. The island key includes each entry's graph key, source SRI, and current link-entry content digest, so stable-SRI local sources get a fresh island when their bytes change.
 
 Each link entry's `node_modules/<pkg>/` is a clonefile (macOS) / reflink-or-hardlink (Linux) of the corresponding `objects/<sri>/` directory. Sibling entries (`scheduler/` next to `react/` above) are **symlinks** pointing at other graph-keys' link entries — not copies. This keeps the inode budget small even on a machine with thousands of packages.
 
@@ -116,7 +122,7 @@ If `LPM_HOME` ends up on a network filesystem, LPM emits a one-time warning at s
 
 The store grows monotonically as new graph contexts appear. Two surfaces clean it up:
 
-- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal. Walks `~/.lpm/known-projects.json` (the registry of every project LPM has installed into), traces each project's `node_modules/` symlinks back into the store, and removes link entries + objects no longer reachable from any registered project. Safe to run regularly. Default is dry-run; pass `--apply` to delete.
+- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal. Walks `~/.lpm/known-projects.json` (the registry of every project LPM has installed into), traces each project's `node_modules/` symlinks back into the store, and removes link entries + objects no longer reachable from any registered project. Cached compatibility islands are removed by crash recovery and optional LRU age. Safe to run regularly. Default is dry-run; pass `--apply` to delete.
 - [`lpm store`](/docs/infra/store) — verify integrity, print the store path, blunt full wipe.
 
 ```bash
