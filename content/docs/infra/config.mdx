@@ -24,6 +24,7 @@ lpm config release-age-policy --set strict      # wizard form of the same policy
 lpm config set minimum-release-age-secs 3600    # 1h cooldown
 lpm config signatures --set true                # verify npm registry signatures during install
 lpm config trust-policy --set no-downgrade      # block publisher/provenance trust downgrades
+lpm config typosquat --set default              # remove override; default keeps checks enabled
 lpm config set workspace-concurrency 4          # workspace run/test/bench fan-out
 lpm config set audit-after-install true         # enable audit-after-install globally
 lpm config delete save-prefix                   # remove
@@ -56,6 +57,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `minimum-release-age-exclude` | Exact canonical package names exempted from the release-age cooldown. Merged with CLI and project excludes. | `[]` |
 | `signatures` | Verify npm registry package signatures during install and fail closed when a package cannot be verified. Set with `lpm config signatures`. | `false` |
 | `trust-policy` | Refuse versions that drop npm publisher/provenance trust evidence compared with an earlier published version. Set with `lpm config trust-policy`. | `"off"` |
+| `typosquat-guard` | Suspicious direct dependency name analysis. Set with `lpm config typosquat`; use project allow-list entries for intentional package names. | unset / `"default"` (enabled) |
 | `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
 | `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
 | `engine-strict` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. | `true` |
@@ -82,6 +84,7 @@ Bare `lpm config` opens a single interactive menu. Each row shows the current va
 │  ○ Sigstore provenance    current: deny
 │  ○ Registry signatures    current: disabled
 │  ○ Trust downgrade policy current: off
+│  ○ Typosquat guard        current: default (enabled)
 │  ○ Minimum release age    current: default (1d)
 │  ○ Release-age scope      current: direct
 ```
@@ -90,7 +93,7 @@ After a setting is changed, the editor returns to the menu with refreshed values
 
 ## Setup wizards
 
-Eight of the keys above have dedicated interactive wizards that handle picking + validation for you:
+Nine of the keys above have dedicated interactive wizards that handle picking + validation for you:
 
 ```bash
 lpm config scripts                          # pick deny / triage / allow
@@ -111,6 +114,9 @@ lpm config signatures --set true            # non-interactive
 lpm config trust-policy                     # pick off / no-downgrade
 lpm config trust-policy --set no-downgrade  # non-interactive
 
+lpm config typosquat                        # pick default / on / off
+lpm config typosquat --set default          # non-interactive
+
 lpm config release-age                      # pick default / 3d / off / custom
 lpm config release-age --set 3d             # non-interactive
 
@@ -118,13 +124,15 @@ lpm config release-age-policy               # pick direct / strict
 lpm config release-age-policy --set strict  # non-interactive
 ```
 
-`lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore` does the same. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
+`lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore` or `lpm config typosquat` does the same. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
 
 `lpm config signatures` and `lpm config trust-policy` are opt-in hardening controls. Their defaults are disabled, so enabling them does not require a security unlock.
 
+`lpm config typosquat` accepts `default`, `on`, or `off`. `default` removes the explicit config key and follows the product default, currently enabled; `on` forces the guard on even when the diagnostic env override is set; `off` disables suspicious-name analysis machine-wide. `off` is a guarded weakening: the interactive wizard asks for confirmation and native approval before saving it, while `--json` / CI / non-TTY callers fail with `security_approval_required`. For false positives, prefer a committed [`lpm.toml` allow-list entry](/docs/reference/lpm-toml#typosquat-policy) with a reason instead of turning the guard off globally.
+
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
-Bare `lpm config` and all eight wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
+Bare `lpm config` and all nine wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
 
 ## Security-sensitive writes
 
@@ -138,6 +146,7 @@ lpm config release-age --set 0
 lpm config release-age-policy --set direct
 lpm config sandbox --set none
 lpm config sigstore --set off
+lpm config typosquat --set off
 ```
 
 In an interactive TTY, LPM asks for confirmation before persisting the weaker value.
@@ -146,7 +155,7 @@ In `--json`, CI, or any non-TTY shell, the same write fails with `error_code: "s
 
 If a managed policy owns that control (`/etc/lpm/security-policy.toml` on Unix/macOS, `C:\ProgramData\lpm\security-policy.toml` on Windows), the write fails with `error_code: "security_floor"` instead.
 
-Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` or `"off"` is surfaced as an active runtime override and requires a `provenance-unverified` unlock before mutating install or trust flows proceed.
+Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` / `"off"` and raw `typosquat-guard = "off"` are surfaced as active runtime overrides and require the matching unlock before mutating install or trust flows proceed.
 
 ## File location
 
@@ -156,7 +165,7 @@ The file is created on demand the first time you `set` a key.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the eight wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
+`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the nine wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
 
 ## See also
 
