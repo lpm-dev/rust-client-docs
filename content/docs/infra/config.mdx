@@ -1,17 +1,18 @@
 ---
 title: lpm config
-description: "Get, set, delete, or list user-level CLI configuration."
+description: "Open the guided config editor or manage user-level CLI configuration."
 ---
 
 ```bash
-lpm config <action> [key] [value]
+lpm config [action] [key] [value]
 ```
 
-Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. For ordinary keys it is a convenience layer over editing the file by hand. For security-sensitive keys, it is also the approved path for persisting a weaker machine posture.
+Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. Run bare `lpm config` in a terminal to open the guided editor for the main security and install-posture settings. For ordinary keys it is a convenience layer over editing the file by hand. For security-sensitive keys, it is also the approved path for persisting a weaker machine posture.
 
 ## Examples
 
 ```bash
+lpm config                                      # guided editor with current values
 lpm config list                                 # show every set key
 lpm config get save-prefix                      # → "^"
 lpm config set save-prefix '~'                  # write
@@ -40,28 +41,52 @@ lpm config unset save-prefix                    # alias for delete
 
 Generic `set` writes ordinary values as TOML strings. Known typed keys can preserve their native type; today `signatures` is written as a boolean. The reader accepts both string and native forms for typed keys — see [String coercion](/docs/reference/config-toml#string-coercion) for the rationale.
 
-## Known keys
+## Known keys and defaults
 
 The reader accepts unknown keys silently (forward compatibility), but only the following keys actually do anything today:
 
-| Key | See |
-| --- | --- |
-| `save-prefix` | [Save policy](/docs/packages/save-policy) |
-| `save-exact` | [Save policy](/docs/packages/save-policy) |
-| `script-policy` | [Lifecycle scripts](/docs/packages/install#lifecycle-scripts) |
-| `triage-advisor` | [Optional LLM advisor](/docs/packages/security-audit#optional-llm-advisor) |
-| `minimum-release-age-secs` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age` |
-| `release-age-policy` | [Recently published packages](/docs/packages/install#recently-published-packages) — raw key; the recommended setup surface is `lpm config release-age-policy` |
-| `minimum-release-age-exclude` | [Recently published packages](/docs/packages/install#recently-published-packages) — native TOML string array of exact package names |
-| `signatures` | [Registry signatures](/docs/packages/install#registry-signatures-and-trust-policy) — recommended setup surface is `lpm config signatures` |
-| `trust-policy` | [Trust policy](/docs/packages/install#registry-signatures-and-trust-policy) — recommended setup surface is `lpm config trust-policy` |
-| `auto-install-peers` | [Peer dependencies](/docs/packages/resolver#peerdependencies-and-optionaldependencies) |
-| `workspace-concurrency` | [Task runner](/docs/dev/task-runner#parallelism) — workspace package fan-out cap for `lpm run`, `lpm test`, and `lpm bench` |
-| `audit-after-install` | [Audit after install](/docs/packages/install#audit-after-install) |
-| `[sandbox] mode` | [Sandbox](/docs/packages/install#sandbox) — only writable via `lpm config sandbox` (nested key) |
-| `[sigstore] verify` | [Provenance](/docs/packages/security-audit#layer-4-provenance--cooldown) — recommended setup surface is `lpm config sigstore` |
+| Config | Description | Default value |
+| --- | --- | --- |
+| `save-prefix` | Prefix used when `lpm install <pkg>` writes dependency ranges to `package.json`. See [Save policy](/docs/packages/save-policy). | `"^"` |
+| `save-exact` | Force exact dependency saves regardless of `save-prefix`. | `false` |
+| `script-policy` | Dependency lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Set with `lpm config scripts`. | `"deny"` |
+| `triage-advisor` | Optional LLM advisor for amber-tier lifecycle scripts. Only active when `script-policy = "triage"`; approvals are ephemeral. Set with `lpm config triage`. | `"none"` |
+| `minimum-release-age-secs` | Cooldown before a freshly published version can be selected. The friendly setup surface is `lpm config release-age`. | `86400` (24h) |
+| `release-age-policy` | Cooldown scope: direct/root dependencies only, or strict direct+transitive checks and lockfile replay checks. Set with `lpm config release-age-policy`. | `"direct"` |
+| `minimum-release-age-exclude` | Exact canonical package names exempted from the release-age cooldown. Merged with CLI and project excludes. | `[]` |
+| `signatures` | Verify npm registry package signatures during install and fail closed when a package cannot be verified. Set with `lpm config signatures`. | `false` |
+| `trust-policy` | Refuse versions that drop npm publisher/provenance trust evidence compared with an earlier published version. Set with `lpm config trust-policy`. | `"off"` |
+| `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
+| `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
+| `engine-strict` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. | `true` |
+| `workspace-concurrency` | User default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. | available parallelism |
+| `audit-after-install` | Run `lpm audit` silently after successful `lpm install` and print a one-line advisory. Findings do not fail the install. | `false` |
+| `linker` | Preferred `node_modules` layout for installs run by this user. Overrides `package.json > lpm > linker`; per-invocation override is `lpm install --linker`. | `"hoisted"`; workspaces and default peer-conflict installs use `"isolated"` |
+| `script-read-allow` | Project-relative paths lifecycle scripts may read despite matching the secret-file deny list. | `[]` |
+| `[sandbox] mode` | Default lifecycle-script sandbox posture for this machine. Set with `lpm config sandbox`. | `"default"` |
+| `[sandbox] allow-degraded` | Allow degraded sandbox fallback when full containment is unavailable. | `false` |
+| `[sigstore] verify` | Sigstore provenance verification posture used by installs and related flows. Set with `lpm config sigstore`. | `"deny"` |
+| `[tunnel] relay-url` | WebSocket relay URL for `lpm tunnel`; override per process with `LPM_TUNNEL_RELAY`. | `"wss://relay.lpm.fyi/connect"` |
 
 The full reference for these keys, their types, defaults, and precedence chain is on [`~/.lpm/config.toml`](/docs/reference/config-toml).
+
+## Guided editor
+
+Bare `lpm config` opens a single interactive menu. Each row shows the current value and routes into the focused wizard for that setting:
+
+```text
+◆  What do you want to configure?
+│  ○ Lifecycle scripts      current: deny
+│  ○ Triage advisor         current: none
+│  ○ Sandbox mode           current: default
+│  ○ Sigstore provenance    current: deny
+│  ○ Registry signatures    current: disabled
+│  ○ Trust downgrade policy current: off
+│  ○ Minimum release age    current: default (1d)
+│  ○ Release-age scope      current: direct
+```
+
+After a setting is changed, the editor returns to the menu with refreshed values. If you set lifecycle scripts to `triage`, LPM also offers to configure the optional triage advisor next.
 
 ## Setup wizards
 
@@ -99,7 +124,7 @@ lpm config release-age-policy --set strict  # non-interactive
 
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
-All eight wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must always pass `--set <value>`.
+Bare `lpm config` and all eight wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
 
 ## Security-sensitive writes
 
@@ -131,7 +156,7 @@ The file is created on demand the first time you `set` a key.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for every action — `get` / `set` / `delete` / `list` and the eight wizards all emit a `{success, …}` envelope under `--json`.
+`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the eight wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
 
 ## See also
 
