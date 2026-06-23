@@ -9,7 +9,7 @@ lpm install [packages...]   # alias: lpm i
 
 With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
 
-Before a new direct dependency enters the project, LPM checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM can switch to the suggested package or write a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy). Existing lockfile replays are not blocked by this check.
+Before a new direct dependency enters the project, LPM checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM defaults to cancel and only switches to the suggested package or writes a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy) when you choose that action. Existing lockfile replays are not blocked by this check.
 
 ## Project discovery
 
@@ -174,6 +174,8 @@ reason = "Intentional internal compatibility package"
 ```
 
 The guard only fires when a name is newly entering the project. If `lpm.lock` already records the direct dependency, `CI=true lpm install` and `lpm install --frozen-lockfile` replay the lockfile normally.
+
+Machine-wide guard mode lives in `~/.lpm/config.toml > typosquat-guard` and is managed by `lpm config typosquat --set default|on|off`. `default` removes the explicit override and keeps the current product default (enabled); `on` keeps the guard enabled even if the diagnostic env toggle is set; `off` is a security-approval-gated machine-wide weakening. The diagnostic env toggle is also ignored when managed policy owns the typosquat floor. Use project allow-list entries for legitimate false positives instead of turning the guard off globally.
 
 Use `--catalog` to force a catalog reference for this invocation. `--catalog <pkg>` writes `"catalog:"`; `--catalog=<name> <pkg>` writes `"catalog:<name>"`. The entry must already exist in the selected root catalog and the resolved version must satisfy that catalog range, otherwise the install fails before committing `package.json`. This flag is mutually exclusive with `--exact`, `--tilde`, and `--save-prefix`.
 
