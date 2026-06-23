@@ -21,6 +21,9 @@ lpm publish --npm                            # publish to registry.npmjs.org
 lpm publish --github                         # publish to GitHub Packages
 lpm publish --publish-registry https://r.example.com   # custom npm-compatible
 lpm publish --provenance                     # require Sigstore provenance (CI)
+lpm publish --npm --provenance               # npm-compatible publish provenance
+lpm publish --npm --provenance-file bundle.sigstore
+lpm publish --no-provenance                  # override provenance config
 lpm publish --min-score 80                   # gate on quality score
 lpm stage publish --tag next                 # stage a version on npm
 lpm stage list @scope/pkg                    # list staged npm versions
@@ -75,7 +78,7 @@ OIDC is publish-only. `lpm stage list`, `view`, `download`, `approve`, and `reje
 ## npm staged publish
 
 ```bash
-lpm stage publish [--tag next] [--access public] [-y]
+lpm stage publish [--tag next] [--access public] [--provenance | --provenance-file <PATH> | --no-provenance] [-y]
 lpm stage list [package]
 lpm stage view <stage-id>
 lpm stage download <stage-id>
@@ -85,7 +88,7 @@ lpm stage reject <stage-id> [--otp 123456]
 
 `lpm stage` wraps npm staged publishing for the current project. It is npm-only in this release: there is no lpm.dev, GitHub Packages, GitLab Packages, custom publish registry, workspace-recursive, or tarball/package-spec staging mode yet.
 
-Stage publish reuses the normal npm publish preparation path: pack, workspace dependency rewrite, secret scan, quality gate, npm name/access/tag config, optional npm-name tarball rewrite, and optional `--provenance` over the final tarball. The upload goes to npm's staging endpoint instead of the live publish endpoint, so the version is not installable until it is approved.
+Stage publish reuses the normal npm publish preparation path: pack, workspace dependency rewrite, secret scan, quality gate, npm name/access/tag config, optional npm-name tarball rewrite, and optional `--provenance` / `--provenance-file` over the final tarball. The upload goes to npm's staging endpoint instead of the live publish endpoint, so the version is not installable until it is approved.
 
 Auth for `lpm stage publish` against the default npm registry uses npm Trusted Publishing first when available, then the normal npm token sources:
 
@@ -110,14 +113,33 @@ Every `lpm stage` subcommand supports `--json`. JSON output uses LPM envelopes w
 
 ```bash
 lpm publish --provenance
+lpm publish --npm --provenance
+lpm publish --npm --provenance-file ./pkg-1.2.3.sigstore
+lpm publish --no-provenance
 ```
 
-Generates a Sigstore-signed attestation that proves which CI workflow built the tarball and which commit it came from. Requires an audience-`sigstore` OIDC token from a supported CI environment:
+`--provenance` generates a Sigstore-signed attestation over the final tarball for each publish target. For lpm.dev, the bundle is stored in package metadata. For npm-compatible targets (`--npm`, `--github`, `--gitlab`, or `--publish-registry`), LPM also attaches npm's expected `{name}-{version}.sigstore` bundle in the publish payload.
+
+Generated provenance requires an audience-`sigstore` OIDC token from a supported CI environment:
 
 - **GitHub Actions** — enable `permissions: id-token: write` on the job; the runtime mints the JWT.
 - **GitLab CI** — mint `SIGSTORE_ID_TOKEN` via the `id_tokens` block with `aud: sigstore` (the legacy `LPM_GITLAB_OIDC_TOKEN` env var is also accepted).
 
 Other platforms aren't supported — Sigstore needs the OIDC issuer to sign. The flag fails loud (non-zero exit) if no usable token is found or if Sigstore signing/Rekor recording fails; it never silently falls back to publishing without provenance.
+
+Generated npm-compatible provenance and provenance-file attachments require effective npm access to be `public`. LPM's npm access default is `public` for scoped and unscoped packages. If you set `publish.npm.access`, `publish.github.access`, `publish.gitlab.access`, or `--access restricted` on stage publish, LPM fails before npm auth, Sigstore signing, file validation, or upload.
+
+`--provenance-file <PATH>` attaches a pre-generated Sigstore bundle to npm-compatible targets. The file is parsed, verified, and checked against the final tarball subject and SHA-512 digest before upload. It is not valid for lpm.dev targets, so `lpm publish --lpm --npm --provenance-file ...` fails before validation or upload. `--provenance`, `--provenance-file`, and `--no-provenance` are mutually exclusive.
+
+Provenance can also be enabled through npm-compatible config, in this order:
+
+1. CLI: `--no-provenance`, `--provenance`, `--provenance-file <PATH>`
+2. `package.json > publishConfig.provenance`
+3. Environment: `NPM_CONFIG_PROVENANCE_FILE`, `NPM_CONFIG_PROVENANCE`
+4. Project `.npmrc`: `provenance=true` or `provenance-file=...`
+5. Home `.npmrc`
+
+`provenance` and `provenance-file` are mutually exclusive in env and `.npmrc` config. Use `--no-provenance` when a repo-level npm config enables provenance but a particular publish or staged publish should skip it.
 
 Consumers can later verify provenance via the audit pipeline or registry UI.
 
@@ -168,11 +190,16 @@ LPM advertises npm web auth on npm-compatible publish requests (`npm-auth-type: 
 | `--check` | Run quality report only |
 | `-y`, `--yes` | Skip interactive confirmation |
 | `--provenance` | Require Sigstore provenance (CI with OIDC only) |
+| `--no-provenance` | Disable provenance even when npm config enables it |
+| `--provenance-file <PATH>` | Attach a pre-generated Sigstore bundle to npm-compatible targets |
 | `--min-score <N>` | Minimum quality score required (0–100) |
 | `--allow-secrets` | Skip pre-publish secret scanning (not recommended) |
 | `--npm` / `--lpm` / `--github` / `--gitlab` | Target a specific registry |
 | `--publish-registry <URL>` | Custom npm-compatible registry (`https://` only) |
 | `stage --npm-registry <URL>` | npm staging registry for `lpm stage` subcommands |
+| `stage publish --provenance` | Generate npm-compatible Sigstore provenance for a staged publish |
+| `stage publish --no-provenance` | Disable staged-publish provenance even when npm config enables it |
+| `stage publish --provenance-file <PATH>` | Attach a pre-generated Sigstore bundle to a staged publish |
 | `stage --otp <CODE>` | One-time password for `lpm stage approve` / `reject` |
 
 Plus the [global flags](/docs/commands#global-flags).
