@@ -16,6 +16,7 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 - `package.json > lpm.minimumReleaseAge = 0`
 - `package.json > lpm.minimumReleaseAgePolicy = "direct"` on a machine approved for strict cooldown scope
 - `lpm.toml > [sandbox] mode = "none"`
+- `~/.lpm/config.toml > [firewall] mode = "off"` on a machine approved for report or enforce mode
 
 `lpm security` is the command surface for two related jobs:
 
@@ -74,7 +75,7 @@ Use `--package <name>` only with a concrete scope when the weakening is package-
 ### Bundle selectors
 
 - `all` expands to every concrete unlock scope.
-- `default` expands to the common install/runtime weakeners: `cooldown-bypass`, `cooldown-window`, `provenance-ignore-drift`, `provenance-unverified`, `scripts-triage`, `scripts-allow`, `sandbox-default`, `sandbox-none`, `sandbox-allow-degraded`, and `typosquat-disable`.
+- `default` expands to the common install/runtime weakeners: `cooldown-bypass`, `cooldown-window`, `provenance-ignore-drift`, `provenance-unverified`, `scripts-triage`, `scripts-allow`, `sandbox-default`, `sandbox-none`, `sandbox-allow-degraded`, `typosquat-disable`, and `firewall-disable`.
 - `default` intentionally excludes `trust-bulk-approve`, `trust-scope-widen`, `capability-widen`, and `floor-edit`.
 
 ### Common scopes
@@ -95,6 +96,7 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `provenance-ignore-drift` | `--ignore-provenance-drift <pkg>` or `--ignore-provenance-drift-all`                                                                                 |
 | `provenance-unverified`   | `LPM_PROVENANCE_ENFORCE=warn`, `LPM_PROVENANCE_ENFORCE=off`, raw or persisted `[sigstore].verify = "warn"` or `"off"`, or `--unverified-provenance*` |
 | `typosquat-disable`       | raw or persisted `typosquat-guard = "off"` when the approved floor keeps suspicious-name analysis enabled                                            |
+| `firewall-disable`        | raw or persisted `[firewall].mode = "off"` or `"report"` when the approved floor requires stronger lpm.dev firewall verdict checks                   |
 
 ## `lock`
 
@@ -134,11 +136,11 @@ Human output includes:
 
 - the selected target (`project` or `global`)
 - the selected root for that target: `project` in project mode, `global-root` in global mode
-- the effective values for script policy, release-age floor, release-age policy, sandbox mode, sandbox degraded mode, and Sigstore verification
+- the effective values for script policy, release-age floor, release-age policy, sandbox mode, sandbox degraded mode, Sigstore verification, typosquat guard, and npm firewall mode
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
 - the active managed policy file, if one is present
-- any active runtime overrides such as `LPM_PROVENANCE_ENFORCE` or raw `~/.lpm/config.toml > [sigstore].verify`
+- any active runtime overrides such as `LPM_PROVENANCE_ENFORCE`, raw `~/.lpm/config.toml > [sigstore].verify`, or raw `~/.lpm/config.toml > [firewall].mode`
 - the active unlocks for that scope, including package scoping and min-release-age limits when present
 
 With `--json`, the envelope looks like:
@@ -156,7 +158,8 @@ With `--json`, the envelope looks like:
       "sandbox_mode": "default",
       "sandbox_allow_degraded": false,
       "sigstore_verify": "deny",
-      "typosquat_guard": "default"
+      "typosquat_guard": "default",
+      "firewall_mode": "off"
     },
     "floor_sources": {
       "script_policy": "approved-store",
@@ -165,7 +168,8 @@ With `--json`, the envelope looks like:
       "sandbox_mode": "builtin-default",
       "sandbox_allow_degraded": "builtin-default",
       "sigstore_verify": "approved-store",
-      "typosquat_guard": "builtin-default"
+      "typosquat_guard": "builtin-default",
+      "firewall_mode": "builtin-default"
     },
     "approved_posture_path": "/Users/alice/.lpm/security/approved-posture.json",
     "approved_posture_source": "approved-store",
@@ -180,6 +184,11 @@ With `--json`, the envelope looks like:
         "control": "sigstore.verify",
         "value": "warn",
         "source": "LPM_PROVENANCE_ENFORCE"
+      },
+      {
+        "control": "[firewall].mode",
+        "value": "off",
+        "source": "~/.lpm/config.toml [firewall].mode"
       }
     ],
     "active_unlocks": []
@@ -270,6 +279,7 @@ lpm config release-age --set 0
 lpm config release-age-policy --set direct
 lpm config sandbox --set none
 lpm config sigstore --set off
+lpm config firewall --set off
 ```
 
 LPM asks for interactive confirmation in a TTY before persisting the weaker machine posture.
@@ -297,14 +307,14 @@ Windows:    C:\ProgramData\lpm\security-policy.toml
 Example:
 
 ```toml title="/etc/lpm/security-policy.toml"
-[policy]
-name = "corp-default"
-source = "mdm"
-
 script-policy = "deny"
 minimum-release-age-secs = 86400
 release-age-policy = "strict"
 typosquat-guard = "on"
+
+[policy]
+name = "corp-default"
+source = "mdm"
 
 [sandbox]
 mode = "strict"
@@ -312,6 +322,9 @@ allow-degraded = false
 
 [sigstore]
 verify = "deny"
+
+[firewall]
+mode = "enforce"
 ```
 
 When this file owns a control, weaker repo or user changes do not win. They fail with `error_code: "security_floor"` instead. In production, LPM only loads managed policy from the managed path itself. On Unix/macOS, the file and parent directories must be root-owned and not group/world writable. On Windows, the file and parent directory must resolve to the ProgramData path, must not be reparse points, must be owned by SYSTEM or Administrators, and must not grant write access to non-administrator principals.
