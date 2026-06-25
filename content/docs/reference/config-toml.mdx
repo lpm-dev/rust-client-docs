@@ -43,6 +43,10 @@ signatures = false
 # npm publisher/provenance trust downgrade policy
 trust-policy = "off"
 
+# Suspicious direct dependency name analysis
+# Omit for the default enabled mode; set "on" to ignore the diagnostic env toggle.
+typosquat-guard = "on"
+
 # Workspace task fan-out for run/test/bench
 workspace-concurrency = 4
 
@@ -60,6 +64,10 @@ script-read-allow = [".env", ".npmrc"]
 [sandbox]
 mode = "default"
 allow-degraded = false
+
+# lpm.dev npm firewall verdict checks
+[firewall]
+mode = "enforce"
 
 # Provenance verification posture
 [sigstore]
@@ -84,6 +92,8 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `sigstore.verify` | `"deny"` \| `"warn"` \| `"off"` | `"deny"` | Provenance verification posture used by installs and related flows. Set with [`lpm config sigstore`](/docs/infra/config#setup-wizards). |
 | `signatures` | bool | `false` | Verify npm registry package signatures during install and fail closed when a registry package cannot be verified. Set with [`lpm config signatures`](/docs/infra/config#setup-wizards). Per-process override: `LPM_VERIFY_REGISTRY_SIGNATURES`. |
 | `trust-policy` | `"off"` \| `"no-downgrade"` | `"off"` | When set to `"no-downgrade"`, the resolver refuses versions that drop npm trust evidence compared with an earlier published version. Ranges can fall back to an older allowed candidate; exact blocked pins fail. Set with [`lpm config trust-policy`](/docs/infra/config#setup-wizards). |
+| `typosquat-guard` | `"default"` \| `"on"` \| `"off"` | unset / `"default"` (enabled) | Suspicious direct dependency name analysis before a new name enters a project. `lpm config typosquat --set default` removes this key; `on` forces the guard on even when the diagnostic env toggle is set; `off` is a guarded machine-wide weakening. Prefer project [`policy.typosquat.allow`](/docs/reference/lpm-toml#typosquat-policy) entries for intentional names instead of disabling the guard globally. |
+| `firewall.mode` | `"off"` \| `"report"` \| `"enforce"` | `"off"` | lpm.dev firewall verdict checks for selected public npm package versions. `report` warns and continues; `enforce` blocks packages marked malicious. npm metadata and tarballs still use the direct npm route. Set with [`lpm config firewall`](/docs/infra/config#setup-wizards). Per-process `LPM_NPM_FIREWALL` can only tighten this value. |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
 | `strict-peer-dependencies` | bool | `false` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. Per-invocation overrides: `--strict-peer-dependencies` / `--no-strict-peer-dependencies`. Project override: `package.json > lpm.strictPeerDependencies`. |
 | `auto-install-peers` | bool | `true` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. Project override: `package.json > lpm.autoInstallPeers`. Set to `false` for npm-classic / pnpm-classic peer-warning-only behavior. |
@@ -108,9 +118,13 @@ workspace-concurrency = 4             # native integer (hand-edit)
 workspace-concurrency = "4"           # string (lpm config set wrote this)
 signatures = true                     # native bool
 signatures = "true"                   # string form also accepted
+typosquat-guard = "on"                # canonical string
+
+[firewall]
+mode = "report"                       # canonical string
 ```
 
-Both forms parse to the same value. Invalid values (non-numeric strings, negative numbers, zero for positive-only keys, etc.) error at load time with the file path baked in.
+Both forms parse to the same value. For `typosquat-guard`, the `default` value is accepted when hand-edited, but the CLI removes the key instead of persisting `typosquat-guard = "default"`. For `firewall.mode`, boolean-like aliases are accepted when hand-edited or provided through `LPM_NPM_FIREWALL`, but `lpm config firewall` persists the canonical `off`, `report`, or `enforce` value. Invalid values (non-numeric strings, negative numbers, zero for positive-only keys, etc.) error at load time with the file path baked in.
 
 ## Security-sensitive keys are proposals
 
@@ -124,6 +138,8 @@ For security-sensitive keys such as:
 - `[sandbox] mode`
 - `[sandbox] allow-degraded`
 - `[sigstore] verify`
+- `typosquat-guard`
+- `[firewall] mode`
 
 the file is only one input to the decision. A weaker value written here does **not** automatically become authoritative.
 
@@ -133,7 +149,7 @@ LPM only honors a weaker value when it is already covered by the current approve
 - install / rebuild / approve-scripts and related mutating commands fail with `security_approval_required` if the raw file value is weaker than the approved floor
 - a managed machine policy can fail the change with `security_floor` instead
 
-For short-lived exceptions, use [`lpm security unlock`](/docs/infra/security#unlock). For persistent changes, use [`lpm config`](/docs/infra/config) rather than relying on a hand edit alone. Raw `[sigstore].verify = "warn"` or `"off"` is reported by `lpm security status` as a runtime override until it is removed, approved, or blocked by managed policy.
+For short-lived exceptions, use [`lpm security unlock`](/docs/infra/security#unlock). For persistent changes, use [`lpm config`](/docs/infra/config) rather than relying on a hand edit alone. Raw `[sigstore].verify = "warn"` / `"off"`, raw `typosquat-guard = "off"`, and raw `[firewall].mode = "off"` or `"report"` below the approved floor are reported by `lpm security status` as runtime overrides until they are removed, approved, or blocked by managed policy.
 
 ## Precedence
 
@@ -148,6 +164,10 @@ For most scalar settings, the precedence chain is (highest first):
 List-valued cooldown excludes are merged instead of replaced: CLI `--min-release-age-exclude` entries first, then `package.json > lpm > minimumReleaseAgeExclude`, then this file's `minimum-release-age-exclude`; duplicates collapse.
 
 On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, `release-age-policy`, `strict-peer-dependencies`, `trust-policy`, and the script-policy aliases (`--yolo` / `--triage`). `minimum-release-age-exclude` still merges with repeated CLI `--min-release-age-exclude` flags. Registry signature verification uses `LPM_VERIFY_REGISTRY_SIGNATURES` > `signatures` > default `false`. Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
+
+Typosquat analysis uses `typosquat-guard` first. If that key is absent, the diagnostic `LPM_TYPOSQUAT_GUARD=0|false|off|disabled` override can disable analysis for benchmarking/debugging unless `force-security-floor = true` is active or managed policy owns the typosquat floor. If the key is present, the config file wins over the env var. The built-in default is enabled, and `lpm config typosquat --set default` removes the explicit key.
+
+The npm firewall uses `[firewall].mode`, defaulting to `"off"`. `LPM_NPM_FIREWALL=report|enforce` can tighten the mode for one process, but it cannot weaken a stricter config value. The legacy diagnostic `LPM_EXPERIMENT_NPM_FIREWALL` is accepted for local benchmark compatibility; prefer `lpm config firewall --set report|enforce` for persistent use.
 
 ### Exception — `linker`
 
