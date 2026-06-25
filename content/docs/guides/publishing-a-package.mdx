@@ -100,13 +100,16 @@ In CI with an audience-`sigstore` OIDC token — GitHub Actions or GitLab CI:
 
 ```bash
 lpm publish --provenance
+lpm publish --npm --provenance
 ```
 
-Generates a Sigstore-signed attestation that proves which workflow built the tarball and which commit it came from. Consumers can verify it via the audit pipeline or the registry UI.
+Generates a Sigstore-signed attestation that proves which workflow built the tarball and which commit it came from. With `--npm`, LPM attaches npm's expected `{name}-{version}.sigstore` bundle in the publish payload. Consumers can verify provenance via the audit pipeline or the registry UI.
 
 `--provenance` fails loud (non-zero exit) if no usable Sigstore-audience token is found or if Sigstore signing fails — it never silently publishes without provenance. Useful as a hard gate in security-critical packages.
 
 On GitHub Actions, enable `permissions: id-token: write` on the job. On GitLab CI, mint `SIGSTORE_ID_TOKEN` via the `id_tokens` block with `aud: sigstore`. Other platforms aren't supported.
+
+For npm-compatible targets, provenance requires public access. LPM's npm default is public for scoped and unscoped packages. If repo config enables provenance but a one-off publish should skip it, pass `--no-provenance`.
 
 ## 8. Publishing elsewhere
 
@@ -126,7 +129,7 @@ You must have auth for the selected target first: `lpm login --npm` opens npm's 
 - **`init -y` defaults aren't directory-derived.** Under `-y`, owner is your `lpm whoami` profile username (or the literal `"username"` if offline / not logged in) and **name is literally `"package"`** (not your directory's name). The published shape becomes `@lpm.dev/<your-username>.package` — update both before publishing.
 - **Quality score below 80 by default = no readme, no license, no types.** Easy fix; usually a 5-minute task.
 - **Distribution mode is irreversible.** Pool / marketplace are one-way doors. Stay private until you're sure.
-- **Provenance only works in OIDC-capable CI.** Don't pass `--provenance` from a developer laptop.
+- **Generated provenance only works in OIDC-capable CI.** Don't pass `--provenance` from a developer laptop. For npm-compatible targets with a pre-generated bundle, use `--provenance-file <PATH>`.
 
 ## See also
 

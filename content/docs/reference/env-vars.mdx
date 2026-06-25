@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: "Every LPM_* variable LPM reads, what it does, and when to use it."
+description: "Environment variables LPM reads for auth, routing, publishing, diagnostics, and CI."
 ---
 
 LPM reads a number of environment variables to override behavior, route auth, or expose diagnostic knobs. Most users never need to touch these — they exist for CI, debugging, and uncommon workflows.
@@ -17,6 +17,17 @@ Variables are grouped by purpose. Anything marked **diagnostic** is a debug-only
 | `LPM_GITLAB_OIDC_TOKEN` | Legacy GitLab alias. Accepted on the registry-exchange and provenance surfaces for back-compat. New setups should mint `LPM_OIDC_TOKEN` (registry exchange) or `SIGSTORE_ID_TOKEN` (provenance).                                                                                                                                                                                                                                                                                                                                          |
 | `SIGSTORE_ID_TOKEN`     | GitLab CI OIDC token with audience `sigstore`, minted via the `id_tokens` block. Drives `lpm publish --provenance` on GitLab. Not used by registry-exchange surfaces (wrong audience).                                                                                                                                                                                                                                                                                                                                                    |
 | `LPM_VAULT_ID`          | Override the project's resolved vault-id when running `lpm env` operations. Useful in CI workflows that target a vault other than what the checked-out project's `lpm.json > "vault"` field would resolve to (e.g., the `lpm setup ci github-actions` snippet sets this on the `lpm env pull --oidc` step). Falls back to the project's vault-id when unset. See [Secrets vault — Per-project identity](/docs/infra/secrets-vault#per-project-identity).                                                                                  |
+
+## npm publish and provenance
+
+These npm-compatible variables are read by [`lpm publish`](/docs/packages/publish#provenance) and `lpm stage publish`. Provenance-file values attach only to npm-compatible targets; `lpm publish` rejects them when an lpm.dev target is active.
+
+| Variable | Effect |
+| --- | --- |
+| `NPM_TOKEN` | Token auth for the default npm registry when npm Trusted Publishing is not available. For non-default npm-compatible registries, store an exact registry-scoped token with `lpm login --login-registry <URL> --token <T>`. |
+| `NPM_ID_TOKEN` | Pre-supplied npm Trusted Publishing OIDC token. The audience must be `npm:registry.npmjs.org`. Used for `lpm publish --npm` and `lpm stage publish` against the default npm registry. |
+| `NPM_CONFIG_PROVENANCE` / `npm_config_provenance` | Truthy values (`true`, `1`, `yes`, `on`) enable generated Sigstore provenance. Falsy values disable it unless a higher-precedence CLI flag or `package.json > publishConfig.provenance` overrides it. Mutually exclusive with `NPM_CONFIG_PROVENANCE_FILE`. |
+| `NPM_CONFIG_PROVENANCE_FILE` / `npm_config_provenance_file` | Path to a pre-generated Sigstore bundle to attach to npm-compatible publish targets. Relative paths are resolved from the project directory. Mutually exclusive with `NPM_CONFIG_PROVENANCE`. |
 
 ## Filesystem layout
 
