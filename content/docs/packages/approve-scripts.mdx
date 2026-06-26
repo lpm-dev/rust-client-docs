@@ -116,7 +116,7 @@ When the global blocked set exceeds 10 entries (auto-enabled at that threshold),
 
 If any global install root has a missing or unreadable `.lpm/build-state.json`, `--global --list` reports it in `unreadable_origins`. Mutating blanket approval (`--global --yes`) refuses while the aggregate is incomplete, because otherwise it could claim every global script was reviewed while some install roots were skipped. Reinstall the named globals to refresh their build-state, then approve again.
 
-After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins`. `--dry-run` omits `next_step` since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
+After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins` and also includes `next_steps[]` command objects for agents. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
 
 ## JSON output
 
@@ -129,7 +129,7 @@ lpm approve-scripts --list --json --dry-run  # preview plan, no writes
 
 `--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
 
-The envelope carries `schema_version`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in), list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add a `next_step: {kind: "reinstall_globals", origins: [...]}` payload telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits `next_step` since no mutation happened.
+The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in), list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits follow-up commands since no mutation happened.
 
 ## Flags
 
