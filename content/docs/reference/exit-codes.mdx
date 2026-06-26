@@ -29,6 +29,7 @@ With `--json`, every error path also emits a structured JSON object on stdout be
 
 ```json
 {
+  "schema_version": 1,
   "success": false,
   "error": "registry: not found",
   "error_code": "not_found"
@@ -36,6 +37,27 @@ With `--json`, every error path also emits a structured JSON object on stdout be
 ```
 
 The `error_code` field is the canonical short name for the error variant. Use it for programmatic dispatch in CI / agents (the `error` message text is human-facing and subject to change; `error_code` is the stable contract).
+
+`schema_version` identifies the JSON document shape. On top-level error envelopes, version `1` is the shared error-envelope schema. Command success envelopes may also expose `schema_version`; those versions are command-specific.
+
+When LPM can suggest a concrete remediation command, the envelope includes `next_steps`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error": "authentication required",
+  "error_code": "auth_required",
+  "next_steps": [
+    {
+      "description": "Authenticate with LPM",
+      "command": "lpm login"
+    }
+  ]
+}
+```
+
+`next_steps` is optional and only appears when LPM has a safe command to hand to a human, CI job, or agent.
 
 Most errors put a human-facing string in `error`; rich diagnostics may use an object with a `message` field plus machine-readable context. Resolver failures use `error_code: "resolution_failed"` and include `package`, `requested`, `required_by`, `kind`, and candidate-summary fields; see [Resolver failures](/docs/packages/resolver#resolution-failures).
 
