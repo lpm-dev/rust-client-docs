@@ -37,6 +37,7 @@ lpm tidy                      # find unused deps and undeclared imports
 lpm install --force           # full re-install, bypass every fast path
 lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --verbose         # append per-phase timings + lockfile size
+lpm install --json --timing   # include JSON timing diagnostics
 ```
 
 ### `--verbose` footer
@@ -54,16 +55,20 @@ Without `--verbose`, only the `✓ Done` line is shown — keeps the slim output
 
 ### JSON timing diagnostics
 
-`lpm install --json` always includes a compact `timing.waterfall` object for setup, resolve, fetch, link, and tail attribution. For deeper install profiling, opt in per run:
+`lpm install --json` keeps the default success envelope lean and omits the `timing` object. Opt in when a tool or benchmark needs install timing diagnostics:
 
 ```bash
+lpm install --json --timing
+LPM_TIMING=1 lpm install --json
 LPM_TIMING_DETAIL=1 lpm install --json
 LPM_TIMING_DETAIL=trace lpm install --json
 ```
 
+`--timing` and `LPM_TIMING=1` include the coarse `timing.waterfall` object for setup, resolve, fetch, link, and tail attribution without the heavier detail tree.
+
 `LPM_TIMING_DETAIL=1` adds `timing.detail` with metadata request attribution by purpose, resolver wall/metadata/scheduler/CPU/policy counters, fetch-stage plan/cache/download attribution, cache-classification branch timing, v2 reusable-object validation counters, registry-signature/provenance timing, v2 link-task timing, link finalize substages, and tail writes such as lockfile and build-state persistence. `LPM_TIMING_DETAIL=trace` also adds `timing.detail.trace.slow_packages` buckets for the slowest tarball HTTP, extract, security, finalize, v2 link task, and provenance verification work, plus per-purpose duplicate metadata request rankings.
 
-The default JSON envelope stays compact. Use detail mode for local performance investigations and cold/warm install comparisons, not as a stable production API.
+`LPM_TIMING_DETAIL=1` and `LPM_TIMING_DETAIL=trace` imply `timing`, so they work without also passing `--timing`. Use detail mode for local performance investigations and cold/warm install comparisons, not as a stable production API.
 
 ## How it works
 
@@ -580,6 +585,7 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--no-skills` | Skip skills auto-install |
 | `--no-editor-setup` | Skip editor auto-integration |
 | `--no-security-summary` | Skip the post-install security report (faster CI) |
+| `--timing` | Include install timing diagnostics in `--json` output |
 | `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
 | `--ignore-provenance-drift-all` | Skip the check for every package |
 | `--no-engine-strict` | Skip `engines.lpm` / `engines.node` enforcement |
