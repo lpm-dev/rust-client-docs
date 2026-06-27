@@ -25,7 +25,8 @@ lpm config set minimum-release-age-secs 3600    # 1h cooldown
 lpm config signatures --set true                # verify npm registry signatures during install
 lpm config trust-policy --set no-downgrade      # block publisher/provenance trust downgrades
 lpm config typosquat --set default              # remove override; default keeps checks enabled
-lpm config firewall --set enforce               # block packages flagged by the lpm.dev firewall
+lpm config firewall --set enforce               # block packages flagged by firewall.lpm.dev
+lpm config integrity --set tree                 # stricter expanded-store reuse checks
 lpm config set workspace-concurrency 4          # workspace run/test/bench fan-out
 lpm config set audit-after-install true         # enable audit-after-install globally
 lpm config delete save-prefix                   # remove
@@ -59,7 +60,8 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `signatures` | Verify npm registry package signatures during install and fail closed when a package cannot be verified. Set with `lpm config signatures`. | `false` |
 | `trust-policy` | Refuse versions that drop npm publisher/provenance trust evidence compared with an earlier published version. Set with `lpm config trust-policy`. | `"off"` |
 | `typosquat-guard` | Suspicious direct dependency name analysis. Set with `lpm config typosquat`; use project allow-list entries for intentional package names. | unset / `"default"` (enabled) |
-| `[firewall] mode` | lpm.dev firewall verdict checks for selected public npm package versions. `report` warns and continues; `enforce` blocks packages marked malicious. npm metadata and tarballs still use the direct npm route. Set with `lpm config firewall`. | `"off"` |
+| `[firewall] mode` | firewall.lpm.dev verdict checks for selected public npm package versions. `report` warns and continues; `enforce` blocks packages marked malicious. npm metadata and tarballs still use the direct npm route. Set with `lpm config firewall`. | `"off"` |
+| `integrity` | Reused v2 store object validation. `"source"` checks source identity without rehashing expanded files; `"tree"` rehashes expanded files to detect local store tampering/corruption. Set with `lpm config integrity`. | `"source"` |
 | `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
 | `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
 | `engine-strict` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. | `true` |
@@ -87,7 +89,8 @@ Bare `lpm config` opens a single interactive menu. Each row shows the current va
 │  ○ Registry signatures    current: disabled
 │  ○ Trust downgrade policy current: off
 │  ○ Typosquat guard        current: default (enabled)
-│  ○ npm firewall           current: off
+│  ○ Firewall for npm       current: off
+│  ○ Store integrity        current: source
 │  ○ Minimum release age    current: default (1d)
 │  ○ Release-age scope      current: direct
 ```
@@ -96,7 +99,7 @@ After a setting is changed, the editor returns to the menu with refreshed values
 
 ## Setup wizards
 
-Ten of the keys above have dedicated interactive wizards that handle picking + validation for you:
+Eleven of the keys above have dedicated interactive wizards that handle picking + validation for you:
 
 ```bash
 lpm config scripts                          # pick deny / triage / allow
@@ -123,6 +126,9 @@ lpm config typosquat --set default          # non-interactive
 lpm config firewall                         # pick off / report / enforce
 lpm config firewall --set enforce           # non-interactive
 
+lpm config integrity                        # pick source / tree
+lpm config integrity --set tree             # non-interactive
+
 lpm config release-age                      # pick default / 3d / off / custom
 lpm config release-age --set 3d             # non-interactive
 
@@ -138,11 +144,17 @@ lpm config release-age-policy --set strict  # non-interactive
 
 ### npm firewall
 
-`lpm config firewall` accepts `off`, `report`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no lpm.dev verdict check. `report` sends selected public npm package versions to lpm.dev in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages marked malicious before package bytes are installed, fetched, downloaded, or copied through `lpm add`. When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and lpm.dev packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `report` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
+`lpm config firewall` accepts `off`, `report`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no firewall.lpm.dev verdict check. `report` sends selected public npm package versions to firewall.lpm.dev in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages marked malicious before package bytes are installed, fetched, downloaded, or copied through `lpm add`. When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and lpm.dev packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `report` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
+
+### Store integrity
+
+`lpm config integrity` accepts `source` or `tree`. `source` is the default and validates reused v2 store objects by their source identity without rehashing every expanded file, which keeps warm installs fast. `tree` is stricter and rehashes expanded files before reuse so local tampering or corruption under `~/.lpm/store/v2/objects/` is detected before the object is linked into a project.
+
+This is separate from `--strict-integrity`. `--strict-integrity` controls trust-on-first-use for tarball URL dependencies that do not declare an inline SRI hash. `integrity = "tree"` controls how LPM validates already-expanded v2 store objects before reuse.
 
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
-Bare `lpm config` and all ten wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
+Bare `lpm config` and all eleven wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
 
 ## Security-sensitive writes
 
@@ -176,7 +188,7 @@ The file is created on demand the first time you `set` a key.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the ten wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
+`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the eleven wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
 
 ## See also
 
