@@ -48,12 +48,27 @@ Each link entry's `node_modules/<pkg>/` is a clonefile (macOS) / reflink-or-hard
 1. **Existence check (object).** If `~/.lpm/store/v2/objects/<sri>/` exists, skip extraction entirely. Content-level dedup.
 2. **Extract.** Gzip-decompress + tar-walk into a staging dir under `~/.lpm/store/v2/objects/`.
 3. **Security scan.** Behavioral analysis runs against the extracted source as part of the same pass. Results persist into `.lpm-security.json` next to the package files so future installs and audits don't re-scan. See [Security audit](/docs/packages/security-audit).
-4. **Finalize object.** Write the `.integrity` file (the verified SRI) and atomic-rename the staging dir into its final `objects/<sri>/` location.
+4. **Finalize object.** Write `.integrity` (the verified SRI) plus `.lpm-object-integrity` (the reuse-validation sidecar), then atomic-rename the staging dir into its final `objects/<sri>/` location.
 5. **Existence check (link entry).** If `~/.lpm/store/v2/links/<graph-key>/` exists, skip materialization.
 6. **Materialize link entry.** Clonefile/reflink the package bytes from `objects/<sri>/` into the link entry's `node_modules/<pkg>/`. Write sibling-dep symlinks for the package's declared deps. Write the `.lpm-link-meta.json` sidecar.
 7. **Finalize link entry.** Atomic-rename the staging dir into its final `links/<graph-key>/` location.
 
 The atomic renames are the visibility boundary. A concurrent install racing for the same content or graph-key either sees the entry or doesn't — never a partially-extracted state.
+
+## Store integrity mode
+
+LPM validates an existing `objects/<sri>/` directory before reusing it. The persistent mode lives in `~/.lpm/config.toml > integrity` and is managed by [`lpm config integrity`](/docs/infra/config#store-integrity):
+
+```bash
+lpm config integrity --set source   # default
+lpm config integrity --set tree     # stricter, slower
+```
+
+`source` is the default. It checks the object's source identity sidecar against the expected source SRI without rehashing every expanded file, so warm installs stay fast.
+
+`tree` rehashes the expanded object tree before reuse and records a `.lpm-tree-snapshot.json` metadata fast path for later checks. Use it when detecting local tampering or corruption inside `~/.lpm/store/v2/objects/` matters more than warm-install speed.
+
+This is separate from `lpm install --strict-integrity`: that flag controls whether tarball URL dependencies must declare an inline SRI before first use. `integrity = "tree"` controls how already-expanded v2 store objects are validated before reuse.
 
 ## How projects reach into the store
 
