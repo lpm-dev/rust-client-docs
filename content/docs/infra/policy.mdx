@@ -1,0 +1,174 @@
+---
+title: lpm policy
+description: "Inspect and test local install-time policy extensions."
+---
+
+```bash
+lpm policy list
+lpm policy status
+lpm policy doctor [extension]
+lpm policy test <extension> --package react@19.0.0
+```
+
+`lpm policy` is the operator surface for local install-time policy extensions. Extensions are configured in [`~/.lpm/config.toml`](/docs/reference/config-toml#policy-extensions), run during [`lpm install`](/docs/packages/install#policy-extensions), and return verdicts only: `allow`, `warn`, or `block`.
+
+The current contract supports one event, `package.candidate`. Extensions run after resolution and platform/dev filtering, before registry tarballs are fetched or packages are linked. Warm lockfile and offline installs run the same check before linking. When policy extensions are active, direct remote tarball URL dependencies are rejected because V1 cannot identify the package candidate without downloading the tarball first.
+
+## Examples
+
+```bash
+lpm policy list
+lpm policy status
+lpm policy doctor
+lpm policy doctor local-feed
+lpm policy test local-feed --package react@19.0.0
+
+lpm policy list --json
+lpm policy status --json
+lpm policy doctor --json
+lpm policy test local-feed --package @scope/pkg@1.2.3 --json
+```
+
+## Configuration
+
+```toml title="~/.lpm/config.toml"
+[policy.extensions.local-feed]
+command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
+mode = "enforce"       # report | enforce
+on-error = "block"     # warn | block
+timeout-ms = 5000
+events = ["package.candidate"]
+```
+
+The `command` array is spawned directly. The first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths such as `./policy-extension` are rejected, and relative or empty `PATH` entries are ignored. Later entries are argv values. LPM never invokes a shell for policy extensions.
+
+Only `command`, `enabled`, `events`, `mode`, `on-error`, and `timeout-ms` are valid fields under each extension. Unknown fields fail config loading so typos cannot silently weaken policy.
+
+`mode = "report"` prints policy decisions and continues. `mode = "enforce"` fails the install when an extension returns a `block` decision. `on-error` controls runner/protocol failures such as missing commands, timeouts, non-zero exits, oversized output, invalid JSON, missing or unknown response fields, or decisions for packages that were not in the request.
+
+`timeout-ms` bounds the whole extension exchange: stdin write, process exit, stdout/stderr drain, and response validation.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `lpm policy list` | Prints active extensions loaded from `~/.lpm/config.toml`. |
+| `lpm policy status` | Summarizes active extensions, report/enforce counts, and warnings such as report-only mode or unavailable commands. |
+| `lpm policy doctor [extension]` | Runs the policy diagnostics and exits `1` when a fail diagnostic fires. Pass an extension name to scope the check. |
+| `lpm policy test <extension> --package <name@version>` | Sends one synthetic `package.candidate` request to the named extension and prints the decisions it returned. Scoped packages use the final `@` as the version separator, e.g. `@scope/pkg@1.2.3`. |
+
+`list`, `status`, and `doctor` only inspect active config. To add, remove, or rename an extension, edit [`~/.lpm/config.toml`](/docs/reference/config-toml#policy-extensions).
+
+## JSON output
+
+`lpm policy list --json`:
+
+```json
+{
+  "success": true,
+  "enabled_count": 1,
+  "extensions": [
+    {
+      "name": "local-feed",
+      "command": ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"],
+      "mode": "enforce",
+      "on_error": "block",
+      "timeout_ms": 5000,
+      "events": ["package.candidate"]
+    }
+  ]
+}
+```
+
+`lpm policy status --json` and `lpm policy doctor --json` share the same envelope. `doctor` exits `1` when `no_failures` is `false`.
+
+```json
+{
+  "success": true,
+  "enabled": true,
+  "enabled_count": 1,
+  "enforce_count": 1,
+  "report_count": 0,
+  "no_failures": true,
+  "has_warnings": false,
+  "diagnostics": [
+    {
+      "code": "policy_extensions_configured",
+      "severity": "pass",
+      "detail": "1 enabled (1 enforce, 0 report)"
+    }
+  ]
+}
+```
+
+Diagnostic codes:
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `policy_extensions_not_configured` | pass | No active `[policy.extensions]` entries were found. |
+| `policy_extensions_configured` | pass | One or more active extensions were found. |
+| `policy_extension_report_mode` | warn | An active extension is report-only. |
+| `policy_extension_command_unavailable` | fail | The command program is missing, not a file, or not executable. |
+| `policy_extension_config_invalid` | fail | The policy extension config could not be parsed. |
+
+`lpm policy test local-feed --package react@19.0.0 --json`:
+
+```json
+{
+  "success": true,
+  "extension": "local-feed",
+  "event": "package.candidate",
+  "package": {
+    "name": "react",
+    "version": "19.0.0"
+  },
+  "duration_ms": 12,
+  "allow_count": 0,
+  "warn_count": 1,
+  "block_count": 0,
+  "decisions": [
+    {
+      "name": "react",
+      "version": "19.0.0",
+      "action": "warn",
+      "code": "local-feed",
+      "reason": "review required"
+    }
+  ]
+}
+```
+
+## Install JSON
+
+Successful `lpm install --json --timing` runs include policy extension counters in both `timing.policy_extensions` and `security.policy_extensions`:
+
+```json
+{
+  "enabled": true,
+  "configured_count": 1,
+  "ran_count": 1,
+  "candidate_count": 42,
+  "duration_ms": 24,
+  "allow_count": 40,
+  "warn_count": 2,
+  "block_count": 0,
+  "error_count": 0,
+  "extensions": [
+    {
+      "name": "local-feed",
+      "mode": "enforce",
+      "on_error": "block",
+      "duration_ms": 24,
+      "allow_count": 40,
+      "warn_count": 2,
+      "block_count": 0
+    }
+  ]
+}
+```
+
+## See also
+
+- [`lpm install`](/docs/packages/install#policy-extensions) — where policy extensions run
+- [`~/.lpm/config.toml`](/docs/reference/config-toml#policy-extensions) — config keys and extension protocol
+- [`lpm doctor`](/docs/infra/doctor#policy-extensions) — doctor catalog rows for policy extensions
