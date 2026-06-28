@@ -7,10 +7,11 @@ import {
 } from "@/lib/shared";
 import { source } from "@/lib/source";
 
-const SEO_TITLE_MIN_LENGTH = 50;
-const SEO_TITLE_MAX_LENGTH = 60;
-const SEO_DESCRIPTION_MIN_LENGTH = 150;
-const SEO_DESCRIPTION_MAX_LENGTH = 160;
+const SEO_TITLE_MIN_LENGTH = 25;
+const SEO_TITLE_MAX_LENGTH = 65;
+const SEO_DESCRIPTION_MIN_LENGTH = 120;
+const SEO_DESCRIPTION_MAX_LENGTH = 170;
+const SEO_TITLE_SUFFIX = " | LPM CLI";
 
 type DocsPage = (typeof source)["$inferPage"];
 
@@ -33,7 +34,7 @@ function titleCase(segment: string): string {
 }
 
 function isCommandPage(title: string): boolean {
-  return /^lpm\b/.test(title);
+  return /^(?:lpm|lpx)(?:\s|$)/.test(title);
 }
 
 function pickSeoTitle(candidates: string[]): string {
@@ -57,16 +58,37 @@ function pickSeoTitle(candidates: string[]): string {
 
 export function docsSeoTitle(page: DocsPage): string {
   const title = page.data.title;
+  const key = page.slugs.join("/");
+  const section = page.slugs[0];
+  const titleOverrides: Record<string, string> = {
+    "": `LPM CLI docs: package manager and dev toolkit`,
+    commands: `LPM command cheat sheet${SEO_TITLE_SUFFIX}`,
+    comparison: `LPM vs npm, pnpm, and bun | package manager defaults`,
+    "first-install": `First LPM install walkthrough${SEO_TITLE_SUFFIX}`,
+    installation: `Install LPM CLI | npm, Homebrew, curl, cargo`,
+    "lpm-dev-and-pro": `lpm.dev and Pro features${SEO_TITLE_SUFFIX}`,
+    migrating: `Migrate npm, pnpm, yarn, or bun to LPM CLI`,
+    "project-setup": `Project setup with package.json and lpm.json${SEO_TITLE_SUFFIX}`,
+    registries: `Registry routing with npm and lpm.dev${SEO_TITLE_SUFFIX}`,
+    dev: `Developer workflow docs${SEO_TITLE_SUFFIX}`,
+    guides: `LPM workflow guides${SEO_TITLE_SUFFIX}`,
+    infra: `Infrastructure command docs${SEO_TITLE_SUFFIX}`,
+    packages: `Package management docs${SEO_TITLE_SUFFIX}`,
+    reference: `LPM config and file reference${SEO_TITLE_SUFFIX}`,
+  };
   const candidates = [
+    ...(titleOverrides[key] ? [titleOverrides[key]] : []),
     ...(isCommandPage(title)
-      ? [`${title} command reference | LPM package manager docs`]
+      ? [`${title} command reference${SEO_TITLE_SUFFIX}`]
       : []),
-    `${title} documentation and guides | LPM package manager`,
-    `${title} reference | LPM package manager docs`,
-    `${title} guide | LPM package manager docs`,
-    `${title} | LPM package manager docs`,
-    `${title} | LPM CLI docs`,
-    `${title} | lpm docs`,
+    ...(section === "reference"
+      ? [`${title} reference${SEO_TITLE_SUFFIX}`]
+      : []),
+    ...(section === "guides" ? [`${title} guide${SEO_TITLE_SUFFIX}`] : []),
+    ...(section === "packages" ? [`${title} | LPM package docs`] : []),
+    ...(section === "dev" ? [`${title} | LPM dev docs`] : []),
+    ...(section === "infra" ? [`${title} | LPM infrastructure docs`] : []),
+    `${title}${SEO_TITLE_SUFFIX}`,
   ];
 
   return pickSeoTitle(candidates);
@@ -80,111 +102,64 @@ function normalizeSeoText(value: string): string {
 }
 
 const COMMON_SEO_CONTEXTS = [
-  "Use it with lpm package installs, scripts, registries, security checks, workspaces, and CI workflows.",
-  "Use it with lpm installs, scripts, registries, security checks, workspaces, and CI workflows.",
-  "Use it with lpm installs, scripts, registries, security checks, configs, and CI workflows.",
-  "Use it with lpm installs, scripts, registries, config, security checks, and CI workflows.",
-  "Use it with lpm installs, scripts, registries, security checks, and CI workflows.",
-  "Use it with lpm installs, registries, security checks, and CI workflows.",
-  "Use it with lpm installs, registries, and CI workflows.",
-  "Covers lpm installs, registries, workspaces, and CI workflows.",
-  "Covers lpm installs, registries, and CI workflows.",
-  "Covers lpm workflows and related reference pages.",
-  "Covers package workflow details.",
-  "Covers related lpm workflows.",
-  "Covers related lpm docs.",
-  "Covers lpm CLI usage.",
-  "Covers lpm workflows.",
-  "Covers lpm tradeoffs.",
-  "Covers lpm details.",
-  "Covers lpm usage.",
+  "Includes examples, defaults, related commands, and links across the LPM CLI docs.",
+  "Use it with installs, registries, workspaces, CI, and secure script workflows.",
+  "Covers LPM CLI usage, configuration, and related package manager workflows.",
 ];
 
 function docsSeoContexts(slugs: string[], title: string): string[] {
   if (slugs.length === 0) {
     return [
-      "Start here for installation, registry routing, project setup, commands, guides, and reference material for the lpm CLI.",
-      "Covers installation, registry routing, project setup, commands, guides, and lpm CLI reference material.",
-      "Covers installation, registries, setup, commands, guides, and lpm CLI reference material.",
-      "Covers setup, registries, commands, and lpm CLI references.",
+      "Start here for installation, registry routing, project setup, commands, guides, and reference material for the LPM CLI.",
+      "Covers installation, registries, project setup, commands, guides, and reference material for the LPM CLI.",
+      "Use it to find command references, config formats, registry behavior, and common LPM workflows.",
     ];
   }
 
   if (isCommandPage(title)) {
     return [
-      "Use this command reference for flags, examples, registry behavior, workspaces, CI, and the default security model in the lpm CLI.",
-      "Use this command reference for flags, examples, registry behavior, workspaces, CI usage, automation, and lpm security defaults.",
-      "Use this command reference for flags, examples, registry behavior, workspaces, CI, automation, and lpm security defaults.",
-      "Use this command reference for flags, examples, registry behavior, workspaces, CI, and secure lpm script defaults.",
-      "Covers flags, examples, registry behavior, workspaces, CI usage, script security defaults, and related lpm docs.",
-      "Covers flags, examples, registry behavior, workspaces, CI automation, security defaults, and related lpm docs.",
-      "Covers flags, examples, registry behavior, workspaces, CI usage, security defaults, and related lpm docs.",
-      "Covers flags, examples, registries, workspaces, CI, security defaults, and lpm reference docs.",
-      "Covers flags, examples, registries, workspaces, CI, security defaults, and related lpm docs.",
-      "Covers flags, examples, registries, workspaces, CI, and security defaults.",
-      "Covers flags, examples, registries, workspaces, and security.",
-      "Covers flags, examples, workspaces, CI, and security defaults.",
-      "Covers flags, examples, registries, and security defaults.",
-      "Covers flags, examples, registries, workspaces, and CI.",
-      "Covers flags, examples, registries, and workspaces.",
-      "Covers flags, examples, and registries.",
-      "Covers flags and examples.",
+      "Includes syntax, examples, flags, workspace behavior, JSON output, and links to related LPM commands.",
+      "Use this command reference for flags, examples, registry behavior, workspaces, CI, and secure script defaults.",
+      "Covers command syntax, common examples, automation output, registry behavior, and related LPM docs.",
     ];
   }
 
   switch (slugs[0]) {
     case "packages":
       return [
-        "Use it with npm-compatible registries, lpm.dev packages, workspaces, lockfiles, and the secure install pipeline.",
-        "Covers npm-compatible registries, lpm.dev packages, workspaces, lockfiles, and the secure install pipeline.",
-        "Covers registries, lpm.dev packages, workspaces, lockfiles, and secure installs.",
-        "Covers registries, workspaces, lockfiles, and secure installs.",
-        "Covers registries, workspaces, and secure installs.",
-        "Covers lpm package workflows.",
+        "Explains package-manager behavior for npm-compatible registries, lpm.dev packages, workspaces, lockfiles, and secure installs.",
+        "Use it with package installs, registry routing, workspaces, lockfiles, lifecycle scripts, and CI workflows.",
+        "Covers package workflow details, defaults, examples, and related LPM package commands.",
       ];
     case "dev":
       return [
-        "Covers local development workflows, scripts, managed runtimes, task execution, CI usage, and how the lpm CLI wires projects together.",
-        "Covers scripts, managed runtimes, task execution, CI usage, and how the lpm CLI wires projects together.",
-        "Covers scripts, managed runtimes, task execution, CI usage, and lpm project wiring.",
-        "Covers scripts, managed runtimes, task execution, and CI usage.",
-        "Covers scripts, runtimes, tasks, and CI usage.",
-        "Covers lpm dev workflows.",
+        "Explains scripts, managed runtimes, task execution, local services, and CI behavior in the LPM CLI.",
+        "Use it with package scripts, managed Node or Bun runtimes, task orchestration, dev servers, and CI workflows.",
+        "Covers local development defaults, examples, command behavior, and related LPM dev tools.",
       ];
     case "infra":
       return [
-        "Covers local HTTPS, tunnels, ports, dependency graphs, health checks, and the infrastructure commands built into the lpm CLI.",
-        "Covers local HTTPS, tunnels, ports, dependency graphs, health checks, and built-in lpm infrastructure commands.",
-        "Covers HTTPS, tunnels, ports, dependency graphs, health checks, and lpm infrastructure commands.",
-        "Covers HTTPS, tunnels, ports, graphs, health checks, and infra commands.",
-        "Covers HTTPS, tunnels, ports, graphs, and health checks.",
-        "Covers lpm infrastructure workflows.",
+        "Explains local HTTPS, tunnels, ports, auth, policy, health checks, and other infrastructure commands in the LPM CLI.",
+        "Use it with local infrastructure, registry auth, security policy, project health checks, and CI workflows.",
+        "Covers infrastructure defaults, examples, command behavior, and related LPM reference pages.",
       ];
     case "guides":
       return [
-        "Follow the workflow with practical commands, config files, safety notes, and links to the related lpm CLI reference pages.",
-        "Follow the workflow with commands, config files, safety notes, and links to related lpm CLI reference pages.",
-        "Follow practical commands, config files, safety notes, and related lpm reference pages.",
-        "Follow practical commands, config files, and related lpm references.",
-        "Follow practical lpm workflow steps.",
+        "Follow the workflow with copyable commands, config examples, safety notes, and links to the related LPM references.",
+        "Includes practical steps, config files, command examples, and cross-links for the full LPM workflow.",
+        "Use it to complete the workflow and jump to the exact command and config reference pages.",
       ];
     case "reference":
       return [
-        "Use this reference for exact config fields, authentication behavior, file formats, environment variables, and automation-friendly output.",
-        "Covers config fields, authentication behavior, file formats, environment variables, and automation-friendly output.",
-        "Covers config fields, auth behavior, file formats, environment variables, and automation output.",
-        "Covers config fields, auth, file formats, env vars, and automation output.",
-        "Covers lpm reference details.",
+        "Use this reference for exact config fields, authentication behavior, file formats, environment variables, and automation output.",
+        "Includes field behavior, defaults, examples, and links to the LPM commands that read or write this data.",
+        "Covers configuration, auth, file formats, environment variables, and related LPM reference pages.",
       ];
     default:
       return [
-        "Learn how lpm works as a Rust package manager and developer toolkit for npm-compatible projects, private registries, and CI.",
-        "Learn how lpm works as a Rust package manager for npm projects, private registries, secure installs, and CI.",
-        "Learn how lpm works as a Rust package manager for npm-compatible projects, private registries, and CI.",
-        "Covers lpm package management, developer tooling, npm-compatible projects, private registries, and CI.",
-        "Covers lpm package management, developer tooling, registries, secure installs, workspaces, and CI.",
-        "Covers lpm package management, developer tooling, registries, and CI.",
-        "Covers lpm package management and developer tooling.",
+        "Use it to understand LPM package management, developer tooling, registry routing, secure installs, and CI workflows.",
+        "Covers LPM defaults, examples, workflows, configuration, and related command reference pages.",
+        "Explains how LPM fits package installs, dev tooling, registries, security checks, and CI.",
       ];
   }
 }
@@ -205,7 +180,7 @@ function fitSeoDescription(base: string, contexts: string[]): string {
   }
 
   let fallback = normalizeSeoText(
-    `${normalizedBase} Learn how it fits into lpm installs, scripts, registries, security checks, workspaces, and CI workflows.`,
+    `${normalizedBase} Includes practical examples, defaults, related commands, and links across the LPM CLI docs.`,
   );
 
   const shortestTooLong = candidates

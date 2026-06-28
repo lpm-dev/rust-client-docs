@@ -33,6 +33,14 @@ async function resolveCliVersion() {
 }
 
 const RESOLVED_CLI_VERSION = await resolveCliVersion();
+const ONE_DAY_SECONDS = 60 * 60 * 24;
+const HTML_CACHE_CONTROL = `public, max-age=0, s-maxage=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_DAY_SECONDS}`;
+const HTML_RESPONSE_HEADERS = [
+  {
+    key: "Cache-Control",
+    value: HTML_CACHE_CONTROL,
+  },
+];
 
 /** @type {import('next').NextConfig} */
 const config = {
@@ -43,6 +51,18 @@ const config = {
   },
   async headers() {
     return [
+      {
+        source: "/",
+        headers: HTML_RESPONSE_HEADERS,
+      },
+      {
+        source: "/docs",
+        headers: HTML_RESPONSE_HEADERS,
+      },
+      {
+        source: "/docs/:path*",
+        headers: HTML_RESPONSE_HEADERS,
+      },
       {
         source: "/schemas/:path*",
         headers: [
