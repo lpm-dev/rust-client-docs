@@ -61,6 +61,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `trust-policy` | Refuse versions that drop npm publisher/provenance trust evidence compared with an earlier published version. Set with `lpm config trust-policy`. | `"off"` |
 | `typosquat-guard` | Suspicious direct dependency name analysis. Set with `lpm config typosquat`; use project allow-list entries for intentional package names. | unset / `"default"` (enabled) |
 | `[firewall] mode` | firewall.lpm.dev verdict checks for selected public npm package versions. `report` warns and continues; `enforce` blocks packages marked malicious. npm metadata and tarballs still use the direct npm route. Set with `lpm config firewall`. | `"off"` |
+| `[policy.extensions.<name>]` | Local install-time policy extension. Edit `~/.lpm/config.toml` directly, then inspect with [`lpm policy`](/docs/infra/policy). | none |
 | `integrity` | Reused v2 store object validation. `"source"` checks source identity without rehashing expanded files; `"tree"` rehashes expanded files to detect local store tampering/corruption. Set with `lpm config integrity`. | `"source"` |
 | `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
 | `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
@@ -142,6 +143,8 @@ lpm config release-age-policy --set strict  # non-interactive
 
 `lpm config typosquat` accepts `default`, `on`, or `off`. `default` removes the explicit config key and follows the product default, currently enabled; `on` forces the guard on even when the diagnostic env override is set; `off` disables suspicious-name analysis machine-wide. `off` is a guarded weakening: the interactive wizard asks for confirmation and native approval before saving it, while `--json` / CI / non-TTY callers fail with `security_approval_required`. For false positives, prefer a committed [`lpm.toml` allow-list entry](/docs/reference/lpm-toml#typosquat-policy) with a reason instead of turning the guard off globally.
 
+Policy extensions are configured by editing `~/.lpm/config.toml` directly. They are local verdict-only install checks; use [`lpm policy list`](/docs/infra/policy#commands), [`lpm policy status`](/docs/infra/policy#commands), [`lpm policy doctor`](/docs/infra/policy#commands), and [`lpm policy test`](/docs/infra/policy#commands) to inspect and test them.
+
 ### npm firewall
 
 `lpm config firewall` accepts `off`, `report`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no firewall.lpm.dev verdict check. `report` sends selected public npm package versions to firewall.lpm.dev in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages marked malicious before package bytes are installed, fetched, downloaded, or copied through `lpm add`. The hosted firewall verdict service is an LPM Pro/org feature, so active modes send LPM auth; run `lpm login` before using `report` or `enforce`. If entitlement is denied, `report` warns and continues, while `enforce` fails before package bytes are materialized. When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and lpm.dev packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `report` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
@@ -193,6 +196,7 @@ The file is created on demand the first time you `set` a key.
 ## See also
 
 - [`~/.lpm/config.toml`](/docs/reference/config-toml) — the file itself, with full key reference
+- [`lpm policy`](/docs/infra/policy) — inspect and test local install policy extensions
 - [`lpm security`](/docs/infra/security) — temporary approvals and floor status
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level alternative
 - [Save policy](/docs/packages/save-policy)

@@ -197,6 +197,34 @@ lpm config firewall --set enforce
 
 Disabling or downshifting the firewall after it becomes part of the approved machine posture is guarded by [`lpm security`](/docs/infra/security).
 
+## Policy extensions
+
+Install can run local policy extensions from `~/.lpm/config.toml > [policy.extensions.<name>]`. Extensions receive the resolved package candidates as JSON on stdin and return verdicts as JSON on stdout. LPM spawns the configured command directly; it does not use `sh -c` or interpolate package data into a command string. The command's first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths are rejected.
+
+Policy extensions run after resolution, platform filtering, and `--omit` filtering, but before registry tarballs are fetched or packages are linked. Warm lockfile and offline installs run the same check before linking. When an extension is active, install-time registry tarball prefetch waits until policy verdicts pass. Direct remote tarball URL dependencies are rejected while policy extensions are active because V1 cannot identify the package candidate without downloading the tarball first.
+
+```toml title="~/.lpm/config.toml"
+[policy.extensions.local-feed]
+command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
+mode = "enforce"       # report | enforce
+on-error = "block"     # warn | block
+timeout-ms = 5000
+events = ["package.candidate"]
+```
+
+`report` mode warns and continues. `enforce` mode fails the install when the extension returns a `block` decision. With `--json --timing`, the success envelope includes `timing.policy_extensions` and `security.policy_extensions` counters.
+
+Use [`lpm policy`](/docs/infra/policy) to inspect and test configured extensions:
+
+```bash
+lpm policy list
+lpm policy status
+lpm policy doctor
+lpm policy test local-feed --package react@19.0.0
+```
+
+Full request/response schema: [`~/.lpm/config.toml` policy extensions](/docs/reference/config-toml#policy-extensions).
+
 Use `--catalog` to force a catalog reference for this invocation. `--catalog <pkg>` writes `"catalog:"`; `--catalog=<name> <pkg>` writes `"catalog:<name>"`. The entry must already exist in the selected root catalog and the resolved version must satisfy that catalog range, otherwise the install fails before committing `package.json`. This flag is mutually exclusive with `--exact`, `--tilde`, and `--save-prefix`.
 
 Catalogs can override the saved spec for packages that exist in the root default catalog. Set `package.json > lpm > catalogMode`:

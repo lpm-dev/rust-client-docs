@@ -10,12 +10,12 @@ lpm health
 
 Two complementary diagnostic commands:
 
-- **`lpm doctor`** — checks the **project + environment**: managed runtime detection, `lpm install` state, global store accessibility, vault-storage and Sigstore posture, plus the broader `--all` sweep for registry/auth/tunnel/tooling/sandbox state. The big "is everything OK here?" command.
+- **`lpm doctor`** — checks the **project + environment**: managed runtime detection, `lpm install` state, global store accessibility, vault-storage, local policy extension posture, and Sigstore posture, plus the broader `--all` sweep for registry/auth/tunnel/tooling/sandbox state. The big "is everything OK here?" command.
 - **`lpm health`** — checks the **registry**: connectivity, latency, the registry's own health endpoint. The "is the service up?" command.
 
 ## Fast vs full
 
-`lpm doctor` runs a **fast local-only preset by default**: no registry probe, no `whoami`, no tunnel lookup, no lint / fmt subprocess, no plugin reachability fetch, no sandbox probe, no manifest-compat sweep. It's the "why is this project broken right now?" pass — milliseconds.
+`lpm doctor` runs a **fast local-only preset by default**: no registry probe, no `whoami`, no tunnel lookup, no lint / fmt subprocess, no plugin reachability fetch, no sandbox probe, no manifest-compat sweep. It does include local policy extension config and executable availability checks. It's the "why is this project broken right now?" pass — milliseconds.
 
 Pass `--all` to run **every catalog row**, including the network-touching and subprocess-spawning ones. Use `--all` in CI gates and when you actually want the broad sweep; stick with the default for quick local checks.
 
@@ -197,6 +197,16 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 | `vault_storage_fallback` | warn | Linux/Windows vault secrets are using the encrypted-file fallback key at `~/.lpm/.vault-fallback-key`; any same-UID process can read that key file. **Fix:** unlock or repair the OS secure store so LPM can promote the data key. |
 | `vault_storage_unavailable` | fail | Encrypted vault files exist locally, but LPM cannot access the OS-protected data key or the legacy fallback key. **Fix:** unlock Secret Service/Credential Manager, repair the secure store, or restore the fallback key from backup if this machine was not promoted yet. |
 
+### Policy extensions
+
+| Code | Severity | Description |
+| --- | --- | --- |
+| `policy_extensions_not_configured` | pass | No active install-time policy extensions are configured in `~/.lpm/config.toml`. |
+| `policy_extensions_configured` | pass | One or more active install-time policy extensions are configured. **Inspect:** Run `lpm policy status` or `lpm policy doctor`. |
+| `policy_extension_report_mode` | warn | A configured policy extension is report-only. **Fix:** Switch to `mode = "enforce"` when the policy is ready to block installs. |
+| `policy_extension_command_unavailable` | fail | A configured policy extension command cannot be found or executed. **Fix:** Install the executable or fix `[policy.extensions.<name>].command`. |
+| `policy_extension_config_invalid` | fail | Policy extension configuration is malformed. **Fix:** Repair the `[policy.extensions]` table, then rerun `lpm policy doctor`. |
+
 ### Project state
 
 | Code                            | Severity | Description                                                                                                                                                                                                                     |
@@ -363,6 +373,7 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 ## See also
 
 - [`lpm doctor list`](#catalog) — the live inventory surface; mirrors this table
+- [`lpm policy`](/docs/infra/policy) — inspect and test local policy extensions
 - [`lpm store verify`](/docs/infra/store) — deeper store integrity check
 - [`lpm cert status`](/docs/infra/cert) — CA + project cert detail
 - [Project health](/docs/infra/project-health) — design and check inventory

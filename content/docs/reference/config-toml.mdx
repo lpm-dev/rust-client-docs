@@ -72,6 +72,14 @@ allow-degraded = false
 [firewall]
 mode = "enforce"
 
+# Local install policy extensions
+[policy.extensions.local-feed]
+command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
+mode = "enforce"
+on-error = "block"
+timeout-ms = 5000
+events = ["package.candidate"]
+
 # Provenance verification posture
 [sigstore]
 verify = "deny"
@@ -97,6 +105,11 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `trust-policy` | `"off"` \| `"no-downgrade"` | `"off"` | When set to `"no-downgrade"`, the resolver refuses versions that drop npm trust evidence compared with an earlier published version. Ranges can fall back to an older allowed candidate; exact blocked pins fail. Set with [`lpm config trust-policy`](/docs/infra/config#setup-wizards). |
 | `typosquat-guard` | `"default"` \| `"on"` \| `"off"` | unset / `"default"` (enabled) | Suspicious direct dependency name analysis before a new name enters a project. `lpm config typosquat --set default` removes this key; `on` forces the guard on even when the diagnostic env toggle is set; `off` is a guarded machine-wide weakening. Prefer project [`policy.typosquat.allow`](/docs/reference/lpm-toml#typosquat-policy) entries for intentional names instead of disabling the guard globally. |
 | `firewall.mode` | `"off"` \| `"report"` \| `"enforce"` | `"off"` | firewall.lpm.dev verdict checks for selected public npm package versions. The hosted verdict service is an LPM Pro/org feature, so active modes send LPM auth. `report` warns and continues; `enforce` blocks packages marked malicious or denied by entitlement. npm metadata and tarballs still use the direct npm route. Set with [`lpm config firewall`](/docs/infra/config#setup-wizards). Per-process `LPM_NPM_FIREWALL` can only tighten this value. |
+| `policy.extensions.<name>.command` | string array | required | Direct-spawn command for a local install policy extension. The first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths are rejected, and relative or empty `PATH` entries are ignored. Later entries are argv. LPM never runs this through a shell. |
+| `policy.extensions.<name>.mode` | `"report"` \| `"enforce"` | `"report"` | `report` prints policy decisions and continues; `enforce` fails the install when the extension returns a `block` decision. |
+| `policy.extensions.<name>.on-error` | `"warn"` \| `"block"` | `warn` in report, `block` in enforce | What to do when the extension cannot be spawned, times out, exits non-zero, emits oversized output, or returns invalid JSON. |
+| `policy.extensions.<name>.timeout-ms` | positive integer | `5000` | Per-extension timeout for the full exchange: stdin write, process exit, stdout/stderr drain, and response validation. Maximum accepted value is `120000`. |
+| `policy.extensions.<name>.events` | string array | `["package.candidate"]` | Events this extension handles. `package.candidate` is the only supported event today. |
 | `integrity` | `"source"` \| `"tree"` | `"source"` | Reused v2 store object validation. `"source"` verifies source identity without rehashing expanded files; `"tree"` rehashes expanded files before reuse to detect local store tampering/corruption. Set with [`lpm config integrity`](/docs/infra/config#setup-wizards). Per-process override: `LPM_V2_OBJECT_INTEGRITY`. |
 | `engine-strict` | bool | `true` | Enforce `engines.lpm` and `engines.node` from the workspace root `package.json`. Set to `false` to fall back to npm's read-but-don't-enforce behavior (mismatches print as stderr warnings). |
 | `strict-peer-dependencies` | bool | `false` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. Per-invocation overrides: `--strict-peer-dependencies` / `--no-strict-peer-dependencies`. Project override: `package.json > lpm.strictPeerDependencies`. |
@@ -130,6 +143,75 @@ mode = "report"                       # canonical string
 ```
 
 Both forms parse to the same value. For `typosquat-guard`, the `default` value is accepted when hand-edited, but the CLI removes the key instead of persisting `typosquat-guard = "default"`. For `firewall.mode`, boolean-like aliases are accepted when hand-edited or provided through `LPM_NPM_FIREWALL`, but `lpm config firewall` persists the canonical `off`, `report`, or `enforce` value. For `integrity`, config accepts only `source` or `tree`; the wizard persists those canonical strings. Invalid values (non-numeric strings, negative numbers, zero for positive-only keys, etc.) error at load time with the file path baked in.
+
+## Policy extensions
+
+Policy extensions are local, verdict-only install checks. They run after dependency resolution and platform/dev filtering, before registry tarballs are fetched or packages are linked. Lockfile and offline replays run the same extension checks before linking, so a warm install does not bypass local policy. Direct remote tarball URL dependencies are rejected while policy extensions are active because V1 cannot identify the package candidate without downloading the tarball first.
+
+Extensions are configured by hand in `~/.lpm/config.toml`:
+
+```toml
+[policy.extensions.local-feed]
+command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
+mode = "enforce"       # report | enforce
+on-error = "block"     # warn | block
+timeout-ms = 5000
+events = ["package.candidate"]
+```
+
+LPM spawns the command directly with the provided argv, sends one JSON document on stdin, and reads one JSON document from stdout. `command[0]` must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths such as `./policy-extension` are rejected, and relative or empty `PATH` entries are ignored. The child environment is cleared except for minimal process/runtime variables such as `PATH`; package names and versions are never interpolated into a shell command.
+
+Only `command`, `enabled`, `events`, `mode`, `on-error`, and `timeout-ms` are accepted under each extension. Unknown fields fail config loading, so typos such as `mdoe = "enforce"` cannot fall back to report mode.
+
+Use [`lpm policy`](/docs/infra/policy) to inspect and test active extensions:
+
+```bash
+lpm policy list
+lpm policy status
+lpm policy doctor
+lpm policy test local-feed --package react@19.0.0
+```
+
+Request:
+
+```json
+{
+  "schema_version": 1,
+  "event": "package.candidate",
+  "packages": [
+    {
+      "name": "left-pad",
+      "version": "1.3.0",
+      "source": "registry+https://registry.npmjs.org",
+      "source_kind": "registry",
+      "integrity": "sha512-...",
+      "registry_published_at": "2025-01-01T00:00:00.000Z",
+      "is_direct": true,
+      "is_lpm": false,
+      "optional": false
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "schema_version": 1,
+  "decisions": [
+    {
+      "name": "left-pad",
+      "version": "1.3.0",
+      "action": "block",
+      "code": "local-deny-list",
+      "reason": "matched local feed"
+    }
+  ]
+}
+```
+
+The response envelope is strict: top-level fields must be `schema_version` and `decisions`, and each decision may contain only `name`, `version`, `action`, `code`, and `reason`. Missing, misspelled, or unknown fields are protocol errors. `action` must be `allow`, `warn`, or `block`. Every decision must reference a package candidate from the request by exact `name` and `version`; unknown or duplicate decisions are also protocol errors. `mode = "report"` warns and continues even for `block` decisions. `mode = "enforce"` blocks the install for `block` decisions. `on-error` controls runner and protocol failures, not package verdicts.
 
 ## Security-sensitive keys are proposals
 
@@ -174,6 +256,8 @@ Typosquat analysis uses `typosquat-guard` first. If that key is absent, the diag
 
 The npm firewall uses `[firewall].mode`, defaulting to `"off"`. `LPM_NPM_FIREWALL=report|enforce` can tighten the mode for one process, but it cannot weaken a stricter config value. Active modes send LPM auth because the hosted firewall.lpm.dev verdict service is an LPM Pro/org feature. The legacy diagnostic `LPM_EXPERIMENT_NPM_FIREWALL` is accepted for local benchmark compatibility; prefer `lpm config firewall --set report|enforce` for persistent use.
 
+Policy extensions use only `~/.lpm/config.toml` today. Active extensions disable install-time registry tarball prefetch until their `package.candidate` verdicts pass, then normal fetch/link work resumes. Direct remote tarball URL dependencies fail before download while policy extensions are active. Extensions are local machine policy, not part of the signed approved-posture or managed-policy floor yet.
+
 Store object validation uses `integrity`, defaulting to `"source"`. `source` validates reused v2 store objects by source identity without rehashing every expanded file. `tree` rehashes expanded files before reuse to catch local tampering/corruption, at the cost of slower warm installs. `LPM_V2_OBJECT_INTEGRITY=source|tree` overrides the config value for one process; the legacy env aliases `sri` and `tarball` mean `source`. This setting is separate from `--strict-integrity`, which controls whether tarball URL dependencies must declare an inline SRI hash before first use.
 
 ### Exception — `linker`
@@ -204,6 +288,7 @@ The file is created on demand the first time `lpm config set` writes to it.
 ## See also
 
 - [`lpm config`](/docs/infra/config) — CLI surface for getting / setting these keys
+- [`lpm policy`](/docs/infra/policy) — inspect and test local install policy extensions
 - [`lpm security`](/docs/infra/security) — inspect the effective floor or create a temporary unlock
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level overrides for save policy
 - [`package.json` "lpm" key](/docs/reference/package-json-lpm) — project-shared LPM config
