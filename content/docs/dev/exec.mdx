@@ -4,10 +4,10 @@ description: "Run a JS or TS file directly with runtime auto-detection."
 ---
 
 ```bash
-lpm exec <file> [-- args...]
+lpm exec [--env <mode>] [--watch] <file> [args...]
 ```
 
-Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through `node`; `.ts` / `.tsx` / `.mts` / `.cts` probe the same PATH `lpm exec` will actually use and pick the first compatible TypeScript runtime — see [How runtime is picked](#how-runtime-is-picked) below.
+Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through `node`; `.ts` / `.mts` / `.cts` probe the same PATH `lpm exec` will actually use and pick the first safe TypeScript runtime. `.tsx` requires project-local `tsx` because Node's built-in TypeScript path does not support TSX. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
 
 Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json`.
 
@@ -23,28 +23,33 @@ Human progress goes to stderr and names the selected runtime before the file sta
 ```bash
 lpm exec scripts/seed.ts
 lpm exec scripts/migrate.js
+lpm exec --env staging scripts/seed.ts
+lpm exec scripts/seed.ts --watch
 lpm exec scripts/seed.ts -- --env=staging      # forward args to the script
 lpm exec src/cli.ts arg1 arg2                  # bare trailing args also work
 ```
 
 ## How runtime is picked
 
-| Extension                     | Runtime                                                                                                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.js`, `.mjs`, `.cjs`         | `node` — direct spawn, no shell                                                                                                                                        |
-| `.ts`, `.tsx`, `.mts`, `.cts` | First compatible runtime on the effective exec PATH: Node ≥23.6 (native TypeScript) → Node ≥22.6 (`node --experimental-strip-types`) → project-local `tsx` → `npx tsx` |
+| Extension             | Runtime                                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell                                                                                                                          |
+| `.ts`, `.mts`, `.cts` | First safe runtime on the effective exec PATH: Node 22.18+ / 23.6+ / 24+ (default type stripping) -> Node 22.6-22.17 / 23.0-23.5 (`--experimental-strip-types`) -> project-local `tsx` |
+| `.tsx`                | Project-local `tsx`; Node's built-in TypeScript execution does not support TSX                                                                           |
 
 The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
 
-If `lpm exec` falls back to `npx tsx`, it prints a warning because the first run may download `tsx` from npm.
+`lpm exec` does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use managed/native Node support or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly. For `.tsx`, install and pin `tsx` locally.
 
 ## Environment loading
 
-`lpm exec` loads the project's env files before spawn. `--no-env-check` skips env-schema validation only; it does not disable env loading.
+`lpm exec` loads the project's env files before spawn. Pass `--env <mode>` to load the same mode-specific files as [`lpm run`](/docs/dev/run), such as `.env.staging` and `.env.staging.local`.
+
+`--no-env-check` skips env-schema validation only; it does not disable env loading.
 
 ## Argument forwarding
 
-Anything after the file is forwarded to it. `--` is optional but useful when you want to pass args that look like LPM flags:
+Bare values after the file are forwarded to it. LPM flags such as `--watch`, `--env`, and `--no-env-check` still belong to `lpm exec` even when they appear after the file; use `--` when you want to pass args that look like LPM flags:
 
 ```bash
 lpm exec scripts/seed.ts -- --verbose --env=prod
@@ -54,6 +59,8 @@ lpm exec scripts/seed.ts -- --verbose --env=prod
 
 | Flag             | Effect                                          |
 | ---------------- | ----------------------------------------------- |
+| `--env <mode>`   | Load env files and secrets for the selected mode |
+| `--watch`        | Re-run the same exec plan when the target file changes |
 | `--no-env-check` | Skip env-var schema validation before execution |
 
 Plus the [global flags](/docs/commands#global-flags).
