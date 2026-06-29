@@ -1,20 +1,20 @@
 ---
 title: lpm exec
-description: "Run a JS or TS file directly with runtime auto-detection."
+description: "Run a JS or TS file directly with LPM-managed TypeScript support."
 ---
 
 ```bash
-lpm exec [--env <mode>] [--watch] <file> [args...]
+lpm exec [--env <mode>] [--watch] [--plain-node] <file> [args...]
 ```
 
-Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through `node`; `.ts` / `.mts` / `.cts` probe the same PATH `lpm exec` will actually use and pick the first safe TypeScript runtime. `.tsx` requires project-local `tsx` because Node's built-in TypeScript path does not support TSX. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
+Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
 
 Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json`.
 
 Human progress goes to stderr and names the selected runtime before the file starts:
 
 ```bash
-› Executing scripts/seed.ts with Node.js v22.12.0
+› Executing scripts/seed.ts with Node.js v22.18.0 + LPM TS runtime
 ✓ Done · exited 0 in 412ms
 ```
 
@@ -22,30 +22,60 @@ Human progress goes to stderr and names the selected runtime before the file sta
 
 ```bash
 lpm exec scripts/seed.ts
+lpm exec scripts/view.tsx
 lpm exec scripts/migrate.js
 lpm exec --env staging scripts/seed.ts
 lpm exec scripts/seed.ts --watch
+lpm exec --plain-node scripts/seed.ts          # disable LPM TS preload and child propagation
 lpm exec scripts/seed.ts -- --env=staging      # forward args to the script
 lpm exec src/cli.ts arg1 arg2                  # bare trailing args also work
 ```
 
 ## How runtime is picked
 
-| Extension             | Runtime                                                                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell                                                                                                                          |
-| `.ts`, `.mts`, `.cts` | First safe runtime on the effective exec PATH: Node 22.18+ / 23.6+ / 24+ (default type stripping) -> Node 22.6-22.17 / 23.0-23.5 (`--experimental-strip-types`) -> project-local `tsx` |
-| `.tsx`                | Project-local `tsx`; Node's built-in TypeScript execution does not support TSX                                                                           |
+| Extension             | Runtime                                                                                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM TS preload                                                                                                                   |
+| `.ts`, `.mts`, `.cts` | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime -> Node 22.6-22.17 / 23.0-23.5 with `--experimental-strip-types` -> project-local `tsx` |
+| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime                |
 
 The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
 
-`lpm exec` does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use managed/native Node support or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly. For `.tsx`, install and pin `tsx` locally.
+`lpm exec` does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use the LPM runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
+
+The LPM TS runtime is LPM-owned: it writes LPM's bundled loader into the LPM cache, calls LPM's Rust/OXC transformer without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, architecture, file path, tsconfig fingerprint, and transform options. Cache entries are validated before reuse.
+
+TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM does not download them during `exec`.
+
+## Plain Node mode
+
+`--plain-node` disables the LPM TS runtime preload and child Node propagation. `--no-augment` is an alias.
+
+Use it when you need to check what Node itself can run without LPM augmentation:
+
+```bash
+lpm exec --plain-node scripts/seed.ts
+```
+
+In plain mode, `.ts` / `.mts` / `.cts` use Node's built-in TypeScript support when available. `.tsx` is refused because plain Node does not support TSX.
+
+## Child Node processes
+
+When a TypeScript entrypoint runs with the LPM TS runtime, child processes spawned as `node child.ts` inherit a controlled LPM `NODE_OPTIONS` preload. That lets TypeScript child scripts use the same loader and `tsconfig.json` path mappings without invoking `npx` or a project-local wrapper.
+
+Inherited parent `NODE_OPTIONS` is stripped before execution, so a developer shell or CI environment cannot silently replace the LPM loader. `--plain-node` / `--no-augment` disables this child propagation.
 
 ## Environment loading
 
-`lpm exec` loads the project's env files before spawn. Pass `--env <mode>` to load the same mode-specific files as [`lpm run`](/docs/dev/run), such as `.env.staging` and `.env.staging.local`.
+`lpm exec` loads the project's env files and env secrets before spawn. Pass `--env <mode>` to load the same mode-specific files as [`lpm run`](/docs/dev/run), such as `.env.staging` and `.env.staging.local`.
 
 `--no-env-check` skips env-schema validation only; it does not disable env loading.
+
+Before spawning, LPM strips inherited runtime-hook env like `NODE_OPTIONS`, `LD_PRELOAD`, `LD_AUDIT`, `BASH_ENV`, and `DYLD_INSERT_LIBRARIES`. Project env files, env secrets, and env-schema defaults are filtered for the same runtime-hook names before they are applied, so those keys are ignored when they come from project env. LPM-controlled runtime env is added after that filtering.
+
+## Watch mode
+
+`--watch` re-runs the same exec plan when the target file changes. It watches the requested file only; dependency-graph watching is not part of `lpm exec` yet.
 
 ## Argument forwarding
 
@@ -62,6 +92,8 @@ lpm exec scripts/seed.ts -- --verbose --env=prod
 | `--env <mode>`   | Load env files and secrets for the selected mode |
 | `--watch`        | Re-run the same exec plan when the target file changes |
 | `--no-env-check` | Skip env-var schema validation before execution |
+| `--plain-node`   | Disable the LPM TS runtime preload and child Node propagation |
+| `--no-augment`   | Alias for `--plain-node` |
 
 Plus the [global flags](/docs/commands#global-flags).
 
