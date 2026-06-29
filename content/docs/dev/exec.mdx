@@ -7,7 +7,7 @@ description: "Run a JS or TS file directly with LPM-managed TypeScript support."
 lpm exec [--env <mode>] [--watch] [--plain-node] <file> [args...]
 ```
 
-Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through plain `node`; `.ts` / `.mts` / `.cts` use LPM's TypeScript runtime on supported Node versions, and `.tsx` uses LPM's script-style JSX transform. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
+Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
 
 Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json`.
 
@@ -37,13 +37,15 @@ lpm exec src/cli.ts arg1 arg2                  # bare trailing args also work
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM TS preload                                                                                                                   |
 | `.ts`, `.mts`, `.cts` | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime -> Node 22.6-22.17 / 23.0-23.5 with `--experimental-strip-types` -> project-local `tsx` |
-| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's script-style JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime                |
+| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime                |
 
 The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
 
 `lpm exec` does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use the LPM runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
 
-The LPM TS runtime is LPM-owned: it writes LPM's bundled loader into the LPM cache, transforms TypeScript without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, and compiler options. The built-in TSX path is intended for script-style JSX execution: it does not implement React's automatic JSX runtime and does not turn local `import React from "react"` bindings into JSX factories. Projects that need React, Solid, Preact, or framework-specific JSX semantics should pin and invoke an explicit local tool.
+The LPM TS runtime is LPM-owned: it writes LPM's bundled loader into the LPM cache, calls LPM's Rust/OXC transformer without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, architecture, file path, tsconfig fingerprint, and transform options. Cache entries are validated before reuse.
+
+TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM does not download them during `exec`.
 
 ## Plain Node mode
 
