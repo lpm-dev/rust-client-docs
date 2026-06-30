@@ -1,15 +1,33 @@
 ---
-title: lpm exec
-description: "Run a JS or TS file directly with LPM-managed TypeScript support."
+title: lpm <file> and lpm exec
+description: "Run JS/TS source files directly, or run project-local binaries from node_modules/.bin."
 ---
 
 ```bash
-lpm exec [--env <mode>] [--watch] [--plain-node] <file> [args...]
+lpm <file> [--env <mode>] [--watch] [--plain-node] [args...]
+lpm exec [--env <mode>] [--no-env-check] <bin> [args...]
 ```
 
-Runs a single JavaScript or TypeScript file. `.js` / `.mjs` / `.cjs` always go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
+LPM has two execution lanes:
 
-Useful for one-off scripts (`scripts/seed.ts`, `tools/migrate.js`) without adding a `scripts` entry to `package.json`.
+- `lpm <file>` runs a JavaScript or TypeScript source file directly.
+- `lpm exec <bin>` runs a project-local binary from `node_modules/.bin`, matching npm/pnpm muscle memory.
+
+`lpm exec` does not run source files. Use `lpm scripts/seed.ts`, not `lpm exec scripts/seed.ts`.
+
+## Source Files
+
+```bash
+lpm scripts/seed.ts
+lpm scripts/view.tsx
+lpm scripts/migrate.js
+lpm scripts/seed.ts --env staging
+lpm scripts/seed.ts --watch
+lpm scripts/seed.ts --plain-node
+lpm scripts/seed.ts -- --env=staging
+```
+
+Runs a single JavaScript or TypeScript file without adding a `scripts` entry to `package.json`. `.js` / `.mjs` / `.cjs` go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
 
 Human progress goes to stderr and names the selected runtime before the file starts:
 
@@ -18,87 +36,98 @@ Human progress goes to stderr and names the selected runtime before the file sta
 ✓ Done · exited 0 in 412ms
 ```
 
-## Examples
+## Local Binaries
 
 ```bash
-lpm exec scripts/seed.ts
-lpm exec scripts/view.tsx
-lpm exec scripts/migrate.js
-lpm exec --env staging scripts/seed.ts
-lpm exec scripts/seed.ts --watch
-lpm exec --plain-node scripts/seed.ts          # disable LPM TS preload and child propagation
-lpm exec scripts/seed.ts -- --env=staging      # forward args to the script
-lpm exec src/cli.ts arg1 arg2                  # bare trailing args also work
+lpm exec eslint --fix src
+lpm exec vitest run
+lpm exec --env staging prisma migrate deploy
 ```
 
-## How runtime is picked
+`lpm exec <bin>` resolves `<bin>` only from project `node_modules/.bin` directories, walking upward through the workspace. It loads project env, injects the same local-bin PATH used by `lpm run`, strips inherited runtime-hook env like `NODE_OPTIONS` and `LD_PRELOAD`, then spawns the binary directly without a shell.
 
-| Extension             | Runtime                                                                                                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM TS preload                                                                                                                   |
+It does not fetch packages and does not fall back to system PATH. Use [`lpm dlx`](/docs/dev/dlx) when you want to run a package binary without adding it to the project.
+
+## Runtime Selection
+
+| Extension             | Runtime                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM TS preload                                                                                               |
 | `.ts`, `.mts`, `.cts` | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime -> Node 22.6-22.17 / 23.0-23.5 with `--experimental-strip-types` -> project-local `tsx` |
-| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime                |
+| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime |
 
 The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
 
-`lpm exec` does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use the LPM runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
+LPM source-file execution does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use the LPM runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
 
 The LPM TS runtime is LPM-owned: it writes LPM's bundled loader into the LPM cache, calls LPM's Rust/OXC transformer without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, architecture, file path, tsconfig fingerprint, and transform options. Cache entries are validated before reuse.
 
-TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM does not download them during `exec`.
+TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM does not download them during execution.
 
-## Plain Node mode
+## Plain Node Mode
 
-`--plain-node` disables the LPM TS runtime preload and child Node propagation. `--no-augment` is an alias.
+`--plain-node` disables the LPM TS runtime preload and child Node propagation for `lpm <file>`. `--no-augment` is an alias.
 
 Use it when you need to check what Node itself can run without LPM augmentation:
 
 ```bash
-lpm exec --plain-node scripts/seed.ts
+lpm scripts/seed.ts --plain-node
 ```
 
 In plain mode, `.ts` / `.mts` / `.cts` use Node's built-in TypeScript support when available. `.tsx` is refused because plain Node does not support TSX.
 
-## Child Node processes
+## Child Node Processes
 
 When a TypeScript entrypoint runs with the LPM TS runtime, child processes spawned as `node child.ts` inherit a controlled LPM `NODE_OPTIONS` preload. That lets TypeScript child scripts use the same loader and `tsconfig.json` path mappings without invoking `npx` or a project-local wrapper.
 
 Inherited parent `NODE_OPTIONS` is stripped before execution, so a developer shell or CI environment cannot silently replace the LPM loader. `--plain-node` / `--no-augment` disables this child propagation.
 
-## Environment loading
+## Environment Loading
 
-`lpm exec` loads the project's env files and env secrets before spawn. Pass `--env <mode>` to load the same mode-specific files as [`lpm run`](/docs/dev/run), such as `.env.staging` and `.env.staging.local`.
+Both execution lanes load the project's env files and env secrets before spawn. Pass `--env <mode>` to load the same mode-specific files as [`lpm run`](/docs/dev/run), such as `.env.staging` and `.env.staging.local`.
 
 `--no-env-check` skips env-schema validation only; it does not disable env loading.
 
 Before spawning, LPM strips inherited runtime-hook env like `NODE_OPTIONS`, `LD_PRELOAD`, `LD_AUDIT`, `BASH_ENV`, and `DYLD_INSERT_LIBRARIES`. Project env files, env secrets, and env-schema defaults are filtered for the same runtime-hook names before they are applied, so those keys are ignored when they come from project env. LPM-controlled runtime env is added after that filtering.
 
-## Watch mode
+## Watch Mode
 
-`--watch` re-runs the same exec plan when the target file changes. It watches the requested file only; dependency-graph watching is not part of `lpm exec` yet.
-
-## Argument forwarding
-
-Bare values after the file are forwarded to it. LPM flags such as `--watch`, `--env`, and `--no-env-check` still belong to `lpm exec` even when they appear after the file; use `--` when you want to pass args that look like LPM flags:
+`--watch` re-runs the same source-file execution plan when the target file changes:
 
 ```bash
-lpm exec scripts/seed.ts -- --verbose --env=prod
+lpm scripts/seed.ts --watch
+```
+
+It watches the requested file only; dependency-graph watching is not part of direct source-file execution yet.
+
+## Argument Forwarding
+
+For source files, put LPM flags after the file and use `--` when the script arg starts with `-`:
+
+```bash
+lpm scripts/seed.ts --env staging -- --verbose --env=prod
+```
+
+For local binaries, flags for LPM belong before the binary name. Everything after the binary name is passed to the binary:
+
+```bash
+lpm exec --env staging eslint --fix src/index.ts
 ```
 
 ## Flags
 
-| Flag             | Effect                                          |
-| ---------------- | ----------------------------------------------- |
-| `--env <mode>`   | Load env files and secrets for the selected mode |
-| `--watch`        | Re-run the same exec plan when the target file changes |
-| `--no-env-check` | Skip env-var schema validation before execution |
-| `--plain-node`   | Disable the LPM TS runtime preload and child Node propagation |
-| `--no-augment`   | Alias for `--plain-node` |
+| Lane            | Flag             | Effect                                           |
+| --------------- | ---------------- | ------------------------------------------------ |
+| Both            | `--env <mode>`   | Load env files and secrets for the selected mode |
+| Both            | `--no-env-check` | Skip env-var schema validation before execution  |
+| Source files    | `--watch`        | Re-run the same plan when the target file changes |
+| Source files    | `--plain-node`   | Disable the LPM TS runtime preload and child Node propagation |
+| Source files    | `--no-augment`   | Alias for `--plain-node`                         |
 
 Plus the [global flags](/docs/commands#global-flags).
 
-## See also
+## See Also
 
-- [`lpm run`](/docs/dev/run) — run named scripts from `package.json`
-- [`lpm dlx`](/docs/dev/dlx) — run a binary from a registry package without installing it
-- [`lpm dev`](/docs/dev/dev) — full dev server with HTTPS, tunnel, services
+- [`lpm run`](/docs/dev/run) - run named scripts from `package.json`
+- [`lpm dlx`](/docs/dev/dlx) - run a binary from a registry package without installing it
+- [`lpm dev`](/docs/dev/dev) - full dev server with HTTPS, tunnel, services
