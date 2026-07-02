@@ -103,6 +103,10 @@ export function SiteHeader() {
           className="flex items-center gap-2 shrink-0"
         >
           <LpmLogo />
+          <span className="whitespace-nowrap text-base font-semibold text-fd-foreground">
+            LPM{" "}
+            <span className="font-normal text-fd-muted-foreground">CLI</span>
+          </span>
         </Link>
 
         <nav className="hidden min-[890px]:flex items-center gap-1 flex-1">

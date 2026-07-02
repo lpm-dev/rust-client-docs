@@ -2,6 +2,7 @@ import { RootProvider } from "fumadocs-ui/provider/next";
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import PostHogProvider from "@/components/posthog-provider";
+import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import {
   appName,
@@ -68,6 +69,7 @@ export default function Layout({ children }: LayoutProps<"/">) {
           <PostHogProvider>
             <SiteHeader />
             <div className="flex-1 flex flex-col">{children}</div>
+            <SiteFooter />
           </PostHogProvider>
         </RootProvider>
       </body>

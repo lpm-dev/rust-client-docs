@@ -138,6 +138,10 @@ export const FOOTER: { heading: string; links: FootLink[] }[] = [
     heading: "LPM",
     links: [
       { label: "LPM.dev Registry", href: registryUrl },
+      {
+        label: "LPM Firewall",
+        href: "https://firewall.lpm.dev",
+      },
       { label: "GitHub", href: githubUrl },
       { label: "X/LPM_dev_", href: "https://x.com/LPM_dev_" },
     ],

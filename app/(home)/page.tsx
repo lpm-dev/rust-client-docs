@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import type { ReactNode } from "react";
 import {
   FEATURES,
   type Feature,
-  FOOTER,
   HERO_SUB,
   INSTALL_CMD,
   MORE,
@@ -68,17 +66,6 @@ function FeatureGrid({ items, start }: { items: Feature[]; start: number }) {
       ))}
     </div>
   );
-}
-
-function FooterLink({ href, children }: { href: string; children: ReactNode }) {
-  if (href.startsWith("http")) {
-    return (
-      <a href={href} target="_blank" rel="noreferrer">
-        {children}
-      </a>
-    );
-  }
-  return <Link href={href}>{children}</Link>;
 }
 
 export default function HomePage() {
@@ -147,29 +134,6 @@ export default function HomePage() {
             <CopyButton />
           </div>
         </Reveal>
-
-        <footer>
-          <div className="wrap">
-            <div className="foot-grid">
-              {FOOTER.map((column) => (
-                <div key={column.heading} className="foot-col">
-                  <h4>{column.heading}</h4>
-                  {column.links.map((item) => (
-                    <FooterLink key={item.label} href={item.href}>
-                      {item.label}
-                    </FooterLink>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="wrap">
-            <div className="foot-meta">
-              <span>© 2026 lpm.dev</span>
-              <span>The fast, all-in-one toolkit for modern software.</span>
-            </div>
-          </div>
-        </footer>
       </div>
     </>
   );
