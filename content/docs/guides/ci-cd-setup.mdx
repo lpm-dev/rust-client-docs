@@ -115,20 +115,46 @@ For finer-grained security gates, use [`lpm query`](/docs/packages/query):
 
 ## 6. Caching `~/.lpm/`
 
-To avoid re-downloading the global store on every CI run:
+Cache the content LPM can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM recreates from the lockfile and store.
+
+| Path | Cache key | Use |
+| --- | --- | --- |
+| `~/.lpm/store` | `lpm-store-${{ runner.os }}-${{ hashFiles('lpm.lock') }}` | Package store used by `lpm ci --offline` and `lpm install --offline`. |
+| `~/.lpm/plugins` | `lpm-plugins-${{ runner.os }}-${{ hashFiles('lpm.json') }}` | Managed Oxlint, Biome, and Rolldown plugin binaries used by built-in tools. |
+| `~/.lpm/cache/dlx` | `lpm-dlx-${{ runner.os }}-${{ hashFiles('lpm.lock') }}` | Optional. Speeds up repeated `lpm dlx` / `lpx` calls; entries still expire after their normal TTL. |
+
+The store is the important cache:
 
 ```yaml
 - name: Cache LPM store
   uses: actions/cache@v4
   with:
     path: ~/.lpm/store
-    key: lpm-store-${{ hashFiles('lpm.lock') }}
-    restore-keys: lpm-store-
+    key: lpm-store-${{ runner.os }}-${{ hashFiles('lpm.lock') }}
+    restore-keys: lpm-store-${{ runner.os }}-
 ```
 
-`lpm install --offline` is fast (~6–23 ms in benchmarks) when the store + lockfile match. Caching the store turns a cold CI install into a warm one.
+If your workflow runs managed tools, cache plugins separately so tool downloads do not share the dependency-store key:
+
+```yaml
+- name: Cache LPM plugins
+  uses: actions/cache@v4
+  with:
+    path: ~/.lpm/plugins
+    key: lpm-plugins-${{ runner.os }}-${{ hashFiles('lpm.json') }}
+    restore-keys: lpm-plugins-${{ runner.os }}-
+```
+
+`lpm install --offline` is fast (~6–23 ms in benchmarks) when the store + lockfile match. Caching `~/.lpm/store` turns a cold CI install into a warm one.
 
 The cache key is the lockfile hash. Typical CI runners are short-lived enough that orphan cleanup isn't needed; if you do persist the store across runs and want to bound its size, run `lpm cache prune --apply` periodically.
+
+For persistent self-hosted runners, also clean short-lived caches on your own schedule:
+
+```bash
+lpm cache clean dlx
+lpm cache prune --apply
+```
 
 ## 7. Publishing from CI
 

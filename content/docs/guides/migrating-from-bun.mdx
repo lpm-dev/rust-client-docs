@@ -1,0 +1,89 @@
+---
+title: Migrating from Bun
+description: "Convert a Bun bun.lock or bun.lockb project to LPM with rollback safety."
+---
+
+`lpm migrate` converts a Bun project to LPM in one command. It detects `bun.lock` or `bun.lockb`, parses the lockfile, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and verifies `build` + `test` when those scripts exist.
+
+This guide covers the Bun-specific parts. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
+
+## Prerequisites
+
+- LPM installed - see [Installation](/docs/installation).
+- A `package.json` plus `bun.lock` or `bun.lockb` in the project root.
+- A clean or committed working tree.
+
+`bun.lock` is the direct path. When `bun.lockb` is selected, LPM first looks for a sibling `bun.lock`; if it exists, LPM parses that text lockfile instead. If no sibling text lockfile exists, LPM runs `bun bun.lockb` and parses the emitted JSON. If the `bun` binary is unavailable, migration exits with a clear error.
+
+## 1. Preview
+
+```bash
+lpm migrate --dry-run
+```
+
+Dry-run detects Bun, parses the selected lockfile, converts the graph in memory, and writes nothing. It reports package counts, workspace counts, and any conversion problems before touching disk.
+
+If the project contains multiple lockfiles, LPM chooses the most recently modified one. On timestamp ties, the priority order is `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`.
+
+## 2. Run The Migration
+
+```bash
+lpm migrate
+```
+
+What runs:
+
+1. Confirm `package.json` exists and refuse to overwrite an existing `lpm.lock` unless `--force` is set.
+2. Parse Bun package entries, exact versions, tarball URLs, integrity strings, dependency edges, and dev/optional metadata.
+3. Write `lpm.lock` and, when supported, `lpm.lockb`.
+4. Back up the Bun lockfile, `.npmrc` when touched, `.gitattributes`, and any pre-existing LPM lockfiles.
+5. Add LPM registry routing to `.npmrc` unless `--no-npmrc` is set.
+6. Run `lpm install` against the converted lockfile unless `--no-install` is set.
+7. Run `build` + `test` scripts unless `--skip-verify` is set.
+
+The flow is non-interactive. `-y` is accepted but reserved for a future interactive mode; it does not imply `--force`.
+
+## 3. Verify
+
+```bash
+lpm install --offline
+lpm test
+lpm lint
+```
+
+`lpm install --offline` confirms the new lockfile and the warmed store can replay without network access. If your Bun project used scripts that shell out through `bun`, keep Bun installed wherever those scripts run; migration changes the package manager, not your project scripts.
+
+## 4. Commit
+
+```bash
+git add lpm.lock .npmrc package.json
+test ! -f lpm.lockb || git add lpm.lockb
+git rm bun.lock bun.lockb bun.lock.backup bun.lockb.backup .npmrc.backup
+git commit -m "Migrate to LPM"
+```
+
+Only remove files that exist in your repo. Do not commit `.backup` files unless you intentionally keep migration rollback artifacts in the repository.
+
+## Bun-Specific Notes
+
+- `bun.lock` JSON is parsed directly.
+- `bun.lockb` needs either a sibling `bun.lock` or the `bun` binary available during migration.
+- Bun lockfile metadata carries dev and optional package flags, so the converted lockfile preserves those package classifications.
+- The install step rebuilds `node_modules`. Single-package projects default to LPM's hoisted v2 layout; workspaces and peer-conflict installs use isolated layout unless you override the linker.
+- Dependency lifecycle scripts remain denied by default. After migration, run [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for packages that need install-time builds.
+
+## Rollback
+
+```bash
+lpm migrate --rollback
+```
+
+Restores backups from the previous migration run and removes LPM files created by that run. Safe to run repeatedly.
+
+## See also
+
+- [`lpm migrate`](/docs/packages/migrate) - full flag reference
+- [Migrating from npm](/docs/guides/migrating-from-npm) - package-lock migration
+- [Migrating from pnpm](/docs/guides/migrating-from-pnpm) - pnpm-specific translations
+- [Migrating from Yarn](/docs/guides/migrating-from-yarn) - Yarn lockfile migration
+- [Lockfile](/docs/packages/lockfile) - what gets committed and why

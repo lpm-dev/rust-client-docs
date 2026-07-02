@@ -1,0 +1,89 @@
+---
+title: Migrating from Yarn
+description: "Convert a Yarn yarn.lock project to LPM with rollback safety."
+---
+
+`lpm migrate` converts a Yarn project to LPM in one command. It detects `yarn.lock`, parses the lockfile, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and verifies `build` + `test` when those scripts exist.
+
+This guide covers the Yarn-specific parts. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
+
+## Prerequisites
+
+- LPM installed - see [Installation](/docs/installation).
+- A `package.json` and `yarn.lock` in the project root.
+- A clean or committed working tree.
+
+The current Yarn import path is built around Yarn Classic lockfile entries. Run the dry-run first and treat it as the source of truth for what will convert.
+
+## 1. Preview
+
+```bash
+lpm migrate --dry-run
+```
+
+Dry-run detects Yarn, parses `yarn.lock`, converts the graph in memory, and writes nothing. It reports package counts, workspace counts, and any conversion problems before touching disk.
+
+If the project contains multiple lockfiles, LPM chooses the most recently modified one. On timestamp ties, the priority order is `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`. Remove stale lockfiles before migrating so `yarn.lock` is the unambiguous source.
+
+## 2. Run The Migration
+
+```bash
+lpm migrate
+```
+
+What runs:
+
+1. Confirm `package.json` exists and refuse to overwrite an existing `lpm.lock` unless `--force` is set.
+2. Parse Yarn lockfile entries: specifiers, exact versions, resolved tarball URLs, integrity strings, and dependency edges.
+3. Mark direct dev and optional dependencies from root `package.json`, because Yarn Classic does not encode those flags per lockfile entry.
+4. Write `lpm.lock` and, when supported, `lpm.lockb`.
+5. Back up `yarn.lock`, `.npmrc` when touched, `.gitattributes`, and any pre-existing LPM lockfiles.
+6. Add LPM registry routing to `.npmrc` unless `--no-npmrc` is set.
+7. Run `lpm install` against the converted lockfile unless `--no-install` is set.
+8. Run `build` + `test` scripts unless `--skip-verify` is set.
+
+The flow is non-interactive. `-y` is accepted but reserved for a future interactive mode; it does not imply `--force`.
+
+## 3. Verify
+
+```bash
+lpm install --offline
+lpm test
+lpm lint
+```
+
+`lpm install --offline` confirms the new lockfile and the warmed store can replay without network access. If your project does not have `test` or `lint` scripts, run the equivalent checks you normally trust before a package-manager migration.
+
+## 4. Commit
+
+```bash
+git add lpm.lock .npmrc package.json
+test ! -f lpm.lockb || git add lpm.lockb
+git rm yarn.lock yarn.lock.backup .npmrc.backup
+git commit -m "Migrate to LPM"
+```
+
+Do not commit `.backup` files unless you intentionally keep migration rollback artifacts in the repository.
+
+## Yarn-Specific Notes
+
+- `yarn.lock` resolved URLs from `registry.yarnpkg.com` are normalized into registry package entries when possible.
+- `dependencies` and `optionalDependencies` blocks inside lockfile entries both contribute dependency edges.
+- The install step rebuilds `node_modules`. Single-package projects default to LPM's hoisted v2 layout; workspaces and peer-conflict installs use isolated layout unless you override the linker.
+- Dependency lifecycle scripts remain denied by default. After migration, run [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for packages that need install-time builds.
+
+## Rollback
+
+```bash
+lpm migrate --rollback
+```
+
+Restores backups from the previous migration run and removes LPM files created by that run. Safe to run repeatedly.
+
+## See also
+
+- [`lpm migrate`](/docs/packages/migrate) - full flag reference
+- [Migrating from npm](/docs/guides/migrating-from-npm) - same migration shape
+- [Migrating from pnpm](/docs/guides/migrating-from-pnpm) - pnpm-specific translations
+- [Migrating from Bun](/docs/guides/migrating-from-bun) - Bun text and binary lockfiles
+- [Lockfile](/docs/packages/lockfile) - what gets committed and why

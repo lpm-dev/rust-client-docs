@@ -1,0 +1,111 @@
+---
+title: Docker Deploys
+description: "Build Docker images with lpm fetch, offline installs, and lpm deploy."
+---
+
+Use one of two Docker patterns:
+
+- Single package: warm the store from `lpm.lock`, then run an offline frozen install.
+- Workspace app: run `lpm deploy` in a build stage, then `COPY --from=pruned` the self-contained output.
+
+Both patterns start from committed lockfiles. `lpm.lock` is authoritative; commit `lpm.lockb` too when LPM writes it, but Docker cache layers can key off `lpm.lock`.
+
+## Single-Package Image
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim
+
+RUN npm install -g @lpm-registry/cli
+WORKDIR /app
+
+COPY lpm.lock ./
+RUN lpm fetch --platform linux/x64/glibc
+
+COPY package.json ./
+RUN lpm install --offline --frozen-lockfile --prod
+
+COPY . .
+
+CMD ["node", "server.js"]
+```
+
+`lpm fetch` only reads `lpm.lock`, so ordinary source changes do not invalidate package downloads. The later `lpm install --offline --frozen-lockfile --prod` links from the warmed store and fails if `package.json` does not match the importer snapshot in `lpm.lock`.
+
+Use a platform that matches the runtime image:
+
+```bash
+lpm fetch --platform linux/x64/glibc  # Debian/Ubuntu images
+lpm fetch --platform linux/x64/musl   # Alpine x64 images
+lpm fetch --platform linux/arm64/musl # Alpine arm64 images
+```
+
+If the project has local `file:` or `link:` sources, copy those source directories before the offline install. `lpm fetch` skips local sources because their bytes live in the checkout, not in a registry tarball.
+
+## Layer Cache Notes
+
+Keep the LPM store in an image layer when that same stage ships `node_modules`. LPM links installed packages through the store, so a BuildKit cache mount at `/root/.lpm/store` would disappear after the `RUN` step and leave broken links in the final image.
+
+Use ordinary Docker layer caching for the store-warm step, or use [`lpm deploy`](#workspace-deploy-image), whose output carries a deploy-local `.lpm/store/` alongside `node_modules`. Do not cache or copy `node_modules` between builds; LPM recreates it from the lockfile and store.
+
+## Workspace Deploy Image
+
+For monorepos, `lpm deploy` materializes one workspace member into a self-contained output directory. The output includes the selected member source, selected local workspace dependencies under `.lpm/deploy-workspace/`, a pruned `lpm.lock`, a deploy-local store, and a populated `node_modules/`.
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM node:22-bookworm-slim AS pruned
+
+RUN npm install -g @lpm-registry/cli
+WORKDIR /repo
+
+COPY . .
+RUN lpm deploy /prod/api --filter api
+
+FROM node:22-bookworm-slim AS runtime
+
+WORKDIR /app
+COPY --from=pruned /prod/api /app
+
+CMD ["node", "server.js"]
+```
+
+`lpm deploy` requires `--filter` or `--filter-prod`, and the final selection must match exactly one workspace member. `--prod` is the default. Use `--dev` for a dev-dependency deploy tree and `--no-optional` to omit optional dependencies.
+
+The runtime image does not need LPM unless your own runtime scripts call it.
+
+## Deploy Copy Rules
+
+`lpm deploy` copies publishable files: `package.json > files` when present, otherwise `.npmignore`, otherwise `.gitignore`. It then applies a deny list at every directory level:
+
+- `node_modules`, `.lpm`, `lpm.lock`, `lpm.lockb`
+- `.env`, `.env.local`, `.env.development`, `.env.development.local`, `.env.production`, `.env.production.local`, `.env.test`, `.env.test.local`
+- `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, `.hg`
+- `.DS_Store`, `Thumbs.db`
+
+Still add a `.dockerignore` so secrets and local state never enter the Docker build context:
+
+```text title=".dockerignore"
+node_modules
+.lpm
+.env*
+.git
+```
+
+## Common Pitfalls
+
+| Symptom | Fix |
+| --- | --- |
+| `lpm install --offline` says a package is missing from the store | Run `lpm fetch --platform <target>` in an earlier layer or remove `--offline` for that build |
+| Native optional package is missing in Alpine | Fetch for `linux/<arch>/musl`, not `glibc` |
+| `lpm deploy` says the filter matched zero or many members | Narrow the filter and preview it with [`lpm filter`](/docs/packages/workspaces#filter-grammar) |
+| Deploy output path is rejected | Put it outside the workspace tree, such as `/prod/api` |
+| Source changes invalidate install cache | Copy only `lpm.lock` before `lpm fetch`, then copy `package.json`, then copy the rest of the source |
+
+## See also
+
+- [`lpm fetch`](/docs/packages/fetch) - lockfile-only store warming
+- [`lpm install --offline --frozen-lockfile`](/docs/packages/install#frozen-lockfile-and-ci) - reproducible installs
+- [Workspaces: `lpm deploy`](/docs/packages/workspaces#lpm-deploy) - deploy command reference
+- [Monorepo setup](/docs/guides/monorepo-setup) - workspace filters and deploy flow
+- [CI/CD setup](/docs/guides/ci-cd-setup) - caching `~/.lpm/store`

@@ -1,0 +1,128 @@
+---
+title: lpm catalog
+description: "Inspect workspace catalog usage and resolved catalog provenance."
+---
+
+```bash
+lpm catalog list
+lpm catalog list --unused
+lpm catalog show --resolved
+```
+
+`lpm catalog` inspects the version catalogs declared by the workspace root. Use it to find unused catalog pins before cleanup, or to verify which catalog references were resolved into `lpm.lock`.
+
+Catalogs are declared in root `package.json > catalogs` or in pnpm-style `pnpm-workspace.yaml > catalog` / `catalogs`. Root and workspace-member manifests reference them with `"catalog:"` for the default catalog or `"catalog:<name>"` for a named catalog.
+
+## Examples
+
+```bash
+lpm catalog list                 # every declared catalog entry
+lpm catalog list --unused        # only entries no manifest references
+lpm catalog show --resolved      # resolved catalog snapshots from lpm.lock
+lpm catalog show --resolved --json
+```
+
+## List Declared Entries
+
+```bash
+lpm catalog list
+```
+
+`list` reads the root catalog declarations and scans the root package plus every workspace member for `catalog:` references in dependency sections. Human output prints one row per entry:
+
+```text
+default react ^18.2.0 used
+default react-dom ^18.2.0 used
+testing vitest ^1.0.0 unused
+```
+
+Use `--unused` before enabling catalog cleanup:
+
+```bash
+lpm catalog list --unused
+```
+
+`--unused` filters out entries that are still referenced. If none remain, LPM prints `No unused catalog entries.`
+
+## Show Resolved Snapshots
+
+```bash
+lpm catalog show --resolved
+```
+
+`show --resolved` reads catalog snapshots from `lpm.lock`. These snapshots record the catalog entry, the saved catalog reference, the resolved version, and the original catalog range:
+
+```text
+default react catalog: -> 18.2.0 (^18.2.0)
+testing vitest catalog:testing -> 1.6.1 (^1.0.0)
+```
+
+`lpm catalog show` currently requires `--resolved`. If a manifest references a catalog entry that is missing from `lpm.lock`, LPM exits non-zero and asks you to run `lpm install` so the lockfile snapshot cannot look falsely clean.
+
+## JSON Output
+
+Pass the global `--json` flag for automation:
+
+```bash
+lpm catalog list --unused --json
+```
+
+```json
+{
+  "success": true,
+  "mode": "unused",
+  "count": 1,
+  "used_count": 2,
+  "unused_count": 1,
+  "entries": [
+    {
+      "catalog": "testing",
+      "package": "vitest",
+      "specifier": "^1.0.0",
+      "used": false
+    }
+  ]
+}
+```
+
+```bash
+lpm catalog show --resolved --json
+```
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "entries": [
+    {
+      "catalog": "default",
+      "package": "react",
+      "specifier": "^18.2.0",
+      "version": "18.2.0",
+      "reference": "catalog:"
+    }
+  ]
+}
+```
+
+## Cleanup Policy
+
+By default, LPM preserves unused catalog entries exactly as written. Set `package.json > lpm.cleanupUnusedCatalogs = true` to prune unreferenced root `package.json > catalogs` entries after successful installs. In pnpm-style workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` does the same for `pnpm-workspace.yaml > catalog` / `catalogs`, unless `package.json > lpm.cleanupUnusedCatalogs` explicitly overrides it.
+
+Run `lpm catalog list --unused` first when you want a dry inspection before the next install mutates catalog declarations.
+
+## Flags
+
+| Command | Flag | Effect |
+| --- | --- | --- |
+| `lpm catalog list` | `--unused` | Show only catalog entries no root/member manifest references |
+| `lpm catalog show` | `--resolved` | Read resolved catalog entries from `lpm.lock` |
+
+Plus the [global flags](/docs/commands#global-flags). `--json` emits structured envelopes for both subcommands.
+
+## See also
+
+- [Workspaces](/docs/packages/workspaces#catalogs) - catalog declarations and member references
+- [Save policy](/docs/packages/save-policy#cli-flags) - saving dependencies as `catalog:` references
+- [`lpm install --catalog`](/docs/packages/install) - force a catalog save for one invocation
+- [`package.json > lpm`](/docs/reference/package-json-lpm#catalogs) - catalog fields and cleanup policy
