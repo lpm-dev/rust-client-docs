@@ -1,0 +1,124 @@
+---
+title: lpm stage
+description: "Stage npm publishes, inspect staged versions, and approve or reject them."
+---
+
+```bash
+lpm stage publish
+lpm stage list [package]
+lpm stage view <stage-id>
+lpm stage download <stage-id>
+lpm stage approve <stage-id>
+lpm stage reject <stage-id>
+```
+
+`lpm stage` wraps npm staged publishing. It prepares the current package the same way [`lpm publish --npm`](/docs/packages/publish) does, uploads it to npm's staging endpoint, then lets you inspect, approve, reject, or download the staged version before it becomes installable.
+
+`lpm stage` is npm-only in this release. It does not stage lpm.dev, GitHub Packages, GitLab Packages, custom publish-registry targets, workspace-recursive publishes, or arbitrary tarball/package specs.
+
+## Examples
+
+```bash
+lpm stage publish --tag next
+lpm stage publish --access public --provenance -y
+lpm stage publish --dry-run
+
+lpm stage list
+lpm stage list @scope/pkg
+lpm stage view <stage-id>
+lpm stage download <stage-id>
+lpm stage approve <stage-id> --otp 123456
+lpm stage reject <stage-id> --otp 123456
+```
+
+## Stage A Version
+
+```bash
+lpm stage publish --tag next
+```
+
+`stage publish` runs the normal npm publish preparation path:
+
+1. Pack the current project.
+2. Rewrite `workspace:*` and `catalog:` dependencies in the packed tarball.
+3. Run the secret scan unless `--allow-secrets` is set.
+4. Run the quality gate and enforce `--min-score` when present.
+5. Resolve npm name, access, dist-tag, registry, auth, and provenance settings.
+6. Upload to npm staging instead of the live publish endpoint.
+
+The staged version is not installable until it is approved.
+
+`--dry-run` stays local-only. It packs, scans, scores, and reports what would be staged, but it does not authenticate to npm and does not run npm's remote version/tag checks.
+
+## Auth
+
+For `lpm stage publish` on the default npm registry, auth resolution is:
+
+| Order | Source |
+| --- | --- |
+| 1 | npm Trusted Publishing through CI OIDC (`NPM_ID_TOKEN` or GitHub Actions OIDC with audience `npm:registry.npmjs.org`) |
+| 2 | `NPM_TOKEN` |
+| 3 | token stored by `lpm login --npm` |
+| 4 | locked `.npmrc` token |
+
+OIDC is publish-only. `list`, `view`, `download`, `approve`, and `reject` require normal npm token auth.
+
+For compatible staging registries, pass `--npm-registry <URL>`. The global `--registry` flag still means the lpm.dev registry and is rejected on `lpm stage` commands.
+
+## Version And Tag Rules
+
+Before a real stage publish, LPM fetches npm package metadata and enforces npm-safe staging rules:
+
+- The package must already exist on npm.
+- The staged version must not already be published.
+- Prerelease versions require an explicit `--tag`.
+- If npm already has a higher stable version, implicit `latest` is blocked; pass an explicit tag.
+
+## Review And Promote
+
+```bash
+lpm stage list @scope/pkg
+lpm stage view <stage-id>
+lpm stage download <stage-id>
+lpm stage approve <stage-id> --otp 123456
+```
+
+`list` shows staged package versions, optionally filtered by package name. `view` prints one staged entry. `download` retrieves the staged tarball for inspection. `approve` promotes the staged package to the live npm registry. `reject` discards it.
+
+Publishing to staging does not prompt for OTP. npm defers proof-of-presence to `approve` and `reject`, where `--otp` or the usual npm web-auth retry flow is used.
+
+Every subcommand supports the global `--json` flag. JSON envelopes include `success`, `target: "npm"`, `registry`, `stageId` when a single staged package is involved, and `data` for the registry response. `stage publish --json` also reports `auth` as `"oidc"` or `"token"`.
+
+## `publish` Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--tag <TAG>` | npm dist-tag for the staged version. Prereleases require an explicit tag. |
+| `--access public\|restricted` | npm package access. Provenance requires effective `public` access. |
+| `--dry-run` | Preview locally without uploading or authenticating to npm. |
+| `--provenance` | Generate and require Sigstore provenance. Mutually exclusive with `--no-provenance` and `--provenance-file`. |
+| `--no-provenance` | Disable provenance even when npm config enables it. |
+| `--provenance-file <PATH>` | Attach a pre-generated Sigstore provenance bundle. Mutually exclusive with `--no-provenance`. |
+| `--min-score <N>` | Minimum quality score required to stage, from `0` to `100`. |
+| `--allow-secrets` | Skip pre-publish secret scanning. |
+| `-y`, `--yes` | Skip the confirmation prompt. |
+| `--npm-registry <URL>` | Override the npm staging registry URL. |
+
+## Other Subcommands
+
+| Command | Arguments | Flags | Effect |
+| --- | --- | --- | --- |
+| `lpm stage list` | `[package]` | `--npm-registry <URL>` | List staged npm package versions, optionally filtered by package name. |
+| `lpm stage view` | `<stage-id>` | `--npm-registry <URL>` | Show one staged npm package version. |
+| `lpm stage download` | `<stage-id>` | `--npm-registry <URL>` | Download the staged tarball for inspection. |
+| `lpm stage approve` | `<stage-id>` | `--otp <CODE>`, `--npm-registry <URL>` | Promote the staged version to live npm. |
+| `lpm stage reject` | `<stage-id>` | `--otp <CODE>`, `--npm-registry <URL>` | Reject the staged version. |
+
+Plus the [global flags](/docs/commands#global-flags). Use global `--json` for structured output.
+
+## See also
+
+- [`lpm publish`](/docs/packages/publish) - normal publish flow and provenance details
+- [Authentication](/docs/infra/authentication) - npm tokens and login flows
+- [CI/CD setup](/docs/guides/ci-cd-setup) - OIDC and provenance in CI
+- [`lpm quality`](/docs/packages/quality) - inspect quality score before publishing
