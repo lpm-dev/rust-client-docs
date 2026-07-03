@@ -9,17 +9,22 @@ lpm run <scripts...> [-- script-args...]
 
 Runs one or more `scripts` entries from `package.json`. With multiple scripts, runs them sequentially by default; pass `-p` to run in parallel.
 
-## Shorthand: `lpm <script>` without `run`
+## Shorthand: `lpm <script-or-bin>` without `run`
 
-`lpm` falls through to the same task runner as `lpm run <name>` when the first argument isn't a known subcommand. That means plain shorthand invocations pick up `lpm.json` meta-tasks, `dependsOn` expansion, caching, and the normal script/task resolution rules.
+`lpm` falls through to the same task runner as `lpm run <name>` when the first argument isn't a known subcommand. That means plain shorthand script invocations pick up `lpm.json` meta-tasks, `dependsOn` expansion, caching, and the normal script/task resolution rules.
 
 ```bash
 lpm build              # equivalent to lpm run build
 lpm typecheck          # equivalent to lpm run typecheck
 lpm verify             # equivalent to lpm run verify (including lpm.json meta-tasks)
+lpm jest --watch       # runs node_modules/.bin/jest --watch if no script/task named "jest" exists
 ```
 
 The lookup only kicks in for unknown subcommand names — built-in commands always win. So `lpm test` runs the Vitest/Jest forwarder (built-in `lpm test`), not your `"test"` script entry. To force the script entry when a built-in conflicts, use `lpm run <name>` explicitly.
+
+If no `package.json` script or `lpm.json` task matches the shorthand name, LPM tries a project-local binary with the same resolver as [`lpm exec`](/docs/dev/exec). That fallback searches only `node_modules/.bin` directories for the project/workspace; it does not run arbitrary system PATH binaries and it does not use a shell. Scripts and tasks still win over same-named local binaries.
+
+Path-like invocations such as `lpm scripts/seed.ts` use the source-file runner instead of the shorthand lookup.
 
 Use `lpm run` when you need runner flags. `lpm build --filter web` forwards `--filter web` to your script; `lpm run build --filter web` applies LPM's workspace selection.
 
@@ -205,6 +210,7 @@ Plus the [global flags](/docs/commands#global-flags).
 ## See also
 
 - [`lpm <file>`](/docs/dev/exec) — run a JS/TS file directly (no script needed)
+- [`lpm exec <bin>`](/docs/dev/exec) — explicitly run a project-local binary
 - [`lpm dlx`](/docs/dev/dlx) — run a package binary without installing
 - [Task runner](/docs/dev/task-runner) — caching, dependencies, `lpm.json` task graph
 - [Workspaces](/docs/packages/workspaces) — filter grammar
