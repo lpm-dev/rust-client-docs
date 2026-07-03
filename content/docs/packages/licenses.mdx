@@ -1,0 +1,83 @@
+---
+title: lpm licenses
+description: "Inventory installed dependency licenses and fail CI on compliance policy."
+---
+
+```bash
+lpm licenses
+lpm licenses --json
+lpm licenses --fail-on copyleft
+lpm licenses --deny GPL-3.0 --deny AGPL-3.0
+```
+
+`lpm licenses` lists the licenses declared by installed packages in the current `lpm.lock` graph. It reads the same installed package manifest metadata that [`lpm sbom`](/docs/packages/sbom) uses: `node_modules/` first, then the LPM store when present.
+
+Use [`lpm query :copyleft`](/docs/packages/query) when you want selector-style security queries. Use `lpm licenses` when you need the exact license inventory and a CI compliance gate.
+
+## Examples
+
+```bash
+lpm licenses                                      # table output
+lpm licenses --json                               # structured inventory
+lpm licenses --fail-on copyleft                   # fail if any GPL-family license is present
+lpm licenses --fail-on copyleft,missing           # fail on copyleft or absent license metadata
+lpm licenses --deny GPL-3.0 --deny AGPL-3.0       # fail on exact denied expressions
+```
+
+## Inventory source
+
+`lpm licenses` is local-first and does not fetch registry metadata. Run [`lpm install`](/docs/packages/install) first so `lpm.lock`, `node_modules/`, and the store have the package manifests to inspect.
+
+The JSON output includes:
+
+- `root` — the current project's own license metadata
+- `packages` — installed dependency packages with `name`, `version`, `scope`, `licenses`, `license_expression`, `missing`, `copyleft`, and denied-license fields
+- `summary` — counts for `copyleft`, `missing`, and `denied`
+- `policy` — the active `--fail-on` / `--deny` gate and whether it failed
+
+`scope` is derived from root reachability in `lpm.lock`, including `root-aliases` for npm alias declarations. Required paths win over optional paths, and optional paths win over excluded/dev-only paths, so a dev-only transitive package is marked `excluded` unless a production or optional root also reaches it.
+
+Policy applies to dependency packages. The root project license is included for context.
+
+## Policy gates
+
+```bash
+lpm licenses --fail-on copyleft
+```
+
+`--fail-on copyleft` uses the same copyleft classifier as [`lpm audit`](/docs/packages/audit) and [`lpm query :copyleft`](/docs/packages/query). It catches GPL-family and other known reciprocal license identifiers inside SPDX-style expressions.
+
+```bash
+lpm licenses --fail-on missing
+```
+
+`--fail-on missing` fails when a package has no license declaration or only no-license markers such as `UNLICENSED`, `NONE`, `PROPRIETARY`, `NOASSERTION`, or `SEE LICENSE IN ...`.
+
+```bash
+lpm licenses --deny GPL-3.0
+```
+
+`--deny <LICENSE>` fails on exact declared license-expression matches, case-insensitive. Repeat it or pass comma-separated values:
+
+```bash
+lpm licenses --deny GPL-3.0,AGPL-3.0
+lpm licenses --deny GPL-3.0 --deny AGPL-3.0
+```
+
+When a policy fails, the command exits `1`. Under `--json`, stdout is still a single JSON object with `"success": false`, summary counts, and per-package denial details.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--fail-on <copyleft\|missing>` | Fail when matching packages are present. Repeatable and comma-separated. |
+| `--deny <LICENSE>` | Fail on an exact declared license expression. Repeatable and comma-separated. |
+
+Plus the [global flags](/docs/commands#global-flags).
+
+## See also
+
+- [`lpm sbom`](/docs/packages/sbom) — CycloneDX/SPDX export with license metadata
+- [`lpm query`](/docs/packages/query) — selector queries such as `:copyleft` and `:no-license`
+- [`lpm audit`](/docs/packages/audit) — vulnerability and behavioral audit
+- [Security & audit](/docs/packages/security-audit) — how the audit/query/license surfaces fit together
