@@ -1,0 +1,156 @@
+---
+title: lpm release
+description: "Plan, apply, and publish workspace releases in dependency order."
+---
+
+```bash
+lpm release plan --affected --base main --bump patch
+```
+
+Coordinates releases across a workspace. `lpm release plan` computes the package/version/dependency update plan, `lpm release apply` writes it to manifests, and `lpm release publish` publishes selected members in dependency order.
+
+`lpm release` is intentionally separate from [`lpm version`](/docs/packages/version): single-package version bumps stay simple, while workspace releases get explicit planning and publish orchestration.
+
+## Examples
+
+```bash
+lpm release plan --all --bump patch
+lpm release plan --affected --base origin/main --bump minor --json
+lpm release apply --filter core --bump major
+lpm release apply --affected --base main --dry-run --json
+lpm release publish --all --dry-run --json
+lpm release publish --affected --base origin/main --npm -y
+```
+
+## Planning
+
+A release plan reads every selected workspace member's `package.json`, computes the new versions, and then checks workspace-internal dependents.
+
+Dependency ranges are updated only when the new version no longer satisfies the existing range and the range is safely rewriteable:
+
+| Existing spec | Example update |
+| --- | --- |
+| exact old version | `1.2.3` -> `2.0.0` |
+| caret old version | `^1.2.3` -> `^2.0.0` |
+| tilde old version | `~1.2.3` -> `~2.0.0` |
+| explicit workspace range | `workspace:^1.2.3` -> `workspace:^2.0.0` |
+
+Dynamic workspace specs such as `workspace:*`, `workspace:^`, and `workspace:~` are left unchanged. `catalog:` specs are also left unchanged because the catalog owns the concrete version.
+
+If any dependent has a range that would stop accepting a bumped internal package and LPM cannot rewrite it safely, planning fails before anything is written.
+
+## Bump sources
+
+Pass `--bump <level>` to use one bump for every selected package:
+
+```bash
+lpm release plan --affected --bump patch
+```
+
+Or add lightweight change files under `.lpm/changes/`. Each non-empty, non-comment line is:
+
+```text
+<package-name> <bump>
+```
+
+Example:
+
+```text
+core minor
+app patch
+```
+
+Change-file bumps override the command's `--bump` fallback for matching packages. If a selected package has no change-file entry and no `--bump`, the command fails instead of guessing. Use `--bump patch` when you want the conservative patch fallback.
+
+## Selection
+
+Every `lpm release` subcommand requires an explicit workspace selection:
+
+Selection modes are mutually exclusive: `--all` cannot be combined with `--affected`, `--filter`, or `--filter-prod`.
+
+| Flag | Description |
+| --- | --- |
+| `--all` | Select every workspace member. |
+| `--affected` | Select packages changed since `--base` plus their transitive dependents. |
+| `--base <REF>` | Git base ref for `--affected`. Defaults to `main`. |
+| `--filter <EXPR>` | Select workspace members with the same filter grammar as [`lpm run --filter`](/docs/dev/run#workspace-filters). |
+| `--filter-prod <EXPR>` | Like `--filter`, but dependency closures follow production edges only. |
+| `--changed-files-ignore-pattern <GLOB>` | Ignore matching changed files when evaluating affected packages. |
+| `--test-pattern <GLOB>` | Treat matching changed files as tests so affected fanout does not include dependents from them. |
+| `--fail-if-no-match` | Exit non-zero when the selection resolves to no members. |
+
+## Subcommands
+
+### `lpm release plan`
+
+Prints the release plan and never writes files.
+
+```bash
+lpm release plan --all --bump patch
+lpm release plan --affected --base origin/main --bump minor --json
+```
+
+### `lpm release apply`
+
+Writes the plan to the selected package manifests and any workspace dependents that need range updates.
+
+```bash
+lpm release apply --filter core --bump major
+lpm release apply --affected --bump patch --dry-run --json
+```
+
+### `lpm release publish`
+
+Publishes selected members in topological order, dependencies before dependents. Before the first upload it validates current workspace-internal ranges so a stale manifest fails before a partial publish.
+
+`release publish` reuses the single-package [`lpm publish`](/docs/packages/publish) implementation for each member. It supports the same target flags that make sense for a workspace publish:
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Print publish order and skip decisions without uploading. |
+| `-y, --yes` | Skip per-package confirmation prompts. |
+| `--min-score <N>` | Require a minimum quality score. |
+| `--allow-secrets` | Skip the pre-publish secret scan. |
+| `--npm` | Publish to npm. |
+| `--lpm` | Publish to lpm.dev. |
+| `--github` | Publish to GitHub Packages. |
+| `--gitlab` | Publish to GitLab Packages. |
+| `--publish-registry <URL>` | Publish to a custom npm-compatible registry. |
+| `--provenance` | Require generated Sigstore provenance. |
+| `--no-provenance` | Disable provenance for this run. |
+| `--provenance-file <PATH>` | Attach a pre-generated Sigstore bundle for npm-compatible targets. |
+
+For lpm.dev and npm targets, LPM checks metadata before upload. If every checked target already has the selected version, the package is skipped. If only some checked targets already have it, the command fails before uploading so it does not partially publish.
+
+Custom, GitHub, and GitLab targets are still validated for local target-name/config correctness, but remote version existence is left to the target publish response.
+
+## JSON
+
+`--json` is available on every subcommand. `plan` and `apply` emit the same envelope shape:
+
+```json
+{
+  "success": true,
+  "dry_run": true,
+  "packages": [],
+  "dependency_updates": [],
+  "files": []
+}
+```
+
+`publish --json` emits:
+
+```json
+{
+  "success": true,
+  "dry_run": true,
+  "packages": 2,
+  "results": []
+}
+```
+
+## See also
+
+- [`lpm version`](/docs/packages/version) — single-package version bumps
+- [`lpm publish`](/docs/packages/publish) — single-package publish behavior and provenance
+- [`lpm workspaces`](/docs/packages/workspaces) — workspace declarations, protocols, catalogs, and filters
