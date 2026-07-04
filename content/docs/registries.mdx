@@ -14,11 +14,33 @@ LPM resolves each package by name and routes accordingly:
 | Package                                              | Goes to                                                   |
 | ---------------------------------------------------- | --------------------------------------------------------- |
 | `react`, `lodash`, `typescript`, …                   | `registry.npmjs.org`                                      |
-| `@scope/anything` (any scope except `@lpm.dev`)      | `registry.npmjs.org`, unless `.npmrc` overrides the scope |
+| `@scope/anything` (except built-in scopes below)     | `registry.npmjs.org`, unless `.npmrc` overrides the scope |
+| `jsr:@std/path` manifest specs (`@jsr/*` internally) | `https://npm.jsr.io`, unless `.npmrc` maps `@jsr`         |
 | `@lpm.dev/*`                                         | `https://lpm.dev` (auth + monetization layer)             |
 | Anything that matches a registry mapping in `.npmrc` | The registry you mapped                                   |
 
-The `@lpm.dev/*` scope is the **only** scope that always goes to lpm.dev. Everything else is npm by default.
+The `@lpm.dev/*` scope is the **only** scope that always goes to lpm.dev. JSR packages use JSR's npm-compatible registry. Everything else is npm by default.
+
+## JSR packages
+
+LPM accepts `jsr:` dependency specs in `package.json` and resolves them through JSR's npm-compatible registry. The JSR package name stays as the local import name, while the metadata fetch uses JSR's folded npm package name under `@jsr`.
+
+```json title="package.json"
+{
+  "dependencies": {
+    "@std/path": "jsr:@std/path@^1.1.0",
+    "@std/fs": "jsr:^1.0.0"
+  }
+}
+```
+
+`"@std/path": "jsr:@std/path@^1.1.0"` fetches `@jsr/std__path` from `https://npm.jsr.io` and links it at `node_modules/@std/path`. Version-only specs such as `"@std/fs": "jsr:^1.0.0"` borrow the package name from the dependency key.
+
+To mirror or intercept JSR traffic, map the `@jsr` scope explicitly:
+
+```ini title=".npmrc"
+@jsr:registry=https://npm-jsr-mirror.example.com
+```
 
 ## Pointing at a private registry
 
