@@ -4,7 +4,7 @@ description: "Temporary approvals, effective machine floor, managed policy, and 
 ---
 
 ```bash
-lpm security <unlock|lock|status|repair>
+lpm security <unlock|lock|status|protect|repair>
 ```
 
 LPM treats some security-lowering requests as guarded operations. Examples:
@@ -23,6 +23,7 @@ LPM treats some security-lowering requests as guarded operations. Examples:
 - `unlock` creates a short-lived approval for one guarded weakening. Manual `unlock` defaults to the machine-global target unless you pass `--project`.
 - `lock` revokes one active temporary unlock. Manual `lock` also defaults to the machine-global target unless you pass `--project`.
 - `status` shows the effective security floor, active runtime overrides, and whichever unlock scope you asked to inspect. `status` still defaults to the current project.
+- `protect` installs, removes, or inspects OS-managed local protection.
 - `repair` quarantines signed local security-state files that can no longer be verified.
 
 ## Examples
@@ -43,6 +44,11 @@ lpm security status --project /path/to/repo
 lpm security status --global
 lpm security status --json
 
+lpm security protect status
+lpm security protect enable
+lpm security protect enable --firewall monitor
+lpm security protect disable
+
 lpm security repair
 lpm security repair --json
 ```
@@ -54,6 +60,7 @@ lpm security repair --json
 | `lpm security unlock <scope>` | Create a temporary approval for one guarded weakening, defaulting to the global trust surface               |
 | `lpm security lock <scope>`   | Revoke one active temporary approval, defaulting to the global trust surface                                |
 | `lpm security status`         | Print the effective floor, runtime overrides, source attribution, and active unlocks for the selected scope |
+| `lpm security protect`        | Manage OS-protected local npm firewall policy for this machine                                             |
 | `lpm security repair`         | Quarantine signed local security state that fails verification                                             |
 
 ## Flag Reference
@@ -71,6 +78,9 @@ lpm security repair --json
 | `lock` | `--package <PKG>` | Match unlocks created with exactly these package filters. Repeatable. Rejected with `all` and `default`. |
 | `status` | `--project <PATH>` | Show project security state for that root. Defaults to the current directory. |
 | `status` | `--global` | Show the global trust surface instead of project state. |
+| `protect status` | (none) | Show whether managed npm firewall protection is active. |
+| `protect enable` | `--firewall <monitor\|enforce>` | Install or update managed npm firewall protection. Defaults to `enforce`. |
+| `protect disable` | (none) | Remove the managed npm firewall protection entry. Other managed-policy controls are preserved. |
 | `repair` | (none) | Quarantine unverifiable signed local security state. |
 
 Plus the [global flags](/docs/commands#global-flags). Use global `--json` for structured output.
@@ -219,6 +229,49 @@ With `--json`, the envelope looks like:
 
 The JSON field name stays `project_root` for envelope stability even under `--global`; in that mode it points at the canonical global trust root.
 
+## `protect`
+
+```bash
+lpm security protect status
+lpm security protect enable [--firewall enforce]
+lpm security protect disable
+```
+
+`protect` manages the npm firewall entry in the OS-managed policy file. It is meant for local-agent protection: if a local LLM agent tries to run with `LPM_HOME=/tmp/clean`, the managed policy still lives outside `LPM_HOME` and keeps the firewall floor active.
+
+`enable` writes `[firewall].mode` into the managed policy path and then reloads it through the same authority checks LPM uses at runtime. The default is `--firewall enforce`; `--firewall monitor` is available for admins who want managed visibility without blocking. `off` is intentionally not accepted by `protect enable`.
+
+`disable` removes only the managed npm firewall entry. If the same managed policy file contains other controls such as `script-policy`, sandbox, Sigstore, typosquat, or release-age settings, those controls are left in place. If no enforced controls remain, the policy file is removed.
+
+This command writes an OS-protected location, so it must run with administrator authority:
+
+```text
+Unix/macOS: /etc/lpm/security-policy.toml
+Windows:    C:\ProgramData\lpm\security-policy.toml
+```
+
+With `--json`, `protect enable` and `protect disable` return:
+
+```json
+{
+  "success": true,
+  "change": "enabled",
+  "protect": {
+    "path": "/etc/lpm/security-policy.toml",
+    "active": true,
+    "firewall_mode": "enforce",
+    "managed_policy": {
+      "path": "/etc/lpm/security-policy.toml",
+      "name": "lpm local protection",
+      "source": "lpm security protect",
+      "enforced_controls": ["firewall.mode"]
+    }
+  }
+}
+```
+
+`protect status --json` omits `change` and returns the same `protect` object.
+
 ## `repair`
 
 ```bash
@@ -318,7 +371,7 @@ If the file asks for something weaker than the currently approved floor, LPM tre
 
 ## Managed machine policy
 
-Managed machines and headless CI can provide a higher-authority floor at:
+For local npm firewall protection, prefer `lpm security protect enable`; it writes the managed policy entry and validates that the runtime will trust it. Managed machines and headless CI can also provide a higher-authority floor directly at:
 
 ```text
 Unix/macOS: /etc/lpm/security-policy.toml
@@ -352,7 +405,7 @@ When this file owns a control, weaker repo or user changes do not win. They fail
 
 An enforced `[firewall].mode` floor applies to public npm package versions before LPM materializes package bytes through install, global install, `lpm fetch`, `lpm download`, or the source-package download step of `lpm add`. Private/custom registry packages and lpm.dev packages are outside the npm firewall verdict API.
 
-Use `lpm security status` to see exactly which controls are currently coming from managed policy.
+Use `lpm security protect status` to inspect the managed npm firewall protection entry, and `lpm security status` to see exactly which controls are currently coming from managed policy.
 
 ## See also
 
