@@ -5,7 +5,7 @@ description: "Configure firewall.lpm.dev verdict checks, monitor mode, enforceme
 
 The npm firewall checks selected public npm package versions with [firewall.lpm.dev](https://firewall.lpm.dev) before LPM materializes package bytes. Metadata and tarballs still come from the normal npm registry path; the firewall request only asks for a package-version verdict.
 
-The hosted verdict service is an LPM Pro/org feature. Active modes send LPM auth, so run `lpm login` before enabling it.
+The hosted verdict service is an LPM Pro/org feature. Active modes send LPM auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI.
 
 ## Quickstart
 
@@ -16,6 +16,12 @@ lpm config firewall --set enforce  # block according to the recommended policy p
 ```
 
 `off` is the default. `monitor` prints verdicts and lets installs continue. `enforce` blocks packages whose effective firewall action is `block`. The legacy string `report` is still accepted as an alias for `monitor`, but new config should use `monitor`.
+
+For guided setup, run the wizard without `--set`:
+
+```bash
+lpm config firewall
+```
 
 ## What gets checked
 
@@ -39,9 +45,87 @@ Private/custom registry packages and lpm.dev packages are not sent to the npm fi
 
 When a human-output materialization command has eligible packages to check, its progress line shows `🔥 LPM Firewall active`.
 
+## CI usage
+
+Firewall checks run for `lpm install`, `lpm ci`, `lpm fetch`, `lpm download`, and the source-package download step of `lpm add`. Because the verdict check calls firewall.lpm.dev, an active firewall check cannot run under `--offline`.
+
+Static-token CI can enable the firewall for one command with `LPM_NPM_FIREWALL`:
+
+```yaml
+- run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+  env:
+    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
+```
+
+OIDC-capable CI can avoid storing `LPM_TOKEN`. When firewall mode is active and no existing bearer or refreshable stored session is available, LPM exchanges a registry-audience OIDC token for a short-lived LPM token before calling the verdict API. If `LPM_TOKEN` or stored auth is already available, the OIDC exchange is skipped.
+
+```yaml title="GitHub Actions"
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  install:
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @lpm-registry/cli
+      - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+```
+
+```yaml title="GitLab CI"
+install:
+  id_tokens:
+    LPM_OIDC_TOKEN:
+      aud: https://lpm.dev
+  script:
+    - npm install -g @lpm-registry/cli
+    - LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+```
+
+For offline replay workflows, run the firewall during the online fetch step instead:
+
+```yaml
+- run: LPM_NPM_FIREWALL=enforce lpm fetch
+- run: lpm ci --offline --strict-integrity
+```
+
 ## Policy groups
 
 LPM receives a default verdict from firewall.lpm.dev, then sends your configured policy profile with the request. The registry evaluates the profile server-side and returns the user-effective action for each decision.
+
+Choosing `enforce` in the interactive wizard opens a single policy review screen. Press Enter to accept the recommended profile, or use the arrow keys to change individual groups before saving.
+
+```text title="Interactive policy review"
+  current: enforce
+◇  How should LPM handle firewall verdicts for npm packages?
+│  enforce
+│
+◆  Review npm firewall enforcement policy
+│  Use ↑/↓ to move, ←/→ to change, Enter to save, Esc to cancel.
+│
+│  › Trusted public malicious advisories
+│    OSV / OpenSSF / GHSA
+│    ● Block  ○ Warn only  ○ Allow
+│
+│    LPM AI-confirmed malware
+│    Credential/data exfiltration, RCE, remote payload execution, persistence, dependency confusion
+│    ● Block  ○ Warn only  ○ Allow
+│
+│    LPM AI-agent control-surface policy
+│    Silent install-lifecycle writes into foreign or broad AI-agent control surfaces
+│    ● Block  ○ Warn only  ○ Allow
+│
+│    Critical vulnerabilities
+│    Legitimate package risk without malicious author intent
+│    ○ Block  ● Warn only  ○ Allow
+│
+│    Static-only suspicious signals
+│    No AI or trusted advisory confirmation yet
+│    ● Warn only  ○ Allow
+└
+```
+
+The equivalent config lives in `~/.lpm/config.toml`:
 
 ```toml title="~/.lpm/config.toml"
 [firewall]
@@ -60,17 +144,16 @@ static_only_suspicious = "warn"
 | `trusted_public_malicious_advisories` | `block` | `allow`, `warn`, `block` | Public malicious-package advisories from OSV/OpenSSF/GHSA. LPM-owned decisions are not included in this group. |
 | `lpm_ai_confirmed_malware` | `block` | `allow`, `warn`, `block` | LPM AI-confirmed malware behavior such as credential or data exfiltration, remote payload execution, persistence/destructive behavior, dependency confusion, and classic malware. |
 | `lpm_ai_agent_control_surface` | `block` | `allow`, `warn`, `block` | LPM policy blocks for silent install-lifecycle writes into foreign or broad AI-agent control surfaces. This is a dangerous-capability policy, not necessarily a malware-intent finding. |
-| `critical_vulnerability` | `warn` | `allow`, `warn`, `block` | Critical vulnerability advisories. The wizard offers warn/allow for this warn-default group; manual config can still choose `block`. |
-| `static_only_suspicious` | `warn` | `allow`, `warn`, `block` | Suspicious static signals that LPM has not confirmed with AI or trusted public intel. The wizard offers warn/allow for this warn-default group; manual config can still choose `block`. |
+| `critical_vulnerability` | `warn` | `allow`, `warn`, `block` | Critical vulnerability advisories. The wizard offers block, warn, or allow for this warn-default group. |
+| `static_only_suspicious` | `warn` | `allow`, `warn`, `block` | Suspicious static signals that LPM has not confirmed with AI or trusted public intel. The wizard normally offers warn or allow; if hand-edited config already uses `block`, the review screen preserves it. |
 
 Use `lpm config firewall` in an interactive terminal to choose:
 
 - Off
 - Monitor only
-- Enforce recommended
-- Customize enforcement
+- Enforce, then review the policy profile
 
-The customized path asks each policy group separately and writes the table above. The wizard only offers `warn only` or `allow` for the two warn-default groups, while hand-edited config accepts `allow`, `warn`, or `block` for every group.
+The wizard writes the policy table only when the chosen profile differs from the default profile, or when an existing policy table needs to be updated.
 
 ## AI-agent control-surface policy
 
@@ -107,6 +190,7 @@ Older firewall records can omit `policy` and `authority`. Those records fall bac
 ## See also
 
 - [`lpm config`](/docs/infra/config#npm-firewall) — interactive and non-interactive setup
+- [CI/CD setup](/docs/guides/ci-cd-setup#npm-firewall-in-ci) — token and OIDC examples
 - [`~/.lpm/config.toml`](/docs/reference/config-toml#npm-firewall-policy-profile) — exact config keys
 - [`lpm install`](/docs/packages/install#npm-firewall) — install-time behavior
 - [Public firewall policy](https://firewall.lpm.dev/policy)
