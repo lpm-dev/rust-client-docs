@@ -90,7 +90,60 @@ lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-
 
 If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM writes it.
 
-## 5. Gating
+## 5. npm firewall in CI
+
+The npm firewall is a network verdict check, so the command that runs it cannot be `--offline`. Use `LPM_NPM_FIREWALL=monitor` or `LPM_NPM_FIREWALL=enforce` for a per-job policy, or run `lpm config firewall --set enforce` on runners where the home directory is intentionally persistent.
+
+### Static token
+
+```yaml
+- run: npm install -g @lpm-registry/cli
+- run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+  env:
+    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
+```
+
+`LPM_TOKEN` is used for the firewall verdict API and any lpm.dev package auth in the same run.
+
+### OIDC
+
+On GitHub Actions, the same `permissions: id-token: write` setting used by `lpm setup ci npmrc --oidc` is enough for firewall checks:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  install:
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @lpm-registry/cli
+      - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+```
+
+When active firewall checks need auth and no `LPM_TOKEN` or stored LPM auth is already available, LPM exchanges the CI OIDC token for a short-lived LPM token. If `LPM_TOKEN` or stored auth is available, there is no OIDC exchange.
+
+On GitLab CI, mint `LPM_OIDC_TOKEN` with audience `https://lpm.dev`:
+
+```yaml
+install:
+  id_tokens:
+    LPM_OIDC_TOKEN:
+      aud: https://lpm.dev
+  script:
+    - npm install -g @lpm-registry/cli
+    - LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
+```
+
+If the workflow deliberately separates an online store warm from an offline replay, put the firewall on the online step and keep the replay offline:
+
+```yaml
+- run: LPM_NPM_FIREWALL=enforce lpm fetch
+- run: lpm ci --offline --strict-integrity
+```
+
+## 6. Gating
 
 The standard gate sequence:
 
@@ -121,7 +174,7 @@ For compliance gates, use [`lpm licenses`](/docs/packages/licenses):
 - run: lpm licenses --deny GPL-3.0 --deny AGPL-3.0
 ```
 
-## 6. Caching `~/.lpm/`
+## 7. Caching `~/.lpm/`
 
 Cache the content LPM can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM recreates from the lockfile and store.
 
@@ -164,7 +217,7 @@ lpm cache clean dlx
 lpm cache prune --apply
 ```
 
-## 7. Publishing from CI
+## 8. Publishing from CI
 
 ```yaml
 - run: lpm setup ci npmrc --oidc
@@ -187,6 +240,7 @@ For multi-registry publishing in one job, configure `lpm.json > publish.registri
 
 - **`@latest` in CI.** Don't pin the binary to floating tags. Reproducible builds need a fixed toolchain.
 - **`lpm install` without `--offline` in CI.** Lets lockfile drift slip through unnoticed.
+- **Combining active npm firewall with `--offline`.** Firewall verdicts need network access. Run the firewall-protected install online, or firewall-gate an online `lpm fetch` before the offline replay.
 - **Forgetting `permissions: id-token: write`** for OIDC in GitHub Actions.
 - **Caching `node_modules/` instead of `~/.lpm/store/`.** The store is the right cache key — `node_modules` is a layout, the store is content.
 - **Skipping `lpm audit` to "save time".** It's a few hundred ms; the time-not-paid is paid back on the next CVE.
