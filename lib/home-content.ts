@@ -17,7 +17,7 @@ export type Feature = {
 export const FEATURES: Feature[] = [
   {
     title: "Fast install",
-    body: "Cold installs land in 880ms — npm takes 6.8 seconds. Warm installs in 23ms. Content-addressable store, clonefile on macOS, zero-parse mmap'd lockfile.",
+    body: "Cold VitePress installs land in 2.9s vs npm at 17.4s. Warm installs in 387ms, up-to-date checks in 14ms.",
     cmd: "$ lpm install",
     href: "/docs/packages/install",
   },
@@ -68,7 +68,7 @@ export const MORE: Feature[] = [
   },
   {
     title: "No npx tax",
-    body: "lpm fmt in 13ms vs npx biome at 264ms — 20× faster. Lint, fmt, test, runner all native and lazy-downloaded.",
+    body: "lpm fmt in 3ms vs npx biome at 269ms. lpm lint in 3ms vs npx oxlint at 249ms. Native runners, no per-invocation npx resolution.",
     cmd: "$ lpm fmt",
     href: "/docs/dev/fmt",
   },
