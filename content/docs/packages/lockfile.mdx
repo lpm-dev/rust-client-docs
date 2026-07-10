@@ -42,13 +42,13 @@ After `lpm install`, two further files exist:
 
 The install pipeline has a tiered fast-path hierarchy. Each tier skips more work than the next.
 
-### Tier 1: Up-to-date install (~6 ms)
+### Tier 1: Up-to-date install (~14 ms)
 
 If the install-hash file (`.lpm/install-hash`) matches the current state of `package.json`, the authoritative lockfile, and the resolved linker mode, install exits immediately. Nothing to do.
 
-This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in single-digit milliseconds.
+This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in a few milliseconds on small projects and around 14 ms on the VitePress docs benchmark fixture.
 
-### Tier 2: Warm install (~23 ms)
+### Tier 2: Warm install (~387 ms)
 
 If `lpm.lock` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the [global content-addressable store](/docs/packages/content-addressable-store).
 
@@ -72,7 +72,7 @@ lpm install --offline --strict-integrity
 
 If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, writes a fresh lockfile.
 
-This is the slow path, but "slow" is relative — cold install on a 266-package fixture is **880 ms** in our benchmarks (vs npm 6,784 ms / pnpm 1,532 ms).
+This is the slow path, but "slow" is relative — cold install on the 535-package VitePress docs fixture is **2,945 ms** in our benchmarks (vs npm 17,354 ms / pnpm 6,125 ms).
 
 ## Lockfile-version
 
