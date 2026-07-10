@@ -92,6 +92,27 @@ export const MORE: Feature[] = [
   },
 ];
 
+export const GUARDRAILS: Feature[] = [
+  {
+    title: "Firewall for npm",
+    body: "Check public npm packages against firewall verdicts before tarballs are downloaded, with monitor mode for visibility and enforce mode for blocking.",
+    cmd: "$ lpm config firewall",
+    href: "/docs/guides/firewall",
+  },
+  {
+    title: "Guarded settings",
+    body: "Treat weaker flags, repo config, and agent-driven changes as proposals until an explicit unlock or approved machine policy says yes.",
+    cmd: "$ lpm security status",
+    href: "/docs/infra/security",
+  },
+  {
+    title: "Behavior queries",
+    body: "Search the installed tree with CSS-like selectors for eval, network, scripts, and vulnerabilities, then fail CI on matches.",
+    cmd: "$ lpm query :critical",
+    href: "/docs/packages/query",
+  },
+];
+
 export type FootLink = {
   label: string;
   href: string;

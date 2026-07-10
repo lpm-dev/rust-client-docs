@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { GET } from "../../app/llms.mdx/home/route";
-import { FEATURES, INSTALL_CMD, MORE } from "../../lib/home-content";
+import {
+  FEATURES,
+  GUARDRAILS,
+  INSTALL_CMD,
+  MORE,
+} from "../../lib/home-content";
 import { appName, siteUrl } from "../../lib/shared";
 
 describe("markdown homepage", () => {
@@ -13,7 +18,7 @@ describe("markdown homepage", () => {
     const body = await response.text();
     expect(body).toContain(`# ${appName} (${siteUrl})`);
     expect(body).toContain(INSTALL_CMD);
-    for (const feature of [...FEATURES, ...MORE]) {
+    for (const feature of [...FEATURES, ...MORE, ...GUARDRAILS]) {
       expect(body).toContain(`### ${feature.title}`);
       expect(body).toContain(feature.body);
     }
@@ -22,7 +27,7 @@ describe("markdown homepage", () => {
   it("links every feature to its absolute docs URL", async () => {
     const body = await GET().text();
 
-    for (const feature of [...FEATURES, ...MORE]) {
+    for (const feature of [...FEATURES, ...MORE, ...GUARDRAILS]) {
       expect(body).toContain(`(${siteUrl}${feature.href})`);
     }
   });

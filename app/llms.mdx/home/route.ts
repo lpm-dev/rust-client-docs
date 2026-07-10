@@ -2,6 +2,7 @@ import {
   FEATURES,
   type Feature,
   FOOTER,
+  GUARDRAILS,
   HERO_SUB,
   INSTALL_CMD,
   MORE,
@@ -59,6 +60,10 @@ ${featureList(FEATURES)}
 ## Beyond install
 
 ${featureList(MORE)}
+
+## Even more
+
+${featureList(GUARDRAILS)}
 
 ## Links
 

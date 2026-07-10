@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   FEATURES,
   type Feature,
+  GUARDRAILS,
   HERO_SUB,
   INSTALL_CMD,
   MORE,
@@ -120,6 +121,19 @@ export default function HomePage() {
             </div>
           </Reveal>
           <FeatureGrid items={MORE} start={7} />
+        </section>
+
+        <section id="guardrails" className="section">
+          <Reveal className="sec-head">
+            <div>
+              <div className="sec-label">Even more</div>
+              <h2>
+                Stay in control.{" "}
+                <span className="light">Before anything runs.</span>
+              </h2>
+            </div>
+          </Reveal>
+          <FeatureGrid items={GUARDRAILS} start={13} />
         </section>
 
         <Reveal as="section" id="install" className="section install">
