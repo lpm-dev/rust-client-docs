@@ -119,7 +119,8 @@ An artifact is cacheable only when all of these are true:
 - The package uses the v2 content-addressable store.
 - The lifecycle command belongs to a recognized native-build family:
   `node-gyp`, `node-gyp-build`, `prebuild-install`, esbuild's `install.js`, or
-  sharp's installer.
+  sharp's installer. Recognition is based on shell command position and package
+  identity; mentions in comments or unrelated arguments do not qualify.
 - The effective sandbox posture is fully strict and outbound network access is
   denied.
 - The project did not widen sandbox read/write paths or lifecycle
@@ -129,7 +130,8 @@ An artifact is cacheable only when all of these are true:
   cacheable input boundary.
 
 During an eligible miss, persistent writes are narrowed to the package tree;
-temporary writes use a private per-build directory. The dependency graph,
+temporary writes use a stable private directory inside the locked graph entry,
+so its path is deterministic for equivalent builds. The dependency graph,
 system toolchain, and local Node header cache remain readable. User npm caches,
 project-wide write roots, and the broader default-sandbox write set are not
 part of the cacheable build.
@@ -142,7 +144,8 @@ normal rebuild path and reports the package as bypassed in JSON metrics.
 The build key includes:
 
 - package tarball integrity and v2 graph identity
-- the installed dependency graph
+- canonical dependency edges, aliases, peer targets, source identities, and
+  patch fingerprints across the installed graph
 - ordered lifecycle phases and exact command bodies
 - OS, architecture, libc, and CPU-feature compatibility
 - Node version, modules ABI, N-API, V8 version, and runtime executable identity
@@ -163,10 +166,10 @@ the artifact for the resulting key.
 ### Measured performance
 
 On macOS arm64 with Node 22.22.1 and the esbuild native fixture (10 release
-samples), a local hit completed in **29.45 ms median** versus **114.99 ms** with
-the cache disabled: **3.90× faster** and **74.39% lower wall time**. A fresh
-project sharing the warm LPM store completed in **29.19 ms median** (**3.94×
-faster**, **74.62% lower**). The miss median was 134.58 ms and the artifact used
+samples), a local hit completed in **29.66 ms median** versus **112.35 ms** with
+the cache disabled: **3.79× faster** and **73.60% lower wall time**. A fresh
+project sharing the warm LPM store completed in **29.19 ms median** (**3.85×
+faster**, **74.02% lower**). The miss median was 137.53 ms and the artifact used
 134,444 bytes. The benchmark and raw methodology live in the rust-client
 repository under `bench/scripts/native-build-cache-benchmark.mjs` and
 `bench/perf-results/native-build-cache-20260712-macos-arm64.*`.
