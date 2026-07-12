@@ -118,9 +118,11 @@ An artifact is cacheable only when all of these are true:
 
 - The package uses the v2 content-addressable store.
 - The lifecycle command belongs to a recognized native-build family:
-  `node-gyp`, `node-gyp-build`, `prebuild-install`, esbuild's `install.js`, or
-  sharp's installer. Recognition is based on shell command position and package
-  identity; mentions in comments or unrelated arguments do not qualify.
+  `node-gyp`, `node-gyp-build`, `node-gyp-build-optional-packages`,
+  `prebuild-install`, `electron-rebuild`, `cmake-js`, esbuild's `install.js`,
+  or sharp's installer. Recognition is based on shell command position and
+  package identity; mentions in comments or unrelated arguments do not
+  qualify.
 - The effective sandbox posture is fully strict and outbound network access is
   denied.
 - The project did not widen sandbox read/write paths or lifecycle
@@ -150,10 +152,17 @@ The build key includes:
 - OS, architecture, libc, and CPU-feature compatibility
 - Node version, modules ABI, N-API, V8 version, and runtime executable identity
 - strict sandbox posture and allowed-input policy
-- build-relevant environment such as `CC`, `CFLAGS`, target architecture, and
-  `npm_config_*` build controls
-- compiler, SDK, and Node-header fingerprints when the command can invoke
-  `node-gyp`
+- the complete environment exposed to the lifecycle script, including custom
+  variables plus LPM's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`, and
+  `TEMP` values
+- compiler, linker, SDK, CMake, Ninja, invoked build-executable, operating
+  system, dynamic-linker cache, and Node-header fingerprints when discoverable
+
+Because absolute lifecycle paths are observable inputs, reuse across separate
+checkouts requires those paths to match. This is normally true for repeated CI
+runs that restore the LPM store into the same workspace path; a differently
+located checkout receives a different key rather than reusing an artifact that
+could contain the previous path.
 
 Changing any keyed input invalidates both the artifact and the package's local
 `.lpm-built` state. LPM rematerializes the pristine package object before the
@@ -166,12 +175,13 @@ the artifact for the resulting key.
 ### Measured performance
 
 On macOS arm64 with Node 22.22.1 and the esbuild native fixture (10 release
-samples), a local hit completed in **29.66 ms median** versus **112.35 ms** with
-the cache disabled: **3.79× faster** and **73.60% lower wall time**. A fresh
-project sharing the warm LPM store completed in **29.19 ms median** (**3.85×
-faster**, **74.02% lower**). The miss median was 137.53 ms and the artifact used
-134,444 bytes. The benchmark and raw methodology live in the rust-client
-repository under `bench/scripts/native-build-cache-benchmark.mjs` and
+samples), a local hit completed in **32.33 ms median** versus a **138.03 ms**
+strict cache miss: **4.27× faster** and **76.58% lower wall time**. Recreating a
+CI checkout at the same stable path while retaining the warm LPM store
+completed in **29.50 ms median** (**4.68× faster**, **78.63% lower**). Every
+measured scenario used the same strict sandbox, and each artifact used 134,444
+bytes. The benchmark and raw methodology live in the rust-client repository
+under `bench/scripts/native-build-cache-benchmark.mjs` and
 `bench/perf-results/native-build-cache-20260712-macos-arm64.*`.
 
 ### Project secret files

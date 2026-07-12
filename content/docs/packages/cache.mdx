@@ -53,7 +53,12 @@ Human output ends with an elapsed summary; `--json` keeps the machine-readable r
 
 The tombstone sweep runs even when the orphan walk is skipped (registry missing or corrupt — see [Safety rails](#safety-rails)), so `lpm uninstall -g`'s deferred cleanup always has a way to reach disk.
 
-If the project registry is corrupt, prune degrades to tombstone-only mode and still exits zero unless tombstone inspection or the `--apply` tombstone sweep fails. In JSON mode, `registry_corrupt: true` and `registry_corrupt_reason` carry the registry problem; `success` becomes `false` only for `tombstone_count_error` or `tombstone_sweep_error`.
+If the project registry is corrupt, prune disables only the project-reachability
+walk. It still plans or applies crash recovery and age-based eviction for
+compatibility islands and native build artifacts, cleans their orphaned lock
+files, and sweeps global-install tombstones. In JSON mode,
+`registry_corrupt: true` and `registry_corrupt_reason` carry the registry
+problem; tombstone inspection and sweep failures are reported separately.
 
 ### How it decides what to keep
 
@@ -79,7 +84,7 @@ This mode is for scripted cleanup of a single project's footprint. **Default mod
 ### Safety rails
 
 - **Dry-run by default.** No deletions without `--apply`.
-- **Tombstone-only degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips orphan removal in this case, runs the tombstone sweep regardless, and prints a warning naming the cause. For corrupt registries the warning includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
+- **Reachability-degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify link/object orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips only link/object orphan removal. Reachability-independent compatibility-island and native-build-artifact cleanup, orphan lock cleanup, and the tombstone sweep still run. LPM prints a warning naming the cause; for corrupt registries it includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
 - **Canonicalized paths.** The registry stores fully resolved absolute paths, so symlink-cwd quirks don't accumulate aliased entries.
 - **Atomic registry rewrites.** Updates go through `<path>.tmp.<pid>` → rename. No partial-write corruption.
 - **In-flight installs are respected.** Prune coordinates with concurrent `lpm install`, `lpm audit`, and `lpm query` invocations through the store reader/writer lock — dry-run takes the shared half, `--apply` takes the exclusive half. See [`lpm store` — Locking model](/docs/infra/store#locking-model).
@@ -124,7 +129,7 @@ lpm cache prune --apply --json    # post-apply report (same shape, mutations rec
 | `compat_islands_total` / `_orphaned[]` | Cached compatibility-island results; `_orphaned[]` lists incomplete or stale LRU islands |
 | `build_artifacts_total` / `_orphaned[]` | Native lifecycle-build artifact results; `_orphaned[]` lists incomplete or stale LRU artifacts |
 | `bytes_freed_or_eligible` | Bytes the orphan walk would free (dry-run) or did free (apply) |
-| `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Degraded-mode flags — when either is true, orphan paths arrays are empty (walk was skipped) and tombstones are the only mutation reported |
+| `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Reachability-degraded flags — when either is true, link/object orphan arrays are empty because that walk was skipped; compatibility-island, native-build-artifact, lock, and tombstone cleanup still operate independently |
 | `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |
 
 `lpm cache clean` emits a parallel `{success, cleaned[], total_bytes_freed, total_freed}` envelope per subcategory.
