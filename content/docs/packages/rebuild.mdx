@@ -157,12 +157,27 @@ The build key includes:
   `TEMP` values
 - compiler, linker, SDK, CMake, Ninja, invoked build-executable, operating
   system, dynamic-linker cache, and Node-header fingerprints when discoverable
+- compiler sysroot/search configuration, pkg-config databases, and
+  discoverable OS package-manager, Homebrew, macOS receipt, and Xcode state
 
 Because absolute lifecycle paths are observable inputs, reuse across separate
 checkouts requires those paths to match. This is normally true for repeated CI
 runs that restore the LPM store into the same workspace path; a differently
 located checkout receives a different key rather than reusing an artifact that
-could contain the previous path.
+could contain the previous path. The complete environment is also exact: CI
+values such as `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER`, and
+`GITHUB_RUN_ATTEMPT` intentionally invalidate reuse unless the workflow
+normalizes them before invoking LPM.
+
+The host fingerprint is conservative, not a claim that native builds are
+fully hermetic. It detects normal compiler, SDK, package-manager, header-cache,
+and pkg-config changes without hashing every readable byte under `/usr` or a
+macOS SDK on every lookup. An administrator can still replace an unmanaged
+system header or library in place without updating discoverable package state.
+After such a manual host mutation, use
+`lpm rebuild --strict-sandbox --all --force` to rebuild from pristine package
+contents; reference-aware cache pruning can remove the older artifact
+afterward.
 
 Changing any keyed input invalidates both the artifact and the package's local
 `.lpm-built` state. LPM rematerializes the pristine package object before the
