@@ -68,7 +68,7 @@ export const MORE: Feature[] = [
   },
   {
     title: "No npx tax",
-    body: "lpm fmt in 3ms vs npx biome at 269ms. lpm lint in 3ms vs npx oxlint at 249ms. Native runners, no per-invocation npx resolution.",
+    body: "lpm fmt in 3ms vs npx biome at 340ms. lpm lint in 3ms vs npx oxlint at 273ms. Native runners, no per-invocation npx resolution.",
     cmd: "$ lpm fmt",
     href: "/docs/dev/fmt",
   },
