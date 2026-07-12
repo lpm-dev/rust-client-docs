@@ -160,6 +160,17 @@ The build key includes:
 - compiler sysroot/search configuration, pkg-config databases, and
   discoverable OS package-manager, Homebrew, macOS receipt, and Xcode state
 
+The complete host-toolchain fingerprint is persisted under
+`~/.lpm/cache/metadata/native-toolchains/v1/`. On later rebuilds, LPM first
+validates compiler identities, package-database generations, pkg-config
+directories, SDK selection, Homebrew/macOS receipts, Rust toolchain selection,
+and the selected Node header cache. An unchanged snapshot avoids rerunning the
+compiler and package-manager probes. Changed, expired, oversized, or malformed
+state fails closed to the complete fingerprint pass; snapshots have a one-hour
+maximum lifetime and `lpm cache clean metadata` removes them. Project-visible
+executables are still fingerprinted for every key and are never executed by
+the host probe path.
+
 Because absolute lifecycle paths are observable inputs, reuse across separate
 checkouts requires those paths to match. This is normally true for repeated CI
 runs that restore the LPM store into the same workspace path; a differently
@@ -189,15 +200,18 @@ the artifact for the resulting key.
 
 ### Measured performance
 
-On macOS arm64 with Node 22.22.1 and the esbuild native fixture (10 release
-samples), a local hit completed in **32.33 ms median** versus a **138.03 ms**
-strict cache miss: **4.27× faster** and **76.58% lower wall time**. Recreating a
-CI checkout at the same stable path while retaining the warm LPM store
-completed in **29.50 ms median** (**4.68× faster**, **78.63% lower**). Every
-measured scenario used the same strict sandbox, and each artifact used 134,444
-bytes. The benchmark and raw methodology live in the rust-client repository
-under `bench/scripts/native-build-cache-benchmark.mjs` and
-`bench/perf-results/native-build-cache-20260712-macos-arm64.*`.
+On macOS arm64 with Node 22.22.1 and the sharp `NativeToolchain` fixture (10
+release samples), a local hit completed in **59.07 ms median** versus a
+**173.10 ms** strict artifact miss: **2.93× faster** and **65.88% lower wall
+time**. Recreating a CI checkout at the same stable path while retaining the
+warm LPM store completed in **58.49 ms median** (**2.96× faster**, **66.21%
+lower**). Warm host-key derivation took 15–24 ms. The first complete host
+fingerprint took 126 ms before its validated snapshot existed, so these
+steady-state numbers do not hide the cold security cost. Every scenario used
+the same strict sandbox, and the median retained artifact used 503,469 bytes.
+The benchmark and raw methodology live in the rust-client repository under
+`bench/scripts/native-build-cache-benchmark.mjs` and
+`bench/perf-results/native-build-cache-20260712-macos-arm64-native-toolchain.*`.
 
 ### Project secret files
 
