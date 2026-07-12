@@ -9,6 +9,25 @@ lpm store <action>
 
 Maintenance commands for the global content-addressable store at `~/.lpm/store/`. Every `lpm install` deduplicates packages into this store and then links them into project `node_modules` trees — so the store is shared across every project on your machine.
 
+The v2 store also contains native lifecycle-build artifacts at
+`~/.lpm/store/v2/builds/<build-key>/`. Strict macOS and Linux rebuilds can
+restore these package trees across reinstalls when every keyed input matches.
+That includes the absolute checkout path and complete lifecycle environment,
+so a differently located project or a CI run with changing values such as
+`GITHUB_RUN_ID` receives a different key unless the caller normalizes those
+inputs. Per-key advisory locks under `~/.lpm/store/v2/build-locks/` prevent
+concurrent invocations from performing the same native build twice, while
+`~/.lpm/store/v2/build-entry-locks/` serializes mutations of each shared graph
+entry across different build keys. See
+[`lpm rebuild` — Native build cache](/docs/packages/rebuild#native-build-cache).
+
+The expensive host-toolchain portion of those keys has a validated snapshot
+under `~/.lpm/cache/metadata/native-toolchains/v1/`. It is metadata rather than
+a build artifact: `lpm cache clean metadata` removes it, while `lpm store
+clean` removes native build artifacts. LPM recomputes the complete host
+fingerprint when the snapshot is missing, changed, invalid, or older than one
+hour.
+
 For reachability-aware orphan cleanup, use [`lpm cache prune`](/docs/packages/cache). `lpm store` covers integrity, the store path, and the blunt full wipe.
 
 ## Examples
@@ -41,6 +60,14 @@ Surface:
 
 - **Shared (multi-reader):** `lpm install`, `lpm patch`, `lpm rebuild`, `lpm approve-scripts`, `lpm store verify`, and `lpm cache prune` (dry-run) always acquire the shared lock for the duration of the command. `lpm audit` and `lpm query` acquire it only when the project has LPM-store-backed packages, and they narrow the lock to just the store-touching slice (audit's behavioral-analysis pass; query's inventory load + lifecycle/build-state loop) — discovery, registry calls, and OSV calls run unlocked. Multiple readers run concurrently — two `lpm install` invocations in different shells share without contention.
 - **Exclusive (single-writer):** `lpm store clean` and `lpm cache prune --apply`. They take the queue baton shared (signaling "writer queued"), then the gate exclusive (blocking new reader admissions), then wait for in-flight readers to release the data lock.
+
+Native build-cache work adds two narrower locks beneath the shared store lock.
+`build-entry-locks/<graph-key>.lock` is acquired first and serializes every
+restore, rematerialization, lifecycle command, marker write, and publication
+that mutates one shared link-package tree. Different graph entries can still
+build concurrently. Inside that critical section,
+`build-locks/<build-key>.lock` deduplicates identical artifacts; a waiter checks
+the artifact again after acquiring the lock before deciding whether to execute.
 
 **Writer preference.** Once a writer is queued, no new reader is admitted until every queued writer has run. The protocol holds even with multiple writers in line — W2 stays at the head of the queue across W1's release boundary because W2's queue-shared keeps the readers' probes blocked. Bias is intentional: writes are rare; install/query is common.
 
