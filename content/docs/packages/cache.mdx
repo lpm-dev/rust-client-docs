@@ -59,6 +59,14 @@ If the project registry is corrupt, prune degrades to tombstone-only mode and st
 
 LPM tracks every project it has installed into in a registry at `~/.lpm/known-projects.json`. For each registered project, prune walks the project's `node_modules/` symlinks back into `~/.lpm/store/v2/links/<graph-key>/`, then BFS through each link entry's sidecar metadata to mark every reachable graph-key. Anything not marked is an orphan. Object directories under `~/.lpm/store/v2/objects/` are pruned the same way — by collecting every surviving link entry's object reference and removing the rest. On macOS, cached compatibility islands under `~/.lpm/store/v2/compat/` are pruned by crash recovery and LRU age: incomplete islands are eligible immediately, and complete islands are eligible only when their last-used sentinel is older than `--max-age`.
 
+Native lifecycle-build artifacts under `~/.lpm/store/v2/builds/` use the same
+crash-recovery and LRU rule on macOS and Linux. An incomplete publication is
+eligible immediately. A complete artifact is kept unless its last-used
+sentinel is older than `--max-age`. This cleanup is independent of project
+reachability, so it remains safe and active when the project registry is
+missing or corrupt. `--apply` also removes advisory build-key lock files that
+no longer have an artifact.
+
 Stale registry entries (projects that have moved or been deleted) are dropped silently during the walk. The `--max-age` filter operates on each link entry's `last_referenced_at` timestamp (recorded in the entry's sidecar at first population, refreshed by `lpm install` cache hits) — not on the project registry's `last_seen`, which is set at install-time only.
 
 ### Manual repair: `--project <path>`
@@ -113,6 +121,7 @@ lpm cache prune --apply --json    # post-apply report (same shape, mutations rec
 | `link_entries_total` / `_reachable` / `_orphaned[]` | Link-entry walk results; `_orphaned[]` is a list of paths |
 | `object_entries_total` / `_reachable` / `_orphaned[]` | Object-entry walk results |
 | `compat_islands_total` / `_orphaned[]` | Cached compatibility-island results; `_orphaned[]` lists incomplete or stale LRU islands |
+| `build_artifacts_total` / `_orphaned[]` | Native lifecycle-build artifact results; `_orphaned[]` lists incomplete or stale LRU artifacts |
 | `bytes_freed_or_eligible` | Bytes the orphan walk would free (dry-run) or did free (apply) |
 | `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Degraded-mode flags — when either is true, orphan paths arrays are empty (walk was skipped) and tombstones are the only mutation reported |
 | `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |

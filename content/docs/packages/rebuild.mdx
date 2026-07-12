@@ -92,6 +92,85 @@ lpm rebuild --paranoid           # alias — same behavior
 
 Strict network denial coverage is platform-asymmetric: macOS Seatbelt denies every socket family; Linux landlock denies TCP `connect(2)`/`bind(2)` and seccomp-bpf denies direct UDP / raw / AF_PACKET / AF_NETLINK sockets; Windows uses AppContainer + Windows Filtering Platform. On platforms where strict isn't fully implementable, the sandbox refuses to start unless the `allow_degraded` config is set.
 
+## Native build cache
+
+On macOS and Linux, strict rebuilds automatically reuse successful native
+dependency builds. The first eligible build publishes the completed package
+tree under `~/.lpm/store/v2/builds/<build-key>/`; an identical reinstall can
+restore that tree instead of rerunning `node-gyp`, `prebuild-install`,
+esbuild's installer, or sharp's installer. There is no cache flag to enable.
+
+```bash
+lpm install
+lpm rebuild --strict-sandbox --all   # miss: build and publish
+
+rm -rf node_modules
+lpm install                          # pristine rematerialization
+lpm rebuild --strict-sandbox --all   # hit: restore the cached build
+```
+
+Cache lookup happens **after** normal trust and policy selection. A cached
+artifact never makes an untrusted package eligible to execute or restore.
+
+### Eligibility and isolation
+
+An artifact is cacheable only when all of these are true:
+
+- The package uses the v2 content-addressable store.
+- The lifecycle command belongs to a recognized native-build family:
+  `node-gyp`, `node-gyp-build`, `prebuild-install`, esbuild's `install.js`, or
+  sharp's installer.
+- The effective sandbox posture is fully strict and outbound network access is
+  denied.
+- The project did not widen sandbox read/write paths or lifecycle
+  capabilities.
+- The host is macOS or Linux. Windows rebuilds still run normally, but native
+  artifact reuse stays disabled until the AppContainer backend has the same
+  cacheable input boundary.
+
+During an eligible miss, persistent writes are narrowed to the package tree;
+temporary writes use a private per-build directory. The dependency graph,
+system toolchain, and local Node header cache remain readable. User npm caches,
+project-wide write roots, and the broader default-sandbox write set are not
+part of the cacheable build.
+
+If any eligibility check fails, LPM runs the lifecycle command through the
+normal rebuild path and reports the package as bypassed in JSON metrics.
+
+### Cache key and invalidation
+
+The build key includes:
+
+- package tarball integrity and v2 graph identity
+- the installed dependency graph
+- ordered lifecycle phases and exact command bodies
+- OS, architecture, libc, and CPU-feature compatibility
+- Node version, modules ABI, N-API, V8 version, and runtime executable identity
+- strict sandbox posture and allowed-input policy
+- build-relevant environment such as `CC`, `CFLAGS`, target architecture, and
+  `npm_config_*` build controls
+- compiler, SDK, and Node-header fingerprints when the command can invoke
+  `node-gyp`
+
+Changing any keyed input invalidates both the artifact and the package's local
+`.lpm-built` state. LPM rematerializes the pristine package object before the
+new command runs, so stale outputs cannot leak into the replacement artifact.
+Corrupt or incomplete artifacts are treated as misses.
+
+`--force` always bypasses lookup, rebuilds from pristine source, and replaces
+the artifact for the resulting key.
+
+### Measured performance
+
+On macOS arm64 with Node 22.22.1 and the esbuild native fixture (10 release
+samples), a local hit completed in **29.45 ms median** versus **114.99 ms** with
+the cache disabled: **3.90× faster** and **74.39% lower wall time**. A fresh
+project sharing the warm LPM store completed in **29.19 ms median** (**3.94×
+faster**, **74.62% lower**). The miss median was 134.58 ms and the artifact used
+134,444 bytes. The benchmark and raw methodology live in the rust-client
+repository under `bench/scripts/native-build-cache-benchmark.mjs` and
+`bench/perf-results/native-build-cache-20260712-macos-arm64.*`.
+
 ### Project secret files
 
 **Sandbox blocks lifecycle script reads of project secrets by default; opt in via `[sandbox] script-read-allow` if your build needs a specific secret file.**
@@ -168,7 +247,15 @@ Refuses to run **any** scripts, even trusted ones. Useful as a CI smoke test: "w
 
 ## JSON output
 
-`lpm rebuild --json --dry-run` emits a dry-run envelope with `dry_run: true` and `packages[]`, including when the set is empty. A live `lpm rebuild --json` emits `success`, `built`, and `failed`; an empty rebuild reports `success: true`, `built: 0`, `failed: 0`.
+`lpm rebuild --json --dry-run` emits a dry-run envelope with `dry_run: true` and `packages[]`, including when the set is empty. A live `lpm rebuild --json` emits `success`, `built`, `failed`, and `build_cache`; an empty rebuild reports `success: true`, `built: 0`, `failed: 0` with zeroed cache counters.
+
+`build_cache` contains `eligible`, `hits`, `misses`, `bypassed`,
+`local_state_hits`, `scripts_avoided`, `restored_bytes`, and
+`lifecycle_ms_avoided`. Its `timings_ms` object breaks out fingerprint
+preparation, keying, lookup, restore, pristine rematerialization, and
+publication time. A `hit` means an artifact was restored; a
+`local_state_hit` means the already-materialized package's keyed build marker
+still matched and no restore was needed.
 
 Errors such as a missing `lpm.lock`, a failing lifecycle script, or an explicitly requested package that is not rebuildable emit `success: false` in the top-level JSON error envelope and exit non-zero.
 
