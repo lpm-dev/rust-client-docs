@@ -132,7 +132,7 @@ export function SiteHeader() {
           ))}
           <FullSearchTrigger
             hideIfDisabled
-            className="h-8 min-w-[11rem] rounded-lg text-xs"
+            className="h-8 w-8 min-w-8 justify-center gap-0 rounded-lg p-0 ps-0 text-[0px] [&>div]:hidden sm:w-auto sm:min-w-[11rem] sm:justify-start sm:gap-2 sm:p-1.5 sm:ps-2 sm:text-xs sm:[&>div]:inline-flex"
           />
           <ThemeSwitch />
           <div ref={menuRef} className="relative">
