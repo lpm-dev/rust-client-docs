@@ -7,7 +7,7 @@ description: "Update LPM to the latest release."
 lpm self-update
 ```
 
-Checks GitHub Releases for the latest LPM version, compares against the running version, and runs the appropriate upgrade command for whichever channel you installed from. The install method is auto-detected from the executable path.
+Checks the npm registry for the latest LPM version, falling back to GitHub Releases when npm is unavailable. It compares that release with the running version and detects the installation method from the executable path.
 
 ## How it works
 
@@ -23,7 +23,7 @@ Checks GitHub Releases for the latest LPM version, compares against the running 
 | Path under a Cargo install root | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force` |
 | Anything else (standalone curl install) | Direct download of `lpm-<platform>` for `v<latest>` from GitHub Releases, replacing the running binary in place |
 
-5. Spawns the upgrade command. The current process continues; the new binary is in place for the next invocation.
+5. Apply the update according to the channel. npm, Homebrew, and Cargo installations spawn their package manager in normal output mode. Standalone installations download, verify, and replace the binary in-process. With `--json`, external channels return a plan without spawning a command, while standalone updates are still verified and applied.
 
 If the running version is already the latest, prints `Already on the latest version (<v>)` and exits cleanly.
 
@@ -42,10 +42,18 @@ GitHub API rate limit hit. Try again in 17 minutes. Set GITHUB_TOKEN or GH_TOKEN
 ```bash
 lpm self-update
 lpm self-update --refresh   # ignore the 10-minute version-lookup cache
-lpm self-update --json      # structured: current, latest, up_to_date, install_method, update_command, cache_hit
+lpm self-update --json      # structured result; external-channel updates are plan-only
 ```
 
-## Channel-specific equivalents
+Successful JSON responses always include `success`, `current`, `latest`, `up_to_date`, and `cache_hit`. Additional fields depend on the outcome:
+
+| Outcome | Additional fields |
+| --- | --- |
+| Already up to date | None |
+| Update available through npm, Homebrew, or Cargo | `install_method`, `update_command` — the command is reported but not run |
+| Standalone update applied | `install_method`, `verified`, `attestation` — no `update_command`; `attestation` contains the verified publisher, workflow, transparency-log, manifest, and asset details |
+
+## Channel-specific update paths
 
 If you'd rather drive the upgrade yourself:
 
@@ -54,10 +62,11 @@ If you'd rather drive the upgrade yourself:
 | Homebrew | `brew upgrade lpm` |
 | npm | `npm install -g @lpm-registry/cli@<latest>` |
 | Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force` |
-| Standalone (macOS / Linux) | `curl -fsSL https://github.com/lpm-dev/rust-client/releases/download/v<latest>/lpm-<platform> -o $(which lpm) && chmod +x $(which lpm)` |
-| Standalone (Windows / PowerShell) | `Invoke-WebRequest -Uri https://github.com/lpm-dev/rust-client/releases/download/v<latest>/lpm-win32-x64.exe -OutFile (Get-Command lpm).Source` |
+| Standalone (macOS / Linux / Windows) | `lpm self-update` |
 
-`lpm self-update` is just a convenience wrapper that picks the right one and pins the exact version it just resolved. For npm and Cargo the wrapper substitutes the resolved version into `<latest>`; the npm `@latest` dist-tag and an unpinned `cargo install --git` work too if you want channel-latest semantics, at the cost of skipping past any release the wrapper would have pinned. The npm channel relies on npm's normal optional-dependency and install-script behavior so the platform binary is installed and verified during the update.
+For npm and Cargo, `lpm self-update` chooses the matching command and substitutes the exact version it resolved into `<latest>`. The npm `@latest` dist-tag and an unpinned `cargo install --git` provide channel-latest semantics if you drive those package managers yourself.
+
+For standalone installations, use `lpm self-update`. Its in-place updater verifies the release manifest's Sigstore identity and replay window, then verifies the selected asset against the authenticated manifest before replacing the running binary. A raw `curl` or `Invoke-WebRequest` directly over the executable does none of those checks and is not an equivalent update procedure; reserve that approach for explicitly insecure emergency recovery where you independently verify the downloaded artifact.
 
 The standalone installer at `https://cli.lpm.dev/install` is the get-started helper for new users — it always resolves `releases/latest` itself and writes to `~/.lpm/bin/`. Use it for first installs, not for in-place upgrades.
 
@@ -71,8 +80,8 @@ For a smoke test that the registry is reachable, use [`lpm health`](/docs/infra/
 
 | Flag | Description |
 | --- | --- |
-| `--refresh` | Bypass the 10-minute version-lookup cache and probe GitHub directly. Only affects the version check — the upgrade itself always installs the resolved release. |
-| `--json` | Emit structured JSON: `current`, `latest`, `up_to_date`, `install_method`, `update_command`, `cache_hit`. |
+| `--refresh` | Bypass successful-result and failure-backoff caches, then perform the normal npm-first lookup with GitHub fallback. Only affects version discovery. |
+| `--json` | Emit structured JSON. Field shape depends on whether LPM is current, reports an external-channel plan, or applies a verified standalone update. |
 
 Plus the standard [global flags](/docs/commands#global-flags).
 
