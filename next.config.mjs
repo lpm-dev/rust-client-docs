@@ -41,6 +41,16 @@ const HTML_RESPONSE_HEADERS = [
     value: HTML_CACHE_CONTROL,
   },
 ];
+const LEGACY_DOCS_REDIRECTS = [
+  ["/docs/configuration/config-toml", "/docs/reference/config-toml"],
+  ["/docs/infra/graph", "/docs/packages/graph"],
+  ["/docs/reference/authentication", "/docs/infra/authentication"],
+  ["/docs/reference/completions", "/docs/dev/completions"],
+  ["/docs/reference/config", "/docs/infra/config"],
+  ["/docs/reference/init", "/docs/packages/init"],
+  ["/docs/reference/security", "/docs/infra/security"],
+  ["/docs/reference/self-update", "/docs/infra/self-update"],
+];
 
 /** @type {import('next').NextConfig} */
 const config = {
@@ -50,18 +60,14 @@ const config = {
     LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
   },
   async redirects() {
-    return [
+    return LEGACY_DOCS_REDIRECTS.flatMap(([source, destination]) => [
+      { source, destination, permanent: true },
       {
-        source: "/docs/reference/security",
-        destination: "/docs/infra/security",
+        source: `${source}.mdx`,
+        destination: `${destination}.mdx`,
         permanent: true,
       },
-      {
-        source: "/docs/reference/security.mdx",
-        destination: "/docs/infra/security.mdx",
-        permanent: true,
-      },
-    ];
+    ]);
   },
   async headers() {
     return [
