@@ -13,7 +13,7 @@ LPM ships a single binary, distributed through several channels. Pick whichever 
 npm install -g @lpm-registry/cli
 ```
 
-Works on every supported platform, including Windows and x64 Alpine Linux. The npm package is a dependency-free launcher; npm installs the matching platform-native Rust package through `optionalDependencies`, distinguishes glibc from musl on Linux x64, then runs a small `postinstall` verifier that checks the native binary and wires the global command to it.
+Works on every currently supported platform, including Windows. Official x64 Alpine Linux packages are upcoming and are not included in v0.67.0. The npm package is a dependency-free launcher; npm installs the matching platform-native Rust package through `optionalDependencies`, then runs a small `postinstall` verifier that checks the native binary and wires the global command to it.
 
 If your npm config omits optional dependencies (`--omit=optional`, `--no-optional`, or a package-manager policy), reinstall with optional dependencies enabled. If install scripts are disabled (`--ignore-scripts`), the JS launcher stays in place and resolves the native package at runtime, but first-run validation and zero-overhead Unix linking are skipped.
 
@@ -32,9 +32,9 @@ The formula auto-updates with every release.
 curl -fsSL https://cli.lpm.dev/install | sh
 ```
 
-Downloads the latest binary into `~/.lpm/bin` and adds it to your `PATH` (`.zshrc`, `.bashrc`, or `config.fish` depending on your shell). On Linux x64, it detects glibc or musl and selects the matching release binary automatically. Open a new terminal — or `source` the rc file — and you're done.
+Downloads the latest binary into `~/.lpm/bin` and adds it to your `PATH` (`.zshrc`, `.bashrc`, or `config.fish` depending on your shell). The upcoming x64 Alpine Linux release will make the installer distinguish glibc from musl and select the matching binary automatically. Open a new terminal — or `source` the rc file — and you're done.
 
-The installer verifies the downloaded binary against the signed checksums manifest before installing it. It also refuses releases below the installer's minimum security floor. Two recovery overrides exist for release incidents and broken bootstrap environments: `LPM_INSTALL_INSECURE=1` skips all integrity checks, while `LPM_INSTALL_MIN_VERSION_OVERRIDE=1` permits an older release but still verifies its checksum/signature.
+The installer always verifies the downloaded binary's SHA-256 digest against the release manifest. When `cosign` is available, it also authenticates that manifest against the release workflow's Sigstore identity; without `cosign`, the check proves consistency with the downloaded manifest but does not authenticate who produced it. The installer also refuses releases below its minimum security floor. Two recovery overrides exist for release incidents and broken bootstrap environments: `LPM_INSTALL_INSECURE=1` skips all integrity checks, while `LPM_INSTALL_MIN_VERSION_OVERRIDE=1` permits an older release but keeps the normal verification behavior.
 
 For Windows, use the npm installer above.
 
@@ -45,6 +45,14 @@ cargo install --git https://github.com/lpm-dev/rust-client lpm-cli
 ```
 
 Builds from the latest `main`. Requires Rust 1.94 or newer.
+
+On ARM64 Alpine Linux, install the native build prerequisites first:
+
+```bash
+apk add --no-cache build-base cmake perl pkgconf
+```
+
+ARM64 musl does not currently have an official prebuilt binary, so source installation is the supported fallback on that platform.
 
 ## Verify
 
