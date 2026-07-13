@@ -49,6 +49,20 @@ const config = {
     BUILD_TIME: RESOLVED_BUILD_TIME,
     LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
   },
+  async redirects() {
+    return [
+      {
+        source: "/docs/reference/security",
+        destination: "/docs/infra/security",
+        permanent: true,
+      },
+      {
+        source: "/docs/reference/security.mdx",
+        destination: "/docs/infra/security.mdx",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {
