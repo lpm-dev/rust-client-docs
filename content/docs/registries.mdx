@@ -1,29 +1,29 @@
 ---
 title: Registries
-description: "LPM works with npm, private registries, and lpm.dev. Here is how it routes."
+description: "LPM CLI works with npm, private registries, and LPM.dev Registry. Here is how it routes."
 ---
 
-The LPM CLI is registry-agnostic. It is **not** a client only for lpm.dev — it is a general-purpose package manager that happens to also speak the lpm.dev protocol.
+LPM CLI is registry-agnostic. It is **not** a client only for LPM.dev Registry — it is a general-purpose package manager with LPM.dev Registry support.
 
-If you have an existing `package.json` full of `react`, `lodash`, `typescript`, and friends, LPM installs them from `registry.npmjs.org` exactly like npm, pnpm, yarn, or bun would. Nothing has to change.
+If you have an existing `package.json` full of `react`, `lodash`, `typescript`, and friends, LPM CLI installs them from `registry.npmjs.org` exactly like npm, pnpm, yarn, or bun would. Nothing has to change.
 
 ## Default routing
 
-LPM resolves each package by name and routes accordingly:
+LPM CLI resolves each package by name and routes accordingly:
 
 | Package                                              | Goes to                                                   |
 | ---------------------------------------------------- | --------------------------------------------------------- |
 | `react`, `lodash`, `typescript`, …                   | `registry.npmjs.org`                                      |
 | `@scope/anything` (except built-in scopes below)     | `registry.npmjs.org`, unless `.npmrc` overrides the scope |
 | `jsr:@std/path` manifest specs (`@jsr/*` internally) | `https://npm.jsr.io`, unless `.npmrc` maps `@jsr`         |
-| `@lpm.dev/*`                                         | `https://lpm.dev` (auth + monetization layer)             |
+| `@lpm.dev/*`                                         | LPM.dev Registry (`https://lpm.dev`; auth + monetization) |
 | Anything that matches a registry mapping in `.npmrc` | The registry you mapped                                   |
 
-The `@lpm.dev/*` scope is the **only** scope that always goes to lpm.dev. JSR packages use JSR's npm-compatible registry. Everything else is npm by default.
+The `@lpm.dev/*` scope is the **only** scope that always goes to LPM.dev Registry. JSR packages use JSR's npm-compatible registry. Everything else is npm by default.
 
 ## JSR packages
 
-LPM accepts `jsr:` dependency specs in `package.json` and resolves them through JSR's npm-compatible registry. The JSR package name stays as the local import name, while the metadata fetch uses JSR's folded npm package name under `@jsr`.
+LPM CLI accepts `jsr:` dependency specs in `package.json` and resolves them through JSR's npm-compatible registry. The JSR package name stays as the local import name, while the metadata fetch uses JSR's folded npm package name under `@jsr`.
 
 ```json title="package.json"
 {
@@ -44,7 +44,7 @@ To mirror or intercept JSR traffic, map the `@jsr` scope explicitly:
 
 ## Pointing at a private registry
 
-LPM reads `.npmrc` project-local first, then user-level (`~/.npmrc`). Keep committed project `.npmrc` files to literal routing data, and put env-backed secrets in user or CI-owned config.
+LPM CLI reads `.npmrc` project-local first, then user-level (`~/.npmrc`). Keep committed project `.npmrc` files to literal routing data, and put env-backed secrets in user or CI-owned config.
 
 ```ini title=".npmrc"
 # A private registry for one scope
@@ -59,13 +59,13 @@ registry=https://my-mirror.example.com
 //my-mirror.example.com/:_authToken=${MIRROR_TOKEN}
 ```
 
-`@my-company/internal-tool` will be fetched from `npm.my-company.com` with the configured auth token. Public packages still flow through the default registry. No LPM-specific config is required.
+`@my-company/internal-tool` will be fetched from `npm.my-company.com` with the configured auth token. Public packages still flow through the default registry. No CLI-specific config is required.
 
-For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
+For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM CLI refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
 
 ## TLS, custom CAs, and mTLS
 
-LPM honors the same `.npmrc` TLS keys npm does. All settings can be set globally or per-origin (`//host/:key=value`); per-origin scoping wins for the matching host.
+LPM CLI honors the same `.npmrc` TLS keys npm does. All settings can be set globally or per-origin (`//host/:key=value`); per-origin scoping wins for the matching host.
 
 ### Trusting a corporate CA
 
@@ -86,13 +86,13 @@ ca="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 strict-ssl=false
 ```
 
-Disables hostname, expiry, and CA validation **process-wide**. LPM logs a loud warning at install start whenever `strict-ssl=false` is in effect — this is the kind of setting that should never accidentally land in CI.
+Disables hostname, expiry, and CA validation **process-wide**. LPM CLI logs a loud warning at install start whenever `strict-ssl=false` is in effect — this is the kind of setting that should never accidentally land in CI.
 
 Per-origin `//host/:strict-ssl=false` is **not** supported in v1; the parser warns and ignores it. Use `cafile` to scope a custom-CA trust addition instead.
 
 ### Mutual TLS (client certificates)
 
-For private registries that require client-cert authentication, point LPM at a PEM cert and key:
+For private registries that require client-cert authentication, point LPM CLI at a PEM cert and key:
 
 ```ini title=".npmrc"
 # Global mTLS identity — applies to every request from the default client.
@@ -119,7 +119,7 @@ You can drop secrets next to the `.npmrc` and reference them with bare names.
 
 #### Encrypted private keys
 
-LPM accepts encrypted PKCS#8 keys. The passphrase is resolved in this order:
+LPM CLI accepts encrypted PKCS#8 keys. The passphrase is resolved in this order:
 
 1. `LPM_KEY_PASSPHRASE` environment variable (the CI-friendly path).
 2. Interactive TTY prompt — only when both stdin AND stdout are a terminal.
@@ -139,7 +139,7 @@ openssl pkcs8 -topk8 -in legacy.key -out key.pem
 
 #### PKCS#12 (.p12 / .pfx) is not supported
 
-LPM uses rustls, which doesn't ingest PKCS#12 archives directly. Convert with openssl and point `certfile=` / `keyfile=` at the resulting PEMs:
+LPM CLI uses rustls, which doesn't ingest PKCS#12 archives directly. Convert with openssl and point `certfile=` / `keyfile=` at the resulting PEMs:
 
 ```bash
 openssl pkcs12 -in identity.pfx -clcerts -nokeys -out cert.pem
@@ -153,28 +153,28 @@ certfile=/path/to/cert.pem
 keyfile=/path/to/key.pem
 ```
 
-If you point `certfile=` or `keyfile=` directly at a `.p12`/`.pfx` file, LPM emits a cited error with this recipe inline.
+If you point `certfile=` or `keyfile=` directly at a `.p12`/`.pfx` file, LPM CLI emits a cited error with this recipe inline.
 
-## When does lpm.dev come in
+## When does LPM.dev Registry come in
 
-lpm.dev is a registry **plus** an auth and monetization layer. Use it when:
+LPM.dev Registry is a registry **plus** an auth and monetization layer. Use it when:
 
 - You want **private packages** without standing up your own registry. Every published package starts private — only the publisher can install it. (Same shape as npm private packages.)
 - You publish under your scope and want to flip a package to **pool** distribution. Metadata becomes public, but installs are gated to pool subscribers — you earn a share of the pool's revenue.
 - You publish a paid package via **marketplace** distribution. Installs require a license purchase.
 
-Setting `distribution` is a per-package opt-in on the publisher's side. As an installer, you simply `lpm install @lpm.dev/owner.package` — LPM handles the auth, license, and download.
+Setting `distribution` is a per-package opt-in on the publisher's side. As an installer, you simply `lpm install @lpm.dev/owner.package` — LPM CLI handles the auth, license, and download through LPM.dev Registry.
 
-If you're not publishing, ignore lpm.dev entirely — LPM is a strict superset of npm-the-client and will never send your `react` install through it.
+If you're not publishing, ignore LPM.dev Registry entirely — LPM CLI is a strict superset of npm-the-client and will never send your `react` install through it.
 
-## Private packages on lpm.dev
+## Private packages on LPM.dev Registry
 
 ```bash
 lpm login
 lpm install @lpm.dev/acme.internal
 ```
 
-`lpm login` stores a token in your OS keychain (Keychain on macOS, libsecret on Linux, Credential Manager on Windows). The token is scoped to lpm.dev — no other registry sees it.
+`lpm login` stores a token in your OS keychain (Keychain on macOS, libsecret on Linux, Credential Manager on Windows). The token is scoped to LPM.dev Registry — no other registry sees it.
 
 To generate `.npmrc` without relying on `lpm login` in the current shell:
 
@@ -185,7 +185,7 @@ lpm setup local  # mints a read-only .npmrc token for local development (auto-gi
 
 ## Mixing registries in one project
 
-A `package.json` can pull from npm, lpm.dev, and a private registry simultaneously — LPM resolves each dep against the correct origin and writes the resolution to the lockfile.
+A `package.json` can pull from npm, LPM.dev Registry, and a private registry simultaneously — LPM CLI resolves each dep against the correct origin and writes the resolution to the lockfile.
 
 ```json title="package.json"
 {
@@ -217,4 +217,4 @@ lpm install
 - [Installation](/docs/installation) — get the CLI on your machine
 - [Authentication](/docs/infra/authentication) — token storage, scopes, rotation
 - [`lpm install`](/docs/packages/install) — the install command
-- [`lpm publish`](/docs/packages/publish) — publishing to lpm.dev or npm
+- [`lpm publish`](/docs/packages/publish) — publishing to LPM.dev Registry or npm

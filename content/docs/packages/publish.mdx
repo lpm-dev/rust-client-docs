@@ -1,20 +1,20 @@
 ---
 title: lpm publish
-description: "Publish a package to lpm.dev, npm, GitHub Packages, or a custom registry."
+description: "Publish a package to LPM.dev Registry, npm, GitHub Packages, or a custom registry."
 ---
 
 ```bash
 lpm publish   # alias: lpm p
 ```
 
-Packs the current directory and uploads it to a registry. By default, the target is **lpm.dev** (where every package is private until you flip distribution to pool or marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
+Packs the current directory and uploads it to a registry. By default, the target is **LPM.dev Registry** (where every package is private until you flip distribution to Pool or Marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
 
 `lpm publish` runs the same quality and security checks regardless of target — it scans for hardcoded secrets, computes a quality score, and refuses to publish if `--min-score` is not met.
 
 ## Examples
 
 ```bash
-lpm publish                                  # publish to lpm.dev
+lpm publish                                  # publish to LPM.dev Registry
 lpm publish --dry-run                        # pack + check, don't upload
 lpm publish --check                          # quality report only
 lpm publish --npm                            # publish to registry.npmjs.org
@@ -38,7 +38,7 @@ In order:
 2. **Workspace protocol rewrite** — in monorepos, `workspace:*` and `catalog:` specifiers in `dependencies` get replaced with their resolved versions before hashing. Registries can't resolve those protocols; the rewrite happens on the in-memory tarball so the on-disk `package.json` stays untouched.
 3. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
 4. **Quality score** — compute readme/license/types/tests/maintenance signals. The publish path prints one compact score line and lists only failing checks. With `--min-score N`, abort if the score is below the threshold.
-5. **Skills validation** (LPM target only) — when the project ships `.lpm/skills/`, validate every skill file and run a security pattern check on the content; either failing aborts the publish.
+5. **Skills validation** (LPM.dev Registry target only) — when the project ships `.lpm/skills/`, validate every skill file and run a security pattern check on the content; either failing aborts the publish.
 6. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
 7. **Upload** — push the tarball to each target registry with the appropriate auth.
 
@@ -47,7 +47,7 @@ Successful human output is a compact status stream:
 ```text
 ✓ Secret scan passed
 ✓ Quality score: 91/100
-› Uploading tarball to lpm.dev
+› Uploading tarball to LPM.dev Registry
     target     @lpm.dev/owner.pkg@1.2.3
     visibility private
     dist-tag   latest
@@ -58,20 +58,20 @@ If quality checks fail or are missing, only those rows are shown beneath the sco
 
 `--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
 
-`--dry-run` runs everything `--check` does, plus an LPM-side preflight: OIDC exchange (when LPM is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM-trust misconfiguration — it won't tell you whether the upload itself would land.
+`--dry-run` runs everything `--check` does, plus an LPM.dev Registry preflight: OIDC exchange (when LPM.dev Registry is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM.dev Registry auth misconfiguration — it won't tell you whether the upload itself would land.
 
 ## npm Trusted Publishing
 
-`lpm publish --npm` and `lpm stage publish` automatically use npm Trusted Publishing when a supported CI OIDC token is available. LPM exchanges the CI identity token with npm for a short-lived registry token, then uses that token only for the publish or stage-publish upload.
+`lpm publish --npm` and `lpm stage publish` automatically use npm Trusted Publishing when a supported CI OIDC token is available. LPM CLI exchanges the CI identity token with npm for a short-lived registry token, then uses that token only for the publish or stage-publish upload.
 
 Supported inputs:
 
 | CI source | Configure |
 | --- | --- |
-| GitHub Actions | `permissions: id-token: write`; LPM fetches the runtime token with audience `npm:registry.npmjs.org` |
+| GitHub Actions | `permissions: id-token: write`; LPM CLI fetches the runtime token with audience `npm:registry.npmjs.org` |
 | GitLab CI / CircleCI / other supported providers | Set `NPM_ID_TOKEN` to an OIDC ID token minted with audience `npm:registry.npmjs.org` |
 
-Trusted Publishing is attempted only for npm's public registry (`https://registry.npmjs.org`; HTTP loopback is accepted for local test registries). Custom npm-compatible registries, GitHub Packages, GitLab Packages, and `--publish-registry` targets keep using token auth. If npm's OIDC exchange fails and a normal npm token is available, LPM falls back to the token path; otherwise the OIDC error is surfaced.
+Trusted Publishing is attempted only for npm's public registry (`https://registry.npmjs.org`; HTTP loopback is accepted for local test registries). Custom npm-compatible registries, GitHub Packages, GitLab Packages, and `--publish-registry` targets keep using token auth. If npm's OIDC exchange fails and a normal npm token is available, LPM CLI falls back to the token path; otherwise the OIDC error is surfaced.
 
 OIDC is publish-only. `lpm stage list`, `view`, `download`, `approve`, and `reject` still require normal npm auth because npm limits Trusted Publishing authentication to publish operations.
 
@@ -88,7 +88,7 @@ lpm stage approve <stage-id> [--otp 123456]
 lpm stage reject <stage-id> [--otp 123456]
 ```
 
-`lpm stage` wraps npm staged publishing for the current project. It is npm-only in this release: there is no lpm.dev, GitHub Packages, GitLab Packages, custom publish registry, workspace-recursive, or tarball/package-spec staging mode yet.
+`lpm stage` wraps npm staged publishing for the current project. It is npm-only in this release: there is no LPM.dev Registry, GitHub Packages, GitLab Packages, custom publish registry, workspace-recursive, or tarball/package-spec staging mode yet.
 
 Stage publish reuses the normal npm publish preparation path: pack, workspace dependency rewrite, secret scan, quality gate, npm name/access/tag config, optional npm-name tarball rewrite, and optional `--provenance` / `--provenance-file` over the final tarball. The upload goes to npm's staging endpoint instead of the live publish endpoint, so the version is not installable until it is approved.
 
@@ -105,11 +105,11 @@ Publishing to staging does not prompt for OTP. npm defers proof-of-presence to `
 
 `lpm stage publish` validates npm's version/tag safety rules before the real upload: the package must already exist on npm, an already-published version is blocked, prerelease versions require an explicit tag, and implicit `latest` is blocked when npm already has a higher stable version. `--dry-run` stays local-only and does not contact npm, so those remote version checks run only for a real stage publish.
 
-Use `--npm-registry <URL>` to target a compatible npm staging registry. The global `--registry` flag still means the lpm.dev registry and is rejected on `lpm stage` commands with a message to use `--npm-registry`.
+Use `--npm-registry <URL>` to target a compatible npm staging registry. The global `--registry` flag still means LPM.dev Registry and is rejected on `lpm stage` commands with a message to use `--npm-registry`.
 
-If `lpm.json > publish.npm.registry` points at a non-default staging registry, LPM requires an exact registry-scoped token from `lpm login --login-registry <URL> --token <T>`. Generic `NPM_TOKEN` and tokens stored by `lpm login --npm` are only used for `https://registry.npmjs.org`.
+If `lpm.json > publish.npm.registry` points at a non-default staging registry, LPM CLI requires an exact registry-scoped token from `lpm login --login-registry <URL> --token <T>`. Generic `NPM_TOKEN` and tokens stored by `lpm login --npm` are only used for `https://registry.npmjs.org`.
 
-Every `lpm stage` subcommand supports `--json`. JSON output uses LPM envelopes with `success`, `target: "npm"`, `registry`, `auth` on stage publish (`"oidc"` or `"token"`), `stageId` when a single staged package is involved, and `data` for the registry response.
+Every `lpm stage` subcommand supports `--json`. JSON output uses LPM CLI envelopes with `success`, `target: "npm"`, `registry`, `auth` on stage publish (`"oidc"` or `"token"`), `stageId` when a single staged package is involved, and `data` for the registry response.
 
 ## Provenance
 
@@ -120,7 +120,7 @@ lpm publish --npm --provenance-file ./pkg-1.2.3.sigstore
 lpm publish --no-provenance
 ```
 
-`--provenance` generates a Sigstore-signed attestation over the final tarball for each publish target. For lpm.dev, the bundle is stored in package metadata. For npm-compatible targets (`--npm`, `--github`, `--gitlab`, or `--publish-registry`), LPM also attaches npm's expected `{name}-{version}.sigstore` bundle in the publish payload.
+`--provenance` generates a Sigstore-signed attestation over the final tarball for each publish target. For LPM.dev Registry, the bundle is stored in package metadata. For npm-compatible targets (`--npm`, `--github`, `--gitlab`, or `--publish-registry`), LPM CLI also attaches npm's expected `{name}-{version}.sigstore` bundle in the publish payload.
 
 Generated npm-compatible attestations use npm's current `libnpmpublish` SLSA statement shapes for GitHub Actions and GitLab CI, so the bundle matches the provenance contract npm-compatible registries and registry UIs expect.
 
@@ -131,9 +131,9 @@ Generated provenance requires an audience-`sigstore` OIDC token from a supported
 
 Other platforms aren't supported — Sigstore needs the OIDC issuer to sign. The flag fails loud (non-zero exit) if no usable token is found or if Sigstore signing/Rekor recording fails; it never silently falls back to publishing without provenance.
 
-Generated npm-compatible provenance and provenance-file attachments require effective npm access to be `public`. LPM's npm access default is `public` for scoped and unscoped packages. If you set `publish.npm.access`, `publish.github.access`, `publish.gitlab.access`, or `--access restricted` on stage publish, LPM fails before npm auth, Sigstore signing, file validation, or upload.
+Generated npm-compatible provenance and provenance-file attachments require effective npm access to be `public`. LPM CLI's npm access default is `public` for scoped and unscoped packages. If you set `publish.npm.access`, `publish.github.access`, `publish.gitlab.access`, or `--access restricted` on stage publish, LPM CLI fails before npm auth, Sigstore signing, file validation, or upload.
 
-`--provenance-file <PATH>` attaches a pre-generated Sigstore bundle to npm-compatible targets. The file is parsed, verified, and checked against the final tarball subject and SHA-512 digest before upload. It is not valid for lpm.dev targets, so `lpm publish --lpm --npm --provenance-file ...` fails before validation or upload. `--provenance`, `--provenance-file`, and `--no-provenance` are mutually exclusive.
+`--provenance-file <PATH>` attaches a pre-generated Sigstore bundle to npm-compatible targets. The file is parsed, verified, and checked against the final tarball subject and SHA-512 digest before upload. It is not valid for LPM.dev Registry targets, so `lpm publish --lpm --npm --provenance-file ...` fails before validation or upload. `--provenance`, `--provenance-file`, and `--no-provenance` are mutually exclusive.
 
 Provenance can also be enabled through npm-compatible config, in this order:
 
@@ -158,7 +158,7 @@ Multiple target flags compose — `lpm publish` runs through them in order and r
 
 | Flag | Registry | Requirements |
 | --- | --- | --- |
-| (default) / `--lpm` | lpm.dev | Package name must be `@lpm.dev/owner.pkg`. Override with `publish.lpm.name` in `lpm.json` |
+| (default) / `--lpm` | LPM.dev Registry | Package name must be `@lpm.dev/owner.pkg`. Override with `publish.lpm.name` in `lpm.json` |
 | `--npm` | `registry.npmjs.org` (or custom via `publish.npm.registry`) | Override name with `publish.npm.name`; non-default registries require exact registry-scoped auth |
 | `--github` | GitHub Packages | Package name must be **scoped** (`@owner/pkg`). Falls back to `publish.github.name` → `publish.npm.name` → `package.json#name` — any of them being a scoped name is enough |
 | `--gitlab` | GitLab Packages | `publish.gitlab.projectId` is required. Optional `publish.gitlab.registry` overrides the default `https://gitlab.com` instance |
@@ -168,7 +168,7 @@ When no target flag is set on the CLI, the active set comes from `lpm.json > pub
 
 You must have auth for the chosen target — see [Authentication](/docs/infra/authentication) for `lpm login --npm`, `--github`, `--gitlab`, or `lpm login --login-registry <URL>` for custom registries.
 
-Custom publish registry URLs are HTTPS-only whether they come from `--publish-registry` or `lpm.json > publish.registries`. LPM rejects `http://` before dry-run planning or upload.
+Custom publish registry URLs are HTTPS-only whether they come from `--publish-registry` or `lpm.json > publish.registries`. LPM CLI rejects `http://` before dry-run planning or upload.
 
 Repo-configured custom npm registries are routing data only. They do not redirect `NPM_TOKEN`, tokens stored by `lpm login --npm`, or locked default-npm `.npmrc` auth. Store a token for the exact registry URL with `lpm login --login-registry <URL> --token <T>`.
 
@@ -179,12 +179,12 @@ Token resolution for npm-compatible targets:
 | Target | Resolution order |
 | --- | --- |
 | npm (`https://registry.npmjs.org`) | npm Trusted Publishing for `publish --npm` / `stage publish` -> `NPM_TOKEN` -> token stored by `lpm login --npm` -> locked `.npmrc` token |
-| GitHub Packages | `GITHUB_TOKEN` → valid `gh` auth for `github.com` → LPM-stored fallback token |
-| GitLab.com Packages | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → valid `glab` auth → LPM-stored fallback token |
-| Self-managed GitLab | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → LPM-stored fallback token |
-| Custom registries | Exact LPM-stored custom-registry token from `lpm login --login-registry <URL> --token <T>` |
+| GitHub Packages | `GITHUB_TOKEN` → valid `gh` auth for `github.com` → LPM CLI-stored fallback token |
+| GitLab.com Packages | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → valid `glab` auth → LPM CLI-stored fallback token |
+| Self-managed GitLab | `GITLAB_TOKEN` / `CI_JOB_TOKEN` → LPM CLI-stored fallback token |
+| Custom registries | Exact LPM CLI-stored custom-registry token from `lpm login --login-registry <URL> --token <T>` |
 
-LPM advertises npm web auth on npm-compatible publish requests (`npm-auth-type: web`, `npm-command: publish`). If npm returns a browser-based OTP challenge (`authUrl` + `doneUrl`), LPM opens the browser flow, polls for completion, and retries with the returned `npm-otp`. Classic `www-authenticate: OTP` prompts still work in an interactive terminal; set [`lpm.json > publish.npm.otpRequired`](/docs/reference/lpm-json#publishnpm) to prompt before the first publish attempt. Non-interactive publish should use an automation token.
+LPM CLI advertises npm web auth on npm-compatible publish requests (`npm-auth-type: web`, `npm-command: publish`). If npm returns a browser-based OTP challenge (`authUrl` + `doneUrl`), LPM CLI opens the browser flow, polls for completion, and retries with the returned `npm-otp`. Classic `www-authenticate: OTP` prompts still work in an interactive terminal; set [`lpm.json > publish.npm.otpRequired`](/docs/reference/lpm-json#publishnpm) to prompt before the first publish attempt. Non-interactive publish should use an automation token.
 
 ## Flags
 

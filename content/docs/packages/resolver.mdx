@@ -1,13 +1,13 @@
 ---
 title: Resolver
-description: "How LPM picks versions — greedy-fusion by default, with PubGrub as the documented fallback."
+description: "How LPM CLI picks versions — greedy-fusion by default, with PubGrub as the documented fallback."
 ---
 
 The resolver decides which version of every transitive dependency lands in your `node_modules/`. It walks `package.json`, talks to the appropriate registry for each canonical package, and computes a `(name, version)` set that satisfies every declared semver range. This page is the conceptual deep-dive.
 
 ## Two resolvers
 
-LPM ships two resolvers in the same binary. Both speak the same npm-compatible semver dialect (`^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, `latest`/`beta`/`next` dist-tags) and produce the same lockfile shape. They differ in how they pick versions when multiple ranges target the same canonical package.
+LPM CLI ships two resolvers in the same binary. Both speak the same npm-compatible semver dialect (`^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, `latest`/`beta`/`next` dist-tags) and produce the same lockfile shape. They differ in how they pick versions when multiple ranges target the same canonical package.
 
 | Resolver | Default? | Algorithm | Notes |
 | --- | --- | --- | --- |
@@ -37,11 +37,11 @@ The resolver maintains a graph keyed by `(canonical, version)`. When it processe
 
 Example: edge A wants `lodash@^4`. The resolver picks `lodash@4.17.21` and allocates one node. Edge B then wants `lodash@^4` — same range bucket, reuses A's node. Edge C wants `lodash@^3` — `4.17.21` doesn't satisfy `^3`, so the resolver allocates a new `lodash@3.10.1` node. The tree now has two `lodash` versions, each shared by everyone whose range pointed at it.
 
-This is the "multi-version per canonical" property. npm has it. pnpm has it. Yarn-classic (with hoisting) approximated it. LPM follows the bun-shaped recipe.
+This is the "multi-version per canonical" property. npm has it. pnpm has it. Yarn-classic (with hoisting) approximated it. LPM CLI follows the bun-shaped recipe.
 
 ## Candidate policy
 
-The resolver walks available versions newest-first. Semver range satisfaction is the first filter, then LPM applies install policy:
+The resolver walks available versions newest-first. Semver range satisfaction is the first filter, then LPM CLI applies install policy:
 
 - **Minimum release age** skips too-new matching candidates for direct/root package ranges by default and keeps walking to the newest mature candidate. Strict release-age policy extends the same check to transitive candidates and lockfile replays. Exact checked pins to a too-new version fail.
 - **`trust-policy = "no-downgrade"`** skips candidates that reduce npm trust evidence compared with an earlier published version. Ranges can fall back to an older allowed candidate; exact blocked pins fail with the trust-policy reason.
@@ -51,7 +51,7 @@ This split keeps lockfiles reviewable and portable across hosts while still avoi
 
 ## Resolution failures
 
-When no compatible package version exists, LPM fails before writing the lockfile or touching `node_modules/`. The error names the dependency edge that failed, the package that required it when that context is available, and the newest published version LPM saw.
+When no compatible package version exists, LPM CLI fails before writing the lockfile or touching `node_modules/`. The error names the dependency edge that failed, the package that required it when that context is available, and the newest published version LPM CLI saw.
 
 ```text
 ✗ Could not resolve dependencies

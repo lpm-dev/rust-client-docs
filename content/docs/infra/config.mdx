@@ -96,7 +96,7 @@ Bare `lpm config` opens a single interactive menu. Each row shows the current va
 │  ○ Release-age scope      current: direct
 ```
 
-After a setting is changed, the editor returns to the menu with refreshed values. If you set lifecycle scripts to `triage`, LPM also offers to configure the optional triage advisor next.
+After a setting is changed, the editor returns to the menu with refreshed values. If you set lifecycle scripts to `triage`, LPM CLI also offers to configure the optional triage advisor next.
 
 ## Setup wizards
 
@@ -147,17 +147,17 @@ Policy extensions are configured by editing `~/.lpm/config.toml` directly. They 
 
 ### npm firewall
 
-`lpm config firewall` accepts `off`, `monitor`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no firewall.lpm.dev verdict check. `monitor` sends selected public npm package versions to firewall.lpm.dev in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages whose effective firewall action is `block` before package bytes are installed, fetched, downloaded, or copied through `lpm add`. The hosted firewall verdict service is an LPM Pro/org feature, so active modes send LPM auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI. If entitlement is denied, `monitor` warns and continues, while `enforce` fails before package bytes are materialized. The legacy string `report` is still accepted as an alias for `monitor`, but the wizard persists `monitor`.
+`lpm config firewall` accepts `off`, `monitor`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no LPM Firewall verdict check. `monitor` sends selected public npm package versions to LPM Firewall in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages whose effective firewall action is `block` before package bytes are installed, fetched, downloaded, or copied through `lpm add`. The hosted firewall verdict service is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI. If entitlement is denied, `monitor` warns and continues, while `enforce` fails before package bytes are materialized. The legacy string `report` is still accepted as an alias for `monitor`, but the wizard persists `monitor`.
 
-When you choose `enforce` interactively, the wizard shows the five npm firewall policy groups on one review screen: trusted public malicious advisories, LPM AI-confirmed malware, LPM AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. Press Enter to accept the recommended profile, or change individual groups before saving. Recommended enforcement blocks trusted public malicious advisories and LPM AI-confirmed malware, and warns for AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full profile.
+When you choose `enforce` interactively, the wizard shows the five npm firewall policy groups on one review screen: trusted public malicious advisories, LPM Firewall AI-confirmed malware, LPM Firewall AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. Press Enter to accept the recommended profile, or change individual groups before saving. Recommended enforcement blocks trusted public malicious advisories and LPM Firewall AI-confirmed malware, and warns for AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full profile.
 
-When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and lpm.dev packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `monitor` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
+When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and LPM.dev Registry packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `monitor` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
 
 ### Store integrity
 
 `lpm config integrity` accepts `source` or `tree`. `source` is the default and validates reused v2 store objects by their source identity without rehashing every expanded file, which keeps warm installs fast. `tree` is stricter and rehashes expanded files before reuse so local tampering or corruption under `~/.lpm/store/v2/objects/` is detected before the object is linked into a project.
 
-This is separate from `--strict-integrity`. `--strict-integrity` controls trust-on-first-use for tarball URL dependencies that do not declare an inline SRI hash. `integrity = "tree"` controls how LPM validates already-expanded v2 store objects before reuse.
+This is separate from `--strict-integrity`. `--strict-integrity` controls trust-on-first-use for tarball URL dependencies that do not declare an inline SRI hash. `integrity = "tree"` controls how LPM CLI validates already-expanded v2 store objects before reuse.
 
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
@@ -179,13 +179,13 @@ lpm config typosquat --set off
 lpm config firewall --set off
 ```
 
-In an interactive TTY, LPM asks for confirmation before persisting the weaker value.
+In an interactive TTY, LPM CLI asks for confirmation before persisting the weaker value.
 
 In `--json`, CI, or any non-TTY shell, the same write fails with `error_code: "security_approval_required"` instead of silently lowering the machine floor.
 
 If a managed policy owns that control (`/etc/lpm/security-policy.toml` on Unix/macOS, `C:\ProgramData\lpm\security-policy.toml` on Windows), the write fails with `error_code: "security_floor"` instead.
 
-Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` / `"off"`, raw `typosquat-guard = "off"`, and raw `[firewall].mode = "off"` or `"monitor"` below the approved floor are surfaced as active runtime overrides and require the matching unlock before mutating install or trust flows proceed.
+Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM CLI refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` / `"off"`, raw `typosquat-guard = "off"`, and raw `[firewall].mode = "off"` or `"monitor"` below the approved floor are surfaced as active runtime overrides and require the matching unlock before mutating install or trust flows proceed.
 
 ## File location
 

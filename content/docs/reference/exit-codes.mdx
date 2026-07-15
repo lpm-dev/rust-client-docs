@@ -1,9 +1,9 @@
 ---
 title: Exit codes
-description: "What each LPM exit code means and how to handle them in CI."
+description: "What each LPM CLI exit code means and how to handle them in CI."
 ---
 
-LPM follows the conventional Unix exit-code convention: `0` for success, non-zero for failure. The CLI is intentionally narrow about which non-zero codes it produces — most failures exit `1`. A few specific scenarios warrant a different code.
+LPM CLI follows the conventional Unix exit-code convention: `0` for success, non-zero for failure. The CLI is intentionally narrow about which non-zero codes it produces — most failures exit `1`. A few specific scenarios warrant a different code.
 
 | Code | Meaning |
 | --- | --- |
@@ -14,7 +14,7 @@ LPM follows the conventional Unix exit-code convention: `0` for success, non-zer
 
 ## Subprocess passthrough
 
-When a wrapped tool exits non-zero — your test suite fails, your script crashes, oxlint reports an error — LPM forwards the exit code so CI gates see the right signal:
+When a wrapped tool exits non-zero — your test suite fails, your script crashes, oxlint reports an error — LPM CLI forwards the exit code so CI gates see the right signal:
 
 ```bash
 lpm test
@@ -40,7 +40,7 @@ The `error_code` field is the canonical short name for the error variant. Use it
 
 `schema_version` identifies the JSON document shape. On top-level error envelopes, version `1` is the shared error-envelope schema. Command success envelopes may also expose `schema_version`; those versions are command-specific.
 
-When LPM can suggest a concrete remediation command, the envelope includes `next_steps`:
+When LPM CLI can suggest a concrete remediation command, the envelope includes `next_steps`:
 
 ```json
 {
@@ -50,14 +50,14 @@ When LPM can suggest a concrete remediation command, the envelope includes `next
   "error_code": "auth_required",
   "next_steps": [
     {
-      "description": "Authenticate with LPM",
+      "description": "Authenticate with the LPM.dev Registry",
       "command": "lpm login"
     }
   ]
 }
 ```
 
-`next_steps` is optional and only appears when LPM has a safe command to hand to a human, CI job, or agent.
+`next_steps` is optional and only appears when LPM CLI has a safe command to hand to a human, CI job, or agent.
 
 Most errors put a human-facing string in `error`; rich diagnostics may use an object with a `message` field plus machine-readable context. Resolver failures use `error_code: "resolution_failed"` and include `package`, `requested`, `required_by`, `kind`, and candidate-summary fields; see [Resolver failures](/docs/packages/resolver#resolution-failures).
 
@@ -93,14 +93,14 @@ Most errors put a human-facing string in `error`; rich diagnostics may use an ob
 | `json` | JSON parse / serialize failure on a file or response body |
 | `security_floor` | A higher-authority floor or managed policy refused a weaker security posture |
 | `security_approval_store` | Local signed security state could not be verified; run `lpm security repair` to quarantine stale state |
-| `security_approval_required` | A guarded weakening needs explicit approval before LPM will proceed |
+| `security_approval_required` | A guarded weakening needs explicit approval before LPM CLI will proceed |
 | `self_update_paused` | Self-update was administratively paused for the resolved release channel |
 | `self_update_rate_limited` | Self-update hit a per-IP probe rate limit |
 | `exit_code` | Subprocess passthrough — the exit code came from a wrapped tool (vitest, oxlint, etc.); see [Subprocess passthrough](#subprocess-passthrough) above |
 
-For single-package subprocess passthrough (`lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON. `lpm run --json` is different: it emits an LPM task metadata envelope even for one script.
+For single-package subprocess passthrough (`lpm test`, `lpm bench`, single-package `lpm lint` / `fmt` / `check`), `--json` preserves the wrapped command's own stdout — LPM CLI does not wrap it. This keeps the "single JSON result" contract for tools that already emit JSON. `lpm run --json` is different: it emits an LPM CLI task metadata envelope even for one script.
 
-Workspace and multi-task aggregation DOES emit an LPM envelope on stdout, but the envelope shape varies by command:
+Workspace and multi-task aggregation DOES emit an LPM CLI envelope on stdout, but the envelope shape varies by command:
 
 - **`lpm lint` / `fmt` / `check` / `test` / `bench` workspace mode** (`--all` / `--filter` / `--affected`) capture each member's subprocess stdout/stderr and surface them inside the envelope only on failure (truncated at 10 MB). Spawn / config / plugin / detection failures appear as `exit_code: null` paired with an `error` string, distinguishing "ran and exited non-zero" from "couldn't even launch." For `test` / `bench`, a member with no installed runner (no vitest/jest/mocha for `test`, no vitest or `scripts.bench` for `bench`) shows up as a per-member detection failure rather than aborting the entire run.
 - **`lpm run`** emits a metadata-only envelope for single-script, multi-script, and workspace runs — each task/member's status, exit code, duration, cache hit, skip reason — but never the captured subprocess stdout/stderr. If a workspace filter matches no packages and `--fail-if-no-match` is not set, JSON mode emits a successful zero-package envelope. To debug a failing member, re-run that member without `--json`.

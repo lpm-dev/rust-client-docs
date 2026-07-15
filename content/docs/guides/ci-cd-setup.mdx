@@ -1,11 +1,11 @@
 ---
 title: CI/CD setup
-description: "Configure LPM for GitHub Actions, GitLab CI, and other CI systems."
+description: "Configure LPM CLI for GitHub Actions, GitLab CI, and other CI systems."
 ---
 
-This guide covers the moving parts of running LPM in CI: pinning the binary, authenticating reproducibly, gating on quality and security signals, and producing reliable artifacts. We'll go through GitHub Actions in detail; GitLab CI follows the same shape.
+This guide covers the moving parts of running LPM CLI in CI: pinning the binary, authenticating reproducibly, gating on quality and security signals, and producing reliable artifacts. We'll go through GitHub Actions in detail; GitLab CI follows the same shape.
 
-## 1. Install LPM in CI
+## 1. Install LPM CLI in CI
 
 The fastest path is npm — it works everywhere:
 
@@ -41,7 +41,7 @@ jobs:
       - run: lpm ci --offline --strict-integrity
 ```
 
-    `lpm setup ci npmrc --oidc` exchanges the workflow's OIDC token for an LPM session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
+    `lpm setup ci npmrc --oidc` exchanges the workflow's OIDC token for an LPM.dev Registry session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
 
 ### Static token (the universal fallback)
 
@@ -88,7 +88,7 @@ lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-
 | `--no-editor-setup`     | Skip editor auto-integration. CI has no editor.                                                                                                           |
 | `--no-security-summary` | Skip the post-install security report. Pair with `lpm audit` as a separate explicit step.                                                                 |
 
-If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM writes it.
+If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM CLI writes it.
 
 ## 5. npm firewall in CI
 
@@ -122,7 +122,7 @@ jobs:
       - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
 ```
 
-When active firewall checks need auth and no `LPM_TOKEN` or stored LPM auth is already available, LPM exchanges the CI OIDC token for a short-lived LPM token. If `LPM_TOKEN` or stored auth is available, there is no OIDC exchange.
+When active LPM Firewall checks need auth and no `LPM_TOKEN` or stored LPM.dev Registry auth is already available, LPM CLI exchanges the CI OIDC token for a short-lived LPM.dev Registry token. If `LPM_TOKEN` or stored auth is available, there is no OIDC exchange.
 
 On GitLab CI, mint `LPM_OIDC_TOKEN` with audience `https://lpm.dev`:
 
@@ -176,7 +176,7 @@ For compliance gates, use [`lpm licenses`](/docs/packages/licenses):
 
 ## 7. Caching `~/.lpm/`
 
-Cache the content LPM can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM recreates from the lockfile and store.
+Cache the content LPM CLI can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM CLI recreates from the lockfile and store.
 
 | Path | Cache key | Use |
 | --- | --- | --- |
@@ -187,7 +187,7 @@ Cache the content LPM can safely reuse. Do **not** cache `node_modules/`; it is 
 The store is the important cache:
 
 ```yaml
-- name: Cache LPM store
+- name: Cache LPM CLI store
   uses: actions/cache@v4
   with:
     path: ~/.lpm/store
@@ -198,7 +198,7 @@ The store is the important cache:
 If your workflow runs managed tools, cache plugins separately so tool downloads do not share the dependency-store key:
 
 ```yaml
-- name: Cache LPM plugins
+- name: Cache LPM CLI plugins
   uses: actions/cache@v4
   with:
     path: ~/.lpm/plugins
@@ -232,7 +232,7 @@ For npm-compatible publish provenance, target npm explicitly:
 - run: lpm publish --npm --provenance --min-score 80 -y
 ```
 
-Generated npm provenance requires public access. LPM's npm default is public; if your config sets restricted access, change it to public or skip generated provenance.
+Generated npm provenance requires public access. LPM CLI's npm default is public; if your config sets restricted access, change it to public or skip generated provenance.
 
 For multi-registry publishing in one job, configure `lpm.json > publish.registries` and pass nothing — `lpm publish` walks every configured target. Custom npm-compatible registries need an exact registry-scoped token from `lpm login --login-registry <URL> --token <T>`; `NPM_TOKEN` only authenticates `https://registry.npmjs.org`.
 
@@ -242,7 +242,7 @@ For multi-registry publishing in one job, configure `lpm.json > publish.registri
 - **`lpm install` without `--offline` in CI.** Lets lockfile drift slip through unnoticed.
 - **Combining active npm firewall with `--offline`.** Firewall verdicts need network access. Run the firewall-protected install online, or firewall-gate an online `lpm fetch` before the offline replay.
 - **Forgetting `permissions: id-token: write`** for OIDC in GitHub Actions.
-- **Caching `node_modules/` instead of `~/.lpm/store/`.** The store is the right cache key — `node_modules` is a layout, the store is content.
+- **Caching `node_modules/` instead of `~/.lpm/store/`.** The LPM CLI store is the right cache key — `node_modules` is a layout, the store is content.
 - **Skipping `lpm audit` to "save time".** It's a few hundred ms; the time-not-paid is paid back on the next CVE.
 
 ## See also

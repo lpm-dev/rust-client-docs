@@ -32,8 +32,8 @@ $ lpm dev
 2. **Dependencies** — re-runs the install pipeline if `package.json` / lockfile / install hash drift. Skip with `--no-install`.
 3. **Env** — if `.env` is missing but `.env.example` exists, copies it once, then loads `.env`, `.env.local`, and, when `--env=<MODE>` is set, `.env.<MODE>` plus `.env.<MODE>.local`.
 4. **HTTPS** — if `lpm.json` has `https: true` (top-level) or you pass `--https`, serves over `https://localhost` using the local CA. When `lpm.json` declares local-domain proxy hosts, `lpm dev` also prepares constrained project certificate-chain coverage for those hosts without enabling app HTTPS, and writes managed hosts-file entries for non-`.localhost` hosts when needed. See [`lpm cert`](/docs/infra/cert) for the trust store install.
-5. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the dev server through an LPM tunnel.
-6. **Services** — if `lpm.json` declares `services`, starts each one with prefixed log output and ready-check waits. Otherwise runs the `dev` script from `package.json`, chooses the local port, injects it as `PORT` for frameworks that read the standard dev-server env var, and automatically prepares project-local compatibility for the dev-tool binary when it needs normal `node_modules` ancestry. Next.js/Turbopack, Vite, Astro, Webpack, Remix, Nuxt, SvelteKit, and Storybook-style entrypoints work with LPM's install layout without extra config.
+5. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the dev server through an LPM CLI tunnel.
+6. **Services** — if `lpm.json` declares `services`, starts each one with prefixed log output and ready-check waits. Otherwise runs the `dev` script from `package.json`, chooses the local port, injects it as `PORT` for frameworks that read the standard dev-server env var, and automatically prepares project-local compatibility for the dev-tool binary when it needs normal `node_modules` ancestry. Next.js/Turbopack, Vite, Astro, Webpack, Remix, Nuxt, SvelteKit, and Storybook-style entrypoints work with LPM CLI's install layout without extra config.
 7. **Browser** — opens the primary service URL when ready. Skip with `--no-open`.
 
 ## Examples
@@ -55,13 +55,13 @@ lpm dev -- --inspect                   # forward args to the dev script
 lpm dev --https
 ```
 
-Serves over `https://localhost` (or whichever host you pass with `--host`) using a certificate signed by LPM's local CA. First-time setup needs the CA installed into your OS trust store; `lpm dev --https` can prompt for that step, or you can run `lpm cert trust` ahead of time. See [Local HTTPS](/docs/infra/local-https).
+Serves over `https://localhost` (or whichever host you pass with `--host`) using a certificate signed by LPM CLI's local CA. First-time setup needs the CA installed into your OS trust store; `lpm dev --https` can prompt for that step, or you can run `lpm cert trust` ahead of time. See [Local HTTPS](/docs/infra/local-https).
 
 If the CA is not trusted yet, `lpm dev --https` prompts before installing it into the system trust store. Pass `-y` / `--yes` to pre-approve that step in non-interactive runs. Add `--allow-ca-bootstrap` to serve the root CA over plain HTTP on `port + 1` for mobile-device trust bootstrap on the local network.
 
 Configured `proxy.host` and `services.<name>.host` entries use the same project certificate path for the HTTPS proxy. When the proxy daemon has an HTTPS listener, `lpm dev` prepares a leaf-first project certificate chain for those hosts; custom-host chains include a constrained project intermediate. This does not inject `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_KEY_FILE`, or framework HTTPS variables into the app unless app HTTPS is explicitly enabled.
 
-Hosts under `localhost` / `*.localhost` usually resolve without a hosts-file entry. Other local TLDs such as `.test`, `.local`, `.internal`, and `.home.arpa` make `lpm dev` ask for consent, add a project-scoped managed block to the system hosts file, and remove that block when the dev session exits. On Unix, LPM uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. If a session is interrupted, [`lpm hosts clean`](/docs/infra/hosts) removes orphaned LPM-managed blocks.
+Hosts under `localhost` / `*.localhost` usually resolve without a hosts-file entry. Other local TLDs such as `.test`, `.local`, `.internal`, and `.home.arpa` make `lpm dev` ask for consent, add a project-scoped managed block to the system hosts file, and remove that block when the dev session exits. On Unix, LPM CLI uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. If a session is interrupted, [`lpm hosts clean`](/docs/infra/hosts) removes orphaned LPM CLI-managed blocks.
 
 The startup banner lists configured proxy hosts. For host-only services it may show `auto port` before orchestration assigns the final port; the exact `host -> localhost:<port>` route line prints after registration. In dashboard mode, service rows include their local-domain host URLs.
 
@@ -73,7 +73,7 @@ The startup banner lists configured proxy hosts. For host-only services it may s
 lpm dev --tunnel --domain my-api.lpm.llc
 ```
 
-Exposes the dev server through the LPM tunnel network. Webhooks land on the public URL, get logged to disk, and are visible via `lpm tunnel inspect` / `lpm tunnel replay`. See [Tunneling](/docs/infra/tunneling).
+Exposes the dev server through the LPM CLI tunnel network. Webhooks land on the public URL, get logged to disk, and are visible via `lpm tunnel inspect` / `lpm tunnel replay`. See [Tunneling](/docs/infra/tunneling).
 
 A browser inspector auto-starts alongside `--tunnel` on a free ephemeral port; the dashboard's `o` key opens it. Pass `--inspect-port <N>` to bind a specific port (strict — fails if `N` is in use), or `--no-inspect` to skip the inspector entirely. Both flags are no-ops without `--tunnel`.
 
@@ -85,7 +85,7 @@ A browser inspector auto-starts alongside `--tunnel` on a free ephemeral port; t
 
 If `lpm.json` declares services (`db`, `api`, `web`, …), `lpm dev` starts each one, waits for ready-check, and prefixes logs with the service name. Failed services exit the run.
 
-For every other service with a resolved port, LPM also injects `{SERVICE}_URL` and `{SERVICE}_PORT` into the child environment. A resolved port can come from `port`, conflict reassignment, or host-only auto-assignment. For example, an `api` service can read `DB_URL=http://localhost:5432` and `DB_PORT=5432`, while `web` can read `API_URL` and `API_PORT`.
+For every other service with a resolved port, LPM CLI also injects `{SERVICE}_URL` and `{SERVICE}_PORT` into the child environment. A resolved port can come from `port`, conflict reassignment, or host-only auto-assignment. For example, an `api` service can read `DB_URL=http://localhost:5432` and `DB_PORT=5432`, while `web` can read `API_URL` and `API_PORT`.
 
 `--dashboard` swaps the prefixed-log output for a TUI dashboard with per-service log panels, local-domain host URLs, and webhook inspection. `--no-dashboard` forces the prefixed-log output even if the dashboard is configured.
 

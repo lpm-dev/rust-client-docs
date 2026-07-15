@@ -1,14 +1,14 @@
 ---
 title: Tunneling
-description: "How LPM exposes localhost — Cloudflare Worker relay, base domains, plan limits, claim model, webhook capture."
+description: "How LPM CLI exposes localhost — Cloudflare Worker relay, base domains, plan limits, claim model, webhook capture."
 ---
 
-`lpm tunnel` exposes a local port to the public internet through LPM's tunnel relay. This is the conceptual deep-dive — the relay architecture, the per-plan limits matrix, how domains work for free vs Pro/Org, the wire protocol, the webhook capture/replay model, and the free-tier interstitial. For the CLI flag reference, see [`lpm tunnel`](/docs/infra/tunnel).
+`lpm tunnel` exposes a local port to the public internet through the LPM.dev Registry tunnel relay. This is the conceptual deep-dive — the relay architecture, the per-plan limits matrix, how domains work for free vs Pro/Org, the wire protocol, the webhook capture/replay model, and the free-tier interstitial. For the CLI flag reference, see [`lpm tunnel`](/docs/infra/tunnel).
 
 ## Architecture
 
 ```text
-[your machine]                 [LPM relay — Cloudflare]              [internet]
+[your machine]        [LPM.dev Registry relay — Cloudflare]          [internet]
                                                                           ▼
   lpm tunnel 3000 ──WebSocket──▶  Worker → Durable Object  ◀──HTTPS──── public users
        │                                  │                              │
@@ -70,7 +70,7 @@ Free-tier random subdomains are different: they're freshly minted each connect w
 
 ## Base domains
 
-LPM operates two base domains today:
+The LPM.dev Registry operates two base domains today:
 
 | Domain    | Default plan required | Notes                                               |
 | --------- | --------------------- | --------------------------------------------------- |
@@ -203,11 +203,11 @@ The protocol is purposely simple. There's no streaming-body support today; large
 
 ## Token validation
 
-When the CLI's WebSocket connects to the relay, the `hello` message includes the LPM auth token. The relay:
+When the CLI's WebSocket connects to the relay, the `hello` message includes the LPM.dev Registry auth token. The relay:
 
 1. Hashes the token (so it can be cached safely).
 2. Looks up `tunnel_auth:{tokenHash}` in KV (60s TTL).
-3. On miss: calls back to the lpm.dev origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, plan tier, and org memberships.
+3. On miss: calls back to the LPM.dev Registry origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, plan tier, and org memberships.
 4. Caches the result for 60s.
 
 Plan tier from `whoami` is what selects the right tunnel limit row.

@@ -1,13 +1,13 @@
 ---
-title: Using LPM with Swift
+title: Using LPM CLI with Swift
 description: "SPM integration via SE-0292 — login, install, publish."
 ---
 
-LPM speaks the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md), so Swift Package Manager (SPM) can resolve LPM-hosted Swift packages natively. This guide walks through the full setup: installing a Swift package, and (for authors) publishing one.
+The LPM.dev Registry speaks the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md), so Swift Package Manager (SPM) can resolve LPM.dev Registry-hosted Swift packages natively. This guide walks through the full setup with LPM CLI: installing a Swift package, and (for authors) publishing one.
 
 ## Prerequisites
 
-- LPM installed — see [Installation](/docs/installation).
+- LPM CLI installed — see [Installation](/docs/installation).
 - Swift toolchain installed.
 - An lpm.dev account, logged in (`lpm login`).
 
@@ -19,8 +19,8 @@ lpm swift-registry
 
 This runs an idempotent, fail-loud setup:
 
-1. Logs SPM into the LPM registry (writes the `swift package-registry` config).
-2. Downloads LPM's CMS signing certificate and writes it to `~/.swiftpm/security/trusted-root-certs/lpm.der`.
+1. Logs SPM into the LPM.dev Registry (writes the `swift package-registry` config).
+2. Downloads the LPM.dev Registry CMS signing certificate and writes it to `~/.swiftpm/security/trusted-root-certs/lpm.der`.
 3. Writes a `lpmdev`-scope override into `~/.swiftpm/configuration/registries.json` (`signing.onUntrustedCertificate = "silentAllow"`) so SPM accepts the self-signed cert without requiring a public-CA chain.
 
 Failures (network, non-2xx from the cert endpoint, truncated body, mkdir/write errors) abort with a clear error rather than silently completing with broken signing — a one-shot `lpm install <swift-pkg>` cannot finish "successfully" with the trust path half-set-up. Re-run with `--force` to refresh the cert (cert rotation, suspicion of corruption, etc.).
@@ -42,7 +42,7 @@ Behind the scenes, `Package.swift`'s `dependencies:` and `targets:` arrays get u
 
 ## Publishing a Swift package
 
-The flow is the same as any other LPM package, plus two Swift-specific requirements:
+The flow is the same as any other package published to the LPM.dev Registry, plus two Swift-specific requirements:
 
 1. Your project must declare `ecosystem: "swift"` in `lpm.config.json`.
 2. The repo must have a valid `Package.swift` at the root.
@@ -56,24 +56,24 @@ The publish pipeline:
 - Packs the repo into a tarball.
 - Generates a `.zip` source archive with the SE-0292-required `{pkgName}-{version}/` top-level wrapper.
 - Computes the SHA-256 checksum that SPM expects.
-- Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) with the LPM signing cert.
+- Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) with the LPM.dev Registry signing cert.
 - Uploads tarball + zip + signature to lpm.dev.
 
-After publish, SPM clients on any machine that's run `lpm swift-registry` can resolve the package by its LPM identity.
+After publish, SPM clients on any machine that's run `lpm swift-registry` can resolve the package by its LPM.dev Registry identity.
 
 ## Identity mapping
 
-LPM packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain dots, so LPM maps them when surfacing to SPM:
+LPM.dev Registry packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain dots, so LPM CLI maps them when surfacing to SPM:
 
-| LPM name | SPM identity |
+| LPM.dev Registry name | SPM identity |
 | --- | --- |
 | `@lpm.dev/owner.pkg-name` | `lpmdev.owner_pkg-name` |
 
-The `_` between owner and package name is the unambiguous separator: LPM forbids `_` in both owner and package name (DB-level), so the boundary is always clear even when either half contains hyphens. You don't need to deal with the SPM identity by hand — `lpm install` and `lpm swift-registry` handle the translation.
+The `_` between owner and package name is the unambiguous separator: the LPM.dev Registry forbids `_` in both owner and package name (DB-level), so the boundary is always clear even when either half contains hyphens. You don't need to deal with the SPM identity by hand — LPM CLI's `lpm install` and `lpm swift-registry` commands handle the translation.
 
 ## Verifying signatures
 
-LPM serves the CMS signing cert at `https://lpm.dev/api/swift-registry/certificate` (DER). `lpm swift-registry` writes the cert and the matching `registries.json` scope override; SPM then verifies the CMS detached signature on every install.
+The LPM.dev Registry serves the CMS signing cert at `https://lpm.dev/api/swift-registry/certificate` (DER). `lpm swift-registry` writes the cert and the matching `registries.json` scope override; SPM then verifies the CMS detached signature on every install.
 
 Signatures are surfaced in three places per release:
 
@@ -88,7 +88,7 @@ For the trust-model rationale (why the cert is self-signed, why SPM uses a `sile
 ## Common pitfalls
 
 - **`lpm add` for Swift is the legacy path.** Use `lpm install` — `add` is source-delivery, not what you want for a runtime SPM dep.
-- **`Package.swift` must use the SE-0292 identity** (`lpmdev.owner_pkg-name`), not the LPM-native form. `lpm install` writes it correctly; if you hand-edit, mind the format — the `_` separates owner from package name.
+- **`Package.swift` must use the SE-0292 identity** (`lpmdev.owner_pkg-name`), not the LPM.dev Registry-native form. `lpm install` writes it correctly; if you hand-edit, mind the format — the `_` separates owner from package name.
 - **Re-run `lpm swift-registry --force` after cert rotation.** A stale local trust store will refuse new signatures. A failing `--force` is fatal — the CLI does not silently keep the stale cert.
 
 ## See also
