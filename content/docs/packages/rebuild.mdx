@@ -19,7 +19,7 @@ Matches `npm rebuild` / `pnpm rebuild` semantics.
 2. `install`
 3. `postinstall`
 
-Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
+Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM CLI for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
 
 ## Examples
 
@@ -138,7 +138,7 @@ system toolchain, and local Node header cache remain readable. User npm caches,
 project-wide write roots, and the broader default-sandbox write set are not
 part of the cacheable build.
 
-If any eligibility check fails, LPM runs the lifecycle command through the
+If any eligibility check fails, LPM CLI runs the lifecycle command through the
 normal rebuild path and reports the package as bypassed in JSON metrics.
 
 ### Cache key and invalidation
@@ -153,7 +153,7 @@ The build key includes:
 - Node version, modules ABI, N-API, V8 version, and runtime executable identity
 - strict sandbox posture and allowed-input policy
 - the complete environment exposed to the lifecycle script, including custom
-  variables plus LPM's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`, and
+  variables plus LPM CLI's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`, and
   `TEMP` values
 - compiler, linker, SDK, CMake, Ninja, invoked build-executable, operating
   system, dynamic-linker cache, and Node-header fingerprints when discoverable
@@ -161,7 +161,7 @@ The build key includes:
   discoverable OS package-manager, Homebrew, macOS receipt, and Xcode state
 
 The complete host-toolchain fingerprint is persisted under
-`~/.lpm/cache/metadata/native-toolchains/v1/`. On later rebuilds, LPM first
+`~/.lpm/cache/metadata/native-toolchains/v1/`. On later rebuilds, LPM CLI first
 validates compiler identities, package-database generations, pkg-config
 directories, SDK selection, Homebrew/macOS receipts, Rust toolchain selection,
 and the selected Node header cache. An unchanged snapshot avoids rerunning the
@@ -173,12 +173,12 @@ the host probe path.
 
 Because absolute lifecycle paths are observable inputs, reuse across separate
 checkouts requires those paths to match. This is normally true for repeated CI
-runs that restore the LPM store into the same workspace path; a differently
+runs that restore the LPM CLI store into the same workspace path; a differently
 located checkout receives a different key rather than reusing an artifact that
 could contain the previous path. The complete environment is also exact: CI
 values such as `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER`, and
 `GITHUB_RUN_ATTEMPT` intentionally invalidate reuse unless the workflow
-normalizes them before invoking LPM.
+normalizes them before invoking LPM CLI.
 
 The host fingerprint is conservative, not a claim that native builds are
 fully hermetic. It detects normal compiler, SDK, package-manager, header-cache,
@@ -191,7 +191,7 @@ contents; reference-aware cache pruning can remove the older artifact
 afterward.
 
 Changing any keyed input invalidates both the artifact and the package's local
-`.lpm-built` state. LPM rematerializes the pristine package object before the
+`.lpm-built` state. LPM CLI rematerializes the pristine package object before the
 new command runs, so stale outputs cannot leak into the replacement artifact.
 Corrupt or incomplete artifacts are treated as misses.
 
@@ -204,7 +204,7 @@ On macOS arm64 with Node 22.22.1 and the sharp `NativeToolchain` fixture (10
 release samples), a local hit completed in **59.07 ms median** versus a
 **173.10 ms** strict artifact miss: **2.93× faster** and **65.88% lower wall
 time**. Recreating a CI checkout at the same stable path while retaining the
-warm LPM store completed in **58.49 ms median** (**2.96× faster**, **66.21%
+warm LPM CLI store completed in **58.49 ms median** (**2.96× faster**, **66.21%
 lower**). Warm host-key derivation took 15–24 ms. The first complete host
 fingerprint took 126 ms before its validated snapshot existed, so these
 steady-state numbers do not hide the cold security cost. Every scenario used

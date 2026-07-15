@@ -8,7 +8,7 @@ lpm <file> [--env <mode>] [--watch] [--plain-node] [args...]
 lpm exec [--env <mode>] [--no-env-check] <bin> [args...]
 ```
 
-LPM has two execution lanes:
+LPM CLI has two execution lanes:
 
 - `lpm <file>` runs a JavaScript or TypeScript source file directly.
 - `lpm exec <bin>` runs a project-local binary from `node_modules/.bin`, matching npm/pnpm muscle memory.
@@ -29,12 +29,12 @@ lpm scripts/seed.ts --plain-node
 lpm scripts/seed.ts -- --env=staging
 ```
 
-Runs a single JavaScript or TypeScript file without adding a `scripts` entry to `package.json`. `.js` / `.mjs` / `.cjs` go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM fails with a fix-it message instead of downloading `tsx` through `npx`.
+Runs a single JavaScript or TypeScript file without adding a `scripts` entry to `package.json`. `.js` / `.mjs` / `.cjs` go through plain `node`; `.ts` / `.tsx` / `.mts` / `.cts` use LPM CLI's OXC-backed TypeScript runtime on supported Node versions. If no safe runtime is available, LPM CLI fails with a fix-it message instead of downloading `tsx` through `npx`.
 
 Human progress goes to stderr and names the selected runtime before the file starts:
 
 ```bash
-› Executing scripts/seed.ts with Node.js v22.18.0 + LPM TS runtime
+› Executing scripts/seed.ts with Node.js v22.18.0 + LPM CLI TS runtime
 ✓ Done · exited 0 in 412ms
 ```
 
@@ -55,23 +55,23 @@ It does not fetch packages and does not fall back to system PATH. The bare short
 
 | Extension             | Runtime                                                                                                                                          |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM TS preload                                                                                               |
-| `.ts`, `.mts`, `.cts` | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime -> Node 22.6-22.17 / 23.0-23.5 with `--experimental-strip-types` -> project-local `tsx` |
-| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM runtime |
+| `.js`, `.mjs`, `.cjs` | `node` - direct spawn, no shell, no LPM CLI TS preload                                                                                           |
+| `.ts`, `.mts`, `.cts` | Node 22.18+ / 23.6+ / 24+ with the LPM CLI TS runtime -> Node 22.6-22.17 / 23.0-23.5 with `--experimental-strip-types` -> project-local `tsx` |
+| `.tsx`                | Node 22.18+ / 23.6+ / 24+ with the LPM CLI TS runtime's OXC JSX transform -> project-local `tsx` when the Node version cannot load the LPM CLI runtime |
 
-The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM resolved for the project, and then your existing system PATH.
+The effective PATH includes project `node_modules/.bin`, any matching managed Node that LPM CLI resolved for the project, and then your existing system PATH.
 
-LPM source-file execution does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM's install-policy/security model. If TypeScript execution cannot use the LPM runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
+LPM CLI source-file execution does not fall back to `npx tsx`. That fallback can download and execute npm code outside LPM CLI's install-policy/security model. If TypeScript execution cannot use the LPM CLI runtime, Node's built-in strip-types path, or a project-local `tsx`, use `lpm use node@22.18+` or add and pin `tsx` in the project explicitly.
 
-The LPM TS runtime is LPM-owned: it writes LPM's bundled loader into the LPM cache, calls LPM's Rust/OXC transformer without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, architecture, file path, tsconfig fingerprint, and transform options. Cache entries are validated before reuse.
+The LPM CLI TS runtime is LPM CLI-owned: it writes LPM CLI's bundled loader into the LPM CLI cache, calls LPM CLI's Rust/OXC transformer without fetching npm packages, executes `.ts`, `.tsx`, `.mts`, and `.cts`, reads `tsconfig.json` `baseUrl` / `paths` mappings for project-local imports, emits source maps, and caches transforms by source content, runtime version, Node version, platform, architecture, file path, tsconfig fingerprint, and transform options. Cache entries are validated before reuse.
 
-TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM does not download them during execution.
+TSX uses OXC's JSX transform. By default it emits the React automatic JSX runtime (`react/jsx-runtime`). `jsx: "react"` or explicit `jsxFactory` / `jsxFragmentFactory` selects the classic runtime, `jsx: "react-jsxdev"` enables development JSX output, and `jsxImportSource` changes the automatic-runtime import source. JSX runtime packages still need to be present in the project or otherwise resolvable by Node; LPM CLI does not download them during execution.
 
 ## Plain Node Mode
 
-`--plain-node` disables the LPM TS runtime preload and child Node propagation for `lpm <file>`. `--no-augment` is an alias.
+`--plain-node` disables the LPM CLI TS runtime preload and child Node propagation for `lpm <file>`. `--no-augment` is an alias.
 
-Use it when you need to check what Node itself can run without LPM augmentation:
+Use it when you need to check what Node itself can run without LPM CLI augmentation:
 
 ```bash
 lpm scripts/seed.ts --plain-node
@@ -81,9 +81,9 @@ In plain mode, `.ts` / `.mts` / `.cts` use Node's built-in TypeScript support wh
 
 ## Child Node Processes
 
-When a TypeScript entrypoint runs with the LPM TS runtime, child processes spawned as `node child.ts` inherit a controlled LPM `NODE_OPTIONS` preload. That lets TypeScript child scripts use the same loader and `tsconfig.json` path mappings without invoking `npx` or a project-local wrapper.
+When a TypeScript entrypoint runs with the LPM CLI TS runtime, child processes spawned as `node child.ts` inherit a controlled LPM CLI `NODE_OPTIONS` preload. That lets TypeScript child scripts use the same loader and `tsconfig.json` path mappings without invoking `npx` or a project-local wrapper.
 
-Inherited parent `NODE_OPTIONS` is stripped before execution, so a developer shell or CI environment cannot silently replace the LPM loader. `--plain-node` / `--no-augment` disables this child propagation.
+Inherited parent `NODE_OPTIONS` is stripped before execution, so a developer shell or CI environment cannot silently replace the LPM CLI loader. `--plain-node` / `--no-augment` disables this child propagation.
 
 ## Environment Loading
 
@@ -91,7 +91,7 @@ Both execution lanes load the project's env files and env secrets before spawn. 
 
 `--no-env-check` skips env-schema validation only; it does not disable env loading.
 
-Before spawning, LPM strips inherited runtime-hook env like `NODE_OPTIONS`, `LD_PRELOAD`, `LD_AUDIT`, `BASH_ENV`, and `DYLD_INSERT_LIBRARIES`. Project env files, env secrets, and env-schema defaults are filtered for the same runtime-hook names before they are applied, so those keys are ignored when they come from project env. LPM-controlled runtime env is added after that filtering.
+Before spawning, LPM CLI strips inherited runtime-hook env like `NODE_OPTIONS`, `LD_PRELOAD`, `LD_AUDIT`, `BASH_ENV`, and `DYLD_INSERT_LIBRARIES`. Project env files, env secrets, and env-schema defaults are filtered for the same runtime-hook names before they are applied, so those keys are ignored when they come from project env. LPM CLI-controlled runtime env is added after that filtering.
 
 ## Watch Mode
 
@@ -105,13 +105,13 @@ It watches the requested file only; dependency-graph watching is not part of dir
 
 ## Argument Forwarding
 
-For source files, put LPM flags after the file and use `--` when the script arg starts with `-`:
+For source files, put LPM CLI flags after the file and use `--` when the script arg starts with `-`:
 
 ```bash
 lpm scripts/seed.ts --env staging -- --verbose --env=prod
 ```
 
-For local binaries, flags for LPM belong before the binary name. Everything after the binary name is passed to the binary:
+For local binaries, flags for LPM CLI belong before the binary name. Everything after the binary name is passed to the binary:
 
 ```bash
 lpm exec --env staging eslint --fix src/index.ts
@@ -124,7 +124,7 @@ lpm exec --env staging eslint --fix src/index.ts
 | Both            | `--env <mode>`   | Load env files and secrets for the selected mode |
 | Both            | `--no-env-check` | Skip env-var schema validation before execution  |
 | Source files    | `--watch`        | Re-run the same plan when the target file changes |
-| Source files    | `--plain-node`   | Disable the LPM TS runtime preload and child Node propagation |
+| Source files    | `--plain-node`   | Disable the LPM CLI TS runtime preload and child Node propagation |
 | Source files    | `--no-augment`   | Alias for `--plain-node`                         |
 
 Plus the [global flags](/docs/commands#global-flags).

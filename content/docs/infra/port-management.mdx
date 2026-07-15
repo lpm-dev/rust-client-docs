@@ -1,9 +1,9 @@
 ---
 title: Port management
-description: "How LPM handles port assignment, conflict detection, and cross-service env injection for dev orchestration."
+description: "How LPM CLI handles port assignment, conflict detection, and cross-service env injection for dev orchestration."
 ---
 
-When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, remap busy ports without mutating `lpm.json`, and tell each service how to reach its peers. This page covers what LPM does behind the scenes — declared-port checks, persisted override remapping, cross-service env injection, and the readiness model.
+When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, remap busy ports without mutating `lpm.json`, and tell each service how to reach its peers. This page covers what LPM CLI does behind the scenes — declared-port checks, persisted override remapping, cross-service env injection, and the readiness model.
 
 The CLI surface is [`lpm ports`](/docs/infra/ports). The configuration field is [`lpm.json > services`](/docs/reference/lpm-json#servicesname).
 
@@ -38,7 +38,7 @@ Before starting any service, `lpm dev` walks every declared port and checks whet
 TcpListener::bind(("127.0.0.1", port))
 ```
 
-If the bind fails, LPM reports who's holding the port. Availability probes both IPv4 and IPv6 loopback, so an `::1` listener is not treated as a free port. Linux reads `/proc`, macOS / BSD use `lsof` and `ps`, and Windows uses the native IP Helper API plus documented process APIs. LPM does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
+If the bind fails, LPM CLI reports who's holding the port. Availability probes both IPv4 and IPv6 loopback, so an `::1` listener is not treated as a free port. Linux reads `/proc`, macOS / BSD use `lsof` and `ps`, and Windows uses the native IP Helper API plus documented process APIs. LPM CLI does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
 
 That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. To reclaim the original port later:
 
@@ -64,7 +64,7 @@ Reads `lpm.json > services`, then for each declared `port` runs the same `TcpLis
 
 Important: `list` shows the declared `lpm.json` ports, not the current persisted override map. If `lpm dev` previously remapped `web` from `3000` to `3001`, `lpm ports list` still reports the declared `3000` row and whether `:3000` is currently free or occupied.
 
-If the current directory has no `lpm.json` services, `lpm ports` falls back to visible listening processes whose cwd is under the current project directory. Use `lpm ports all` or `lpm ports --all` for a system-wide table of listening TCP ports. On Windows, generic process cwd is not available through a stable public API, so system-wide rows show PID/process/image path/uptime but leave cwd/project/framework blank unless future LPM-owned process tracking can provide them.
+If the current directory has no `lpm.json` services, `lpm ports` falls back to visible listening processes whose cwd is under the current project directory. Use `lpm ports all` or `lpm ports --all` for a system-wide table of listening TCP ports. On Windows, generic process cwd is not available through a stable public API, so system-wide rows show PID/process/image path/uptime but leave cwd/project/framework blank unless future LPM CLI-owned process tracking can provide them.
 
 ## `lpm ports reset`
 
@@ -72,7 +72,7 @@ If the current directory has no `lpm.json` services, `lpm ports` falls back to v
 lpm ports reset
 ```
 
-Clears persisted port **overrides** for the current project. LPM keeps per-project port overrides in `~/.lpm/ports.toml` (keyed by a hash of the project directory), so a service whose default port collides on this machine can be remapped without editing `lpm.json`. `reset` removes only this project's entry from that file — other projects' overrides are untouched.
+Clears persisted port **overrides** for the current project. LPM CLI keeps per-project port overrides in `~/.lpm/ports.toml` (keyed by a hash of the project directory), so a service whose default port collides on this machine can be remapped without editing `lpm.json`. `reset` removes only this project's entry from that file — other projects' overrides are untouched.
 
 Useful for the "I have no idea why my dev server won't start on the port I expected" escape hatch. Doesn't kill any processes; doesn't touch `lpm.json`. After reset, the next `lpm dev` falls back to the declared ports.
 

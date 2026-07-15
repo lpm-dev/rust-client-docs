@@ -1,9 +1,9 @@
 ---
 title: Content-addressable store
-description: "How LPM stores packages once on disk and links them into every project — clonefile on macOS, hardlink on Linux."
+description: "How LPM CLI stores packages once on disk and links them into every project — clonefile on macOS, hardlink on Linux."
 ---
 
-Every package LPM downloads goes into a **single global store** at `~/.lpm/store/`. Every project that depends on the same package shares the same on-disk copy — and not just the raw bytes, but the materialized wrapper directory with sibling symlinks already laid out. The result: installing the same dep set across 50 projects costs disk-space and time once, not 50 times.
+Every package LPM CLI downloads goes into a **single global store** at `~/.lpm/store/`. Every project that depends on the same package shares the same on-disk copy — and not just the raw bytes, but the materialized wrapper directory with sibling symlinks already laid out. The result: installing the same dep set across 50 projects costs disk-space and time once, not 50 times.
 
 This page covers the design — what the store is, how packages get into it, how projects reach into it from `node_modules/`, and the maintenance surface.
 
@@ -57,7 +57,7 @@ The atomic renames are the visibility boundary. A concurrent install racing for 
 
 ## Store integrity mode
 
-LPM validates an existing `objects/<sri>/` directory before reusing it. The persistent mode lives in `~/.lpm/config.toml > integrity` and is managed by [`lpm config integrity`](/docs/infra/config#store-integrity):
+LPM CLI validates an existing `objects/<sri>/` directory before reusing it. The persistent mode lives in `~/.lpm/config.toml > integrity` and is managed by [`lpm config integrity`](/docs/infra/config#store-integrity):
 
 ```bash
 lpm config integrity --set source   # default
@@ -127,17 +127,17 @@ Hoisted exposes root dependencies at the project root and lets each package see 
 
 | Path | Override with |
 | --- | --- |
-| `~/.lpm/store/` (default) | `LPM_HOME=<path>` (moves the entire LPM root) |
+| `~/.lpm/store/` (default) | `LPM_HOME=<path>` (moves the entire LPM CLI root) |
 
 `LPM_HOME` is useful in CI for hermetic runs — point it at a workspace-local directory and the store survives only as long as the runner does.
 
-If `LPM_HOME` ends up on a network filesystem, LPM emits a one-time warning at startup pointing at performance issues — clonefile and hardlinks degrade badly across NFS.
+If `LPM_HOME` ends up on a network filesystem, LPM CLI emits a one-time warning at startup pointing at performance issues — clonefile and hardlinks degrade badly across NFS.
 
 ## Maintenance
 
 The store grows monotonically as new graph contexts appear. Two surfaces clean it up:
 
-- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal. Walks `~/.lpm/known-projects.json` (the registry of every project LPM has installed into), traces each project's `node_modules/` symlinks back into the store, and removes link entries + objects no longer reachable from any registered project. Cached compatibility islands are removed by crash recovery and optional LRU age. Safe to run regularly. Default is dry-run; pass `--apply` to delete.
+- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal. Walks `~/.lpm/known-projects.json` (the registry of every project LPM CLI has installed into), traces each project's `node_modules/` symlinks back into the store, and removes link entries + objects no longer reachable from any registered project. Cached compatibility islands are removed by crash recovery and optional LRU age. Safe to run regularly. Default is dry-run; pass `--apply` to delete.
 - [`lpm store`](/docs/infra/store) — verify integrity, print the store path, blunt full wipe.
 
 ```bash

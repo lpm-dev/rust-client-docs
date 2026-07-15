@@ -1,11 +1,11 @@
 ---
 title: Swift Package Registry (SE-0292)
-description: "How LPM implements the SE-0292 Swift Package Registry spec — identity mapping, signing, certificates."
+description: "How LPM.dev Registry implements the SE-0292 Swift Package Registry spec — identity mapping, signing, certificates."
 ---
 
-LPM implements the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) on its registry side. Once you've run `lpm swift-registry` once, Swift Package Manager (SPM) on your machine can resolve LPM-hosted Swift packages natively — no manual fork-as-git-dep, no shim.
+LPM.dev Registry implements the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md). Once you've run `lpm swift-registry` once, Swift Package Manager (SPM) on your machine can resolve LPM.dev Registry-hosted Swift packages natively — no manual fork-as-git-dep, no shim.
 
-This page is the conceptual reference. For the user-facing setup walkthrough, see [Using LPM with Swift](/docs/guides/using-with-swift).
+This page is the conceptual reference. For the user-facing setup walkthrough, see [Using LPM CLI with Swift](/docs/guides/using-with-swift).
 
 ## What SE-0292 specifies
 
@@ -17,21 +17,21 @@ SE-0292 defines a REST API for Swift package registries that SPM can talk to in 
 - Login (`POST /login`)
 - Optional package signing via [CMS](https://datatracker.ietf.org/doc/html/rfc5652)
 
-LPM implements all of the above plus signature verification metadata. SPM clients see a standard SE-0292 server.
+LPM.dev Registry implements all of the above plus signature verification metadata. SPM clients see a standard SE-0292 server.
 
 ## Identity mapping
 
-LPM packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain `.`, so LPM maps:
+LPM.dev Registry packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain `.`, so LPM.dev Registry maps:
 
-| LPM name | SE-0292 identity |
+| LPM.dev Registry name | SE-0292 identity |
 | --- | --- |
 | `@lpm.dev/owner.pkg-name` | `lpmdev.owner_pkg-name` |
 | `@lpm.dev/myorg.swift-utils` | `lpmdev.myorg_swift-utils` |
 
 Rules:
 
-- The LPM scope `@lpm.dev/` becomes the SE-0292 scope `lpmdev` (no dots, no `@`).
-- The `_` between owner and package name is the unambiguous separator. LPM forbids `_` in both owner and package name (enforced at the storage layer), so the boundary is always clear even when either half contains hyphens. `@lpm.dev/swift-server.async-http-client` and `@lpm.dev/swift.server-async-http-client` map to two distinct identifiers (`lpmdev.swift-server_async-http-client` vs `lpmdev.swift_server-async-http-client`) — no ambiguity.
+- The LPM.dev Registry scope `@lpm.dev/` becomes the SE-0292 scope `lpmdev` (no dots, no `@`).
+- The `_` between owner and package name is the unambiguous separator. LPM.dev Registry forbids `_` in both owner and package name (enforced at the storage layer), so the boundary is always clear even when either half contains hyphens. `@lpm.dev/swift-server.async-http-client` and `@lpm.dev/swift.server-async-http-client` map to two distinct identifiers (`lpmdev.swift-server_async-http-client` vs `lpmdev.swift_server-async-http-client`) — no ambiguity.
 
 Identity translation is automatic — `lpm install @lpm.dev/owner.swift-pkg` writes the SE-0292 identity into `Package.swift`. You don't deal with the mapping by hand.
 
@@ -42,19 +42,19 @@ lpm swift-registry              # idempotent
 lpm swift-registry --force      # re-download the signing certificate (cert rotation)
 ```
 
-Four steps under the hood. Every step is **fail-loud** — if any one of them returns a non-success exit, the command aborts instead of completing with broken signing:
+Four setup steps under the hood. Scope, certificate, and signing-trust failures abort the command. Authentication setup warns instead when no token is available or SPM rejects the login:
 
 1. **Set the registry for the `lpmdev` scope.**
    ```bash
    swift package-registry set --scope lpmdev https://lpm.dev/api/swift-registry
    ```
-2. **Log in.** Uses the LPM bearer token resolved through the standard session manager (`LPM_TOKEN` → keychain → OIDC → none).
+2. **Log in.** Uses the LPM.dev Registry bearer token resolved through the standard LPM CLI session manager (`LPM_TOKEN` → keychain → OIDC → none).
 3. **Install the signing certificate.** Downloads the CMS signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`. The DER body is size-checked before being written; an empty / truncated / HTML-error response aborts instead of leaving a broken cert on disk.
 4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with a default `signing.onUnsigned = "warn"` + `signing.onUntrustedCertificate = "warn"` policy and a scope-specific override pinning `lpmdev` to `signing.onUntrustedCertificate = "silentAllow"` — see [Trust model](#trust-model) for the rationale.
 
 `--force` re-downloads the cert even when a valid one is on disk. A failed re-download with `--force` is fatal even if a stale cert is still on disk — silently keeping the stale cert would defeat the explicit rotation the user asked for.
 
-When `lpm install` first encounters a Swift package in a project that hasn't been set up, it runs the same four-step path (in `ensure_configured` mode) before resolving the dep. Same fail-loud contract applies, so a one-shot `lpm install @lpm.dev/owner.swift-pkg` cannot finish "successfully" with signing broken.
+When `lpm install` first encounters a Swift package in a project that hasn't been set up, it runs the same four-step path (in `ensure_configured` mode) before resolving the dep. Scope, certificate, and signing-trust failures abort setup; a missing token warns during setup, but LPM.dev Registry returns `401` until you run `lpm login`.
 
 ## Trust model
 
@@ -63,13 +63,13 @@ What the signature buys you, and what it doesn't — be precise about both:
 **Current posture: detached package integrity + HTTPS transport authenticity.**
 
 - **Detached package integrity.** SPM verifies the CMS signature against the source archive bytes on every install. A tampered tarball fails the integrity check before any code runs.
-- **Transport authenticity via HTTPS.** The lpm.dev origin is the trust anchor for "this came from LPM" — the system CA chain authenticates the connection that carried both the signing cert and the tarballs themselves.
+- **Transport authenticity via HTTPS.** The LPM.dev Registry origin is the trust anchor for "this came from LPM.dev Registry" — the system CA chain authenticates the connection that carried both the signing cert and the tarballs themselves.
 
 **Not current posture: trusted signer identity verification.**
 
-LPM's signing cert is self-signed, non-CA, and code-signing-only. SPM's root trust store rejects it (root certs must have basicConstraints `CA=true`). The `silentAllow` scope override in step 4 tells SPM to accept the signature without a chain to a system trust root for the `lpmdev` scope. The cryptographic CMS check still runs; what's bypassed is the "is this signer in my trust chain?" gate.
+LPM.dev Registry's signing cert is self-signed, non-CA, and code-signing-only. SPM's root trust store rejects it (root certs must have basicConstraints `CA=true`). The `silentAllow` scope override in step 4 tells SPM to accept the signature without a chain to a system trust root for the `lpmdev` scope. The cryptographic CMS check still runs; what's bypassed is the "is this signer in my trust chain?" gate.
 
-The signer today is the LPM registry, not the package author — the signature attests "this came from LPM," not "this came from author X." Per-author attribution (Sigstore, transparency log, whatever shape it takes) is a deliberately separate, future track. This page will be updated when that lands; until then, treat any "signed by author X" mental model as not implemented.
+The signer today is LPM.dev Registry, not the package author — the signature attests "this came from LPM.dev Registry," not "this came from author X." Per-author attribution (Sigstore, transparency log, whatever shape it takes) is a deliberately separate, future track. This page will be updated when that lands; until then, treat any "signed by author X" mental model as not implemented.
 
 ## Installing a Swift package
 
@@ -80,7 +80,7 @@ lpm install @lpm.dev/owner.swift-pkg@1.2.0
 
 Behind the scenes:
 
-1. LPM resolves the version against the SE-0292 endpoint.
+1. LPM CLI resolves the version against the SE-0292 endpoint.
 2. Updates `Package.swift` — appends the dep into `dependencies:`, wires it into the requested target's `targets:` array.
 3. Triggers `swift package resolve` so SPM downloads the source archive, verifies the signature, and writes `Package.resolved`.
 
@@ -96,7 +96,7 @@ Detected as a Swift package when `lpm.config.json` declares `ecosystem: "swift"`
 
 1. **Generate the SE-0292 source archive.** Wraps the pack output into a `{pkgName}-{version}/` top-level directory and creates the `.zip` SPM expects. The wrapper is a hard SE-0292 requirement (SPM uses `stripFirstLevel` semantics on the archive).
 2. **Compute and record the SHA-256 checksum.** SPM verifies this on download. The hex is stored in the release metadata; the base64 form is sent in the `Digest` HTTP response header on download.
-3. **Sign the package.** Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) using the LPM signing key. The signature is base64-encoded into release metadata and surfaced in three places per release:
+3. **Sign the package.** Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) using the LPM.dev Registry signing key. The signature is base64-encoded into release metadata and surfaced in three places per release:
    - The release metadata JSON (base64 CMS string)
    - The `Digest` HTTP response header on download
    - A comment block in the `Package.swift` manifest response
@@ -107,7 +107,7 @@ SPM verifies the CMS detached signature on every package archive at install time
 
 Two failure shapes a user can run into:
 
-- **`onUnsigned: warn`** — a Swift package without a signature surfaces as a warning, not a hard error. LPM-published packages are always signed, so this typically only appears for non-LPM packages SPM resolves alongside.
+- **`onUnsigned: warn`** — a Swift package without a signature surfaces as a warning, not a hard error. LPM.dev Registry-published packages are always signed, so this typically only appears for packages outside LPM.dev Registry that SPM resolves alongside.
 - **Cert missing or out of date** — SPM emits a "signer is not trusted" error. Re-run `lpm swift-registry` (or `lpm swift-registry --force` if you suspect a stale cert) to refresh both the cert file and the registries.json scope override.
 
 If the cert rotates server-side, re-run `lpm swift-registry --force`. A failed `--force` re-download is fatal — `lpm` will not silently keep using the stale cert.
@@ -125,17 +125,17 @@ For the curious — the things SPM expects from the server side:
 | `POST /login` | Auth flow (handled by `lpm swift-registry` automatically) |
 | `GET /certificate` | Public cert in DER format |
 
-Implementation lives in the LPM origin server and registry worker. The Rust CLI is a client of this API; it doesn't implement the server side itself.
+Implementation lives in the LPM.dev Registry origin server and registry worker. LPM CLI is a client of this API; it doesn't implement the server side itself.
 
 ## Limitations
 
-- Today `lpm swift-registry` configures the `lpmdev` scope only. Custom-scope publishing (e.g., `acme` for a private LPM tenant) isn't surfaced in the CLI yet.
+- Today `lpm swift-registry` configures the `lpmdev` scope only. Custom-scope publishing (e.g., `acme` for a private LPM.dev Registry tenant) isn't surfaced in LPM CLI yet.
 - Cert rotation is manual — no automatic refresh on schedule. The signing cert is long-lived; rotation events will be communicated via release notes.
-- The SE-0292 `--allow-insecure-http` flag is honored only for `http://` registry URLs (i.e., local dev against `http://localhost`). The hosted lpm.dev endpoint is HTTPS-only.
+- The SE-0292 `--allow-insecure-http` flag is honored only for `http://` registry URLs (i.e., local dev against `http://localhost`). The hosted LPM.dev Registry endpoint is HTTPS-only.
 
 ## See also
 
-- [Using LPM with Swift](/docs/guides/using-with-swift) — setup walkthrough + publish flow
+- [Using LPM CLI with Swift](/docs/guides/using-with-swift) — setup walkthrough + publish flow
 - [`lpm swift-registry`](/docs/packages/swift-registry) — CLI command reference
 - [`lpm install`](/docs/packages/install) — the right command for SPM deps
 - [SE-0292 spec](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) — the upstream protocol

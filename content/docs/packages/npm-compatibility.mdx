@@ -1,11 +1,11 @@
 ---
 title: npm compatibility
-description: "What works the same as npm, what's different, and what LPM adds on top."
+description: "What works the same as npm, what's different, and what LPM CLI adds on top."
 ---
 
-LPM is **drop-in compatible** with the npm ecosystem. Reads `package.json`. Resolves npm-flavored semver. Materializes `node_modules/`. Installs from `registry.npmjs.org` by default. Honors `.npmrc` for routing and auth. Forwards subprocess exit codes. Almost any npm-shaped project works without conversion — `lpm install` produces a runnable tree.
+LPM CLI is **drop-in compatible** with the npm ecosystem. Reads `package.json`. Resolves npm-flavored semver. Materializes `node_modules/`. Installs from `registry.npmjs.org` by default. Honors `.npmrc` for routing and auth. Forwards subprocess exit codes. Almost any npm-shaped project works without conversion — `lpm install` produces a runnable tree.
 
-This page is the explicit scope: what carries over verbatim, what's different, and what LPM adds.
+This page is the explicit scope: what carries over verbatim, what's different, and what LPM CLI adds.
 
 ## Carries over verbatim
 
@@ -16,7 +16,7 @@ This page is the explicit scope: what carries over verbatim, what's different, a
 | `package.json > bin` (string or map form) | Both shapes accepted |
 | `package.json > files` | Honored at publish time |
 | `package.json > engines.node` | Honored as a pin source AND enforced — install aborts if the effective Node version doesn't satisfy the constraint |
-| `package.json > engines.lpm` | Enforced against the running CLI version (npm only enforces with `engine-strict=true`; LPM enforces by default) |
+| `package.json > engines.lpm` | Enforced against the running CLI version (npm only enforces with `engine-strict=true`; LPM CLI enforces by default) |
 | `package.json > workspaces` (array or object form) | Both shapes accepted |
 | `package.json > overrides` | npm-style overrides honored (lower precedence than `lpm.overrides`) |
 | `package.json > resolutions` | yarn-style resolutions honored |
@@ -29,11 +29,11 @@ If a project's only contract with npm is "I have a `package.json` with deps and 
 
 ## Differences
 
-The differences are deliberate — LPM defaults differ where npm's defaults aren't safe, and a handful of legacy npm behaviors are simplified.
+The differences are deliberate — LPM CLI defaults differ where npm's defaults aren't safe, and a handful of legacy npm behaviors are simplified.
 
 ### Dependency lifecycle scripts: deny by default
 
-npm runs `preinstall` / `install` / `postinstall` for every dependency package by default. LPM **doesn't**. Bare `lpm install` still runs the root project's install lifecycle, including `prepare`; dependency package scripts stay behind the approval gate.
+npm runs `preinstall` / `install` / `postinstall` for every dependency package by default. LPM CLI **doesn't**. Bare `lpm install` still runs the root project's install lifecycle, including `prepare`; dependency package scripts stay behind the approval gate.
 
 ```bash
 lpm install        # root lifecycle + downloads + links; dependency scripts blocked
@@ -52,11 +52,11 @@ This is the single biggest behavioral difference. See [Security & audit](/docs/p
 
 ### `node_modules` layout: hoisted by default, isolated for workspaces and peer conflicts
 
-LPM starts single-package projects in its v2 hoisted virtual-store layout: declared root deps are exposed at project `node_modules/<dep>`, and package-local dependency links live inside shared store link entries. This is compatible with normal Node resolution, but it is not npm-v3-style "flatten every transitive to the project root." **Workspaces auto-flip to isolated** (pnpm-style symlinks into the global virtual store) — phantom-dep bugs are most expensive in monorepos, so the safer layout becomes the default there. If a default-hoisted resolve finds incompatible peer requirements, LPM also auto-switches that project to isolated and records the decision in `lpm.lock`. Force a specific mode:
+LPM CLI starts single-package projects in its v2 hoisted virtual-store layout: declared root deps are exposed at project `node_modules/<dep>`, and package-local dependency links live inside shared store link entries. This is compatible with normal Node resolution, but it is not npm-v3-style "flatten every transitive to the project root." **Workspaces auto-flip to isolated** (pnpm-style symlinks into the global virtual store) — phantom-dep bugs are most expensive in monorepos, so the safer layout becomes the default there. If a default-hoisted resolve finds incompatible peer requirements, LPM CLI also auto-switches that project to isolated and records the decision in `lpm.lock`. Force a specific mode:
 
 ```bash
 lpm install --linker=isolated      # opt into pnpm-style for non-workspaces
-lpm install --linker=hoisted       # use LPM's hoisted virtual-store layout
+lpm install --linker=hoisted       # use LPM CLI's hoisted virtual-store layout
 ```
 
 Or persist it in `package.json > lpm > linker` / `~/.lpm/config.toml > linker`. Explicit linker settings opt out of peer-conflict auto-switching.
@@ -65,7 +65,7 @@ Under isolated layout, code that imports a dep it didn't declare in `dependencie
 
 ### Lockfile: `lpm.lock` + optional `lpm.lockb`
 
-npm produces `package-lock.json`. LPM always produces `lpm.lock` (TOML, git-diffable, authoritative). It also produces `lpm.lockb` when the current binary wire format can represent the graph. Commit `lpm.lock` always; commit `lpm.lockb` when it exists.
+npm produces `package-lock.json`. LPM CLI always produces `lpm.lock` (TOML, git-diffable, authoritative). It also produces `lpm.lockb` when the current binary wire format can represent the graph. Commit `lpm.lock` always; commit `lpm.lockb` when it exists.
 
 Convert with:
 
@@ -77,15 +77,15 @@ See [Migrating from npm](/docs/guides/migrating-from-npm).
 
 ### Save policy: never `*`
 
-npm's `npm install <pkg>` saves `^resolvedVersion`. LPM does the same — but LPM also enforces that `*` can never become a default. Wildcards must be requested per-package via `pkg@*`. See [Save policy](/docs/packages/save-policy).
+npm's `npm install <pkg>` saves `^resolvedVersion`. LPM CLI does the same — but LPM CLI also enforces that `*` can never become a default. Wildcards must be requested per-package via `pkg@*`. See [Save policy](/docs/packages/save-policy).
 
 ### Cooldown on recent versions
 
-LPM blocks direct/root dependency versions published less than 24h ago by default. npm doesn't. Override with `lpm install --allow-new`, or opt into strict transitive cooldown with `minimumReleaseAgePolicy: "strict"`. See [Recently published packages](/docs/packages/install#recently-published-packages).
+LPM CLI blocks direct/root dependency versions published less than 24h ago by default. npm doesn't. Override with `lpm install --allow-new`, or opt into strict transitive cooldown with `minimumReleaseAgePolicy: "strict"`. See [Recently published packages](/docs/packages/install#recently-published-packages).
 
 ### `engines` enforced by default
 
-npm reads `engines.node` / `engines.npm` and only enforces them when `engine-strict=true` is set in `.npmrc`. LPM enforces by default — install / rebuild / add abort when the workspace root's `engines.lpm` constraint doesn't match the running CLI version, or `engines.node` doesn't match the effective Node runtime.
+npm reads `engines.node` / `engines.npm` and only enforces them when `engine-strict=true` is set in `.npmrc`. LPM CLI enforces by default — install / rebuild / add abort when the workspace root's `engines.lpm` constraint doesn't match the running CLI version, or `engines.node` doesn't match the effective Node runtime.
 
 ```bash
 lpm install --no-engine-strict     # opt out for this invocation
@@ -95,11 +95,11 @@ Or persistent in `package.json > lpm > engineStrict = false` (per-project) or `~
 
 ### `npm publish --otp` → `lpm publish` with `otpRequired`
 
-npm prompts for OTP at publish time when 2FA is enabled. LPM mirrors this; configure via `lpm.json > publish.npm.otpRequired = true` to prompt up-front (saves a round-trip). See [`lpm.json` publish.npm](/docs/reference/lpm-json#publishnpm).
+npm prompts for OTP at publish time when 2FA is enabled. LPM CLI mirrors this; configure via `lpm.json > publish.npm.otpRequired = true` to prompt up-front (saves a round-trip). See [`lpm.json` publish.npm](/docs/reference/lpm-json#publishnpm).
 
-## What LPM adds
+## What LPM CLI adds
 
-Things LPM offers on top of the npm-compatible baseline:
+Things LPM CLI offers on top of the npm-compatible baseline:
 
 | Feature | Where |
 | --- | --- |
@@ -116,26 +116,26 @@ Things LPM offers on top of the npm-compatible baseline:
 | Catalog protocol | [Workspaces](/docs/packages/workspaces#catalogs) |
 | Native `jsr:` dependency specs | [`lpm install`](/docs/packages/install#jsr-dependencies), [Registries](/docs/registries#jsr-packages) |
 | Path-selector overrides (`baz>foo`) | [`package.json` lpm.overrides](/docs/reference/package-json-lpm#overrides) |
-| Multi-registry routing via `.npmrc` (lpm.dev + npm + private in one project) | [Registries](/docs/registries) |
+| Multi-registry routing via `.npmrc` (LPM.dev Registry + npm + private in one project) | [Registries](/docs/registries) |
 | Source delivery (`lpm add`) | [`lpm add`](/docs/packages/add) |
 | Built-in lazy-downloaded tools (oxlint, biome) | [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt) |
 | Zero-config dev server with HTTPS, tunnel, services | [`lpm dev`](/docs/dev/dev) |
 | SE-0292 Swift Package Registry support | [Swift Package Registry](/docs/packages/swift-package-registry) |
 
-## What LPM does not do
+## What LPM CLI does not do
 
 Honest scope:
 
 - **Lockfile-only PR review** — no first-class diff tool yet beyond `git diff lpm.lock`. Use the deterministic format and your PR review tool of choice.
 - **Reading the `pnpm.*` namespace at install time** — plain `lpm install` does not consume `pnpm.overrides`, `pnpm.patchedDependencies`, or `pnpm.peerDependencyRules`. `lpm migrate` translates all three into their `lpm.*` equivalents in one pass; install-time warnings (and stable `lpm doctor --json` codes `pnpm_overrides_drift`, `pnpm_patches_drift`, `pnpm_peer_rules_drift`) flag any post-migration drift. See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).
-- **Yarn berry's `.pnp.cjs`** — no Plug'n'Play support. LPM materializes `node_modules/` (isolated or hoisted).
+- **Yarn berry's `.pnp.cjs`** — no Plug'n'Play support. LPM CLI materializes `node_modules/` (isolated or hoisted).
 - **GUI** — there's no `lpm-vault`-style desktop app shipped today. The CLI is the surface.
 
 ## Compatibility with the broader ecosystem
 
 - **Tools that read `package.json`** (TypeScript, ESLint, build tools): work unchanged.
 - **Tools that walk `node_modules/`** (most bundlers, test runners): work under both isolated and hoisted layouts.
-- **Tools that hard-code `package-lock.json`**: don't see LPM's lockfile. Either run `lpm migrate` to add `lpm.lock` alongside, or use `lpm install --linker=hoisted` for a closer-to-npm shape.
+- **Tools that hard-code `package-lock.json`**: don't see LPM CLI's lockfile. Either run `lpm migrate` to add `lpm.lock` alongside, or use `lpm install --linker=hoisted` for a closer-to-npm shape.
 
 ## See also
 
@@ -143,4 +143,4 @@ Honest scope:
 - [Migrating from npm](/docs/guides/migrating-from-npm) — walkthrough
 - [Registries](/docs/registries) — `.npmrc` routing
 - [Save policy](/docs/packages/save-policy) — npm-compatible defaults with stricter rails
-- [Security & audit](/docs/packages/security-audit) — what's different about LPM's trust model
+- [Security & audit](/docs/packages/security-audit) — what's different about LPM CLI's trust model

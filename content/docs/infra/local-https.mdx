@@ -1,6 +1,6 @@
 ---
 title: Local HTTPS
-description: "How LPM ships zero-config HTTPS for localhost — root CA, project certs, trust store install."
+description: "How LPM CLI ships zero-config HTTPS for localhost — root CA, project certs, trust store install."
 ---
 
 `lpm dev --https` serves your dev server over `https://localhost`. Browsers trust the certificate. No `--insecure` flag, no warnings, no per-project setup beyond a one-time CA install.
@@ -76,9 +76,9 @@ Removes the CA from the trust store. Doesn't delete the on-disk CA — re-instal
 
 ## Browser support
 
-Once the CA is trusted at the OS level, browsers that use the system trust store (Chrome, Edge, Safari, most Linux browsers) accept LPM-signed certs without warnings.
+Once the CA is trusted at the OS level, browsers that use the system trust store (Chrome, Edge, Safari, most Linux browsers) accept LPM CLI-generated certs without warnings.
 
-**Firefox uses its own trust store** by default. To trust the LPM CA in Firefox, either:
+**Firefox uses its own trust store** by default. To trust the LPM CLI CA in Firefox, either:
 
 - Set `security.enterprise_roots.enabled = true` in `about:config` (Firefox then reads the system trust store), or
 - Manually import `~/.lpm/certs/rootCA.pem` via Settings → Privacy → Certificates → View Certificates → Authorities → Import.
@@ -102,11 +102,11 @@ Now `https://my-app.local:3000` works in any browser. Useful for projects that n
 
 `lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. The default `localhost`, `127.0.0.1`, and `::1` SANs are always included.
 
-When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, `cert.pem` is written as a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. If your root CA was created before intermediate support, LPM may ask you to run `lpm cert rotate` before issuing custom-host certificates.
+When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, `cert.pem` is written as a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. If your root CA was created before intermediate support, LPM CLI may ask you to run `lpm cert rotate` before issuing custom-host certificates.
 
 ## Framework integration
 
-LPM detects which framework `lpm dev` is starting and injects the right env vars:
+LPM CLI detects which framework `lpm dev` is starting and injects the right env vars:
 
 | Framework | Env vars |
 | --- | --- |
@@ -114,7 +114,7 @@ LPM detects which framework `lpm dev` is starting and injects the right env vars
 | Vite | `VITE_HTTPS=true`, `VITE_SSL_CERT`, `VITE_SSL_KEY` (or via Vite's `https` config object) |
 | Generic | `SSL_CRT_FILE`, `SSL_KEY_FILE`, `HTTPS=true` |
 
-If your framework needs different vars, you can read the cert paths yourself from the env LPM injects and configure the server manually.
+If your framework needs different vars, you can read the cert paths yourself from the env LPM CLI injects and configure the server manually.
 
 ## Status check
 
@@ -141,9 +141,9 @@ The CA itself has a much longer lifetime — once you `lpm cert trust`, it lasts
 
 ## Why a per-machine root CA
 
-LPM doesn't ship a baked-in CA. Every machine generates its own root CA on first `lpm cert trust`. Reasons:
+LPM CLI doesn't ship a baked-in CA. Every machine generates its own root CA on first `lpm cert trust`. Reasons:
 
-- The private key never leaves the machine. A compromised LPM-distributed CA would be a supply-chain attack against every user.
+- The private key never leaves the machine. A compromised shared CA distributed by LPM CLI would be a supply-chain attack against every user.
 - Removing trust is a local operation — `lpm cert uninstall` doesn't have to coordinate with anything.
 - Project certs are signed by your local CA, so they're only trusted on machines that have run `lpm cert trust`. Sharing a project cert across machines doesn't accidentally trust its issuer everywhere.
 

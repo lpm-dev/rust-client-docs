@@ -1,15 +1,15 @@
 ---
 title: Built-in tools
-description: "How LPM ships Oxlint, Biome, and Rolldown, plus how `lpm check` and `lpm pack` pick their backends."
+description: "How LPM CLI ships Oxlint, Biome, and Rolldown, plus how `lpm check` and `lpm pack` pick their backends."
 ---
 
-LPM ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), a package-build wrapper for [`lpm pack`](/docs/dev/pack), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint, Biome, and Rolldown are managed through [`lpm plugin`](/docs/dev/plugin): lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` uses a separate internal managed engine cache under `~/.lpm/engines`.
+LPM CLI ships a small set of built-in tools — [Oxlint](https://oxc.rs) for [`lpm lint`](/docs/dev/lint), [Biome](https://biomejs.dev) for [`lpm fmt`](/docs/dev/fmt), a type-check wrapper for [`lpm check`](/docs/dev/check), a package-build wrapper for [`lpm pack`](/docs/dev/pack), and a bundler wrapper for [`lpm bundle`](/docs/dev/bundle). Oxlint, Biome, and Rolldown are managed through [`lpm plugin`](/docs/dev/plugin): lazy-downloaded on first use, cached, and pinned per-project. `lpm check --engine tsgo` uses a separate internal managed engine cache under `~/.lpm/engines`.
 
 This page covers the design — how the plugin system works, where binaries land, how versions are resolved, and the security model.
 
 ## Why lazy-download
 
-Bundling 50+ MB of toolchains into the LPM binary would bloat every install and waste disk for users who don't lint. Bundling nothing and using `npx` adds hundreds of milliseconds of resolution overhead per invocation. The middle path: download tools on first use, cache them globally, hash-verify, share across every project.
+Bundling 50+ MB of toolchains into the LPM CLI binary would bloat every install and waste disk for users who don't lint. Bundling nothing and using `npx` adds hundreds of milliseconds of resolution overhead per invocation. The middle path: download tools on first use, cache them globally, hash-verify, share across every project.
 
 Measured cost: `lpm lint` is **3 ms** (vs `npx oxlint` 273 ms). `lpm fmt` is **3 ms** (vs `npx biome` 340 ms). The win is not the tool itself — it's the resolution overhead `npx` pays per invocation.
 
@@ -24,8 +24,8 @@ Measured cost: `lpm lint` is **3 ms** (vs `npx oxlint` 273 ms). `lpm fmt` is **3
 Other tool backends sit beside the plugin system:
 
 - `tsc` shells out through the same PATH-injection mechanism `lpm run` uses. PATH-injection prepends `node_modules/.bin` and falls back to the system `PATH`, so a globally-installed `tsc` can run too — but the project-local install is the right answer. [`lpm doctor`](/docs/infra/doctor) flags the system-only case as `typescript_missing_for_tsconfig` (warn).
-- `tsdown` stays project-local. [`lpm pack`](/docs/dev/pack) walks `node_modules/.bin` from the current package up to the workspace root and requires a reachable `tsdown` there. LPM owns the workspace selection, `--json` envelope, and stable top-level flags; the backend version still comes from the repo's own `package.json`.
-- `tsgo` is an internal managed engine. LPM downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
+- `tsdown` stays project-local. [`lpm pack`](/docs/dev/pack) walks `node_modules/.bin` from the current package up to the workspace root and requires a reachable `tsdown` there. LPM CLI owns the workspace selection, `--json` envelope, and stable top-level flags; the backend version still comes from the repo's own `package.json`.
+- `tsgo` is an internal managed engine. LPM CLI downloads the pinned platform tarball on first use, verifies its SRI integrity, preserves the full extracted layout, and reuses it from `~/.lpm/engines/tsgo/<version>/<platform>/` on later runs.
 - `rolldown` is user-facing as a managed plugin, even though its internal cache uses the managed engine layout. [`lpm bundle`](/docs/dev/bundle) installs the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the current platform binding into one verified cached layout under `~/.lpm/engines/rolldown/<version>/<platform>/`.
 
 That split is intentional: `tsc` and `tsdown` preserve repo-local version ownership, `tsgo` remains an internal engine choice, and Rolldown gets the public plugin update UX while keeping the package-graph layout it needs internally.
@@ -80,7 +80,7 @@ The `.lpm-plugin.json` sidecar records the plugin name, version, platform, asset
 The lookup order, when [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), or [`lpm bundle`](/docs/dev/bundle) starts:
 
 1. **Pinned version** in `lpm.json > tools.<name>` — exact match.
-2. **`max(hardcoded, approved-cache)`** — whichever is newer, the version baked into the LPM binary or one a previous successful `lpm plugin update` approved.
+2. **`max(hardcoded, approved-cache)`** — whichever is newer, the version baked into the LPM CLI binary or one a previous successful `lpm plugin update` approved.
 3. **Auto-download** if the resolved version isn't installed for the current platform yet.
 
 Normal tool execution never touches the network for upstream-latest discovery — it only reads the bundled floor and sticky approved cache. To check upstream for newer releases, run `lpm plugin outdated`. To approve a newer version, run `lpm plugin update <name>`; that command runs the discovery probe, prints the download and verification phases for human runs, and only then approves the verified new version into the cache.
@@ -117,7 +117,7 @@ Every install — whether the registry's pinned `latest_version`, a `lpm.json`-p
 
 For Oxlint and Biome, the checksum gate tries three sources in order:
 
-1. **Bundled checksum** — SHA-256 baked into the LPM binary at build time. Used when the requested version equals the registry's hardcoded `latest_version`. The fast path; no network round-trip.
+1. **Bundled checksum** — SHA-256 baked into the LPM CLI binary at build time. Used when the requested version equals the registry's hardcoded `latest_version`. The fast path; no network round-trip.
 2. **Upstream sidecar** — SHA-256 fetched from `<asset_url>.sha256` (oxlint via cargo-dist, biome publishes per-asset sidecars). Used for pinned versions and `lpm plugin update` results.
 3. **Unverified override** — only if `LPM_ALLOW_UNVERIFIED_PLUGINS=1` is set. Records `verification-source: unverified-override` in the sidecar; reuse requires the same env var on every subsequent invocation.
 
@@ -128,7 +128,7 @@ If neither bundled nor upstream verification is available — typically when the
 ```text
 refusing to install oxlint 1.42.0 for darwin-arm64: no bundled checksum and
 upstream sidecar https://.../oxlint-aarch64-apple-darwin.tar.gz.sha256 is
-unavailable. Update LPM (newer releases ship pinned checksums for newer plugin
+unavailable. Update LPM CLI (newer releases ship pinned checksums for newer plugin
 versions), pin a different version, or set LPM_ALLOW_UNVERIFIED_PLUGINS=1
 to install without verification.
 ```
@@ -152,7 +152,7 @@ PluginDef {
 
 The sidecar — not bare file existence — gates reuse. Every cache hit re-validates:
 
-- `schema_version` matches the current LPM binary,
+- `schema_version` matches the current LPM CLI binary,
 - `plugin_name` and `version` match the request,
 - `platform` matches the current host,
 - `verification_source` is compatible with the current trust posture (`unverified-override` is only honored when `LPM_ALLOW_UNVERIFIED_PLUGINS=1` is set in the consuming process),
@@ -169,7 +169,7 @@ Each plugin definition declares which platforms get a binary:
 | `oxlint` | `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win-x64` |
 | `biome` | `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win-x64` |
 
-LPM detects the current platform and downloads the matching asset. Unsupported platforms get an immediate error rather than a download attempt.
+LPM CLI detects the current platform and downloads the matching asset. Unsupported platforms get an immediate error rather than a download attempt.
 
 ## Manage installed plugins
 
@@ -186,7 +186,7 @@ See [`lpm plugin`](/docs/dev/plugin) for the full subcommand surface.
 
 ## Why the registry is hardcoded
 
-The plugin registry ships **inside the LPM binary**, not as a runtime-fetched config. New plugins land in an LPM release — there's no add-your-own-plugin path. This is deliberately conservative: tool distribution bugs ship with the LPM binary and pass through the team's QA, instead of a registry config that could change between two `lpm lint` invocations on the same machine.
+The plugin registry ships **inside the LPM CLI binary**, not as a runtime-fetched config. New plugins land in an LPM CLI release — there's no add-your-own-plugin path. This is deliberately conservative: tool distribution bugs ship with the LPM CLI binary and pass through the team's QA, instead of a registry config that could change between two `lpm lint` invocations on the same machine.
 
 If you want to use a tool that isn't in the plugin set today, install it as a normal dep and run it through your `package.json` scripts:
 
@@ -200,7 +200,7 @@ lpm run lint           # runs the package.json `lint` script
 In CI, plugins behave the same way as locally — first invocation downloads, subsequent invocations reuse. Cache `~/.lpm/plugins/` in your CI to skip the download step:
 
 ```yaml
-- name: Cache LPM plugins
+- name: Cache LPM CLI plugins
   uses: actions/cache@v4
   with:
     path: ~/.lpm/plugins
@@ -214,7 +214,7 @@ The cache key is the `lpm.json` hash — when `tools` versions change, the cache
 - [`lpm lint`](/docs/dev/lint) — backed by oxlint
 - [`lpm fmt`](/docs/dev/fmt) — backed by biome
 - [`lpm check`](/docs/dev/check) — project-local `tsc` by default, managed `tsgo` when selected
-- [`lpm pack`](/docs/dev/pack) — project-local tsdown with LPM workspace orchestration
+- [`lpm pack`](/docs/dev/pack) — project-local tsdown with LPM CLI workspace orchestration
 - [`lpm bundle`](/docs/dev/bundle) — managed Rolldown plugin
 - [`lpm plugin`](/docs/dev/plugin) — manage installed plugins
 - [`lpm.json` tools](/docs/reference/lpm-json#tools) — version pinning per project

@@ -9,13 +9,13 @@ lpm install [packages...]   # alias: lpm i
 
 With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
 
-Before a new direct dependency enters the project, LPM checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM defaults to cancel and only switches to the suggested package or writes a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy) when you choose that action. Existing lockfile replays are not blocked by this check.
+Before a new direct dependency enters the project, LPM CLI checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM CLI defaults to cancel and only switches to the suggested package or writes a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy) when you choose that action. Existing lockfile replays are not blocked by this check.
 
 ## Project discovery
 
 `lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock`, `lpm.lockb` when representable, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
 
-If `lpm i <pkg>` runs in a directory with no `package.json` anywhere up the tree, LPM auto-creates a minimal `{"dependencies": {}}` manifest in the current directory before installing — matching `npm i <pkg>`'s fresh-dir behavior. Bare `lpm install` (no package args) still errors when nothing can be found, since it has nothing to install against.
+If `lpm i <pkg>` runs in a directory with no `package.json` anywhere up the tree, LPM CLI auto-creates a minimal `{"dependencies": {}}` manifest in the current directory before installing — matching `npm i <pkg>`'s fresh-dir behavior. Bare `lpm install` (no package args) still errors when nothing can be found, since it has nothing to install against.
 
 ## Examples
 
@@ -72,14 +72,14 @@ LPM_TIMING_DETAIL=trace lpm install --json
 
 ## How it works
 
-1. **Resolve.** LPM walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
+1. **Resolve.** LPM CLI walks `package.json`, applies the lockfile, and fetches whatever metadata is missing from the appropriate registry (see [Registries](/docs/registries) for routing).
 2. **Download.** Tarballs go into the global content-addressable store at `~/.lpm/store/`. Anything already present is reused — installs across projects share on-disk copies via clonefile (macOS) or hardlinks (Linux).
-3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** in LPM's v2 virtual-store layout: root direct dependencies are surfaced at the project root, while package-local dependency links live inside shared link entries. Workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
+3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** in LPM CLI's v2 virtual-store layout: root direct dependencies are surfaced at the project root, while package-local dependency links live inside shared link entries. Workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM CLI switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Run root lifecycle, gate dependency scripts.** Bare installs run the root project's install lifecycle (`pnpm:devPreinstall` before dependency work, then `preinstall` / `install` / `postinstall` / `preprepare` / `prepare` / `postprepare` after a successful install). Dependency package scripts stay blocked by default; when policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only dependency `preinstall`, `install`, and `postinstall` fire. Other recognized dependency phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
 
-For registry packages, any tarball URL recorded in `lpm.lock` is only a cache hint. Before fetching it, LPM checks the registry metadata for that exact `name@version` and refuses the install if the hint does not match `dist.tarball`. Explicit tarball, `file:`, `link:`, and git sources keep their own source identity and are not rebound to registry metadata.
+For registry packages, any tarball URL recorded in `lpm.lock` is only a cache hint. Before fetching it, LPM CLI checks the registry metadata for that exact `name@version` and refuses the install if the hint does not match `dist.tarball`. Explicit tarball, `file:`, `link:`, and git sources keep their own source identity and are not rebound to registry metadata.
 
 ## JSR dependencies
 
@@ -94,7 +94,7 @@ For registry packages, any tarball URL recorded in `lpm.lock` is only a cache hi
 }
 ```
 
-LPM installs those dependencies under the JSR import name (`node_modules/@std/path`) and fetches the folded npm package (`@jsr/std__path`) from `https://npm.jsr.io`. Version-only specs such as `"jsr:^1.0.0"` borrow the package name from the dependency key. Malformed JSR package names are rejected before any registry request.
+LPM CLI installs those dependencies under the JSR import name (`node_modules/@std/path`) and fetches the folded npm package (`@jsr/std__path`) from `https://npm.jsr.io`. Version-only specs such as `"jsr:^1.0.0"` borrow the package name from the dependency key. Malformed JSR package names are rejected before any registry request.
 
 Use `.npmrc` to point JSR fetches at a mirror:
 
@@ -106,7 +106,7 @@ See [Registries](/docs/registries#jsr-packages) for the routing details.
 
 ## Peer dependency strict mode
 
-By default, LPM follows pnpm's non-strict install posture: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings, then install continues.
+By default, LPM CLI follows pnpm's non-strict install posture: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings, then install continues.
 
 When those warnings include a cross-consumer peer conflict, the default linker auto-switches to isolated for that project. Explicit linker choices (`--linker`, `~/.lpm/config.toml > linker`, `LPM_LINKER`, or `package.json > lpm.linker`) are respected and do not auto-switch.
 
@@ -165,7 +165,7 @@ Under `--json`, peer diagnostics are always attached to the success envelope as 
 
 ## Save policy
 
-When you run `lpm install <pkg>` without an explicit version, LPM saves `^resolvedVersion` to `package.json`. If you typed an explicit version or range, LPM preserves what you typed. Prereleases are saved exact for safety.
+When you run `lpm install <pkg>` without an explicit version, LPM CLI saves `^resolvedVersion` to `package.json`. If you typed an explicit version or range, LPM CLI preserves what you typed. Prereleases are saved exact for safety.
 
 | You ran | `package.json` ends up with |
 | --- | --- |
@@ -190,7 +190,7 @@ Re-installing an existing dep without a version or override flag refreshes the l
 
 `lpm install <pkg>` and bare `lpm install` both guard **new direct dependency names** before resolution. The detector covers low-noise cases such as adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`), and flag-shaped package names after `--` (`--legacy-peer-deps`). Transitive dependencies are not blocked by this guard.
 
-In interactive terminals, a single suspicious CLI package can be replaced with the suggested package or committed to the project allow-list. In CI, `--json`, non-TTY, and `--yes` runs, LPM exits `1` with `error_code: "typosquat_suspected"` and leaves the manifest untouched.
+In interactive terminals, a single suspicious CLI package can be replaced with the suggested package or committed to the project allow-list. In CI, `--json`, non-TTY, and `--yes` runs, LPM CLI exits `1` with `error_code: "typosquat_suspected"` and leaves the manifest untouched.
 
 Intentional names belong in `lpm.toml`:
 
@@ -207,11 +207,11 @@ Machine-wide guard mode lives in `~/.lpm/config.toml > typosquat-guard` and is m
 
 ## npm firewall
 
-When `~/.lpm/config.toml > [firewall] mode` is set to `monitor` or `enforce`, install sends selected public npm package versions to firewall.lpm.dev in batches. Metadata and tarballs still use the direct npm route; the firewall request only asks for block/warn verdicts. The hosted verdict service is an LPM Pro/org feature, so active modes send LPM auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI.
+When `~/.lpm/config.toml > [firewall] mode` is set to `monitor` or `enforce`, LPM CLI sends selected public npm package versions to LPM Firewall at `firewall.lpm.dev` in batches. Metadata and tarballs still use the direct npm route; the firewall request only asks for block/warn verdicts. LPM Firewall is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI.
 
 When human output is active and the install includes public npm packages that need verdict checks, the install phase line shows `🔥 LPM Firewall active`.
 
-`monitor` prints would-block and warning verdicts and lets the install continue. If firewall.lpm.dev denies entitlement or is unreachable, monitor mode warns and continues. `enforce` blocks packages whose effective firewall action is `block` before their tarballs are allowed through, and fails before package bytes are materialized when entitlement is denied. Configure it with:
+`monitor` prints would-block and warning verdicts and lets the install continue. If LPM Firewall denies entitlement or is unreachable, monitor mode warns and continues. `enforce` blocks packages whose effective firewall action is `block` before their tarballs are allowed through, and fails before package bytes are materialized when entitlement is denied. Configure it with:
 
 ```bash
 lpm config firewall --set monitor
@@ -222,7 +222,7 @@ The legacy string `report` is still accepted as an alias for `monitor`. Disablin
 
 ## Policy extensions
 
-Install can run local policy extensions from `~/.lpm/config.toml > [policy.extensions.<name>]`. Extensions receive the resolved package candidates as JSON on stdin and return verdicts as JSON on stdout. LPM spawns the configured command directly; it does not use `sh -c` or interpolate package data into a command string. The command's first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths are rejected.
+Install can run local policy extensions from `~/.lpm/config.toml > [policy.extensions.<name>]`. Extensions receive the resolved package candidates as JSON on stdin and return verdicts as JSON on stdout. LPM CLI spawns the configured command directly; it does not use `sh -c` or interpolate package data into a command string. The command's first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths are rejected.
 
 Policy extensions run after resolution, platform filtering, and `--omit` filtering, but before registry tarballs are fetched or packages are linked. Warm lockfile and offline installs run the same check before linking. When an extension is active, install-time registry tarball prefetch waits until policy verdicts pass. Direct remote tarball URL dependencies are rejected while policy extensions are active because V1 cannot identify the package candidate without downloading the tarball first.
 
@@ -373,7 +373,7 @@ Interactive TTY behavior:
 lpm install --no-sandbox
 ```
 
-In an interactive shell, LPM can ask inline for confirmation and continue the install if you approve.
+In an interactive shell, LPM CLI can ask inline for confirmation and continue the install if you approve.
 
 Automation behavior:
 
@@ -381,7 +381,7 @@ Automation behavior:
 lpm install --no-sandbox --json
 ```
 
-With `--json`, in CI, or in any non-TTY shell, LPM does **not** prompt. It fails with `error_code: "security_approval_required"` and includes a `suggested_command`, for example:
+With `--json`, in CI, or in any non-TTY shell, LPM CLI does **not** prompt. It fails with `error_code: "security_approval_required"` and includes a `suggested_command`, for example:
 
 ```bash
 lpm security unlock sandbox-none --project . --ttl 10m
@@ -396,7 +396,7 @@ Repo-file weakeners are treated differently. If a repo asks for a weaker posture
 - `package.json > lpm.minimumReleaseAgePolicy`
 - `lpm.toml > [sandbox]`
 
-install or rebuild does **not** prompt inline. LPM treats those file values as proposals, fails the command, and points you at `lpm security unlock ...` for a temporary project exception.
+install or rebuild does **not** prompt inline. LPM CLI treats those file values as proposals, fails the command, and points you at `lpm security unlock ...` for a temporary project exception.
 
 Use [`lpm security`](/docs/infra/security) to create the unlock explicitly or to inspect the current floor with `lpm security status`.
 
@@ -411,7 +411,7 @@ lpm install --filter './apps/*'   # any glob the workspace filter accepts
 lpm install react --filter-prod ...web # prod dependency closure only
 ```
 
-`--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM prompts for confirmation; pass `-y` to skip the prompt.
+`--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM CLI prompts for confirmation; pass `-y` to skip the prompt.
 
 See [Workspaces](/docs/packages/workspaces) for filter grammar.
 
@@ -446,7 +446,7 @@ For full image patterns, see [Docker deploys](/docs/guides/docker-deploys).
 
 ## Recently published packages
 
-LPM applies a **24-hour** minimum release age by default. On project installs, the default policy checks direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on checked packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
+LPM CLI applies a **24-hour** minimum release age by default. On project installs, the default policy checks direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on checked packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
 
 Transitive dependencies of an allowed direct package are not separately halted by the default policy. That keeps a mature direct package on its normal dependency graph instead of downgrading it only because one of its children was published recently.
 
@@ -501,11 +501,11 @@ The verifier checks npm-compatible `dist.signatures` against registry signing ke
 lpm config trust-policy --set no-downgrade
 ```
 
-When enabled, LPM refuses npm versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can fall back to an older allowed candidate; an exact pin to a blocked version fails with the trust-policy reason.
+When enabled, LPM CLI refuses npm versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can fall back to an older allowed candidate; an exact pin to a blocked version fails with the trust-policy reason.
 
 ## Audit after install
 
-Optional opt-in: after a successful install, LPM can run [`lpm audit`](/docs/packages/audit) silently and emit a one-line advisory:
+Optional opt-in: after a successful install, LPM CLI can run [`lpm audit`](/docs/packages/audit) silently and emit a one-line advisory:
 
 ```text
 ✓ Done · installed 247 packages in 1.31s
@@ -563,7 +563,7 @@ Two things differ from project installs:
 - **Globals don't write to `package.json`.** `lpm install -g` resolves a single package into `~/.lpm/global/installs/<pkg>@<ver>/` and tracks it in `~/.lpm/global/manifest.toml`. The project's `package.json` is never read or mutated. Approvals from [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) land in `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
 - **Project config is skipped.** With no project-level `package.json > lpm` block to read, the script-policy and strict-peer-dependency chains on `-g` collapse to CLI flag > `~/.lpm/config.toml` > default. The `~/.lpm/config.toml > minimum-release-age-secs` and `release-age-policy` chains work the same way.
 
-A global install commits only after LPM has materialized at least one safe, executable bin shim for the package. If the package exposes no usable bins, declares unsafe bin names, or the install cannot write its ready marker, LPM rolls the pending global entry back instead of leaving a half-installed package in `~/.lpm/global/`.
+A global install commits only after LPM CLI has materialized at least one safe, executable bin shim for the package. If the package exposes no usable bins, declares unsafe bin names, or the install cannot write its ready marker, LPM CLI rolls the pending global entry back instead of leaving a half-installed package in `~/.lpm/global/`.
 
 Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
 
@@ -583,7 +583,7 @@ Error: lpm::engine_mismatch
   │ > engines.lpm)
 ```
 
-Other `engines.<pm>` keys (`npm`, `pnpm`, `yarn`, `bun`) are recognized and surfaced as a one-line warning that LPM doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
+Other `engines.<pm>` keys (`npm`, `pnpm`, `yarn`, `bun`) are recognized and surfaced as a one-line warning that LPM CLI doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
 
 The check runs before any resolver work, so failures exit cheaply.
 
@@ -655,7 +655,7 @@ Plus the [global flags](/docs/commands#global-flags): `--token`, `--registry`, `
 
 - [`lpm uninstall`](/docs/packages/uninstall) — remove a dependency
 - [`lpm tidy`](/docs/packages/tidy) — find unused dependency declarations and phantom imports
-- [`lpm upgrade`](/docs/packages/upgrade) — bump eligible LPM and npm deps to their latest matching range
+- [`lpm upgrade`](/docs/packages/upgrade) — bump eligible LPM.dev Registry and npm deps to their latest matching range
 - [`lpm rebuild`](/docs/packages/rebuild) — run dependency lifecycle scripts after install
 - [`lpm approve-scripts`](/docs/packages/approve-scripts) — approve packages to run scripts
 - [Save policy](/docs/packages/save-policy) — full details of the save-prefix system

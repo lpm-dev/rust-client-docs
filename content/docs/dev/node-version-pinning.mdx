@@ -1,15 +1,15 @@
 ---
 title: Managed runtimes
-description: "How LPM detects, installs, and exposes managed Node.js and Bun runtimes."
+description: "How LPM CLI detects, installs, and exposes managed Node.js and Bun runtimes."
 ---
 
-LPM manages project runtimes itself. It detects the versions your project asks for, downloads missing installs on demand, stores them under `~/.lpm/runtimes/`, and prepends the right `bin/` directories to `PATH` for every script you run.
+LPM CLI manages project runtimes itself. It detects the versions your project asks for, downloads missing installs on demand, stores them under `~/.lpm/runtimes/`, and prepends the right `bin/` directories to `PATH` for every script you run.
 
 Node and Bun are supported managed runtimes. Deno is still unsupported.
 
 ## Detection Order
 
-When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lpm exec`](/docs/dev/exec), [`lpm test`](/docs/dev/test), or [`lpm bench`](/docs/dev/bench) starts, LPM resolves managed runtime pins in deterministic order: Node first, then Bun.
+When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lpm exec`](/docs/dev/exec), [`lpm test`](/docs/dev/test), or [`lpm bench`](/docs/dev/bench) starts, LPM CLI resolves managed runtime pins in deterministic order: Node first, then Bun.
 
 ### Node
 
@@ -21,7 +21,7 @@ When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lp
 | 4          | `.node-version`               | Plain version                                          |
 | (fallback) | None of the above             | Use the system `node` from `PATH` — no managed runtime |
 
-`.nvmrc` lives in this list intentionally — projects migrating from `nvm` get Node pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` because it sits next to the rest of the LPM config.
+`.nvmrc` lives in this list intentionally — projects migrating from `nvm` get Node pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` because it sits next to the rest of the LPM CLI config.
 
 ### Bun
 
@@ -30,17 +30,17 @@ When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lp
 | 1          | `lpm.json > runtime.bun`  | Exact, `latest`, `v1.3.14`, `bun-v1.3.14`, prefix, or range    |
 | (fallback) | No `runtime.bun` declared | Do not prepend managed Bun                                    |
 
-`package.json > engines.bun` is recognized as a compatibility warning, but LPM does not enforce it and does not use it as a managed-runtime pin. Use `lpm.json > runtime.bun` when scripts need Bun available.
+`package.json > engines.bun` is recognized as a compatibility warning, but LPM CLI does not enforce it and does not use it as a managed-runtime pin. Use `lpm.json > runtime.bun` when scripts need Bun available.
 
 ## Auto-Install
 
-If a detected version is not already installed, LPM downloads it before running the script unless auto-install is disabled:
+If a detected version is not already installed, LPM CLI downloads it before running the script unless auto-install is disabled:
 
 ```bash
 LPM_NO_AUTO_INSTALL=true lpm dev
 ```
 
-`LPM_NO_AUTO_INSTALL=true` applies to both Node and Bun. When auto-install is off and a managed runtime is missing, LPM warns and leaves the system `PATH` in place for that runtime.
+`LPM_NO_AUTO_INSTALL=true` applies to both Node and Bun. When auto-install is off and a managed runtime is missing, LPM CLI warns and leaves the system `PATH` in place for that runtime.
 
 Node releases come from `https://nodejs.org/dist/index.json`, cached for 1 hour at `~/.lpm/runtimes/index-cache.json`. Downloads are SHA-256 verified against the matching `SHASUMS256.txt` entry.
 
@@ -64,11 +64,11 @@ Bun releases come from the GitHub releases API for `oven-sh/bun`, cached for 1 h
 └── bun-index-cache.json
 ```
 
-Each version is installed once and reused by every project on the machine. `LPM_HOME=<path>` moves the entire LPM root, including `runtimes/`, which is useful for hermetic CI.
+Each version is installed once and reused by every project on the machine. `LPM_HOME=<path>` moves the entire LPM CLI root, including `runtimes/`, which is useful for hermetic CI.
 
 ## Script PATH Order
 
-When a script runs, LPM builds `PATH` from:
+When a script runs, LPM CLI builds `PATH` from:
 
 1. Project-local `node_modules/.bin/`
 2. Managed Node `bin/`, if a Node pin resolves to an installed version
@@ -77,11 +77,11 @@ When a script runs, LPM builds `PATH` from:
 
 This means locally-installed CLIs win over managed runtime tools, and managed Node wins over managed Bun when both provide a command with the same name.
 
-`runtime.bun` only exposes `bun` to scripts. It does **not** switch LPM script execution to `bun run`.
+`runtime.bun` only exposes `bun` to scripts. It does **not** switch LPM CLI script execution to `bun run`.
 
 ## Node Engine Enforcement
 
-`engines.node` plays two roles. As a **detection source** it tells LPM which managed Node runtime to install for `lpm dev` / `lpm run` when `runtime.node` is absent. As an **enforcement constraint** it gates `lpm install` / `lpm rebuild` / `lpm add` — the pipeline aborts with a structured error if the effective Node version does not satisfy the range.
+`engines.node` plays two roles. As a **detection source** it tells LPM CLI which managed Node runtime to install for `lpm dev` / `lpm run` when `runtime.node` is absent. As an **enforcement constraint** it gates `lpm install` / `lpm rebuild` / `lpm add` — the pipeline aborts with a structured error if the effective Node version does not satisfy the range.
 
 ```text
 $ lpm install
@@ -108,19 +108,19 @@ lpm use remove bun@1.3          # remove all installed 1.3.x Bun runtimes
 `lpm use <runtime>@<spec>` writes the resolved version into `lpm.json > runtime.<runtime>`.
 During a fresh install, the human output shows the resolved version, downloaded size, SHA-256 verification, extraction/linking, final runtime, and PATH hint.
 
-`lpm use <runtime>@<spec> --pin` skips the download step. If the spec already matches an installed runtime, LPM writes that exact installed version; otherwise it records the requested spec unchanged so a later `lpm dev` / `lpm run` can resolve or auto-install it.
+`lpm use <runtime>@<spec> --pin` skips the download step. If the spec already matches an installed runtime, LPM CLI writes that exact installed version; otherwise it records the requested spec unchanged so a later `lpm dev` / `lpm run` can resolve or auto-install it.
 
-`lpm use remove <runtime>@<spec>` deletes installed managed runtimes matching the spec without changing `lpm.json`. If the project still pins a matching runtime, LPM warns because later commands can auto-install it again.
+`lpm use remove <runtime>@<spec>` deletes installed managed runtimes matching the spec without changing `lpm.json`. If the project still pins a matching runtime, LPM CLI warns because later commands can auto-install it again.
 
 ## Compatibility With `nvm` / `fnm`
 
-LPM's Node management is independent. If you have `nvm` or `fnm` installed:
+LPM CLI's Node management is independent. If you have `nvm` or `fnm` installed:
 
-- They modify `PATH` in your shell, affecting `node` lookup outside LPM.
-- LPM's Node detection respects `.nvmrc`, so a project pinned via `nvm` works under LPM without converting.
-- When LPM runs a script with a managed Node pin, LPM's runtime takes precedence over whatever `nvm` set in the shell.
+- They modify `PATH` in your shell, affecting `node` lookup outside LPM CLI.
+- LPM CLI's Node detection respects `.nvmrc`, so a project pinned via `nvm` works under LPM CLI without converting.
+- When LPM CLI runs a script with a managed Node pin, LPM CLI's runtime takes precedence over whatever `nvm` set in the shell.
 
-You do not have to remove `nvm` to adopt LPM. If a project has both `.nvmrc` and `lpm.json > runtime.node`, the `lpm.json` value wins.
+You do not have to remove `nvm` to adopt LPM CLI. If a project has both `.nvmrc` and `lpm.json > runtime.node`, the `lpm.json` value wins.
 
 ## See Also
 

@@ -3,7 +3,7 @@ title: Security & audit
 description: "Defense in depth — script policy, behavioral analysis, OSV, provenance, typosquatting, the triage gate."
 ---
 
-LPM's security model is **layered**. No single check is the answer; instead, several independent gates each catch a different class of threat. This page is the conceptual overview — what each layer does, how they compose, and where to dig deeper.
+LPM CLI's security model is **layered**. No single check is the answer; instead, several independent gates each catch a different class of threat. This page is the conceptual overview — what each layer does, how they compose, and where to dig deeper.
 
 The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm query`](/docs/packages/query) (precision selectors), [`lpm approve-scripts`](/docs/packages/approve-scripts) (script trust), and [`lpm trust`](/docs/packages/trust) (drift inspection). All of them read from the same underlying analysis pipeline.
 
@@ -99,7 +99,7 @@ lpm query :critical --assert-none # CI gate: fail if any critical-tagged package
 
 ## Layer 3: Vulnerability data (OSV)
 
-`lpm audit` cross-references every installed package against [OSV.dev](https://osv.dev) (for npm packages) and any registry-side advisories (for `@lpm.dev` packages). Findings are surfaced inline with the behavioral report. Severity ladder: `critical` > `high` > `moderate` (alias `medium`) > `info` (alias `low`).
+`lpm audit` cross-references every installed package against [OSV.dev](https://osv.dev) (for npm packages) and any LPM.dev Registry-side advisories (for `@lpm.dev` packages). Findings are surfaced inline with the behavioral report. Severity ladder: `critical` > `high` > `moderate` (alias `medium`) > `info` (alias `low`).
 
 ```bash
 lpm audit                       # all findings
@@ -127,7 +127,7 @@ or for one process:
 LPM_VERIFY_REGISTRY_SIGNATURES=1 lpm install
 ```
 
-When enabled on install, LPM verifies registry signatures after resolution and before the install commits. A missing signature, missing integrity hash, missing signing key, expired key, or invalid signature fails the install for npm registry packages. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check and still pass through the other layers.
+When enabled on install, LPM CLI verifies registry signatures after resolution and before the install commits. A missing signature, missing integrity hash, missing signing key, expired key, or invalid signature fails the install for npm registry packages. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check and still pass through the other layers.
 
 **Trust policy** — optional no-downgrade policy for npm trust evidence:
 
@@ -137,7 +137,7 @@ lpm config trust-policy --set no-downgrade
 
 When enabled, the resolver refuses versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can choose an older allowed version; exact pins to a downgraded version fail. This is separate from Sigstore bundle verification: it decides whether a candidate is acceptable based on the package's current and historical npm trust evidence.
 
-**Provenance drift** — when a previously-approved package is re-resolved, LPM compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
+**Provenance drift** — when a previously-approved package is re-resolved, LPM CLI compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
 
 ```text
 (now,      approved)
@@ -221,7 +221,7 @@ Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdv
 
 **Properties:**
 
-- **Ephemeral.** Approvals never write to disk as trust state. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
+- **Ephemeral.** Approvals never write to disk as trust state. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM CLI does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
 - **Source-aware identity.** Approvals key on `(name, version, integrity)` so a registry copy of a package can never inherit approval from a workspace copy of the same coordinates.
 - **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
 - **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
@@ -270,9 +270,9 @@ Operates entirely offline. See [`lpm.toml` typosquat policy](/docs/reference/lpm
 
 ## npm firewall verdicts
 
-The npm firewall is an opt-in firewall.lpm.dev verdict check for selected public npm package versions. It does not proxy npm metadata or tarballs: installs still fetch from the normal npm registry path, then batch selected `(name, version)` checks to firewall.lpm.dev before tarballs are allowed through.
+LPM Firewall is an opt-in verdict check at `firewall.lpm.dev` for selected public npm package versions. It does not proxy npm metadata or tarballs: LPM CLI still fetches from the normal npm registry path, then batches selected `(name, version)` checks with LPM Firewall before tarballs are allowed through.
 
-The hosted verdict service is an LPM Pro/org feature. Active `monitor` and `enforce` modes send LPM auth, so run `lpm login` first. Entitlement failures are warnings in `monitor` mode and blocking failures in `enforce` mode.
+LPM Firewall is an LPM.dev Registry Pro/Org feature. Active `monitor` and `enforce` modes send LPM.dev Registry auth, so run `lpm login` first. Entitlement failures are warnings in `monitor` mode and blocking failures in `enforce` mode.
 
 Configure it globally:
 
@@ -283,13 +283,13 @@ lpm config firewall --set enforce  # block malicious verdicts
 
 `off` is the default. `monitor` is useful while evaluating coverage; `enforce` is the blocking mode. The legacy string `report` is still accepted as an alias for `monitor`. Once monitor or enforce mode is part of the approved machine posture, disabling or downshifting it is a guarded weakening through [`lpm security`](/docs/infra/security).
 
-The firewall also carries policy metadata for configurable enforcement. Recommended enforcement blocks trusted public malicious advisories and LPM AI-confirmed malware; it warns for LPM AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full policy profile.
+LPM Firewall also carries policy metadata for configurable enforcement. Recommended enforcement blocks trusted public malicious advisories and LPM Firewall AI-confirmed malware; it warns for LPM Firewall AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full policy profile.
 
-## Skill content (lpm.dev only)
+## Skill content (LPM.dev Registry only)
 
-Packages on lpm.dev that ship [agent skills](/docs/reference/ai-agent-skills) get a separate LLM security scan against the skill content at publish time. Consumers receive attested skill markdown — drift in the skill body invalidates the attestation.
+Packages on LPM.dev Registry that ship [agent skills](/docs/reference/ai-agent-skills) get a separate LLM security scan against the skill content at publish time. Consumers receive attested skill markdown — drift in the skill body invalidates the attestation.
 
-This layer doesn't exist for non-lpm.dev packages today (no per-tarball skills declaration yet).
+This layer doesn't exist for non-LPM.dev Registry packages today (no per-tarball skills declaration yet).
 
 ## CI integration
 
