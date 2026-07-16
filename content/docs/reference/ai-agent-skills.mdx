@@ -1,69 +1,95 @@
 ---
 title: AI agent skills
-description: "What skills are, how they ship inside packages, and how lpm installs them."
+description: "Package-published and standalone agent skills managed by the LPM CLI."
 ---
 
-**Agent skills** are markdown files that ship inside a package and tell an AI editor / agent how to use it correctly — usage examples, gotchas, common patterns, integration steps. When you install a skill-shipping package, LPM CLI extracts the skills into `.lpm/skills/<package>/` in your project and (optionally) auto-integrates them with your editor.
+**Agent skills** are Markdown instructions that help an AI agent use a package, workflow, or project correctly. The LPM CLI supports two distinct kinds under one `lpm skills` command family.
 
-Skills are the LPM.dev Registry's native answer to the "the AI hallucinates this library's API" problem. The package author writes the skill at publish time; consumers get authoritative usage docs the agent can read directly.
+## Package-published skills
 
-## Status
+Package-published skills are a permanent LPM.dev Registry feature. Package authors publish them with an `@lpm.dev/*` package, and the LPM.dev publishing and registry flow validates their content.
 
-Skills are currently a **lpm.dev-only** API behavior. Non-lpm.dev packages are skipped (no per-tarball skills declaration yet). Package authors publish skills via the lpm.dev UI; the LPM.dev Registry runs LLM security scans on shipped skill content at publish time, so consumed skills are attested.
-
-## On the consumer side
-
-Skills get installed automatically by [`lpm install`](/docs/packages/install) and [`lpm add`](/docs/packages/add) — you don't usually need to touch them by hand.
-
-Manage them explicitly with [`lpm skills`](/docs/packages/skills):
+Installing a direct package extracts its published skills automatically:
 
 ```bash
-lpm skills list                              # list installed skills, grouped by package
-lpm skills install @lpm.dev/owner.pkg        # install skills for one package
-lpm skills validate                          # local size + shape sanity check
-lpm skills clean                             # wipe .lpm/skills/ entirely
+lpm install @lpm.dev/owner.package
 ```
 
-`validate` is a local check, not a registry round-trip — it enforces the same per-skill 15 KB / 100-char-minimum / 100 KB-total / required-frontmatter rules that the publisher had to satisfy. `clean` is a blunt `rm -rf` on `.lpm/skills/`; it's not orphan-aware (re-run `lpm install` afterward to repopulate from your dependency closure). Skip skill installation per-invocation with `--no-skills` on `lpm install` or `lpm add`.
-
-## On-disk layout
+They are materialized as package-owned files:
 
 ```text
 my-project/
-├── .lpm/
-│   └── skills/
-│       └── owner.pkg/
-│           ├── usage.md
-│           ├── gotchas.md
-│           └── …
-└── …
+└── .lpm/
+    └── skills/
+        └── owner.package/
+            ├── usage.md
+            └── gotchas.md
 ```
 
-When skills install via `lpm install` or `lpm add`, LPM CLI auto-adds `.lpm/skills/` to your project's `.gitignore` (commitable by hand if you want the skills in source control). The standalone `lpm skills install` command does **not** touch `.gitignore` — add the entry yourself if you go through that path.
+Use `--no-skills` with [`lpm install`](/docs/packages/install) or [`lpm add`](/docs/packages/add) to opt out for that invocation. To fetch one package's published set explicitly, use:
 
-## Editor auto-integration
+```bash
+lpm skills add @lpm.dev/owner.package
+```
 
-After a successful skill install, LPM CLI detects which AI editor your project is using (by looking for one of the marker files below) and appends a one-time reference block to its rules file pointing the agent at `.lpm/skills/`. The block is idempotent — re-installs don't duplicate it. Skip with `--no-editor-setup` on `lpm install` / `lpm add`.
+Package-published skills stay in `.lpm/skills/<package>/`. The LPM CLI does not convert them into standalone managed skills or automatically link them into agent directories.
 
-| Editor | Detected via |
+When package-published skills install through `lpm install` or `lpm add`, the LPM CLI can keep its existing editor rules-reference integration. That reference points an editor at `.lpm/skills/`; it is not a managed skill or an agent-directory link. Use `--no-editor-setup` to skip the reference update.
+
+## Standalone skills
+
+The same command manages public or local standard `SKILL.md` directories. A source may be a GitHub shorthand, an HTTPS GitHub repository or tree URL, or a local path.
+
+```bash
+lpm skills add vercel-labs/agent-skills
+lpm skills add https://github.com/vercel-labs/agent-skills --skill frontend-design
+lpm skills add ./team-skills --skill release-notes --agent codex --project
+```
+
+In a terminal, `lpm skills add` opens a wizard to choose the source, skills, scope, compatible targets, and confirmation. For CI and scripts, provide flags and `--yes` after reviewing `--dry-run`.
+
+Standalone skills are stored in an LPM-managed canonical location, then linked by default (or copied with `--copy`) to selected agent directories:
+
+| Target | Project directory |
 | --- | --- |
-| Claude Code | `CLAUDE.md` at the project root |
-| Cursor | `.cursor/rules/` directory |
-| Cursor (legacy) | `.cursorrules` file |
-| Windsurf | `.windsurfrules` file |
-| GitHub Copilot | `.github/copilot-instructions.md` |
-| Augment | `.augment/instructions.md` |
-| Cline | `.clinerules` file |
+| Codex | `.agents/skills/<skill>/` |
+| Claude Code | `.claude/skills/<skill>/` |
+| Cursor | `.cursor/skills/<skill>/` |
 
-If none of these markers exist, the auto-integration step is a no-op — your skills still install to `.lpm/skills/<package>/`, but no editor-side rules file is touched. Create the matching marker for your editor and re-run `lpm install` (or `lpm skills install <pkg>`) to opt in.
+Project-managed content lives in `.lpm/managed-skills/`; global-managed content lives under the LPM home directory. This is separate from package-published `.lpm/skills/` content.
 
-## `lpm skills`
+## Source and security boundary
 
-Full command reference, including the validation rules, JSON envelope, and `.gitignore` nuance, lives on [`lpm skills`](/docs/packages/skills).
+Standalone GitHub sources must use HTTPS. The LPM CLI resolves a requested GitHub ref to an immutable commit before downloading the archive, applies archive and file-size limits, and rejects traversal, symlinks, and special files.
+
+Before installation, it scans every skill file for prompt injection, secret exfiltration, shell-download execution, and destructive filesystem instructions. `lpm skills view` reports estimated context size and security information. `lpm skills update --dry-run` shows a bounded content diff and a security-finding delta before any change is applied.
+
+## Inventory and maintenance
+
+```bash
+lpm skills list                         # package-published, managed, and external inventory
+lpm skills view release-notes           # source, context, security, and target state
+lpm skills doctor                       # managed-link health
+lpm skills update release-notes         # re-resolve and refresh a managed source
+lpm skills disable release-notes        # remove target links while retaining managed content
+lpm skills enable release-notes         # restore recorded target links
+lpm skills remove release-notes         # remove managed content and target links
+lpm skills prune --dry-run              # preview stale-link and state cleanup
+lpm skills validate                     # validate package-published .lpm/skills content
+lpm skills clean                        # remove package-published .lpm/skills content
+```
+
+`list` and `view` distinguish three inventory categories:
+
+- `package`: package-published LPM.dev skills in `.lpm/skills/`.
+- `managed`: standalone skills explicitly added through `lpm skills add`.
+- `external`: pre-existing skills discovered in agent directories but not managed by LPM CLI.
+
+`clean` only removes package-published `.lpm/skills/` content. It does not remove standalone managed content or agent links. Re-run `lpm install` to repopulate package-published skills after a clean.
 
 ## See also
 
-- [`lpm skills`](/docs/packages/skills) — command reference
-- [`lpm install --no-skills`](/docs/packages/install) — skip skill installation per-invocation
-- [`lpm add --no-skills`](/docs/packages/add) — same, for source delivery
-- [MCP servers](/docs/reference/mcp-servers) — different mechanism for AI integration (tool calls vs. ambient docs)
+- [`lpm skills`](/docs/packages/skills) — complete command reference
+- [`lpm install --no-skills`](/docs/packages/install) — opt out of package-published skill extraction
+- [`lpm add --no-skills`](/docs/packages/add) — same for source delivery
+- [MCP servers](/docs/reference/mcp-servers) — tools and agent skills are separate integrations
