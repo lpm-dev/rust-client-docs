@@ -3,7 +3,12 @@ title: lpm skills
 description: "Discover, scan, and manage reusable skills for Codex, Claude Code, and Cursor."
 ---
 
-`lpm skills` manages standard `SKILL.md` directories from GitHub, local folders, and LPM.dev packages. It keeps one managed copy, then enables it for the coding agents you choose.
+`lpm skills` is one inventory for two valid skill flows:
+
+- **Package-published skills** ship with an LPM.dev package and are installed into `.lpm/skills/<package>/` when you run `lpm install` or `lpm add`.
+- **Standalone agent skills** come from standard `SKILL.md` directories on GitHub or disk and are explicitly added for the agents you choose.
+
+The flows share discovery and inspection, but keep their ownership and lifecycle separate.
 
 ```bash
 lpm skills add vercel-labs/agent-skills
@@ -18,7 +23,7 @@ lpm skills add
 lpm skills add vercel-labs/agent-skills
 lpm skills add https://github.com/vercel-labs/agent-skills --skill frontend-design
 lpm skills add ./team-skills --skill release-notes --agent codex
-lpm skills add @lpm.dev/acme.deploy --skill deploy --agent claude-code
+lpm skills add @lpm.dev/acme.deploy
 ```
 
 For CI and agents, make every choice explicit and pass `--yes`:
@@ -31,7 +36,7 @@ lpm skills add vercel-labs/agent-skills \
   --yes
 ```
 
-Supported sources are GitHub `owner/repository` shorthand, HTTPS GitHub repository URLs (including a `tree/<branch>/<path>` skill directory), local directories, and `@lpm.dev/*` packages. GitHub sources resolve to an immutable commit before installation.
+Supported sources are GitHub `owner/repository` shorthand, HTTPS GitHub repository URLs (including a `tree/<branch>/<path>` skill directory), local directories, and `@lpm.dev/*` packages. GitHub sources resolve to an immutable commit before installation. An `@lpm.dev/*` source adds package-published skills to `.lpm/skills/<package>/`; every other source uses the standalone agent-skill flow.
 
 Use `--list` to inspect a source without writing files:
 
@@ -76,9 +81,16 @@ lpm skills doctor
 | `disable <skill>` | — | Hide a skill from selected agents while retaining its managed copy |
 | `update [skill]` | — | Re-resolve the source, rescan it, and apply changed content after confirmation |
 | `doctor` | — | Detect missing managed content and broken agent visibility |
-| `validate [path]` | — | Validate and scan standard `SKILL.md` directories without installing them |
+| `clean` | — | Remove only package-published skills from `.lpm/skills/` |
+| `validate [path]` | — | Without a path, validate package-published skills; with a path, scan standard `SKILL.md` directories |
 
-`list`, `view`, and `doctor` inspect both scopes by default. Mutating commands default to the current project; pass `--global` to operate on user-wide skills.
+`list` and `view` are a combined inventory. They identify each result by ownership:
+
+- `package` — published by an installed LPM.dev package and materialized in `.lpm/skills/`. Manage it through the package lifecycle.
+- `managed` — a standalone skill added through `lpm skills`; LPM can update, enable, disable, or remove it.
+- `external` — an existing agent skill discovered in that agent's directory. LPM shows it but never changes it.
+
+`list` and `view` inspect both scopes by default. Standalone mutations default to the current project; pass `--global` to operate on user-wide managed skills. Removing a package-published skill means removing or reinstalling its package, not calling `lpm skills remove`.
 
 ## Storage and agent targets
 
@@ -93,7 +105,7 @@ my-project/
 └── .cursor/skills/           # Cursor project skills
 ```
 
-Global managed content lives under `~/.lpm/agent-skills/`; its manifest is `~/.lpm/skills.toml`. Global targets use `~/.codex/skills/`, `~/.claude/skills/`, and `~/.cursor/skills/` respectively.
+Global managed content lives under `~/.lpm/agent-skills/`; its manifest is `~/.lpm/skills.toml`. Global targets use `~/.codex/skills/`, `~/.claude/skills/`, and `~/.cursor/skills/` respectively. For discovery, Codex also scans `~/.agents/skills/`, so skills installed by another tool remain visible in `lpm skills view` without LPM taking ownership.
 
 LPM only deletes paths named in its manifest. It refuses to replace an existing agent skill path it does not manage.
 
@@ -105,9 +117,9 @@ Before a skill becomes visible to an agent, LPM validates `SKILL.md`, rejects un
 
 ## Package-published skills
 
-`lpm install` and `lpm add` still automatically extract skills published by LPM.dev packages into the legacy `.lpm/skills/` package layout. That package-publishing flow remains validated by `lpm publish --check`.
+`lpm install @lpm.dev/owner.pkg` and `lpm add @lpm.dev/owner.pkg` automatically extract skills published by that package into `.lpm/skills/owner.pkg/`. Use `--no-skills` to opt out for one installation. That package-publishing flow remains validated by `lpm publish --check`.
 
-Use `lpm skills add @lpm.dev/owner.pkg` to expose a package's published skills through the universal agent-skill manager. Existing package skill extraction is unchanged while projects migrate to standard `SKILL.md` directories.
+Use `lpm skills add @lpm.dev/owner.pkg` when you need to fetch or refresh that package's published skills directly. `lpm skills clean` removes only the extracted package-skill directories; a later package install restores them. These are first-class package skills, not standalone agent-skill copies.
 
 ## JSON output
 
