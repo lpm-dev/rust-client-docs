@@ -556,6 +556,7 @@ The `! Audited` advisory is hidden when the install short-circuits on the up-to-
 | `--ignore-provenance-drift <PKG>` / `--ignore-provenance-drift-all` | Waives the drift check |
 | `--policy=<deny\|allow\|triage>`, `--yolo`, `--triage` | Sets the dependency script-policy |
 | `--strict-peer-dependencies` / `--no-strict-peer-dependencies` | Overrides the peer-dependency strictness setting for the synthesized install |
+| `--no-engine-strict` | Uses warning-only dependency engine checks for the synthesized install |
 | `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted for global installs. Also useful under `deny` with an established global trust set. |
 
 Two things differ from project installs:
@@ -569,7 +570,12 @@ Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall 
 
 ## Engines enforcement
 
-`lpm install` reads the workspace root `package.json > engines` block and aborts when a constraint isn't satisfied. Two keys are checked:
+`lpm install` enforces engine compatibility at two boundaries:
+
+- **Project preflight:** reads the workspace root `package.json > engines` block before install work begins.
+- **Resolved dependencies:** checks every selected package version's `engines.node` constraint before materialization. The constraint is persisted in `lpm.lock`, so warm, frozen, and offline installs revalidate it without relying on cached registry metadata.
+
+The workspace-root keys are:
 
 | Key | Compared against |
 | --- | --- |
@@ -583,21 +589,23 @@ Error: lpm::engine_mismatch
   │ > engines.lpm)
 ```
 
-Other `engines.<pm>` keys (`npm`, `pnpm`, `yarn`, `bun`) are recognized and surfaced as a one-line warning that LPM CLI doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
+For dependencies, an incompatible required package aborts with `engine_mismatch`. An incompatible package reachable only through optional dependency edges is skipped. When the same package is also reachable through a required path, the required path wins and the mismatch remains fatal.
 
-The check runs before any resolver work, so failures exit cheaply.
+Other workspace-root `engines.<pm>` keys (`npm`, `pnpm`, `yarn`, `bun`) are recognized and surfaced as a one-line warning that LPM CLI doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
+
+Workspace-root failures exit during preflight. Dependency constraints are evaluated after resolution identifies exact versions. If no effective Node version can be determined, Node constraints are left unenforced until a runtime is available.
 
 ```bash
-lpm install --no-engine-strict            # skip enforcement for this invocation
+lpm install --no-engine-strict            # warning-only for this invocation
 ```
 
 Persistent opt-out:
 - `package.json > lpm > engineStrict = false` (per-project)
 - `~/.lpm/config.toml > engine-strict = false` (per-user)
 
-Precedence: CLI flag > `package.json > lpm.engineStrict` > `~/.lpm/config.toml` > default (`true`). Under `engineStrict = false` the constraints are still parsed and any mismatches print as stderr warnings (suppressed under `--json`).
+Precedence: CLI flag > `package.json > lpm.engineStrict` > `~/.lpm/config.toml` > default (`true`). The same resolved policy applies to the workspace root and dependencies. Under `engineStrict = false`, incompatible dependencies remain installed and mismatches print as stderr warnings (suppressed under `--json`).
 
-The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/docs/packages/add) (preflight, before any manifest mutation).
+The workspace-root preflight also runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/docs/packages/add). Add runs it before manifest mutation, then applies dependency checks during its install phase.
 
 ## Flags
 
@@ -643,7 +651,7 @@ The same gate runs for [`lpm rebuild`](/docs/packages/rebuild) and [`lpm add`](/
 | `--timing` | Include install timing diagnostics in `--json` output |
 | `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
 | `--ignore-provenance-drift-all` | Skip the check for every package |
-| `--no-engine-strict` | Skip `engines.lpm` / `engines.node` enforcement |
+| `--no-engine-strict` | Install with warnings instead of enforcing workspace-root and dependency engine mismatches |
 | `--audit-after-install` | Run [audit after install](#audit-after-install) for this run (informational only — never fails the install) |
 | `--no-audit-after-install` | Skip [audit after install](#audit-after-install) for this run, overriding env + config |
 | `--replace-bin <CMD>` | (`-g` only) Take ownership of a colliding bin name (repeatable) |

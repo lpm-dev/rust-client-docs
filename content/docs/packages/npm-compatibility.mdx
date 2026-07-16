@@ -15,7 +15,7 @@ This page is the explicit scope: what carries over verbatim, what's different, a
 | `package.json > scripts` | Run via `lpm run <name>` (or bare `lpm <name>` as shorthand) |
 | `package.json > bin` (string or map form) | Both shapes accepted |
 | `package.json > files` | Honored at publish time |
-| `package.json > engines.node` | Honored as a pin source AND enforced — install aborts if the effective Node version doesn't satisfy the constraint |
+| `package.json > engines.node` | Honored as a root pin source and enforced for both the root and selected dependency versions; required mismatches abort and optional-only incompatible packages are skipped |
 | `package.json > engines.lpm` | Enforced against the running CLI version (npm only enforces with `engine-strict=true`; LPM CLI enforces by default) |
 | `package.json > workspaces` (array or object form) | Both shapes accepted |
 | `package.json > overrides` | npm-style overrides honored (lower precedence than `lpm.overrides`) |
@@ -85,10 +85,10 @@ LPM CLI blocks direct/root dependency versions published less than 24h ago by de
 
 ### `engines` enforced by default
 
-npm reads `engines.node` / `engines.npm` and only enforces them when `engine-strict=true` is set in `.npmrc`. LPM CLI enforces by default — install / rebuild / add abort when the workspace root's `engines.lpm` constraint doesn't match the running CLI version, or `engines.node` doesn't match the effective Node runtime.
+npm reads `engines.node` / `engines.npm` and only enforces them when `engine-strict=true` is set in `.npmrc`. LPM CLI enforces by default: workspace-root `engines.lpm` and `engines.node` mismatches abort, as do incompatible required dependencies. An incompatible package reachable only through optional edges is skipped. Dependency Node ranges are stored in `lpm.lock` and revalidated on warm, frozen, and offline installs.
 
 ```bash
-lpm install --no-engine-strict     # opt out for this invocation
+lpm install --no-engine-strict     # warning-only for this invocation
 ```
 
 Or persistent in `package.json > lpm > engineStrict = false` (per-project) or `~/.lpm/config.toml > engine-strict = false` (per-user). See [`lpm install` § engines enforcement](/docs/packages/install#engines-enforcement).
