@@ -1,76 +1,127 @@
 ---
 title: lpm skills
-description: "Install, list, validate, or clean AI agent skills delivered as packages."
+description: "Discover, scan, and manage reusable skills for Codex, Claude Code, and Cursor."
 ---
 
-```bash
-lpm skills <action> [package]
-```
-
-Skills are markdown files that ship inside a package and tell an AI agent how to use it correctly. `lpm install` and `lpm add` install them automatically; this command is for explicit management.
-
-For the conceptual model — what skills are, on-disk layout, editor integration, and the LPM.dev Registry-only status — see [AI agent skills](/docs/reference/ai-agent-skills).
-
-## Examples
+`lpm skills` manages standard `SKILL.md` directories from GitHub, local folders, and LPM.dev packages. It keeps one managed copy, then enables it for the coding agents you choose.
 
 ```bash
-lpm skills list                                # what's installed, grouped by package
-lpm skills install @lpm.dev/owner.pkg          # fetch and write one package's skills
-lpm skills validate                            # local sanity-check against the size + shape rules
-lpm skills clean                               # wipe .lpm/skills/ entirely
+lpm skills add vercel-labs/agent-skills
 ```
 
-## Subcommands
+## Add a skill
+
+In an interactive terminal, `add` is a wizard. It asks for a source when omitted, lets you select discovered skills, picks project or global scope, selects agent targets, shows the installation plan, then asks for confirmation.
+
+```bash
+lpm skills add
+lpm skills add vercel-labs/agent-skills
+lpm skills add https://github.com/vercel-labs/agent-skills --skill frontend-design
+lpm skills add ./team-skills --skill release-notes --agent codex
+lpm skills add @lpm.dev/acme.deploy --skill deploy --agent claude-code
+```
+
+For CI and agents, make every choice explicit and pass `--yes`:
+
+```bash
+lpm skills add vercel-labs/agent-skills \
+  --skill frontend-design \
+  --global \
+  --agent codex \
+  --yes
+```
+
+Supported sources are GitHub `owner/repository` shorthand, HTTPS GitHub repository URLs (including a `tree/<branch>/<path>` skill directory), local directories, and `@lpm.dev/*` packages. GitHub sources resolve to an immutable commit before installation.
+
+Use `--list` to inspect a source without writing files:
+
+```bash
+lpm skills add vercel-labs/agent-skills --list
+```
+
+### Add flags
+
+| Flag | Effect |
+| --- | --- |
+| `--skill <name>` / `-s` | Select a skill; repeat for more than one |
+| `--all` | Install every discovered skill |
+| `--agent <name>` / `-a` | Enable for `codex`, `claude-code`, or `cursor`; repeat or use comma-separated values |
+| `--all-agents` | Enable for every supported agent |
+| `--global` | Store under your user profile instead of the current project |
+| `--project` | Explicitly select project scope (the default) |
+| `--copy` | Copy into agent directories instead of linking to LPM's managed copy |
+| `--list` | Only discover and print skills from the source |
+| `--yes` / `-y` | Disable prompts; required for a fully non-interactive install |
+
+When `--yes` or `--json` is used, LPM never prompts. Non-interactive installation requires `--agent` or `--all-agents`; a source with more than one skill also requires `--skill` or `--all`.
+
+## Inspect and manage installed skills
+
+```bash
+lpm skills list
+lpm skills view find-skills
+lpm skills disable find-skills --agent codex
+lpm skills enable find-skills --agent codex
+lpm skills update
+lpm skills remove find-skills --yes
+lpm skills doctor
+```
 
 | Subcommand | Aliases | Effect |
 | --- | --- | --- |
-| `list` | `ls` | Walk `.lpm/skills/<package>/*.md`, group by package, print one row per skill with file size |
-| `install <package>` | — | Fetch the published skills for one package from the registry and write them to `.lpm/skills/<package>/`. Same end state as the auto-install side-effect of `lpm install` / `lpm add`, scoped to one package |
-| `validate` | — | Walk local `.lpm/skills/`, validate each file against the publish-time shape rules (see below). Exits non-zero on any failure |
-| `clean` | — | Recursively remove `.lpm/skills/` and everything under it. **Blunt** — not orphan-aware; re-run `lpm install` afterward to repopulate |
+| `list` | `ls` | Compact inventory across project and global scopes |
+| `view [skill]` | — | Detailed source, revision, context estimate, and agent-visibility report |
+| `remove <skill>` | `rm` | Remove LPM-managed copies and their managed agent targets; use `--all` for the selected scope |
+| `enable <skill>` | — | Restore managed target links or copies |
+| `disable <skill>` | — | Hide a skill from selected agents while retaining its managed copy |
+| `update [skill]` | — | Re-resolve the source, rescan it, and apply changed content after confirmation |
+| `doctor` | — | Detect missing managed content and broken agent visibility |
+| `validate [path]` | — | Validate and scan standard `SKILL.md` directories without installing them |
 
-`install` requires an authenticated LPM.dev Registry session (only LPM.dev Registry packages ship skills today). `list`, `validate`, and `clean` are purely local — no network.
+`list` and `view` are a combined inventory, not just an LPM manifest reader. They label every result by ownership:
 
-## Validation rules
+- `managed` — installed through `lpm skills`; LPM can update, enable, disable, and remove it.
+- `external` — discovered in an agent's own skill directory; LPM shows it but will not mutate it.
+- `package` — a legacy package-published skill extracted by `lpm install` or `lpm add` into `.lpm/skills/`.
 
-`lpm skills validate` enforces what the publisher had to satisfy at publish time:
+This lets `lpm skills view` show pre-existing skills such as a manually installed Codex skill alongside skills managed by LPM. `list`, `view`, and `doctor` inspect both scopes by default. Mutating commands default to the current project; pass `--global` to operate on user-wide managed skills.
 
-| Rule | Limit |
-| --- | --- |
-| Per-skill file size | ≤ 15 KB |
-| Per-skill content length | ≥ 100 chars (after frontmatter) |
-| Per-skill structure | Must start with YAML frontmatter (`---`) |
-| Total skills size | ≤ 100 KB across all installed skill files |
+## Storage and agent targets
 
-Each violation is printed as a warning; the command exits non-zero if any violation occurred. `--json` emits a structured envelope:
+Project state is recorded in `lpm-skills.toml`. LPM stores materialized skill content in `.lpm/agent-skills/`, then links or copies it into the selected target:
 
-```json
-{
-  "success": false,
-  "valid": 2,
-  "errors": [
-    "owner.pkg/heavy.md: exceeds 15KB limit (16384 bytes)",
-    "owner.pkg/short.md: content too short (need 100+ chars)"
-  ],
-  "quality_impact": 7
-}
+```text
+my-project/
+├── lpm-skills.toml
+├── .lpm/agent-skills/
+├── .agents/skills/           # Codex project skills
+├── .claude/skills/           # Claude Code project skills
+└── .cursor/skills/           # Cursor project skills
 ```
 
-`quality_impact` mirrors the publish-time quality bonus: `+10` if 3 or more skills validate, `+7` for at least one, `0` otherwise.
+Global managed content lives under `~/.lpm/agent-skills/`; its manifest is `~/.lpm/skills.toml`. Global targets use `~/.codex/skills/`, `~/.claude/skills/`, and `~/.cursor/skills/` respectively. For discovery, Codex also scans `~/.agents/skills/`, which is used by existing agent-skill installations.
 
-## `--no-skills` and `.gitignore`
+LPM only deletes paths named in its manifest. It refuses to replace an existing agent skill path it does not manage.
 
-`lpm install` and `lpm add` auto-install skills as a post-resolve side-effect. Skip with `--no-skills` per-invocation. When skills do install through those commands, `.lpm/skills/` is added to your project's `.gitignore` automatically. **The standalone `lpm skills install` does not touch `.gitignore`** — add the entry by hand if you want the skill files ignored.
+## Security checks
 
-Keep `.lpm/skills/` out of source control unless you have a specific reason to commit it (e.g., reproducible AI tooling in CI). The contents come back deterministically from the registry on the next install.
+Before a skill becomes visible to an agent, LPM validates `SKILL.md`, rejects unsafe paths and symlinks, limits archive and skill size, and scans text files for prompt injection, secret exfiltration, shell-download/execute patterns, and destructive filesystem instructions. A blocking finding prevents installation or update.
 
-## Flags
+`view` reports the managed content size and an approximate token count. Token counts are estimates, not an exact statement of every agent model's context cost.
 
-`lpm skills` takes no specific flags besides the global flags. `--json` returns structured output for every subcommand.
+## Package-published skills
+
+`lpm install` and `lpm add` still automatically extract skills published by LPM.dev packages into the legacy `.lpm/skills/` package layout. That package-publishing flow remains validated by `lpm publish --check`.
+
+Use `lpm skills add @lpm.dev/owner.pkg` to expose a package's published skills through the universal agent-skill manager. Existing package skill extraction is unchanged while projects migrate to standard `SKILL.md` directories.
+
+## JSON output
+
+Every subcommand supports `--json`. JSON mode is non-interactive and emits one object on standard output with `success`, an action-specific array or report, and count fields where applicable.
 
 ## See also
 
-- [AI agent skills](/docs/reference/ai-agent-skills) — concept page, on-disk layout, editor integration
-- [`lpm install --no-skills`](/docs/packages/install) — skip skill installation per-invocation
-- [`lpm add --no-skills`](/docs/packages/add) — same, for source delivery
-- [MCP servers](/docs/reference/mcp-servers) — different AI-integration mechanism (tool calls vs. ambient docs)
+- [AI agent skills](/docs/reference/ai-agent-skills) — package-published skills and editor integration
+- [`lpm install --no-skills`](/docs/packages/install) — skip package-published skill extraction
+- [`lpm add --no-skills`](/docs/packages/add) — same for source delivery
+- [MCP servers](/docs/reference/mcp-servers) — tools for AI agents rather than skills
