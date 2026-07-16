@@ -202,7 +202,7 @@ What's outside the rollback surface, by design:
 
 - **The install directory itself**, plus any parent directories materialized to host the copied source files. `lpm add` resolves `target_dir` and creates it (and any canonical parents on the resolution chain) before the transaction opens — that mkdir is what lets the transaction snapshot canonical-pinned dest paths in the first place. A rolled-back failure leaves these directories on disk; the files inside them were rolled back, so the directories may end up empty.
 - **Recursive Swift `lpm add`** for SE-0292 source-package dependencies. Each recursive call owns its own transaction; the outer `lpm add` commits before triggering recursion so a Swift-dep failure doesn't roll back the root package's already-applied mutations.
-- **Agent skills** installed under `.lpm/skills/<package>/`. Skills are intentionally non-fatal (best-effort writes, swallowed errors) and run after the main transaction commits.
+- **Package-published agent skills** reconciled under `.lpm/skills/<package>/`. Fetch, validation, and write errors fail the install instead of leaving a partial or stale package-owned skill set.
 
 If `lpm add` fails inside the rollback boundary, every file and lockfile under the transaction snaps back to its pre-`lpm add` state. The remaining residue is empty directories under the install target (cheap to clean up; `rm -rf` the directory if you don't want it). Re-run `lpm add` after fixing the underlying error to converge.
 

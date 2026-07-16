@@ -15,14 +15,13 @@ For the model, on-disk layout, and security boundary, see [AI agent skills](/doc
 
 ```bash
 lpm skills add @lpm.dev/owner.pkg
+lpm skills add vercel-labs/skills --skill find-skills
 lpm skills add vercel-labs/agent-skills
-lpm skills add https://github.com/vercel-labs/agent-skills --skill frontend-design
+lpm skills add https://github.com/vercel-labs/agent-skills --skill web-design-guidelines
 lpm skills add ./team-skills --skill release-notes --agent codex --project --yes
 ```
 
-`@lpm.dev/owner.package` uses the package-published flow and materializes the package's registry-validated skills in `.lpm/skills/owner.package/`. It does not create agent-target links.
-
-Automatic package installs through `lpm install` and `lpm add` may add an editor rules reference to `.lpm/skills/` unless `--no-editor-setup` is supplied. That reference is separate from standalone managed agent targets.
+`@lpm.dev/owner.package` uses the package-published flow and materializes the package's registry-validated skills in `.lpm/skills/owner.package/`. These files are versioned package guidance. The LPM CLI does not create agent-target links, modify editor configuration, or require an enable command for them; point your agent at `.lpm/skills/owner.package/` when the guidance is relevant.
 
 Every other supported source uses the standalone flow. In a TTY, the LPM CLI opens a wizard for source, skill, scope, target, security/context review, and confirmation. In non-interactive use, provide `--skill` when needed, `--project` or `--global`, one or more `--agent` values, and `--yes` after reviewing `--dry-run`.
 
@@ -36,6 +35,8 @@ Every other supported source uses the standalone flow. In a TTY, the LPM CLI ope
 | `--full-depth` | Search beyond standard skill directory layouts. |
 | `--dry-run` | Show planned filesystem changes without writing them. |
 | `--yes` | Confirm a non-interactive mutation. |
+
+The package-published route accepts `--list`, `--dry-run`, and `--yes`. Standalone-only selection, scope, agent, and copy flags are rejected for `@lpm.dev/*` sources because the registry response is materialized as one package-owned set.
 
 ## Inventory and detail
 
@@ -54,7 +55,13 @@ lpm skills view release-notes
 | `managed` | Standalone skills explicitly added through `lpm skills add`. |
 | `external` | Existing skills found in agent directories but not managed by the LPM CLI. |
 
-`view` reports source, target state, estimated context size, and available security information. Add `--global` to include global managed and external locations.
+`view` reports source, target state, estimated context size, and security findings with stable rule IDs and `warning` or `block` severity. Add `--global` to include global managed and external locations.
+
+| Command | Flags |
+| --- | --- |
+| `list` | `--global`, `--kind package|managed|external`, `--agent codex|claude-code|cursor` |
+| `view <selector>` | `--global` |
+| `doctor` | `--global` |
 
 ## Manage standalone skills
 
@@ -68,9 +75,13 @@ lpm skills remove release-notes --yes
 lpm skills prune --dry-run
 ```
 
-`update` re-resolves a source, presents a content diff and security-finding delta, then refreshes its canonical content and recorded targets. `doctor` reports target health. `prune` cleans orphaned managed links and stale state records after confirmation.
+`update` re-resolves a source, presents a content diff and identity-based security-finding delta, then refreshes its shared canonical content and all recorded targets. Because the canonical version is shared, `update` does not accept `--agent`. `doctor` reports canonical, target, ownership, disabled, and external broken-link health. `prune` previews exact filesystem paths, then cleans orphaned managed links and stale state records after confirmation.
 
 `disable` retains canonical managed content but removes selected agent-target links. `remove` removes selected targets; if none remain, it also removes the managed content and record. Package-published skills are not affected by these commands.
+
+Warning findings remain installable after explicit confirmation. Block findings stop `add` or `update` before mutation.
+
+`update`, `remove`, `enable`, and `disable` accept skill selectors or `--all`, plus `--global`, `--dry-run`, and `--yes`. `remove`, `enable`, and `disable` also accept repeated `--agent` filters. `prune` accepts `--global`, `--dry-run`, and `--yes`.
 
 ## Package-published validation and cleanup
 
@@ -85,7 +96,7 @@ lpm skills clean
 
 ## JSON and CI
 
-`--json` emits one structured envelope per command. Use `--dry-run --json` to capture a mutation plan in CI, then invoke the approved command with `--yes`.
+`--json` emits one structured envelope per command. Use `--dry-run --json` to capture a mutation plan in CI, then invoke the approved command with `--yes`. No-op validation, cleanup, and prune operations still emit truthful success envelopes with empty or zero-count changes.
 
 ## See also
 

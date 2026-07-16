@@ -32,17 +32,22 @@ Use `--no-skills` with [`lpm install`](/docs/packages/install) or [`lpm add`](/d
 lpm skills add @lpm.dev/owner.package
 ```
 
-Package-published skills stay in `.lpm/skills/<package>/`. The LPM CLI does not convert them into standalone managed skills or automatically link them into agent directories.
+Package-published skills are versioned package knowledge. They stay in `.lpm/skills/<package>/`; the LPM CLI does not convert them into standalone managed skills, create agent links, or modify editor configuration. Point your agent at that directory when you want it to apply the package author's current guidance:
 
-When package-published skills install through `lpm install` or `lpm add`, the LPM CLI can keep its existing editor rules-reference integration. That reference points an editor at `.lpm/skills/`; it is not a managed skill or an agent-directory link. Use `--no-editor-setup` to skip the reference update.
+```text
+Read .lpm/skills/owner.package/ before changing code that uses @lpm.dev/owner.package.
+```
+
+There is no enable step for package-published skills. Installing or upgrading a package reconciles its directory to the exact published set, removing guidance that the new package version no longer ships. Uninstalling the package removes its package-owned skill directory.
 
 ## Standalone skills
 
 The same command manages public or local standard `SKILL.md` directories. A source may be a GitHub shorthand, an HTTPS GitHub repository or tree URL, or a local path.
 
 ```bash
+lpm skills add vercel-labs/skills --skill find-skills
 lpm skills add vercel-labs/agent-skills
-lpm skills add https://github.com/vercel-labs/agent-skills --skill frontend-design
+lpm skills add https://github.com/vercel-labs/agent-skills --skill web-design-guidelines
 lpm skills add ./team-skills --skill release-notes --agent codex --project
 ```
 
@@ -60,9 +65,16 @@ Project-managed content lives in `.lpm/managed-skills/`; global-managed content 
 
 ## Source and security boundary
 
-Standalone GitHub sources must use HTTPS. The LPM CLI resolves a requested GitHub ref to an immutable commit before downloading the archive, applies archive and file-size limits, and rejects traversal, symlinks, and special files.
+Standalone GitHub sources must use HTTPS. The LPM CLI resolves branches—including names containing `/`—tags, and commit refs to an immutable commit before downloading from `codeload.github.com`. `GH_TOKEN` or `GITHUB_TOKEN` is used when present. The source boundary limits downloads to 20 MB, expanded content to 64 MB, regular files to 1 MB, 500 archive entries, and 12 directory levels. Traversal is always rejected; symlinks, hard links, special entries, and oversized files reject a selected skill without making unrelated repository fixtures block a valid subpath.
 
-Before installation, it scans every skill file for prompt injection, secret exfiltration, shell-download execution, and destructive filesystem instructions. `lpm skills view` reports estimated context size and security information. `lpm skills update --dry-run` shows a bounded content diff and a security-finding delta before any change is applied.
+Before installation, it scans every selected skill for prompt injection, secret access or exfiltration, shell-download execution, and destructive filesystem instructions. Findings have stable rule IDs and one of two severities:
+
+| Severity | Effect |
+| --- | --- |
+| `warning` | Shown in the plan. Installation can continue after explicit confirmation. |
+| `block` | Installation stops before managed storage or agent targets are written. |
+
+`lpm skills view` reports estimated context size, security findings, and an agent-target health matrix. `lpm skills update --dry-run` shows a bounded content diff and computes new findings by identity—rule, severity, file, and line—rather than comparing counts. Binary auxiliary files are preserved and represented by their SHA-256 digest in update diffs instead of being interpreted as text.
 
 ## Inventory and maintenance
 
@@ -86,6 +98,10 @@ lpm skills clean                        # remove package-published .lpm/skills c
 - `external`: pre-existing skills discovered in agent directories but not managed by LPM CLI.
 
 `clean` only removes package-published `.lpm/skills/` content. It does not remove standalone managed content or agent links. Re-run `lpm install` to repopulate package-published skills after a clean.
+
+Project-managed target paths and links are relative to the project, so moving the project directory keeps healthy links intact. `doctor` distinguishes missing canonical content, missing targets, ownership mismatches, disabled targets, and broken external symlinks. `prune --dry-run` shows the exact target and state-file paths before cleanup.
+
+JSON mode always emits one envelope, including no-op operations. For example, `skills validate`, `skills clean`, and `skills prune --yes` report successful zero-count results when there is nothing to change.
 
 ## See also
 
