@@ -37,6 +37,9 @@ engine-strict = true
 strict-peer-dependencies = false
 auto-install-peers = true
 
+# Package-published skills from @lpm.dev/* packages
+auto-install-lpm-skills = true
+
 # npm registry package signatures
 signatures = false
 
@@ -126,6 +129,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `engine-strict` | bool | `true` | Enforce workspace-root `engines.lpm` / `engines.node` and dependency `engines.node` constraints. Set to `false` for warning-only behavior; incompatible dependencies remain installed. |
 | `strict-peer-dependencies` | bool | `false` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. Per-invocation overrides: `--strict-peer-dependencies` / `--no-strict-peer-dependencies`. Project override: `package.json > lpm.strictPeerDependencies`. |
 | `auto-install-peers` | bool | `true` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. Project override: `package.json > lpm.autoInstallPeers`. Set to `false` for npm-classic / pnpm-classic peer-warning-only behavior. |
+| `auto-install-lpm-skills` | bool | `true` | Reconcile package-published skills from installed `@lpm.dev/*` packages. Set with [`lpm config lpm-skills`](/docs/infra/config#setup-wizards). Per-invocation overrides: `--skills` / `--no-skills` on `lpm install`, `lpm add`, and `lpm ci`. Disabling automatic installs does not delete existing `.lpm/skills/` content or affect explicit `lpm skills add`. |
 | `workspace-concurrency` | positive integer | available parallelism | User default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. Per-invocation override: `--workspace-concurrency <N>`. Project override: `lpm.toml > [workspace].concurrency`. |
 | `audit-after-install` | bool | `false` | Run [`lpm audit`](/docs/packages/audit) silently after every successful `lpm install` and emit a one-line advisory (`! Audited N packages, V vulnerabilities, S suspicious in Tms — run \`lpm audit\``). Informational only — findings never fail the install. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Per-process env: `LPM_AUDIT_AFTER_INSTALL`. See [Audit after install](/docs/packages/install#audit-after-install). |
 | `linker` | `"isolated"` \| `"hoisted"` | `"hoisted"` (workspaces and default peer-conflict installs use `"isolated"`) | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
@@ -136,7 +140,7 @@ Unknown keys are accepted silently — forward-compatible by design.
 
 ## String coercion
 
-`lpm config set` writes ordinary generic values as TOML strings. Known typed keys can preserve native TOML types; today `lpm config set signatures true` writes a boolean. Readers accept both native types and the string form for typed keys:
+`lpm config set` writes ordinary generic values as TOML strings. Known typed keys can preserve native TOML types; today `lpm config set signatures true` and `lpm config set auto-install-lpm-skills false` write booleans. Readers accept both native types and the string form for typed keys:
 
 ```toml
 minimum-release-age-secs = 86400      # native integer (hand-edit)
@@ -147,6 +151,8 @@ workspace-concurrency = 4             # native integer (hand-edit)
 workspace-concurrency = "4"           # string (lpm config set wrote this)
 signatures = true                     # native bool
 signatures = "true"                   # string form also accepted
+auto-install-lpm-skills = false        # native bool
+auto-install-lpm-skills = "false"      # string form also accepted
 typosquat-guard = "on"                # canonical string
 integrity = "tree"                    # canonical string
 
@@ -279,6 +285,8 @@ For most scalar settings, the precedence chain is (highest first):
 5. **Built-in default**
 
 List-valued cooldown excludes are merged instead of replaced: CLI `--min-release-age-exclude` entries first, then `package.json > lpm > minimumReleaseAgeExclude`, then this file's `minimum-release-age-exclude`; duplicates collapse.
+
+Package-published LPM.dev skill installation has its own compact chain: `--skills` / `--no-skills` wins over `auto-install-lpm-skills`, which wins over the inverted legacy `noSkills` key, then the built-in default `true`. `lpm config lpm-skills` writes the canonical boolean and removes the legacy key.
 
 On `lpm install -g` the `package.json > lpm` tier is N/A — global installs synthesize their own package.json that doesn't carry user-edited keys. The chain collapses to CLI flag > `~/.lpm/config.toml` > built-in default for `script-policy`, `triage-advisor`, `minimum-release-age-secs`, `release-age-policy`, `strict-peer-dependencies`, `trust-policy`, `integrity`, and the script-policy aliases (`--yolo` / `--triage`). `minimum-release-age-exclude` still merges with repeated CLI `--min-release-age-exclude` flags. Registry signature verification uses `LPM_VERIFY_REGISTRY_SIGNATURES` > `signatures` > default `false`. Sigstore verification uses `LPM_PROVENANCE_ENFORCE` > `[sigstore].verify` > built-in default, with weaker env/config values guarded by the security approval layer.
 
