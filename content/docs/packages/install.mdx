@@ -36,6 +36,7 @@ lpm fetch                     # warm the store from lpm.lock, no node_modules
 lpm tidy                      # find unused deps and undeclared imports
 lpm install --force           # full re-install, bypass every fast path
 lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
+lpm install --no-skills        # skip @lpm.dev package skills for this run
 lpm install --verbose         # append per-phase timings + lockfile size
 lpm install --json --timing   # include JSON timing diagnostics
 ```
@@ -78,6 +79,18 @@ LPM_TIMING_DETAIL=trace lpm install --json
 4. **Run root lifecycle, gate dependency scripts.** Bare installs run the root project's install lifecycle (`pnpm:devPreinstall` before dependency work, then `preinstall` / `install` / `postinstall` / `preprepare` / `prepare` / `postprepare` after a successful install). Dependency package scripts stay blocked by default; when policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only dependency `preinstall`, `install`, and `postinstall` fire. Other recognized dependency phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
 Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
+
+## Package-published LPM.dev skills
+
+Installed `@lpm.dev/*` packages can publish package-specific agent guidance. LPM CLI reconciles that content into `.lpm/skills/<package>/` by default. This automatic step is specific to LPM.dev Registry packages; npm and custom-registry packages do not use it.
+
+```bash
+lpm install @lpm.dev/owner.package --no-skills # skip once
+lpm config lpm-skills --set false              # persist the opt-out
+lpm install @lpm.dev/owner.package --skills    # override config once
+```
+
+The persistent setting does not delete existing package skill files. Use [`lpm skills clean`](/docs/packages/skills) to remove them. Explicit `lpm skills add @lpm.dev/owner.package` commands remain available regardless of the setting. See [AI agent skills](/docs/reference/ai-agent-skills).
 
 For registry packages, any tarball URL recorded in `lpm.lock` is only a cache hint. Before fetching it, LPM CLI checks the registry metadata for that exact `name@version` and refuses the install if the hint does not match `dist.tarball`. Explicit tarball, `file:`, `link:`, and git sources keep their own source identity and are not rebound to registry metadata.
 
@@ -424,7 +437,7 @@ lpm ci --offline --strict-integrity
 - `lpm ci` — frozen install. Requires `lpm.lock`, validates that the lockfile's importer snapshot matches `package.json`, and never rewrites `lpm.lock` or `lpm.lockb`.
 - `--offline` — never touches the network. Replays entirely from the lockfile + global store. Errors out if anything is missing.
 - `--strict-integrity` — fail on tarball-URL deps that don't declare an inline SRI hash. Disables trust-on-first-use for fresh installs.
-- `--no-skills` and `--no-security-summary` skip optional work to shave CI time. `--no-editor-setup` remains accepted but has no effect; package skills never create editor links or configuration.
+- `--no-skills` and `--no-security-summary` skip optional work to shave CI time. Persist the package-skill opt-out with `lpm config lpm-skills --set false`; use `--skills` to override it for one CI run. `--no-editor-setup` remains accepted but has no effect; package skills never create editor links or configuration.
 
 For reused expanded-store object validation, use [`lpm config integrity`](/docs/infra/config#store-integrity). `integrity = "tree"` rehashes expanded files before reuse; `--strict-integrity` only controls whether tarball URL dependencies must declare SRI before first use.
 
@@ -647,7 +660,8 @@ The workspace-root preflight also runs for [`lpm rebuild`](/docs/packages/rebuil
 | `-w`, `--workspace-root` | Target the root `package.json` |
 | `--fail-if-no-match` | Exit non-zero if filters match nothing |
 | `-y`, `--yes` | Skip the interactive multi-member confirm |
-| `--no-skills` | Skip skills auto-install |
+| `--skills` | Install package-published LPM.dev skills for this invocation, overriding user config |
+| `--no-skills` | Skip package-published LPM.dev skill auto-install for this invocation |
 | `--no-editor-setup` | Accepted with no effect. Package skills do not create editor integrations. |
 | `--no-security-summary` | Skip the post-install security report (faster CI) |
 | `--timing` | Include install timing diagnostics in `--json` output |

@@ -27,6 +27,7 @@ lpm config trust-policy --set no-downgrade      # block publisher/provenance tru
 lpm config typosquat --set default              # remove override; default keeps checks enabled
 lpm config firewall --set enforce               # block packages flagged by firewall.lpm.dev
 lpm config integrity --set tree                 # stricter expanded-store reuse checks
+lpm config lpm-skills --set false               # stop auto-installing @lpm.dev package skills
 lpm config set workspace-concurrency 4          # workspace run/test/bench fan-out
 lpm config set audit-after-install true         # enable audit-after-install globally
 lpm config delete save-prefix                   # remove
@@ -42,7 +43,7 @@ lpm config unset save-prefix                    # alias for delete
 | `delete <key>` | `unset` | Remove the key from the file |
 | `list` | `ls` | Print every key/value pair currently stored |
 
-Generic `set` writes ordinary values as TOML strings. Known typed keys can preserve their native type; today `signatures` is written as a boolean. The reader accepts both string and native forms for typed keys — see [String coercion](/docs/reference/config-toml#string-coercion) for the rationale.
+Generic `set` writes ordinary values as TOML strings. Known typed keys can preserve their native type; today `signatures` and `auto-install-lpm-skills` are written as booleans. The reader accepts both string and native forms for typed keys — see [String coercion](/docs/reference/config-toml#string-coercion) for the rationale.
 
 ## Known keys and defaults
 
@@ -64,6 +65,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `[policy.extensions.<name>]` | Local install-time policy extension. Edit `~/.lpm/config.toml` directly, then inspect with [`lpm policy`](/docs/infra/policy). | none |
 | `integrity` | Reused v2 store object validation. `"source"` checks source identity without rehashing expanded files; `"tree"` rehashes expanded files to detect local store tampering/corruption. Set with `lpm config integrity`. | `"source"` |
 | `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
+| `auto-install-lpm-skills` | Reconcile package-published skills from installed `@lpm.dev/*` packages. Set with `lpm config lpm-skills`. | `true` |
 | `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
 | `engine-strict` | Enforce workspace-root `engines.lpm` / `engines.node` and dependency `engines.node` constraints. | `true` |
 | `workspace-concurrency` | User default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. | available parallelism |
@@ -94,13 +96,14 @@ Bare `lpm config` opens a single interactive menu. Each row shows the current va
 │  ○ Store integrity        current: source
 │  ○ Minimum release age    current: default (1d)
 │  ○ Release-age scope      current: direct
+│  ○ LPM.dev package skills current: enabled (default)
 ```
 
 After a setting is changed, the editor returns to the menu with refreshed values. If you set lifecycle scripts to `triage`, LPM CLI also offers to configure the optional triage advisor next.
 
 ## Setup wizards
 
-Eleven of the keys above have dedicated interactive wizards that handle picking + validation for you:
+Twelve of the keys above have dedicated interactive wizards that handle picking + validation for you:
 
 ```bash
 lpm config scripts                          # pick deny / triage / allow
@@ -135,11 +138,16 @@ lpm config release-age --set 3d             # non-interactive
 
 lpm config release-age-policy               # pick direct / strict
 lpm config release-age-policy --set strict  # non-interactive
+
+lpm config lpm-skills                       # pick enabled / disabled
+lpm config lpm-skills --set false           # non-interactive
 ```
 
 `lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore`, `lpm config typosquat`, or `lpm config firewall` does the same when it weakens the approved floor. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
 
 `lpm config signatures` and `lpm config trust-policy` are opt-in hardening controls. Their defaults are disabled, so enabling them does not require a security unlock.
+
+`lpm config lpm-skills` controls only automatic package-published skill reconciliation for `@lpm.dev/*` packages. The default is enabled. Setting it to `false` keeps existing `.lpm/skills/` files and skips future automatic fetches; use [`lpm skills clean`](/docs/packages/skills) when you also want to remove existing package-owned skill content. Explicit [`lpm skills add`](/docs/packages/skills) commands are unaffected.
 
 `lpm config typosquat` accepts `default`, `on`, or `off`. `default` removes the explicit config key and follows the product default, currently enabled; `on` forces the guard on even when the diagnostic env override is set; `off` disables suspicious-name analysis machine-wide. `off` is a guarded weakening: the interactive wizard asks for confirmation and native approval before saving it, while `--json` / CI / non-TTY callers fail with `security_approval_required`. For false positives, prefer a committed [`lpm.toml` allow-list entry](/docs/reference/lpm-toml#typosquat-policy) with a reason instead of turning the guard off globally.
 
@@ -161,7 +169,7 @@ This is separate from `--strict-integrity`. `--strict-integrity` controls trust-
 
 `lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
 
-Bare `lpm config` and all eleven wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
+Bare `lpm config` and all twelve wizards write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a specific wizard.
 
 ## Security-sensitive writes
 
@@ -195,7 +203,7 @@ The file is created on demand the first time you `set` a key.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the eleven wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
+`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the wizard-only `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and the twelve wizards all emit a `{success, …}` envelope under `--json`. The bare guided editor is interactive-only; use `lpm config list --json` for machine-readable current config.
 
 ## See also
 
