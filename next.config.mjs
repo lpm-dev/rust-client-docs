@@ -35,6 +35,32 @@ async function resolveCliVersion() {
 const RESOLVED_CLI_VERSION = await resolveCliVersion();
 const ONE_DAY_SECONDS = 60 * 60 * 24;
 const HTML_CACHE_CONTROL = `public, max-age=0, s-maxage=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_DAY_SECONDS}`;
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "connect-src 'self' https://*.posthog.com wss://*.posthog.com",
+  "font-src 'self' data:",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: blob: https:",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "worker-src 'self' blob:",
+].join("; ");
+const SECURITY_RESPONSE_HEADERS = [
+  {
+    key: "Content-Security-Policy-Report-Only",
+    value: CONTENT_SECURITY_POLICY,
+  },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), geolocation=(), microphone=()",
+  },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+];
 const HTML_RESPONSE_HEADERS = [
   {
     key: "Cache-Control",
@@ -54,6 +80,7 @@ const LEGACY_DOCS_REDIRECTS = [
 
 /** @type {import('next').NextConfig} */
 const config = {
+  poweredByHeader: false,
   reactStrictMode: true,
   env: {
     BUILD_TIME: RESOLVED_BUILD_TIME,
@@ -71,6 +98,10 @@ const config = {
   },
   async headers() {
     return [
+      {
+        source: "/:path*",
+        headers: SECURITY_RESPONSE_HEADERS,
+      },
       {
         source: "/",
         headers: HTML_RESPONSE_HEADERS,

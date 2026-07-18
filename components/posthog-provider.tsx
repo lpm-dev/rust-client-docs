@@ -30,9 +30,10 @@ function PostHogPageviewTracker() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    return scheduleWhenIdle(() => {
-      getPostHogClient().then((posthog) => {
-        if (!posthog) return;
+    let cancelled = false;
+    const cancelIdle = scheduleWhenIdle(() => {
+      void getPostHogClient().then((posthog) => {
+        if (cancelled || !posthog) return;
 
         let url = window.origin + pathname;
         const qs = searchParams.toString();
@@ -40,6 +41,11 @@ function PostHogPageviewTracker() {
         posthog.capture("$pageview", { $current_url: url });
       });
     }, 2000);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
   }, [pathname, searchParams]);
 
   return null;

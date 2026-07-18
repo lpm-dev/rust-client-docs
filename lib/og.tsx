@@ -9,14 +9,16 @@ const STRIP_COLORS = {
   home: "#227CE6",
 } as const;
 
-const FONT_REGULAR_URL =
-  "https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfMZhrib2Au-0.ttf";
-const FONT_BOLD_URL =
-  "https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZhrib2Au-0.ttf";
+const FONT_REGULAR_PATH = join(
+  process.cwd(),
+  "public/fonts/inter-og-regular.ttf",
+);
+const FONT_BOLD_PATH = join(process.cwd(), "public/fonts/inter-og-bold.ttf");
+const LOGO_PATH = join(process.cwd(), "public/lpm-og-logo.svg");
 
 type AssetCache = {
-  fontRegular: ArrayBuffer;
-  fontBold: ArrayBuffer;
+  fontRegular: Buffer;
+  fontBold: Buffer;
   logoDataUri: string;
 };
 
@@ -24,18 +26,17 @@ let cachedAssets: Promise<AssetCache> | null = null;
 
 function loadAssets(): Promise<AssetCache> {
   if (!cachedAssets) {
-    cachedAssets = (async () => {
-      const [regularRes, boldRes, svg] = await Promise.all([
-        fetch(FONT_REGULAR_URL),
-        fetch(FONT_BOLD_URL),
-        readFile(join(process.cwd(), "public/lpm-og-logo.svg"), "utf-8"),
-      ]);
+    cachedAssets = Promise.all([
+      readFile(FONT_REGULAR_PATH),
+      readFile(FONT_BOLD_PATH),
+      readFile(LOGO_PATH, "utf-8"),
+    ]).then(([fontRegular, fontBold, svg]) => {
       return {
-        fontRegular: await regularRes.arrayBuffer(),
-        fontBold: await boldRes.arrayBuffer(),
+        fontRegular,
+        fontBold,
         logoDataUri: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
       };
-    })();
+    });
   }
   return cachedAssets;
 }

@@ -5,8 +5,10 @@ import { useEffect, useRef, useState } from "react";
 const INSTALL_CMD = "curl -fsSL https://cli.lpm.dev/install | sh";
 const RESET_MS = 1600;
 
+type CopyState = "idle" | "copied" | "error";
+
 export function CopyButton() {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<CopyState>("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -15,18 +17,47 @@ export function CopyButton() {
     };
   }, []);
 
-  function copy() {
-    // Optional chaining short-circuits the whole chain when clipboard is
-    // unavailable (insecure context), so .catch never runs on undefined.
-    void navigator.clipboard?.writeText(INSTALL_CMD).catch(() => {});
-    setCopied(true);
+  async function copy() {
+    let nextState: CopyState = "copied";
+
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(INSTALL_CMD);
+    } catch {
+      nextState = "error";
+    }
+
+    setCopyState(nextState);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), RESET_MS);
+    timer.current = setTimeout(() => setCopyState("idle"), RESET_MS);
   }
 
+  const statusMessage =
+    copyState === "copied"
+      ? "Install command copied to clipboard."
+      : copyState === "error"
+        ? "Could not copy the install command. Select it and copy it manually."
+        : "";
+
   return (
-    <button type="button" className="copybtn" onClick={copy}>
-      {copied ? "Copied ✓" : "Copy"}
-    </button>
+    <>
+      <button
+        type="button"
+        className="copybtn"
+        aria-label="Copy install command"
+        onClick={() => void copy()}
+      >
+        {copyState === "copied"
+          ? "Copied ✓"
+          : copyState === "error"
+            ? "Copy failed"
+            : "Copy"}
+      </button>
+      <span className="sr-only" role="status" aria-live="polite">
+        {statusMessage}
+      </span>
+    </>
   );
 }
