@@ -15,7 +15,9 @@ Walks every installed package and reports:
 4. **Dependency-confusion warnings** — when an installed `@lpm.dev/*` package's bare name collides with a popular npm package (`react`, `lodash`, etc.), the audit warns about the registry-confusion risk.
 5. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
 
-Works in any project, not just LPM.dev Registry-published ones. Discovery walks `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (text form); falls back to walking `node_modules/` in degraded mode.
+Works in any project, not just LPM.dev Registry-published ones. Discovery walks `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (text form). Without a supported lockfile, it recursively walks nested `node_modules/` package directories without following symlinks and reports that inventory as degraded.
+
+The vulnerability scan fails closed. If OSV.dev is unavailable, returns an incomplete batch, or omits advisory details that cannot be hydrated, `lpm audit` exits non-zero and never reports a clean audit. The same applies when the LPM.dev Registry cannot return exact metadata for an installed `@lpm.dev/*` version. Under `--json`, an incomplete OSV scan returns the audit envelope with `success: false`, `osv_degraded: true`, and `osv_degraded_reason`; other registry failures use the standard error envelope.
 
 The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
 
@@ -40,6 +42,8 @@ lpm audit --json                    # structured output for tooling
 
 `lpm audit` exits non-zero when its findings trip the active `--fail-on` policy. The implicit default is conservative — high-severity behavioral signals like `eval` don't fail CI unless you ask for them explicitly with `--fail-on all`.
 
+An incomplete vulnerability scan always exits non-zero, regardless of `--fail-on`. A network or advisory-data failure is not evidence that the installed tree is clean.
+
 | Policy                      | Exit code 1 when                                                                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, high-entropy strings). Excludes `high` behaviors so existing pipelines that tolerate `eval` don't break. |
@@ -58,9 +62,13 @@ lpm audit --fix
 lpm audit fix --dry-run
 ```
 
-`lpm audit fix` is the canonical form; `lpm audit --fix` is an alias for npm-compatible muscle memory. Both inspect OSV fixed-version data, update vulnerable direct dependencies in `dependencies` and `devDependencies`, then run `lpm install` to refresh `lpm.lock` and `node_modules`.
+`lpm audit fix` is the canonical form; `lpm audit --fix` is an alias for npm-compatible muscle memory. Both match each direct manifest entry to its exact installed lockfile instance, even when multiple versions of the same package are installed. They support `dependencies`, `devDependencies`, `optionalDependencies`, npm aliases such as `npm:lodash@^4`, and registry advisories for `@lpm.dev/*` packages.
 
-The fix pass currently operates only in LPM CLI-managed projects. It does not rewrite npm / pnpm / yarn / bun lockfiles, and it skips transitive-only vulnerabilities, private/custom-registry packages, or advisories without a usable fixed version. `--dry-run` reports the plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
+For npm packages, the fixer evaluates every relevant OSV affected range against available registry versions and chooses the lowest newer version proven unaffected. This preserves maintained release lines when a patch exists instead of jumping to the highest fixed version from another major line. Complex or non-registry source protocols such as `catalog:`, `workspace:`, `file:`, git, and JSR are reported as skipped rather than rewritten into semver dependencies. Transitive-only findings are not changed.
+
+The fix pass currently operates only in LPM CLI-managed projects; it does not rewrite npm / pnpm / yarn / bun lockfiles. Fix and dry-run planning hold the project's install transaction lock so the manifest and lockfile cannot drift during selection. A real fix snapshots `package.json`, `lpm.lock`, and `lpm.lockb`, invalidates the install cache, reinstalls, and then rechecks the versions actually installed against OSV.dev or exact LPM.dev Registry metadata. A failed install or verification restores the snapshotted files; because `node_modules/` is not copied as part of the transaction, run `lpm install` after a failed fix if the installed tree needs to converge with the restored lockfile.
+
+`--dry-run` reports the same plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
 
 ## Registry signatures
 
@@ -114,7 +122,7 @@ Statuses are `verified`, `not_verified`, or `skipped`. Skipped rows cover packag
 lpm audit --level high
 ```
 
-Suppresses anything below the threshold. Ladder from most-to-least severe: `critical` → `high` → `moderate` (alias `medium`) → `info` (alias `low`). Default is `info` (show everything).
+Suppresses anything below the threshold. Ladder from most-to-least severe: `critical` → `high` → `moderate` (alias `medium`) → `info` (alias `low`). Default is `info` (show everything). Any other value is rejected as a usage error before the audit starts.
 
 ## Secret scanning
 
@@ -124,7 +132,7 @@ lpm audit --secrets
 
 Scans the installed source tree under `node_modules/` for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
 
-Requires `node_modules/` to exist (errors with a `run \`lpm install\` first`hint otherwise).`--secrets`still runs as its own scan mode, but it now participates in`--fail-on`:
+Requires `node_modules/` to exist (errors with a `run \`lpm install\` first` hint otherwise). `--secrets` still runs as its own scan mode, but it participates in `--fail-on`:
 
 - `lpm audit --secrets` uses the command's default gate policy (`all`), so a detected secret exits non-zero.
 - `lpm audit --secrets --fail-on secrets` gates on secret findings only.
@@ -135,7 +143,7 @@ Requires `node_modules/` to exist (errors with a `run \`lpm install\` first`hint
 
 | Flag                                       | Effect                                                                                                          |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`)                                                                    |
+| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`; aliases: `medium`, `low`)                                          |
 | `--fail-on <vuln\|behavior\|secrets\|all>` | CI exit-code policy (`secrets` applies to `--secrets`; `all` includes secret findings too)                      |
 | `--secrets`                                | Scan installed source for hardcoded secrets (separate scan mode; consults `--fail-on`, still ignores `--level`) |
 | `--fix`                                    | Alias for `lpm audit fix`                                                                                       |
@@ -147,7 +155,7 @@ Plus the [global flags](/docs/commands#global-flags) — `--json` is especially 
 
 | Subcommand | Effect |
 | --- | --- |
-| `fix` | Update vulnerable direct dependencies to patched versions, then reinstall |
+| `fix` | Update vulnerable direct dependency instances to verified unaffected versions, then reinstall |
 | `signatures` | Verify npm registry package signatures for the installed tree |
 
 ## See also
