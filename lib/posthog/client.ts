@@ -20,28 +20,34 @@ export function getPostHogClient(): Promise<PostHog | null> {
   if (!key) return Promise.resolve(null);
 
   if (!posthogPromise) {
-    posthogPromise = import("posthog-js").then(({ default: posthog }) => {
-      const hasFullConsent =
-        localStorage.getItem("cookie_consent") === "granted";
+    posthogPromise = import("posthog-js")
+      .then(({ default: posthog }) => {
+        const hasFullConsent =
+          localStorage.getItem("cookie_consent") === "granted";
 
-      posthog.init(key, {
-        api_host: "/a",
-        ui_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-        capture_pageview: false,
-        capture_pageleave: true,
-        autocapture: false,
-        person_profiles: "identified_only",
-        capture_exceptions: true,
-        persistence: hasFullConsent ? "localStorage+cookie" : "memory",
-        disable_session_recording: !hasFullConsent,
-        session_recording: {
-          maskAllInputs: true,
-        },
-        disable_surveys: true,
+        posthog.init(key, {
+          api_host: "/a",
+          ui_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+          capture_pageview: false,
+          capture_pageleave: true,
+          autocapture: false,
+          person_profiles: "identified_only",
+          capture_exceptions: true,
+          persistence: hasFullConsent ? "localStorage+cookie" : "memory",
+          disable_session_recording: !hasFullConsent,
+          session_recording: {
+            maskAllInputs: true,
+          },
+          disable_surveys: true,
+        });
+
+        return posthog;
+      })
+      .catch(() => {
+        posthogPromise = null;
+        console.error("PostHog initialization failed");
+        return null;
       });
-
-      return posthog;
-    });
   }
 
   return posthogPromise;

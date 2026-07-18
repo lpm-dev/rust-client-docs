@@ -13,19 +13,21 @@ type RevealProps = {
 
 export function Reveal({ as = "div", id, className, children }: RevealProps) {
   const [node, setNode] = useState<HTMLElement | null>(null);
+  const [revealPending, setRevealPending] = useState(false);
   const [inView, setInView] = useState(false);
 
   useEffect(() => {
     if (!node) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setInView(true);
       return;
     }
+    if (typeof IntersectionObserver === "undefined") return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
+            setRevealPending(false);
             setInView(true);
             observer.disconnect();
             break;
@@ -36,10 +38,16 @@ export function Reveal({ as = "div", id, className, children }: RevealProps) {
     );
 
     observer.observe(node);
+    setRevealPending(true);
     return () => observer.disconnect();
   }, [node]);
 
-  const classes = cn("reveal", inView && "in", className);
+  const classes = cn(
+    "reveal",
+    revealPending && "reveal-pending",
+    inView && "in",
+    className,
+  );
 
   if (as === "section") {
     return (
