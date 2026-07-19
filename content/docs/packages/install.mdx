@@ -133,7 +133,9 @@ Strict mode fails after resolution if a required peer is missing, an installed p
 
 Version-carrying peer specs are parsed once and checked consistently by every resolver. For example, `work:^18` is checked as `^18`, while `"react-compat": "npm:react@^17 || ^18"` checks both alternatives against the installed `react` version and preserves `react-compat` as the local module name. Repeating the alias in each union alternative is also supported. `workspace:^` and `workspace:~` are presence constraints; explicit `workspace:` ranges keep their semver constraint.
 
-`file:`, `link:`, and URL peer specs require an explicitly declared provider installed under the peer's local dependency name with the same source identity. A registry package with the same name or version is not equivalent. Missing npm-alias peers can be auto-installed from their canonical registry target, but a missing non-registry or named-registry peer fails with an explicit source-routing error. Unknown protocols and malformed source specs are rejected instead of becoming unconstrained presence checks. Git dependency installation is not currently supported, so a git peer cannot be supplied explicitly.
+`file:`, `link:`, and URL peer specs require an explicitly declared provider installed under the peer's local dependency name with the same source identity. The fetched package's own manifest name may differ from that local name: for example, `"react-compat": "file:./react"` can provide a `react-compat` peer even when `./react/package.json` names the package `react`. File and link providers remain explicit providers when their paths also identify workspace members, and their manifest versions do not need to be valid semver because matching is source-based.
+
+Source identity is exact. A registry package with the same name or version is not equivalent, and a URL's declared SRI fragment participates in its identity; the same URL pinned to different hashes is different content. Missing npm-alias peers can be auto-installed from their canonical registry target, but a missing non-registry or named-registry peer fails with an explicit source-routing error. Unknown protocols and malformed source specs are rejected instead of becoming unconstrained presence checks. Git dependency installation is not currently supported, so a git peer cannot be supplied explicitly.
 
 Precedence: `--strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > default (`false`). On `-g`, the `package.json` tier is not present, so CLI flags override `~/.lpm/config.toml`.
 
@@ -449,6 +451,8 @@ For reused expanded-store object validation, use [`lpm config integrity`](/docs/
 
 Frozen means frozen: package specs are rejected, `--force` is rejected, missing lockfiles fail, stale manifest ranges or dependency sections fail, and drift in overrides, catalogs, patches, peer rules, or `autoInstallPeers` fails before install work proceeds.
 
+Legacy or imported lockfiles that do not contain a root importer snapshot cannot prove that their package graph still matches `package.json`. A mutable online install re-resolves and rewrites that graph; a frozen install fails and asks you to refresh the lockfile. `--offline` continues to support compatibility replay of a snapshotless lockfile because it cannot re-resolve; run one mutable online install when possible to upgrade it to importer-validated state.
+
 For Docker layers keyed only by the lockfile, warm the store before copying the rest of the project:
 
 ```dockerfile
@@ -530,6 +534,8 @@ Optional opt-in: after a successful install, LPM CLI can run [`lpm audit`](/docs
 ```
 
 The advisory is **informational only** — vulnerabilities found here NEVER fail the install. Run [`lpm audit --fail-on=<level>`](/docs/packages/audit) explicitly if you want a gating audit. The feature is **disabled by default**.
+
+The vulnerability count includes both OSV.dev findings for npm packages and exact-version LPM.dev Registry advisories. If either advisory lookup cannot complete, LPM CLI suppresses the `! Audited` line (and the JSON `audit_summary`) instead of reporting zero vulnerabilities; the install still succeeds and the audit failure remains visible in logs.
 
 Enable per-invocation:
 
