@@ -24,7 +24,7 @@ Each entry in the lockfile records:
 
 - **Exact resolved version** — never a range
 - **Source registry** (e.g. `registry+https://registry.npmjs.org`)
-- **SRI integrity hash** (`sha512-…`) — verified on every install
+- **SRI integrity hash** (`sha512-…`, `sha256-…`, or legacy `sha1-…`) — downloads are verified against the declared SRI, and explicitly declared algorithms remain exact. Warm/offline v1 reuse compares the stored `.integrity` marker with the lockfile; it does not rehash the extracted tree on every install.
 - **Platform metadata** (`os`, `cpu`, `libc`) and optional reachability
 - **Registry signature evidence** (`registry-signatures`, `registry-published-at`) when npm metadata provides it
 - **Patch records** (`path`, patch-file `sha256`, `original-integrity`) when `lpm.patchedDependencies` changes installed bytes
@@ -54,6 +54,8 @@ If `lpm.lock` matches `package.json` (no drift), but `node_modules/` is missing 
 
 No metadata fetches. No tarball downloads. Project `node_modules/<pkg>` is created as a symlink into the matching link entry under `~/.lpm/store/v2/links/<graph-key>/`. The link entries live in the **global** store, not in the project, so `rm -rf node_modules` between iterations only loses the cheap project-side symlinks — the canonical extracted bytes and the per-graph wrappers stay put. Warm install is a symlink rebuild over already-materialized link entries.
 
+The root importer snapshot is what proves that the lockfile matches `package.json`. Legacy or imported lockfiles without that snapshot are not eligible for mutable, frozen, or default offline replay: a mutable online install re-resolves and rewrites the graph, while frozen and offline installs fail. This prevents removed dependencies or changed direct-peer roles from surviving in a stale graph. If an online rebuild is impossible, `lpm install --offline --allow-snapshotless-lockfile` explicitly enables compatibility replay and warns that stale packages may remain. Run one mutable online install when possible to write a current importer snapshot.
+
 [`lpm fetch`](/docs/packages/fetch) is the lockfile-only way to create that warm store state ahead of time. It reads `lpm.lock`, downloads compatible remote tarballs into the store, and leaves `package.json`, `node_modules`, and the lockfile untouched.
 
 ### Tier 3: Lockfile-only install (offline-able)
@@ -76,7 +78,7 @@ This is the slow path, but "slow" is relative — cold install on the 535-packag
 
 ## Lockfile-version
 
-The TOML lockfile is **schema-versioned** (current: `5`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots for frozen-lockfile installs and patch checksum records.
+The TOML lockfile is **schema-versioned** (current: `6`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots for frozen-lockfile installs and patch checksum records. Version `6` added persisted `engines.node` constraints so warm and frozen installs can revalidate dependency compatibility.
 
 The binary lockfile has its own wire-format version (current: `2`, bumped from `1` when the per-entry `tarball_off`/`tarball_len` pair was added). On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
 

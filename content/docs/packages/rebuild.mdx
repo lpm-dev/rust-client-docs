@@ -55,9 +55,10 @@ When you name packages explicitly, every requested package must be installed and
 
 With no arguments and no `--all`, `lpm rebuild` runs scripts for packages whose name appears in:
 
-- `package.json > lpm > trustedDependencies` (legacy array form), OR
-- `package.json > lpm > trustedDependencies` (rich-map form, with matching integrity + script hash), OR
+- `package.json > lpm > trustedDependencies` (rich-map form, with an exact source, integrity, and lifecycle-content key), OR
 - A scope glob in `package.json > lpm > scripts.trustedScopes` (e.g. `@myorg/*`)
+
+Legacy name-only arrays remain visible to the review/migration path but do not authorize execution because they cannot identify reusable script bytes.
 
 Manage that allowlist with [`lpm trust`](/docs/packages/trust) and [`lpm approve-scripts`](/docs/packages/approve-scripts).
 
@@ -191,12 +192,14 @@ contents; reference-aware cache pruning can remove the older artifact
 afterward.
 
 Changing any keyed input invalidates both the artifact and the package's local
-`.lpm-built` state. LPM CLI rematerializes the pristine package object before the
-new command runs, so stale outputs cannot leak into the replacement artifact.
-Corrupt or incomplete artifacts are treated as misses.
+`.lpm-built` state. Before a v2 command runs, LPM CLI restores and revalidates
+the immutable post-patch, pre-build lifecycle baseline whose hash passed the
+trust gate, so stale outputs cannot leak into the replacement artifact and
+patched bytes cannot differ from the reviewed bytes. Corrupt, incomplete, or
+over-budget baselines and artifacts fail closed.
 
-`--force` always bypasses lookup, rebuilds from pristine source, and replaces
-the artifact for the resulting key.
+`--force` always bypasses lookup, rebuilds from the verified lifecycle baseline,
+and replaces the artifact for the resulting key.
 
 ### Measured performance
 

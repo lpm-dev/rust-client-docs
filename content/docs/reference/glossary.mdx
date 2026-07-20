@@ -87,7 +87,7 @@ Sigstore-signed attestation that proves which CI workflow built a tarball and wh
 
 ### Provenance drift
 
-A change in a package's publisher identity between a prior approval and a candidate version. LPM CLI blocks installs on drift on both project and `-g` paths; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`. The reference snapshot is captured into the trust binding's `provenanceAtApproval` field at `lpm approve-scripts` time (or `--global` time for the global trust file).
+A change in a package's publisher identity between a prior approval and a candidate version. LPM CLI blocks installs on drift on both project and `-g` paths; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`. Project and global snapshots are captured in exact source/content-qualified trust bindings at approval time. Registry provenance follows the package's resolved registry route rather than a same-name public-registry package.
 
 ### Quality score
 
@@ -115,7 +115,7 @@ A Markdown file that teaches an AI agent how to use a package or workflow. Packa
 
 ### Triage advisor
 
-`none` (default) / `claude-cli` / `codex` / `ollama`. Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor) — only active when script policy is `triage`. Set per-project with `package.json > lpm > triageAdvisor`, per-user with `~/.lpm/config.toml > triage-advisor`. Independent of script policy. Approvals are **ephemeral** — never written to disk — so a second install invokes the advisor again. Setup wizard: `lpm config triage`.
+`none` (default) / `claude-cli` / `codex` / `ollama`. Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor) — only active when script policy is `triage`. Set per-project with `package.json > lpm > triageAdvisor`, per-user with `~/.lpm/config.toml > triage-advisor`. Independent of script policy. Approvals are **ephemeral trust**: each install creates them in memory, although an exact cached verdict can skip a repeated provider invocation. Setup wizard: `lpm config triage`.
 
 ### Source package
 
@@ -127,7 +127,7 @@ The global content-addressable package store at `~/.lpm/store/v2/`. One on-disk 
 
 ### Trusted dependency
 
-A package on a trust allowlist that's permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Project trust lives in `package.json > lpm > trustedDependencies` (legacy array of names, or rich map bound to integrity + script hash). Global trust lives in `~/.lpm/global/trusted-dependencies.json` (rich map only, with an extra `provenanceAtApproval` snapshot used by the install-time drift gate). The two stores are independent — `lpm approve-scripts` writes the former, `lpm approve-scripts --global` writes the latter.
+A package with exact lifecycle trust under `scriptPolicy: "deny"`. Project trust lives in `package.json > lpm > trustedDependencies`; global trust lives in `~/.lpm/global/trusted-dependencies.json`. Both rich maps use `name@version#identity-token` keys bound to source, integrity, and script hash, so equal-coordinate source variants remain independent. Legacy name-only project arrays and coordinate-only global keys remain readable migration input but do not authorize execution. Global bindings also carry the `provenanceAtApproval` snapshot used by the install-time drift gate. The two stores are independent — `lpm approve-scripts` writes the former, `lpm approve-scripts --global` writes the latter.
 
 ### Tunnel claim
 

@@ -9,7 +9,7 @@ lpm uninstall <packages...>   # aliases: lpm un, lpm unlink
 
 Drops one or more packages from `package.json`, removes them from `node_modules`, removes any local `node_modules/.bin` shims owned by those packages, and rewrites `lpm.lock` plus `lpm.lockb` when the post-uninstall graph fits the binary format. When a removed package makes transitive packages unreachable, LPM CLI prunes those orphaned entries from both the lockfile and `node_modules`, removes their owned bin shims as well, then cleans up empty scoped-package directories such as `node_modules/@scope/`.
 
-`lpm uninstall` only touches `dependencies` and `devDependencies`. **`peerDependencies`, `optionalDependencies`, and `lpm > trustedDependencies` are intentionally left alone** — a peer-dep declaration is a contract with consumers and shouldn't disappear when the underlying package is removed; trust entries persist so that re-adding the same `name@version` doesn't silently re-open the script-trust review. Clean stale trust entries with [`lpm trust prune`](/docs/packages/trust#lpm-trust-prune).
+`lpm uninstall` only touches `dependencies` and `devDependencies`. **`peerDependencies`, `optionalDependencies`, and `lpm > trustedDependencies` are intentionally left alone** — a peer-dep declaration is a contract with consumers and shouldn't disappear when the underlying package is removed; trust entries persist so re-adding the same exact source/content identity doesn't silently re-open the script-trust review. Clean stale trust entries with [`lpm trust prune`](/docs/packages/trust#lpm-trust-prune).
 
 To remove a globally-installed CLI, pass `-g`. To remove source files added with [`lpm add`](/docs/packages/add), use [`lpm remove`](/docs/packages/remove).
 
@@ -29,6 +29,7 @@ Human output reports the direct removals and any orphaned transitives:
 lpm uninstall lodash
 lpm un react react-dom            # multiple at once
 lpm uninstall -g typescript       # remove a global install
+lpm uninstall -g --preserve-trust eslint # approved-script reinstall only
 lpm uninstall lodash --filter web # workspace member only
 lpm uninstall -w eslint           # remove from workspace root
 ```
@@ -56,11 +57,14 @@ lpm uninstall -g eslint
 
 `--global` is mutually exclusive with filters / `-w` / `--fail-if-no-match` (those are project-scoped). Both invocations route through the same global-uninstall implementation.
 
+Ordinary global uninstall removes exact lifecycle approvals that are unique to the removed install, while preserving approvals still reachable through another global install with the same source and integrity. After [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project), use the emitted `--preserve-trust` uninstall command so the immediate reinstall can consume the new approval. The flag requires `--global`; don't use it for permanent removal because it intentionally leaves those trust rows in place.
+
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
 | `-g`, `--global` | Remove a globally-installed package from `~/.lpm/global/` |
+| `--preserve-trust` | With `--global`, keep exact lifecycle approvals for an immediate post-approval reinstall |
 | `--filter <EXPR>` | Workspace filter (mutually exclusive with `-w` and `-g`) |
 | `--filter-prod <EXPR>` | Workspace filter with production-only dependency closures (mutually exclusive with `-w` and `-g`) |
 | `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `[git-ref]` filters |

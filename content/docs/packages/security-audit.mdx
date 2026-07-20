@@ -12,7 +12,7 @@ The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm q
 | Layer                     | What it catches                                         | Where it runs                                          |
 | ------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
 | **Lifecycle script gate** | Postinstall script supply-chain attacks                 | At install time, blocks until approval                 |
-| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time (cached forever per `(name, version)`) |
+| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time (cached with the exact package content) |
 | **Vulnerability data**    | Known CVEs from OSV.dev + registry advisories           | At `lpm audit` time                                    |
 | **Publisher trust + cooldown** | Recently-published direct versions, registry-signature failures, trust downgrades, or publisher-identity drift | At install time and via `lpm audit signatures` |
 | **Triage**                | Tiered automation for the script gate                   | At install time, per-package                           |
@@ -23,17 +23,19 @@ Each layer is independent — a package can pass one and fail another. Most atta
 
 Bare `lpm install` runs the root project's install lifecycle, including `prepare`. Dependency package lifecycle scripts (`preinstall`, `install`, `postinstall`) do **not** run by default. To execute dependency scripts, you either:
 
-- **Approve them explicitly** via [`lpm approve-scripts`](/docs/packages/approve-scripts) — the package gets recorded in `package.json > lpm > trustedDependencies` (project) or `~/.lpm/global/trusted-dependencies.json` (`--global`) with its integrity + script hash.
+- **Approve them explicitly** via [`lpm approve-scripts`](/docs/packages/approve-scripts) — project and global trust record the exact source/content identity and script hash; global bindings also retain approval-time provenance.
 - **Opt out per-invocation** with `lpm install --policy=allow` (or `--yolo`) — runs everything, no gate. Works on `lpm install -g` too.
 - **Opt out persistently** with `package.json > lpm > scriptPolicy: "allow"` or `~/.lpm/config.toml > script-policy = "allow"`. The user-config tier applies to both project and global installs.
 
-Approvals are **strict**: bound to `{name, version, integrity, scriptHash}`. A republished version with different bytes invalidates the approval and re-opens the package for review. This is what makes the deny-by-default model usable across long-running projects — trust is for a specific build, not a name.
+Approvals are **strict**: project and global keys combine `name`, `version`, and an opaque identity token derived from the exact `source`, `integrity`, and `scriptHash`; each binding also records those fields. The script hash covers the executed lifecycle phase bodies and the package-owned content tree, including the raw `package.json` bytes. Two equal-coordinate packages from different sources—or two lifecycle-content revisions sharing source and integrity—remain independently reviewable. A source, content, or script change invalidates the approval and re-opens that identity for review. Bindings without a reusable script hash never grant durable trust. Source-less coordinate-only legacy entries cannot authorize source-qualified packages and remain migration input.
+
+Under store v2, lifecycle review uses an immutable post-patch, pre-build baseline. Build-generated output does not alter that durable identity. Before execution, LPM restores the exact authorized baseline and recalculates its content hash; missing, changed, malformed, or over-budget baselines fail closed before a process is spawned. Whole-tree and delegate hashing are bounded by entry-count, total-byte, per-delegate-file, and depth limits so hostile package trees cannot force unbounded trust/advisor I/O.
 
 The dependency lifecycle phases that actually run during `lpm install`'s build pipeline are `preinstall`, `install`, `postinstall`. The broader BLOCKED set (which detection scans for) also includes `preuninstall`, `uninstall`, `postuninstall`, `prepare`, and `prepublishOnly` — dependency packages that declare any of these get flagged even if the current dependency pipeline doesn't execute them.
 
 ## Layer 2: Behavioral analysis
 
-The `lpm-security` crate's `behavioral` module performs static analysis on every extracted package. Results are cached in `.lpm-security.json` next to the package files — computed once per `(name, version)`, forever.
+The `lpm-security` crate's `behavioral` module performs static analysis on every extracted package. Results are cached in `.lpm-security.json` next to the analyzed package content, so equal coordinates from different sources do not share analysis merely because their names and versions match.
 
 Three groups of tags — source behavior (what the code does), supply-chain signals (what the artifact looks like), and manifest declarations (what `package.json` declares):
 
@@ -148,7 +150,7 @@ When enabled, the resolver refuses versions whose trust evidence is weaker than 
 (None,     None)                  → never had it; layers 1/2/4 decide
 ```
 
-A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. The reference snapshot lives in `package.json > lpm > trustedDependencies > <pkg>@<ver> > provenanceAtApproval` for project trust and in `~/.lpm/global/trusted-dependencies.json` for global trust.
+A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. For project trust, the reference snapshot lives under the exact `package.json > lpm > trustedDependencies > <pkg>@<ver>#<identity-token>` binding; global trust stores it under the equivalent exact key in `~/.lpm/global/trusted-dependencies.json`. Registry provenance requests follow the installed package's resolved registry route. File, link, git, and direct URL sources are not substituted with same-name public-registry provenance.
 
 `--allow-new`, registry signatures, trust-policy, and `--ignore-provenance-drift[-all]` are independent. `--allow-new` only skips the cooldown; signature verification and drift still apply unless their own controls are disabled or waived.
 
@@ -217,12 +219,12 @@ triage-advisor  = "claude-cli"
 
 The two keys are **independent**. `script-policy: "triage"` with `triage-advisor: "none"` is the portable L1-4 baseline. `script-policy: "deny"` with any advisor setting still blocks unconditionally — the advisor never runs outside `triage`.
 
-Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
+Precedence for `triage-advisor` (highest first): `--advisor` > `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
 
 **Properties:**
 
-- **Ephemeral.** Approvals never write to disk as trust state. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM CLI does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
-- **Source-aware identity.** Approvals key on `(name, version, integrity)` so a registry copy of a package can never inherit approval from a workspace copy of the same coordinates.
+- **Ephemeral.** Approvals never write to disk as trust state. Each `lpm install` creates a new in-memory approval; an exact verdict-cache hit may recreate it without invoking the provider. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
+- **Source- and content-aware identity.** Approvals key on `(name, version, source, integrity, script_bundle_hash)`. The script hash covers every executed install lifecycle phase plus the bounded package-owned file tree, including raw `package.json` bytes and package-owned `.lpm-build-tmp` or `.lpm-build-complete` entries. Dependency directories and LPM CLI's internal store sidecars are excluded. Statically recognized delegate graphs are checked as an additional fail-closed guard. If package content is unreadable or the tree/delegate graph exceeds a safety limit, LPM CLI withholds a reusable hash and keeps the package blocked. Equal-coordinate registry, workspace, file, and link packages remain independent even when a local source has no integrity, and a verdict cannot cross to changed package executable bytes.
 - **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
 - **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
 - **Worst-of-phases per package.** Approve only if every amber phase classified Approve; one Manual or Abstain blocks the whole package.
@@ -241,9 +243,9 @@ The advisor sees a fixed template — role framing, verdict-format reminder, and
 
 ### Verdict cache
 
-Advisor verdicts are persisted at `$LPM_HOME/cache/l4-verdicts.json`. The next install of the same `(name, version)` with byte-identical script bodies skips the advisor round-trip and replays the cached verdict.
+Advisor verdicts are persisted at `$LPM_HOME/cache/l4-verdicts.json`. An exact cache hit skips the advisor round-trip, but still creates only a new in-memory approval for that install.
 
-The cache key folds in the script identity, the prompt template hash, the provider slug, and the model version. Any of those changing produces a different key and the next invocation re-classifies — there is no manual invalidation step. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
+The cache key folds in `(name, version, source, integrity, script_bundle_hash)`, every amber phase and referenced file shown to the advisor, the repository hint, prompt template hash, provider slug, observed CLI version, and effective model. Ollama always has an explicit model (`LPM_TRIAGE_OLLAMA_MODEL`, default `llama3.2`). Claude and Codex verdicts are persisted only when `LPM_TRIAGE_CLAUDE_MODEL` or `LPM_TRIAGE_CODEX_MODEL` pins the model passed to that CLI. LPM bypasses the persistent verdict cache whenever the model or CLI version cannot be observed. A registry verdict therefore cannot cross to a file or workspace source, and changed package executable bytes cannot reuse the old verdict even when prompt context was truncated. Any key input changing causes the next invocation to re-classify. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
 
 Tunables (env vars):
 

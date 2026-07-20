@@ -167,9 +167,9 @@ Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optiona
 | `"codex"` | OpenAI [Codex CLI](https://github.com/openai/codex). |
 | `"ollama"` | Ollama-served local model. |
 
-Approvals are **ephemeral** — never written to `package.json` or any other file. A second `lpm install` invokes the advisor again. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) (which writes to `trustedDependencies`) for durable trust.
+Approvals are **ephemeral trust** — never written to `package.json` or another trust store. Each `lpm install` creates a new in-memory approval; an exact cached verdict may recreate it without invoking the advisor provider. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) (which writes to `trustedDependencies`) for durable trust.
 
-Precedence: `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default (`"none"`).
+Precedence: `--advisor` > `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default (`"none"`).
 
 ### `trustedDependencies`
 
@@ -177,7 +177,7 @@ Precedence: `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-
 { "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
 ```
 
-Allowlist of dependency packages permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Two accepted shapes:
+Lifecycle trust configuration for dependency packages under `scriptPolicy: "deny"`. Two shapes remain readable:
 
 **Legacy array form** — names only:
 
@@ -185,13 +185,16 @@ Allowlist of dependency packages permitted to run lifecycle scripts under `scrip
 { "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
 ```
 
-**Rich map form** — bound to integrity + script hash, so any change re-opens the package for review:
+The array is migration input only. Because it has no version, source, integrity, or script hash, it cannot authorize lifecycle execution. The packages remain in `lpm approve-scripts` output until they are reviewed into exact rich bindings.
+
+**Rich map form** — new approvals are bound to source + integrity + script hash, so a source or content change re-opens the package for review:
 
 ```json
 {
   "lpm": {
     "trustedDependencies": {
-      "esbuild@0.25.1": {
+      "esbuild@0.25.1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": {
+        "source": "registry+https://registry.npmjs.org",
         "integrity": "sha512-...",
         "scriptHash": "sha256-..."
       }
@@ -199,6 +202,10 @@ Allowlist of dependency packages permitted to run lifecycle scripts under `scrip
   }
 }
 ```
+
+The suffix after `#` is an opaque 64-character lowercase hexadecimal identity token derived from the exact `source`, `integrity`, and `scriptHash`. It lets two packages with the same `name@version` retain independent approvals even when only their lifecycle content differs. Copy exact selectors from the candidate list printed by [`lpm approve-scripts`](/docs/packages/approve-scripts); don't construct the token by hand.
+
+Legacy rich-map keys in the `name@version` form remain readable as migration input. A source-less legacy binding cannot authorize a source-qualified package; re-approving writes a new source-, integrity-, and script-hash-qualified key.
 
 Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`](/docs/packages/approve-scripts).
 

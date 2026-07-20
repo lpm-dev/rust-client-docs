@@ -11,7 +11,7 @@ Pairs with [`lpm install`](/docs/packages/install)'s default-deny dependency scr
 
 The blocked set is broader than what actually runs. The detection layer queues every recognized dependency lifecycle name so you can review the surface area; the execution layer only runs dependency `preinstall`, `install`, and `postinstall`. A dependency package whose only declared script is `prepare` will appear in your review queue but won't execute anything when approved — see [What `lpm rebuild` runs](/docs/packages/rebuild#what-runs).
 
-Approvals are bound to **`{name, version, integrity, scriptHash}`** — any change to the package tarball or its scripts re-opens the package for review on the next install. The strict binding is what makes the deny-by-default model usable: you grant trust to a specific build, not to a name.
+Project approvals are bound to **`{name, version, source, integrity, scriptHash}`** — any change to the installed source, package content, or scripts re-opens the package for review on the next install. The strict binding is what makes the deny-by-default model usable: you grant trust to one install identity, not to a name.
 
 ## Examples
 
@@ -19,6 +19,7 @@ Approvals are bound to **`{name, version, integrity, scriptHash}`** — any chan
 lpm approve-scripts                          # interactive walk through every blocked package
 lpm approve-scripts esbuild                  # approve a specific package directly
 lpm approve-scripts esbuild@0.25.1           # approve a specific version
+lpm approve-scripts 'esbuild@0.25.1#<identity-token>' # disambiguate equal name/version sources
 lpm approve-scripts --list                   # read-only listing
 lpm approve-scripts --yes                    # bulk approve, loud — emits a warning banner
 lpm approve-scripts --dry-run                # preview decisions without writing
@@ -31,7 +32,7 @@ lpm approve-scripts --global --group         # group by top-level globally-insta
 
 ## What approval writes
 
-The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. The binding shape and drift semantics are otherwise identical.
+The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. Both stores use source-, integrity-, and lifecycle-content-qualified keys so equal-coordinate packages can retain independent approvals, including two revisions that differ only in their lifecycle content hash.
 
 ### Project scope (default)
 
@@ -41,7 +42,8 @@ Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map f
 {
   "lpm": {
     "trustedDependencies": {
-      "esbuild@0.25.1": {
+      "esbuild@0.25.1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": {
+        "source": "registry+https://registry.npmjs.org",
         "integrity": "sha512-...",
         "scriptHash": "sha256-..."
       }
@@ -50,15 +52,18 @@ Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map f
 }
 ```
 
+The `#` suffix is an opaque 64-character lowercase hexadecimal token derived from the exact `source`, `integrity`, and `scriptHash`. Source-less coordinate-only rich keys remain readable as migration input, but cannot authorize a modern source-qualified package; approving that package writes a new exact key.
+
 ### Global scope (`--global`)
 
-Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-machine trust file. The bound fields are the same plus a `provenanceAtApproval` snapshot used by the install-time drift gate:
+Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-machine trust file. Global bindings store source, integrity, and script hash plus a `provenanceAtApproval` snapshot used by the install-time drift gate:
 
 ```json title="~/.lpm/global/trusted-dependencies.json"
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "trusted": {
-    "esbuild@0.25.1": {
+    "esbuild@0.25.1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": {
+      "source": "registry+https://registry.npmjs.org",
       "integrity": "sha512-...",
       "scriptHash": "sha256-...",
       "provenanceAtApproval": {
@@ -72,6 +77,8 @@ Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-m
 }
 ```
 
+The global `#` suffix follows the same source, integrity, and lifecycle-content identity contract as project selectors. Schema-1 `name@version` entries remain readable for migration, but they do not grant strict lifecycle trust; approving the package again writes a schema-3 exact binding.
+
 `approve-scripts --global` fetches the candidate's Sigstore attestation at approval time (best-effort — network failure or no-attestation degrades to `provenanceAtApproval = null`). On the next `lpm install -g`, the drift gate compares the freshly-fetched provenance against this snapshot. The project's `package.json` is not touched.
 
 ### Provenance posture during approval
@@ -80,18 +87,18 @@ Mutating approval flows use the same Sigstore posture chain as install: `LPM_PRO
 
 `--list` and `--dry-run` are read-only and do not need that unlock. Under `--json`, CI, or non-TTY mode, LPM CLI refuses deterministically with `security_approval_required` instead of opening a native approval prompt.
 
-### Drift semantics (both scopes)
+### Drift semantics
 
-The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events for project trust.)
+For project and global trust, a different `source`, `integrity`, or `scriptHash` does not match the approved identity and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events for project trust.)
 
 ## Modes
 
 | Mode | Behavior |
 | --- | --- |
-| (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows `name@version`, integrity, script hash, the lifecycle phases the package declares, the [static tier](/docs/packages/security-audit#layer-5-triage) (green / amber / red), and a binding-drift warning when this package was previously approved and the script content has changed since. Approve / skip / inspect per package. |
-| `--list` | Read-only — print the blocked set, no prompts, no mutations. Mutually exclusive with `--yes`. |
+| (default — interactive at TTY) | Walk the blocked set one package at a time. Cards show `name@version`, source, an exact copyable selector, integrity, script hash, the lifecycle phases the package declares, the [static tier](/docs/packages/security-audit#layer-5-triage) (green / amber / red), and a binding-drift warning when this package was previously approved and the script content has changed since. Approve / skip / inspect per package. |
+| `--list` | Read-only — print the blocked set, including source and exact selector for disambiguating equal-coordinate rows. No prompts or mutations. Mutually exclusive with `--yes`. |
 | `--yes` | Bulk approve everything. Emits a warning banner. **Refuses to bulk-approve any package classified outside the green tier** — amber / amber-llm / red entries each require explicit per-package review via the interactive walk or `<pkg>` argument. Error message starts with `--yes refuses` so agents can branch on it. Mutually exclusive with `--list`. |
-| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name` or `name@version`. Bare `name` must match exactly one blocked row; if multiple versions or bindings match, LPM CLI exits non-zero and lists the `name@version` candidates to disambiguate. This is the correct non-interactive path for single-package approvals. |
+| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name`, `name@version`, or the exact `name@version#identity-token` selector. If a shorter selector matches multiple blocked rows, LPM CLI exits non-zero and lists exact copyable selectors. This is the correct non-interactive path for single-package approvals. |
 | `--dry-run` | Run the review flow normally, but skip every write. JSON envelopes carry `"dry_run": true` so agents can detect the mode. |
 
 `--dry-run` composes with `--yes`, `<pkg>`, the interactive walk, and `--global` / `--json`. It's a no-op when combined with `--list` (already read-only).
@@ -116,7 +123,7 @@ When the global blocked set exceeds 10 entries (auto-enabled at that threshold),
 
 If any global install root has a missing or unreadable `.lpm/build-state.json`, `--global --list` reports it in `unreadable_origins`. Mutating blanket approval (`--global --yes`) refuses while the aggregate is incomplete, because otherwise it could claim every global script was reviewed while some install roots were skipped. Reinstall the named globals to refresh their build-state, then approve again.
 
-After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins` and also includes `next_steps[]` command objects for agents. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
+After a successful global approval, the banner enumerates the affected top-level globals and prints `lpm uninstall -g --preserve-trust <pkg> && lpm install -g <pkg>` for each. `--preserve-trust` is deliberately limited to this immediate approved-reinstall workflow; an ordinary global uninstall prunes approvals that are no longer reachable. The `--json` envelope carries the same information as `next_step.origins` and includes the exact commands in `next_steps[]`. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to execute the newly approved scripts.
 
 ## JSON output
 
@@ -129,13 +136,13 @@ lpm approve-scripts --list --json --dry-run  # preview plan, no writes
 
 `--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
 
-The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in), list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits follow-up commands since no mutation happened.
+The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, and `skipped_count`. In project scope, `blocked[]` rows contain `name`, `version`, `source`, `identity_selector`, `integrity`, `script_hash`, `phases_present`, `static_tier`, and `binding_drift`. `identity_selector` is the exact value automation can pass back as `<pkg>` when equal-coordinate rows coexist. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, rows carry the same `source` and `identity_selector` fields plus `origins` (the top-level globals that pulled the package in); list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects containing `lpm uninstall -g --preserve-trust … && lpm install -g …`. `--dry-run` omits follow-up commands since no mutation happened.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `<package>` | Approve a specific package directly (`name` or `name@version`). Auto-confirms in non-TTY / JSON mode. |
+| `<package>` | Approve a specific package directly (`name`, `name@version`, or `name@version#identity-token`). Auto-confirms in non-TTY / JSON mode. |
 | `--yes` | Bulk-approve every blocked package (loud). Refuses to bulk-approve amber / red tier packages. |
 | `--list` | Read-only listing |
 | `--dry-run` | Preview without writing |

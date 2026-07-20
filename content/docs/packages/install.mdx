@@ -78,7 +78,7 @@ LPM_TIMING_DETAIL=trace lpm install --json
 3. **Link.** `node_modules/<pkg>` is created as a symlink into the global store at `~/.lpm/store/v2/links/<graph-key>/`. Single packages start **hoisted** in LPM CLI's v2 virtual-store layout: root direct dependencies are surfaced at the project root, while package-local dependency links live inside shared link entries. Workspaces auto-default to **isolated** (pnpm-style strict-deps). If resolution detects incompatible peer requirements and no explicit linker was set, LPM CLI switches that install to isolated and records the decision in `lpm.lock` so warm installs keep the same layout. Override per-invocation with `--linker=isolated` or `--linker=hoisted`.
 4. **Run root lifecycle, gate dependency scripts.** Bare installs run the root project's install lifecycle (`pnpm:devPreinstall` before dependency work, then `preinstall` / `install` / `postinstall` / `preprepare` / `prepare` / `postprepare` after a successful install). Dependency package scripts stay blocked by default; when policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only dependency `preinstall`, `install`, and `postinstall` fire. Other recognized dependency phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 
-Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
+Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Global v2 graph identity includes registry origin and content integrity, while local `file:` and `link:` identity is qualified by the resolved project path. Two projects can therefore use the same relative source path without sharing a link entry. Local source snapshots refresh when you run `lpm install` again.
 
 ## Package-published LPM.dev skills
 
@@ -130,6 +130,12 @@ lpm install --strict-peer-dependencies
 ```
 
 Strict mode fails after resolution if a required peer is missing, an installed peer does not satisfy the declared range, or the resolver found incompatible peer requirements across consumers. Optional peers that are absent still do not fail.
+
+Version-carrying peer specs are parsed once and checked consistently by every resolver. For example, `work:^18` is checked as `^18`, while `"react-compat": "npm:react@^17 || ^18"` checks both alternatives against the installed `react` version and preserves `react-compat` as the local module name. Repeating the alias in each union alternative is also supported. `workspace:^` and `workspace:~` are presence constraints; explicit `workspace:` ranges keep their semver constraint.
+
+`file:`, `link:`, and URL peer specs require an explicitly declared provider installed under the peer's local dependency name with the same source identity. The fetched package's own manifest name may differ from that local name: for example, `"react-compat": "file:./react"` can provide a `react-compat` peer even when `./react/package.json` names the package `react`. File and link providers remain explicit providers when their paths also identify workspace members in both v1 and v2 store modes, and their manifest versions do not need to be valid semver because matching is source-based. A relative `file:` or `link:` peer declared by a workspace member resolves from that member's directory, then is compared with providers in project-relative coordinates.
+
+Source identity is exact. A registry package with the same name or version is not equivalent, and a URL's declared SRI fragment participates in its identity; the same URL pinned to different hashes is different content. A verified declared SRI remains the stored source identity instead of being rewritten to another hash algorithm. Missing npm-alias peers can be auto-installed from their canonical registry target. While peer auto-installation is enabled, a missing required non-registry or named-registry peer fails with an explicit source-routing error; optional peers and installs with peer auto-installation disabled do not take that failure path. Unknown protocols and malformed source specs are rejected instead of becoming unconstrained presence checks. Git dependency installation is not currently supported, so a git peer cannot be supplied explicitly.
 
 Precedence: `--strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > default (`false`). On `-g`, the `package.json` tier is not present, so CLI flags override `~/.lpm/config.toml`.
 
@@ -311,6 +317,8 @@ Triage auto-runs only when every unbuilt scripted package classifies green. If a
 
 Auto-build runs after dependency resolution/linking. The same build tail is used for fresh resolution, `lpm install <pkg>`, and lockfile/offline replays when the effective policy permits dependency scripts. If any trusted lifecycle script exits non-zero, `lpm install` exits non-zero and surfaces the failing package/script instead of treating the install as successful.
 
+Store v2 binds lifecycle trust to an immutable post-patch, pre-build package baseline, not the mutable directory left behind by a prior build. Immediately before a trusted script runs, LPM restores that baseline and verifies its exact content hash again. Normal generated output therefore does not reopen an approval, while baseline drift or a package tree that exceeds the bounded hashing budget remains blocked.
+
 Set per-invocation:
 
 ```bash
@@ -335,7 +343,7 @@ Precedence: CLI flag > `package.json` > `~/.lpm/config.toml` > default (`deny`).
 
 ### Optional LLM advisor (under `triage`)
 
-If you have a local LLM available — Claude CLI, Codex, or Ollama — the triage gate can ask it to review Amber-tier scripts during install. If the advisor returns Approve for every amber phase a package presents, that package's scripts run via an ephemeral trust path **for the current install only** — verdicts are never persisted. See [security overview](/docs/packages/security-audit#optional-llm-advisor) for the full contract.
+If you have a local LLM available — Claude CLI, Codex, or Ollama — the triage gate can ask it to review Amber-tier scripts during install. If the advisor returns Approve for every amber phase a package presents, that package's scripts run via an ephemeral trust path **for the current install only**. The approval is not written as trust state; the verdict may be cached against the exact source and executable identity for later installs. See [security overview](/docs/packages/security-audit#optional-llm-advisor) for the full contract.
 
 ```bash
 lpm config triage --set claude-cli          # one-time setup
@@ -436,6 +444,7 @@ lpm ci --offline --strict-integrity
 
 - `lpm ci` — frozen install. Requires `lpm.lock`, validates that the lockfile's importer snapshot matches `package.json`, and never rewrites `lpm.lock` or `lpm.lockb`.
 - `--offline` — never touches the network. Replays entirely from the lockfile + global store. Errors out if anything is missing.
+- `--allow-snapshotless-lockfile` — with `--offline`, explicitly permits compatibility replay of a legacy lockfile without a root importer snapshot. Human-readable output warns that stale roots or peer-role transitions may remain.
 - `--strict-integrity` — fail on tarball-URL deps that don't declare an inline SRI hash. Disables trust-on-first-use for fresh installs.
 - `--no-skills` and `--no-security-summary` skip optional work to shave CI time. Persist the package-skill opt-out with `lpm config lpm-skills --set false`; use `--skills` to override it for one CI run. `--no-editor-setup` remains accepted but has no effect; package skills never create editor links or configuration.
 
@@ -444,6 +453,8 @@ For reused expanded-store object validation, use [`lpm config integrity`](/docs/
 `lpm install --frozen-lockfile` gives the same frozen behavior on the regular install command. On CI providers that set `CI=true` (or a provider-specific CI env var), plain `lpm install` automatically becomes frozen when `lpm.lock` exists. Pass `--no-frozen-lockfile` only when you intentionally want a mutable install in CI.
 
 Frozen means frozen: package specs are rejected, `--force` is rejected, missing lockfiles fail, stale manifest ranges or dependency sections fail, and drift in overrides, catalogs, patches, peer rules, or `autoInstallPeers` fails before install work proceeds.
+
+Legacy or imported lockfiles that do not contain a root importer snapshot cannot prove that their package graph still matches `package.json`. A mutable online install re-resolves and rewrites that graph; frozen and offline installs fail and ask you to refresh the lockfile. If an online rebuild is impossible, combine `--offline --allow-snapshotless-lockfile` to opt into compatibility replay. The warning is load-bearing: without an importer snapshot, removed roots and direct-peer-to-ambient transitions cannot be validated and stale packages may remain.
 
 For Docker layers keyed only by the lockfile, warm the store before copying the rest of the project:
 
@@ -581,7 +592,7 @@ Two things differ from project installs:
 
 A global install commits only after LPM CLI has materialized at least one safe, executable bin shim for the package. If the package exposes no usable bins, declares unsafe bin names, or the install cannot write its ready marker, LPM CLI rolls the pending global entry back instead of leaving a half-installed package in `~/.lpm/global/`.
 
-Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global. `lpm rebuild --global` is a planned follow-up.
+Re-running scripts after `lpm approve-scripts --global` requires `lpm uninstall -g --preserve-trust <pkg> && lpm install -g <pkg>` for each affected top-level global. The approval output prints these commands. `lpm rebuild --global` is a planned follow-up.
 
 ## Engines enforcement
 
@@ -633,6 +644,7 @@ The workspace-root preflight also runs for [`lpm rebuild`](/docs/packages/rebuil
 | `--omit <dev\|optional>` | Omit dependency types from `node_modules` (comma-separated or repeatable) |
 | `--prod`, `--production` | Production install; equivalent to omitting dev dependencies |
 | `--offline` | Never touch the network |
+| `--allow-snapshotless-lockfile` | With `--offline`, permit legacy replay without a root importer snapshot and warn about stale-graph risk |
 | `--frozen-lockfile` | Refuse to update lockfiles; fail if `package.json` and `lpm.lock` disagree |
 | `--no-frozen-lockfile` | Disable the CI auto-frozen default for this invocation |
 | `--force` | Bypass fast-exit hash check, skip the lockfile, re-download, re-link from scratch |
