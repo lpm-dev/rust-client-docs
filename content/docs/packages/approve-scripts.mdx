@@ -32,7 +32,7 @@ lpm approve-scripts --global --group         # group by top-level globally-insta
 
 ## What approval writes
 
-The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. Both stores use source/content-qualified keys so equal-coordinate packages can retain independent approvals.
+The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. Both stores use source-, integrity-, and lifecycle-content-qualified keys so equal-coordinate packages can retain independent approvals, including two revisions that differ only in their lifecycle content hash.
 
 ### Project scope (default)
 
@@ -52,7 +52,7 @@ Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map f
 }
 ```
 
-The `#` suffix is an opaque 64-character lowercase hexadecimal token derived from the exact `source` and `integrity`. Legacy coordinate-only rich keys remain readable and are migrated when that package is approved again.
+The `#` suffix is an opaque 64-character lowercase hexadecimal token derived from the exact `source`, `integrity`, and `scriptHash`. Source-less coordinate-only rich keys remain readable as migration input, but cannot authorize a modern source-qualified package; approving that package writes a new exact key.
 
 ### Global scope (`--global`)
 
@@ -60,7 +60,7 @@ Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-m
 
 ```json title="~/.lpm/global/trusted-dependencies.json"
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "trusted": {
     "esbuild@0.25.1#0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": {
       "source": "registry+https://registry.npmjs.org",
@@ -77,7 +77,7 @@ Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-m
 }
 ```
 
-The global `#` suffix follows the same opaque source/content identity contract as project selectors. Schema-1 `name@version` entries remain readable for migration, but they do not grant strict lifecycle trust; approving the package again writes a schema-2 exact binding.
+The global `#` suffix follows the same source, integrity, and lifecycle-content identity contract as project selectors. Schema-1 `name@version` entries remain readable for migration, but they do not grant strict lifecycle trust; approving the package again writes a schema-3 exact binding.
 
 `approve-scripts --global` fetches the candidate's Sigstore attestation at approval time (best-effort — network failure or no-attestation degrades to `provenanceAtApproval = null`). On the next `lpm install -g`, the drift gate compares the freshly-fetched provenance against this snapshot. The project's `package.json` is not touched.
 
@@ -123,7 +123,7 @@ When the global blocked set exceeds 10 entries (auto-enabled at that threshold),
 
 If any global install root has a missing or unreadable `.lpm/build-state.json`, `--global --list` reports it in `unreadable_origins`. Mutating blanket approval (`--global --yes`) refuses while the aggregate is incomplete, because otherwise it could claim every global script was reviewed while some install roots were skipped. Reinstall the named globals to refresh their build-state, then approve again.
 
-After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins` and also includes `next_steps[]` command objects for agents. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
+After a successful global approval, the banner enumerates the affected top-level globals and prints `lpm uninstall -g --preserve-trust <pkg> && lpm install -g <pkg>` for each. `--preserve-trust` is deliberately limited to this immediate approved-reinstall workflow; an ordinary global uninstall prunes approvals that are no longer reachable. The `--json` envelope carries the same information as `next_step.origins` and includes the exact commands in `next_steps[]`. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to execute the newly approved scripts.
 
 ## JSON output
 
@@ -136,7 +136,7 @@ lpm approve-scripts --list --json --dry-run  # preview plan, no writes
 
 `--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
 
-The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, and `skipped_count`. In project scope, `blocked[]` rows contain `name`, `version`, `source`, `identity_selector`, `integrity`, `script_hash`, `phases_present`, `static_tier`, and `binding_drift`. `identity_selector` is the exact value automation can pass back as `<pkg>` when equal-coordinate rows coexist. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, rows carry the same `source` and `identity_selector` fields plus `origins` (the top-level globals that pulled the package in); list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits follow-up commands since no mutation happened.
+The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, and `skipped_count`. In project scope, `blocked[]` rows contain `name`, `version`, `source`, `identity_selector`, `integrity`, `script_hash`, `phases_present`, `static_tier`, and `binding_drift`. `identity_selector` is the exact value automation can pass back as `<pkg>` when equal-coordinate rows coexist. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, rows carry the same `source` and `identity_selector` fields plus `origins` (the top-level globals that pulled the package in); list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects containing `lpm uninstall -g --preserve-trust … && lpm install -g …`. `--dry-run` omits follow-up commands since no mutation happened.
 
 ## Flags
 
