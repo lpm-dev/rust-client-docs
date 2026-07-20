@@ -217,12 +217,12 @@ triage-advisor  = "claude-cli"
 
 The two keys are **independent**. `script-policy: "triage"` with `triage-advisor: "none"` is the portable L1-4 baseline. `script-policy: "deny"` with any advisor setting still blocks unconditionally — the advisor never runs outside `triage`.
 
-Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
+Precedence for `triage-advisor` (highest first): `--advisor` > `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
 
 **Properties:**
 
 - **Ephemeral.** Approvals never write to disk as trust state. Each `lpm install` creates a new in-memory approval; an exact verdict-cache hit may recreate it without invoking the provider. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
-- **Source- and script-aware identity.** Approvals key on `(name, version, source, integrity, script_bundle_hash)`. The script hash covers every install lifecycle phase and delegated file content. Equal-coordinate registry, workspace, file, and link packages remain independent even when a local source has no integrity, and a verdict cannot cross to changed executable bytes.
+- **Source- and script-aware identity.** Approvals key on `(name, version, source, integrity, script_bundle_hash)`. The script hash covers every install lifecycle phase and its reachable in-package delegated file graph. If that graph is missing, escapes the package, or exceeds the safety limits, LPM CLI withholds a reusable hash and keeps the package blocked. Equal-coordinate registry, workspace, file, and link packages remain independent even when a local source has no integrity, and a verdict cannot cross to changed executable bytes.
 - **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
 - **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
 - **Worst-of-phases per package.** Approve only if every amber phase classified Approve; one Manual or Abstain blocks the whole package.
@@ -243,7 +243,7 @@ The advisor sees a fixed template — role framing, verdict-format reminder, and
 
 Advisor verdicts are persisted at `$LPM_HOME/cache/l4-verdicts.json`. An exact cache hit skips the advisor round-trip, but still creates only a new in-memory approval for that install.
 
-The cache key folds in `(name, version, source, integrity)`, every amber phase and referenced file shown to the advisor, the repository hint, prompt template hash, provider slug, and model version. A registry verdict therefore cannot cross to a file or workspace source, and an integrity change cannot reuse the old verdict. Any key input changing causes the next invocation to re-classify. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
+The cache key folds in `(name, version, source, integrity, script_bundle_hash)`, every amber phase and referenced file shown to the advisor, the repository hint, prompt template hash, provider slug, and provider/model identity. For Ollama, the identity includes both the CLI version and the effective `LPM_TRIAGE_OLLAMA_MODEL`. A registry verdict therefore cannot cross to a file or workspace source, and changed executable bytes cannot reuse the old verdict even when prompt context was truncated. Any key input changing causes the next invocation to re-classify. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
 
 Tunables (env vars):
 
