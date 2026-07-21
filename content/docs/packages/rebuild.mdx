@@ -215,7 +215,7 @@ The benchmark and raw methodology live in the rust-client repository under
 
 ### Project secret files
 
-**Sandbox blocks lifecycle script reads of project secrets by default; opt in via `[sandbox] script-read-allow` if your build needs a specific secret file.**
+**Sandbox blocks lifecycle script reads of project secrets by default; opt in via `script-read-allow` if your build needs a specific secret file.**
 
 Lifecycle scripts have read access to most of `project_dir` so they can locate sources, configs, generated files, etc. But certain conventional secret-file locations are denied even though they sit inside the project tree — a malicious or compromised script has no legitimate reason to read your `.env`, `.aws/credentials`, or a `*.pem` private key.
 
@@ -227,9 +227,13 @@ The deny list covers:
 - **git credential URLs** — `.git/config`, `.git/credentials`
 - **SSH keys at project root** — `id_rsa`, `id_ecdsa`, `id_ed25519`, `id_dsa` (and `.pub` variants)
 - **cloud / credential dirs** — `.ssh/`, `.aws/`, `.kube/`, `.gcp/`, `.config/gcloud/`, `.terraform/`, `secrets/`, `secret/`
-- **filetype patterns at any depth** — `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.tfstate`, `*.tfvars`, `*.tfvars.json`
+- **filetype patterns in the bounded project scan** — `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.tfstate`, `*.tfvars`, `*.tfvars.json`
 
-On macOS the denial fires as a Seatbelt `(deny file-read* ...)` rule layered after the project-dir allow (SBPL last-match-wins). On Linux the sandbox enters a fresh user + mount namespace before the script runs and bind-mounts `/dev/null` over each enumerated secret file — reads return zero bytes. Hardened distros that block unprivileged user namespaces (Debian with `kernel.unprivileged_userns_clone=0`, some AppArmor profiles, unprivileged containers) silently no-op the overlay; the script falls back to baseline access. Windows AppContainer has no equivalent overlay layer today.
+On macOS the denial fires as a Seatbelt `(deny file-read* ...)` rule layered after the project-dir allow (SBPL last-match-wins). On Linux the sandbox enters a fresh user and mount namespace, makes mount propagation private, and bind-mounts `/dev/null` over each enumerated secret file before the command executes. Reads then return zero bytes.
+
+Linux treats that overlay as required whenever at least one protected file needs masking. Namespace creation, ID mapping, propagation setup, and every bind mount must all succeed. If a hardened host blocks any step — for example through `user.max_user_namespaces=0`, AppArmor or SELinux policy, or container restrictions — LPM CLI refuses to execute the lifecycle script. It does not fall back to the broad Landlock project-read access. Projects with no matching secret files, or whose matches are all explicitly allowlisted, skip the namespace setup and continue normally.
+
+The protection is a bounded pre-spawn snapshot, not a dynamic filesystem monitor. Files created after enumeration are not added to the overlay. The extension scan stops below four nested project levels and prunes generated or dependency-heavy directories such as `node_modules`, `.git`, `target`, `dist`, and `build`; explicit literal paths such as `.git/config` are still checked separately. Linux does not follow symlink entries while enumerating protected files. Windows AppContainer has no equivalent project-secret overlay today.
 
 #### Opting specific files back in
 
@@ -249,7 +253,7 @@ Some builds genuinely need access — `prisma generate` reads `DATABASE_URL` fro
 script-read-allow = [".env", ".npmrc"]
 ```
 
-Per-project (`package.json > lpm > scripts > sandboxReadAllow`) and per-user (`~/.lpm/config.toml > script-read-allow`) lists are **unioned** at install time. Every entry must resolve to a path **inside** `project_dir` — traversal escapes (`..`) and absolute paths pointing outside the project are rejected with an actionable error naming the config source and key. Duplicate entries across the two lists are deduplicated.
+Per-project (`package.json > lpm > scripts > sandboxReadAllow`) and per-user (`~/.lpm/config.toml > script-read-allow`) lists are **unioned** at install time. Every entry must resolve to a path **inside** `project_dir` — traversal escapes (`..`) and absolute paths pointing outside the project are rejected with an actionable error naming the config source and key. Duplicate entries across the two lists are deduplicated. These entries are the explicit read opt-in: an allowlisted secret remains readable, and a project whose matching secrets are all allowlisted does not need the Linux namespace overlay.
 
 ### Disabling the sandbox
 
