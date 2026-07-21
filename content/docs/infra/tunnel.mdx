@@ -45,7 +45,19 @@ The domain must include a base — `lpm.fyi` (free + Pro/Org) or `lpm.llc` (Pro/
 
 `--auto-ack` is useful when you're not running a server but need webhook providers to keep their endpoint active — providers typically deactivate endpoints after repeated 5xx responses.
 
-Once connected, the startup block prints the public URL, inspector URL, plan, expiry when the relay advertises one, active limits, session, local port, and domain. Press `o` to open the inspector when it is running, or `q` to quit the tunnel. Incoming requests stream as compact rows such as `→ POST /hooks/stripe 201 42ms`.
+Once connected, the startup block prints the public URL, inspector URL, plan, expiry when the relay advertises one, active limits, current accepted/included request usage, overage state, session, local port, and domain. `--json` includes the same additive `limits` and `usage` objects for scripts. Current CLI versions also print live usage warnings when the relay sends allowance or overage threshold notices. Press `o` to open the inspector when it is running, or `q` to quit the tunnel. Incoming requests stream as compact rows such as `→ POST /hooks/stripe 201 42ms`.
+
+## Request allowance
+
+| Plan | Included requests | Account-wide rate | Concurrent tunnels | After allowance |
+| --- | --- | --- | --- | --- |
+| Free | 20,000/UTC month | 4,000/min | 1 | hard stop |
+| Pro | 100,000/billing period | 20,000/min | 3 | $1/100,000 proportional overage |
+| Org | 100,000/billed seat/billing period | 20,000/min/billed seat | 10 | $1/100,000 proportional overage |
+
+Every plan also applies 600 requests/minute to each visitor IP within the account. Limits and usage are shared across the account's domains; three Pro tunnels do not receive three separate allowances. Pro and Org overage is enabled by default and can be turned off from the tunnel dashboard for a hard stop.
+
+An admitted HTTP request counts once even if localhost later fails or times out. A successful public WebSocket upgrade counts once; its frames do not count. Public WebSockets require a current protocol-v2 CLI connection; tunnels connected by an older protocol-v1 client return `426 Upgrade Required` before quota admission. See [Request usage and overage](/docs/infra/tunneling#request-usage-and-overage) for exclusions and billing-period behavior.
 
 ## Claiming a stable domain
 
