@@ -63,6 +63,14 @@ registry=https://my-mirror.example.com
 
 For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM CLI refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
 
+## Redirect transport policy
+
+LPM CLI checks every automatically followed redirect before sending the next request. Once a request chain has used HTTPS, a redirect to HTTP is refused — including redirects to `localhost`, `127.0.0.1`, or `[::1]`. The command fails with a network or registry error containing `refused HTTPS-to-HTTP redirect`.
+
+HTTPS-to-HTTPS redirects and HTTP-to-HTTPS upgrades remain allowed. HTTP-to-HTTP development flows can still begin from a directly configured loopback URL. For registry operations, `--insecure` can admit an explicitly configured HTTP endpoint outside loopback, but it never permits an HTTPS request to downgrade through a redirect.
+
+`strict-ssl=false` changes certificate verification only; it does not weaken the redirect rule. This policy covers outbound HTTP clients used by LPM CLI itself. It does not make claims about arbitrary application URLs opened by project code or installed packages.
+
 ## TLS, custom CAs, and mTLS
 
 LPM CLI honors the same `.npmrc` TLS keys npm does. All settings can be set globally or per-origin (`//host/:key=value`); per-origin scoping wins for the matching host.
@@ -86,7 +94,7 @@ ca="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 strict-ssl=false
 ```
 
-Disables hostname, expiry, and CA validation **process-wide**. LPM CLI logs a loud warning at install start whenever `strict-ssl=false` is in effect — this is the kind of setting that should never accidentally land in CI.
+Disables hostname, expiry, and CA validation **process-wide**. It does not allow an HTTPS redirect to downgrade to HTTP. LPM CLI logs a loud warning at install start whenever `strict-ssl=false` is in effect — this is the kind of setting that should never accidentally land in CI.
 
 Per-origin `//host/:strict-ssl=false` is **not** supported in v1; the parser warns and ignores it. Use `cafile` to scope a custom-CA trust addition instead.
 
