@@ -8,20 +8,23 @@ description: "How LPM CLI exposes localhost — Cloudflare Worker relay, base do
 ## Architecture
 
 ```text
-[your machine]        [LPM.dev Registry relay — Cloudflare]          [internet]
-                                                                          ▼
-  lpm tunnel 3000 ──WebSocket──▶  Worker → Durable Object  ◀──HTTPS──── public users
-       │                                  │                              │
-       ▼                          one DO per tunnel domain               │
-  localhost:3000                  routes by Host header                  │
-                                                                          │
-       ▲                                  │                              │
-       └─── HTTP responses through the same WebSocket ───────────────────┘
+[your machine]                  [LPM.dev Registry relay — Cloudflare]
+
+  localhost:3000 ◀──────▶ TunnelRoom DO ◀──────▶ public HTTP/WebSocket
+        ▲                       │
+        │                       └────▶ TunnelCounter DO
+        └── CLI WebSocket                    account-wide slots,
+                                             rates, and usage
 ```
 
-The relay runs as a **Cloudflare Worker with Durable Objects**. Each tunnel domain (e.g., `acme-api.lpm.llc`) maps to its own Durable Object instance — that DO holds the WebSocket connection from your CLI and proxies HTTP requests through it.
+The relay runs as a **Cloudflare Worker with two Durable Object roles**:
 
-The DO model gives the relay strong consistency for the "which session owns which domain" question without round-tripping to a central service. KV caches token validation (60s TTL) and domain ownership (5-min TTL).
+- A domain-keyed `TunnelRoom` holds the CLI WebSocket and proxies public HTTP and WebSocket traffic for that domain.
+- An account-keyed `TunnelCounter` owns the concurrent slots, per-minute rate buckets, monthly/billing-period usage, and request-ID idempotency for `user:<uuid>` or `org:<uuid>`.
+
+The split keeps domain routing isolated while making limits truly account-wide. Every domain owned by the same personal or organization account reaches the same counter. Durable Object SQLite preserves quota state across object eviction and restarts; KV still caches token validation and domain ownership lookups.
+
+Both CLI and public WebSockets use Cloudflare's WebSocket Hibernation API. The room can sleep while connections are idle and wake on the next message. For the end user, nothing changes: the URL, CLI workflow, open connection, and WebSocket protocol stay the same. Hibernation is an implementation and provider-cost optimization; it does not change the LPM.dev Registry request allowance.
 
 The relay URL is `wss://relay.lpm.fyi/connect`. You don't need to configure it — it's the default the CLI uses.
 
@@ -48,21 +51,50 @@ The CLI pins each relay's certificate independently — see [Certificate pinning
 
 Tunnels are gated by plan tier and relay-wide abuse controls:
 
-| Dimension               | Free            | Pro       | Org       |
-| ----------------------- | --------------- | --------- | --------- |
-| Concurrent tunnels      | **1**           | **3**     | **10**    |
-| Per-tunnel rate limit   | **100 req/min** | unlimited | unlimited |
-| Global per-IP cap       | 600 req/min/IP  | 600 req/min/IP | 600 req/min/IP |
-| Max request body size   | **10 MB**       | 100 MB    | 100 MB    |
-| Max session length      | **1 hour**      | unlimited | unlimited |
-| Custom subdomain claims | **0**           | 3 total   | 10 total  |
-| `--tunnel-auth` flag    | not available   | available | available |
+| Dimension | Free | Pro | Org |
+| --- | --- | --- | --- |
+| Concurrent tunnels | **1** | **3** | **10** |
+| Included requests | **20,000/UTC month** | **100,000/billing period** | **100,000/billed seat/billing period** |
+| Account-wide rate | **4,000 req/min** | **20,000 req/min** | **20,000 req/min/billed seat** |
+| Per visitor IP within the account | 600 req/min | 600 req/min | 600 req/min |
+| After included requests | hard stop | $1/100,000 proportional overage | $1/100,000 proportional overage |
+| Max request body size | **10 MB** | 100 MB | 100 MB |
+| Max session length | **1 hour** | unlimited | unlimited |
+| Custom subdomain claims | **0** | 3 total | 10 total |
+| `--tunnel-auth` flag | not available | available | available |
 
 Limits are enforced at the relay (the Cloudflare Worker), not the CLI. Product constants live in `config/plans.js`, and the Worker derives its runtime limit table from `workers/tunnel/src/limits.js`.
 
+The 600/minute visitor limit is scoped to the account and source IP. The same visitor cannot reset that budget by switching between two domains owned by the same account.
+
+### Request usage and overage
+
+The included allowance belongs to the account, not each tunnel. A Pro account with three active tunnels still has 100,000 included requests total. Reducing the concurrent limit to one would not reduce the allowance or the fixed Pro subscription price; more live tunnels can only consume the shared allowance faster.
+
+The relay counts:
+
+- One admitted HTTP request, even if the local server later returns an error, is unavailable, or times out.
+- One successful public WebSocket upgrade confirmed by a current protocol-v2 CLI. Frames on that WebSocket consume zero LPM.dev Registry tunnel requests.
+
+It does not count:
+
+- Authentication failures or Free-tier interstitial responses.
+- Oversized request bodies.
+- Requests rejected by the account-wide, per-account/IP, or period allowance limit.
+- Internal reconcile probes, CLI keepalive pings/pongs, or public WebSocket frames.
+- Public WebSocket attempts against a tunnel connected by an older protocol-v1 CLI. The relay returns `426 Upgrade Required` before quota admission; upgrade LPM CLI and reconnect the tunnel.
+
+Free usage resets at the start of each UTC calendar month and hard-stops at 20,000. Pro and Org usage follows the active Stripe subscription-item period. Paid overage is enabled by default, billed proportionally at $1 per 100,000 requests, and can be turned off from the personal or organization tunnel dashboard. With overage off, the relay hard-stops at the included allowance. Toggling overage affects future admissions only; it never retroactively bills an earlier period.
+
+Organization usage belongs to the organization account selected by the claimed domain. A member's personal Free or Pro plan never controls an organization tunnel. When an organization usage period is first opened, LPM.dev Registry snapshots the subscription's billed Stripe seat quantity; the included requests and account-wide rate stay fixed from that snapshot for the rest of the billing period. The 10-tunnel and 10-claim caps do not scale per seat.
+
+If an organization enters its billing grace period, tunnel access continues until the grace deadline with paid overage disabled. The grace window has one stable allowance and hard-stops when that allowance is exhausted; requests during grace are not reported as paid Stripe overage.
+
+The CLI startup block shows current accepted/included usage and whether overage is on or the account is at a hard stop. Current CLI versions also render live allowance and overage threshold notices as visible warnings. The dashboard is based on monotonic Worker snapshots and may lag the request path by approximately one minute.
+
 ### Reconnecting to your own domain
 
-Concurrent caps are enforced atomically by a per-user quota DO. Slots are keyed by domain, so a **same-domain reconnect is a 0-net replacement** — never a +1 against your cap, regardless of plan. Concretely: if you're a Pro user with three live tunnels and one of them disconnects (laptop sleep, network blip), reconnecting it doesn't temporarily inflate your count to 4-and-then-deny. The slot stays reserved for that domain across the disconnect/reconnect cycle.
+Concurrent caps are enforced atomically by the account-wide `TunnelCounter`. Slots are keyed by domain, so a **same-domain reconnect is a 0-net replacement** — never a +1 against your cap, regardless of plan. Concretely: if you're a Pro user with three live tunnels and one of them disconnects (laptop sleep, network blip), reconnecting it doesn't temporarily inflate your count to 4-and-then-deny. The replacement gets a fresh session ID, and a late close from the old session cannot release the new slot.
 
 The URL itself stays the same across reconnects whenever it's deterministic from your identity. That covers explicitly claimed Pro/Org subdomains (held by your database claim) and the implicit Pro default of `<username>.lpm.fyi` (held by your username). Continuity comes from the deterministic source, not from a transient grace timer.
 
@@ -167,7 +199,7 @@ lpm tunnel unclaim acme-api.lpm.llc
 
 Claims are scoped:
 
-- **Personal claims** — owned by the authenticated user. Counted against the user's per-plan claim pool (Pro=3, Org members=10 inherited from any of their orgs, plus their own Pro pool if they have one).
+- **Personal claims** — owned by the authenticated user. Pro accounts can hold 3; organization membership does not add organization limits to the member's personal account.
 - **Org claims** — owned by an org. Counted against the org's pool. Anyone in the org can use the domain; permissions to claim/unclaim depend on the org role.
 
 Race-safe: the underlying `claimPersonalDomain` / `claimOrgDomain` queries use `INSERT … ON CONFLICT DO NOTHING` against a unique index on `domain`, so two simultaneous claims for the same domain produce one win and one no-op.
@@ -186,31 +218,38 @@ The CLI ↔ relay protocol is **JSON over WebSocket**. Each message has a discri
 
 | Direction      | Type            | Purpose                                                                           |
 | -------------- | --------------- | --------------------------------------------------------------------------------- |
-| Client → relay | `hello`         | Initial handshake — token, requested domain (wire field: `subdomain`), local port |
-| Relay → client | `hello`         | Handshake response — assigned domain, full `tunnel_url`, `session_id`, plan, expiry, and limits |
+| Relay → client | `hello`         | First JSON frame — assigned domain, full `tunnel_url`, `session_id`, plan, expiry, limits, and current usage |
 | Relay → client | `http_request`  | Incoming HTTP request to proxy                                                    |
 | Client → relay | `http_response` | The local server's response                                                       |
 | Relay → client | `ws_upgrade`    | Incoming WebSocket upgrade request from a remote client                           |
+| Client → relay | `ws_ready`      | Confirms that the local server accepted the WebSocket upgrade                     |
+| Client → relay | `ws_reject`     | Reports that the local server rejected the WebSocket upgrade                      |
 | Both           | `ws_frame`      | WebSocket frames in either direction                                              |
 | Both           | `ws_close`      | WebSocket close events in either direction (with optional `code` + `reason`)      |
 | Client → relay | `ping`          | Keepalive                                                                         |
+| Relay → client | `usage_notice`  | Updated account usage at allowance and overage thresholds                         |
 
-Bodies are base64-encoded for binary safety. The CLI maintains a request-ID map so concurrent requests don't conflict.
+Bodies are base64-encoded for binary safety. Authentication and the requested domain are carried by the HTTP WebSocket upgrade (`Authorization` header plus URL query), before JSON frames begin. The CLI maintains a request-ID map so concurrent requests don't conflict.
 
-The relay `hello` frame includes additive metadata fields when the relay knows them: `plan`, `base_domain`, `domain_kind`, `session_expires_at`, `session_max_ms`, and a `limits` object with concurrency, per-tunnel rate, global per-IP rate, request body, custom-domain, and tunnel-auth availability. Older relays may omit these fields; the CLI treats them as optional.
+The relay `hello` frame includes additive metadata fields when the relay knows them: `plan`, `base_domain`, `domain_kind`, `session_expires_at`, `session_max_ms`, an account-wide `usage` object, and a `limits` object with concurrency, account-wide rate, per-IP rate, request body, custom-domain, and tunnel-auth availability. Older relays may omit these fields; the CLI treats them as optional.
+
+Public WebSocket proxying requires the protocol-v2 `ws_ready` / `ws_reject` acknowledgement. If a tunnel is connected through a protocol-v1 client, public WebSocket requests receive `426 Upgrade Required` and do not consume the request allowance. HTTP proxying is unaffected.
 
 The protocol is purposely simple. There's no streaming-body support today; large requests are buffered up to the per-plan body cap (10 MB free / 100 MB Pro+Org) before forwarding. Most webhook payloads are small enough that this is fine; large file uploads are the edge case.
 
 ## Token validation
 
-When the CLI's WebSocket connects to the relay, the `hello` message includes the LPM.dev Registry auth token. The relay:
+When the CLI opens the relay WebSocket, the HTTP upgrade carries the LPM.dev Registry auth token in the `Authorization` header. The relay:
 
 1. Hashes the token (so it can be cached safely).
 2. Looks up `tunnel_auth:{tokenHash}` in KV (60s TTL).
-3. On miss: calls back to the LPM.dev Registry origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, plan tier, and org memberships.
-4. Caches the result for 60s.
+3. On miss: calls back to the LPM.dev Registry origin's `/api/registry/-/worker/validate-token` and `/api/registry/-/whoami` to fetch user identity, personal plan, and org memberships.
+4. Resolves the authoritative personal or organization tunnel account after selecting the domain. This fetch supplies billing status, billed seats, period boundaries, allowance, and current usage.
+5. Caches the result for 60s; billing and overage changes explicitly invalidate the account cache.
 
-Plan tier from `whoami` is what selects the right tunnel limit row.
+The domain selects the billing account. An organization-owned domain always uses the organization plan and seat quantity, even when the connecting member has a different personal plan.
+
+Connection rejections such as invalid auth, plan requirement, domain ownership, inactive billing, and concurrent limit are permanent for that invocation, so the CLI reports them instead of retrying forever. Transport errors, relay 5xx responses, and temporary account/quota/usage-service failures remain retryable.
 
 ## Domain ownership verification
 
