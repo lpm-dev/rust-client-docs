@@ -63,6 +63,12 @@ registry=https://my-mirror.example.com
 
 For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM CLI refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
 
+## Registry configuration size limits
+
+Each `.npmrc` layer has a 1 MiB limit, and each file referenced by `cafile`, `certfile`, or `keyfile` has a 1 MiB limit. LPM CLI enforces these limits before parsing or building an HTTP client. Missing optional layers are still skipped, but an oversized or invalid UTF-8 `.npmrc` is a fatal configuration error: it is not ignored in favor of a lower-precedence registry. An oversized TLS file likewise fails with its path and byte limit, without logging tokens, certificates, keys, or file contents.
+
+For installs, these errors surface before dependency resolution or any registry request. Inline `ca` / `cert` / `key` values are part of the containing `.npmrc` and therefore covered by that file's 1 MiB layer limit. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits) for non-registry config and explicit exclusions.
+
 ## Redirect transport policy
 
 LPM CLI checks every automatically followed redirect before sending the next request. Once a request chain has used HTTPS, a redirect to HTTP is refused — including redirects to `localhost`, `127.0.0.1`, or `[::1]`. The command fails with a network or registry error containing `refused HTTPS-to-HTTP redirect`.

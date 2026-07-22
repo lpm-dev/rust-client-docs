@@ -104,6 +104,20 @@ Commit it for team-shared CLI defaults; `.gitignore` it if save policy should st
 
 Full field reference: [`lpm.toml`](/docs/reference/lpm-toml).
 
+## Local configuration size limits
+
+LPM CLI bounds local configuration before UTF-8 decoding or parsing. The limit applies to the bytes read from the opened file, including the target of a supported symlink.
+
+| Input | Limit |
+| --- | --- |
+| JSON, TOML, YAML, and dotenv configuration or manifests — including `package.json`, `lpm.toml`, `~/.lpm/config.toml`, `lpm.json`, `lpm.config.json`, `pnpm-workspace.yaml`, `.env*`, security/trust policy, and CLI-managed MCP, proxy, or Swift registry JSON | 16 MiB per file |
+| `.npmrc` | 1 MiB per configuration layer |
+| File-referenced CA bundles, client certificates, and private keys | 1 MiB per file |
+
+A missing optional file keeps its normal default or fallback behavior. A file that exists but exceeds its limit is not treated as missing: LPM CLI returns an error naming the path and byte limit. Install-time configuration fails before dependency resolution or registry access, and run-time configuration fails before a script or child process is spawned. This prevents an oversized higher-precedence file from silently changing registry, source, or security-policy selection.
+
+These small-file limits do not apply to `lpm.lock` / `lpm.lockb`, package tarballs and downloaded archives, package source or build outputs, patch and skill source payloads, README content, growing task/audit/webhook logs, or operating-system pseudo-files such as `/proc`. Those inputs retain their own streaming, integrity, rotation, or format-specific controls.
+
 ## Which file owns what
 
 Quick decision table when you're not sure where a setting belongs:
