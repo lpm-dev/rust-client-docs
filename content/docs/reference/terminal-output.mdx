@@ -1,0 +1,62 @@
+---
+title: Terminal output security
+description: "How the LPM CLI separates trusted UI, external text, structured JSON, and raw child-process output."
+---
+
+The LPM CLI treats text from registries, package metadata, project files, paths, URLs, task and service configuration, policy providers, and intercepted child processes as untrusted when it appears inside CLI-owned terminal output.
+
+This boundary protects human-readable output without removing the CLI's own colors and formatting.
+
+## Human-readable output
+
+The LPM CLI sanitizes externally controlled fields before adding its own colors, prefixes, status glyphs, or other terminal formatting.
+
+Inline fields include package names and versions, dependency-graph labels and queries, CI setup values, process names, advisory summaries, registry and server messages, paths, URLs, git references, task and service names, workspace values, and similar data embedded in a CLI-owned row. Inline fields cannot add another terminal line or rewrite the current line: newline, carriage return, tab, backspace, delete, and other raw controls are rendered as `?`.
+
+Terminal escape sequences are removed as complete units, including CSI, OSC, DCS, APC, PM, SOS, single-character ESC sequences, and their C1 forms. This prevents external text from changing colors, moving the cursor, setting the terminal title, creating an unsafe hyperlink, or writing to the clipboard. Printable Unicode is preserved.
+
+For an intentionally multiline block, the CLI preserves legitimate line-feed and tab structure where that structure is part of the output contract. Carriage-return rewriting is not preserved; CRLF is normalized to LF and a lone carriage return is rendered as `?`.
+
+## Intercepted child output
+
+Child output is inside the sanitization boundary whenever the LPM CLI intercepts it to add presentation or retain it for later display. This includes:
+
+- live output with CLI-owned task or service prefixes
+- buffered output printed after a task completes
+- captured output replayed from the task cache
+- lifecycle output intercepted by install or rebuild
+- service logs stored and rendered by the dashboard
+
+The CLI sanitizes each intercepted line before adding a prefix or color. Cached and structured data retains its original value; sanitization happens when the value crosses into human terminal output.
+
+## JSON output
+
+`--json` output keeps the original semantic values. The LPM CLI does not terminal-sanitize strings before placing them in a JSON envelope, so a registry message or captured output can be recovered exactly after parsing the JSON.
+
+The JSON serializer structurally escapes characters as required to keep the byte stream valid JSON. Consumers should parse the JSON instead of rendering string values directly to a terminal. A consumer that later displays a parsed external string owns its own terminal-output boundary.
+
+## Raw child-process output
+
+Some commands intentionally give a child process direct ownership of stdin, stdout, stderr, or the terminal. The LPM CLI does not see those bytes and cannot sanitize them. This compatibility boundary is required for interactive programs, terminal-aware tools, prompts, progress UIs, and normal shell/process semantics.
+
+Directly inherited child output is therefore outside the CLI's sanitization guarantee. The boundary changes as soon as the CLI captures, prefixes, buffers, summarizes, or replays that output: those render paths are sanitized as described above.
+
+This is an output-rendering protection, not a sandbox for child processes or a replacement for terminal-emulator security updates.
+
+## Boundary summary
+
+| Output path | Contract |
+| --- | --- |
+| CLI-owned human row | External inline fields are sanitized before trusted CLI styling. |
+| CLI-owned multiline block | Escape commands and rewrite controls are removed; documented LF/tab structure may be preserved. |
+| Captured, prefixed, buffered, or replayed child output | Sanitized when rendered to a human terminal. |
+| Dashboard service logs | Sanitized before storage/rendering under the shared terminal policy. |
+| Structured JSON | Valid JSON with the original semantic string values. |
+| Directly inherited child terminal | Raw compatibility boundary; the child owns its terminal output. |
+
+## See also
+
+- [`lpm run`](/docs/dev/run) — buffering, streaming prefixes, and task-cache replay
+- [`lpm exec`](/docs/dev/exec) — direct source-file and project-binary execution
+- [`lpm dev`](/docs/dev/dev) — prefixed service output and dashboard logs
+- [`lpm rebuild`](/docs/packages/rebuild) — intercepted lifecycle output
