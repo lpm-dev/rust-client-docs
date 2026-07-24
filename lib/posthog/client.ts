@@ -23,7 +23,7 @@ export function getPostHogClient(): Promise<PostHog | null> {
     posthogPromise = import("posthog-js")
       .then(({ default: posthog }) => {
         const hasFullConsent =
-          localStorage.getItem("cookie_consent") === "granted";
+          window.localStorage.getItem("cookie_consent") === "granted";
 
         posthog.init(key, {
           api_host: "/a",
