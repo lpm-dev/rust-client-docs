@@ -21,6 +21,14 @@ LPM CLI resolves each package by name and routes accordingly:
 
 The `@lpm.dev/*` scope is the **only** scope that always goes to LPM.dev Registry. JSR packages use JSR's npm-compatible registry. Everything else is npm by default.
 
+## One dependency, one source
+
+LPM CLI chooses a package's registry route before resolving it. A dependency does not fall through from a configured private index to npm, or from npm to LPM.dev Registry, when lookup fails. Missing, unauthorized, or invalid metadata from the selected registry is a hard error. This prevents dependency-confusion behavior where the same name silently resolves from a lower-priority index.
+
+The selected logical source is recorded on the resolved package in `lpm.lock`, for example `registry+https://npm.my-company.com`. Scoped `.npmrc` mappings, the configured npm registry, and the active LPM.dev Registry origin are preserved exactly. The package identity used by lockfile evidence includes this source, so evidence from one registry cannot be replayed for a same-name package from another.
+
+LPM CLI may use the LPM Worker as a transport proxy for public npm metadata and fall back to a direct npm request when that transport is unavailable. Both paths represent the same configured logical npm origin, so this is transport failover—not index fallback—and the lockfile records the npm origin rather than the Worker URL.
+
 ## JSR packages
 
 LPM CLI accepts `jsr:` dependency specs in `package.json` and resolves them through JSR's npm-compatible registry. The JSR package name stays as the local import name, while the metadata fetch uses JSR's folded npm package name under `@jsr`.

@@ -135,7 +135,7 @@ When enabled on install, LPM CLI verifies registry signatures after resolution a
 lpm config trust-policy --set no-downgrade
 ```
 
-When enabled, the resolver refuses versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can choose an older allowed version; exact pins to a downgraded version fail. This is separate from Sigstore bundle verification: it decides whether a candidate is acceptable based on the package's current and historical npm trust evidence.
+When enabled, LPM CLI enforces two history floors. During resolution, it refuses a release whose npm trusted-publisher or staged-publish evidence is weaker than an earlier published release; ranges can select an older acceptable version, while an exact downgraded pin fails. After selection, verified lockfile history adds an artifact-level floor: once any locked version has artifact-bound Sigstore evidence, a later selected version must also verify. An absent attestation, unavailable attestation, invalid bundle, frozen lockfile without matching evidence, or disabled/skipped verifier fails instead of allowing provenance to disappear. This artifact-level rule takes precedence over `verify=warn`, `verify=off`, per-package verification skips, and best-effort availability; disable `trust-policy` itself if you intentionally want to permit a downgrade. Registry attestation pointers alone count toward neither floor. The default remains `off`.
 
 **Provenance drift** — when a previously-approved package is re-resolved, LPM CLI compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
 
@@ -149,6 +149,21 @@ When enabled, the resolver refuses versions whose trust evidence is weaker than 
 ```
 
 A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. The reference snapshot lives in `package.json > lpm > trustedDependencies > <pkg>@<ver> > provenanceAtApproval` for project trust and in `~/.lpm/global/trusted-dependencies.json` for global trust.
+
+The verifier binds the signed in-toto subject to the exact npm package URL (`pkg:npm/<name>@<version>`) and the package tarball's SHA-512 integrity. It also verifies the Sigstore certificate chain, transparency-log inclusion, publisher/workflow identity, and bundle digest. Registry metadata that merely points at an attestation is not proof.
+
+Attestation URLs must be HTTPS and match the package registry origin. Redirects are checked at every hop and cannot change origin or downgrade HTTPS. The provenance cache stores the original bundle bytes, not a writable “verified” result; every cache hit reruns cryptographic verification and artifact binding. A malformed or locally modified cache entry is discarded and fetched again.
+
+Verified evidence is written sparsely to `lpm.lock`, including the publisher/workflow snapshot, subject purl and SHA-512, transparency-log identity/index/time, and bundle SHA-256. Frozen and offline installs validate that evidence against the locked package name, version, source, and integrity before replay. The lockfile contains derived evidence rather than the original Sigstore bundle, so frozen replay cannot independently re-prove the publisher and transparency-log claims after a malicious lockfile edit. Treat `lpm.lock` as trusted, reviewable project input; online cache hits are different because the cache retains the original bundle and reruns verification.
+
+To broaden or tighten verification explicitly:
+
+```bash
+lpm config sigstore --set scope=all
+lpm config sigstore --set availability=strict
+```
+
+`scope=all` checks every resolved package; the default `scope=approved` limits checks to packages with an approved provenance identity. `availability=strict` requires an attestation; the default `best-effort` preserves missing/temporarily unavailable attestations as absence or unknown without blocking. A present bundle that fails verification is still rejected by the default `verify=deny` posture.
 
 `--allow-new`, registry signatures, trust-policy, and `--ignore-provenance-drift[-all]` are independent. `--allow-new` only skips the cooldown; signature verification and drift still apply unless their own controls are disabled or waived.
 

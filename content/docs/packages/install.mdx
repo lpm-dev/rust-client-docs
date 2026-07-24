@@ -510,13 +510,22 @@ LPM_VERIFY_REGISTRY_SIGNATURES=1 lpm install
 
 The verifier checks npm-compatible `dist.signatures` against registry signing keys and the package integrity hash. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check; they still pass through the normal integrity, provenance, script, and behavioral layers.
 
-`trust-policy = "no-downgrade"` is a separate resolver policy:
+`trust-policy = "no-downgrade"` is a separate verified-history policy:
 
 ```bash
 lpm config trust-policy --set no-downgrade
 ```
 
-When enabled, LPM CLI refuses npm versions whose trust evidence is weaker than an earlier published version of the same package. Ranges can fall back to an older allowed candidate; an exact pin to a blocked version fails with the trust-policy reason.
+When enabled, LPM CLI first rejects releases whose npm trusted-publisher or staged-publish evidence is weaker than an earlier published release. It also remembers verified provenance in `lpm.lock`: after any locked version of a package has verified evidence, a later version without verified evidence fails with the trust-policy reason. `verify=warn`, `verify=off`, per-package verification skips, and best-effort availability cannot bypass the lockfile-history floor; disable `trust-policy` itself to permit an intentional downgrade. Registry attestation pointers alone are not treated as evidence. The default is `off`.
+
+Sigstore verification has two additional opt-in axes:
+
+```bash
+lpm config sigstore --set scope=all
+lpm config sigstore --set availability=strict
+```
+
+`scope=all` verifies every resolved package and locks successful evidence; the default `approved` scope checks packages with previously approved provenance identities. `availability=strict` requires evidence; the default `best-effort` mode keeps attestation absence or transient unavailability non-blocking. Invalid supplied bundles still fail under the default `verify=deny` posture. See [Security audit](/docs/packages/security-audit#layer-4-provenance--cooldown) for artifact binding, cache, and frozen-replay details.
 
 ## Audit after install
 
