@@ -3,7 +3,7 @@ title: lpm.lock format
 description: "TOML lockfile schema — what every field means and why it's there."
 ---
 
-`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, SRI integrity hash, platform metadata, and any registry-signature evidence LPM CLI saw, so the next install can reproduce the same graph without trusting ambient registry state.
+`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
 
 The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is generated when the current binary wire format can represent the graph. `lpm.lock` is always authoritative; commit `lpm.lockb` when LPM CLI writes it.
 
@@ -15,7 +15,7 @@ The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is gen
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 5
+lockfile-version = 7
 resolved-with = "greedy-fusion"
 # Only present when the default linker auto-switched to isolated
 # after detecting incompatible peer requirements.
@@ -32,6 +32,21 @@ path = "patches/left-pad@1.3.0.patch"
 sha256 = "sha256-..."
 original-integrity = "sha512-..."
 
+[provenance."react@19.0.0#npm-..."]
+subject-name = "pkg:npm/react@19.0.0"
+subject-sha512 = "..."
+integrated-time-secs = 1740000000
+log-id = "..."
+log-index = 123456
+bundle-sha256 = "sha256-..."
+
+[provenance."react@19.0.0#npm-...".snapshot]
+present = true
+publisher = "github:facebook/react"
+workflowPath = ".github/workflows/publish.yml"
+workflowRef = "refs/tags/v19.0.0"
+attestation_cert_sha256 = "sha256-..."
+
 [[packages]]
 name = "react"
 version = "19.0.0"
@@ -40,6 +55,7 @@ integrity = "sha512-..."
 dependencies = ["scheduler@0.25.0"]
 tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
 registry-published-at = "2025-01-01T00:00:00.000Z"
+node-engine = ">=18"
 
 [[packages.registry-signatures]]
 keyid = "SHA256:..."
@@ -68,7 +84,7 @@ ambient-peer-installs = ["loose-envify"]
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `5`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots for frozen-lockfile installs and patch checksum records. |
+| `lockfile-version` | u32 | Schema version. Current: `7`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots and patch checksum records; version `6` added per-package `engines.node`; version `7` added artifact-bound Sigstore provenance evidence. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 | `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
 
@@ -143,6 +159,7 @@ One entry per resolved package. Sorted by `name` for deterministic diffs and min
 | `os` | string[] | `package.json > os` restrictions for this version. Skipped when empty. |
 | `cpu` | string[] | `package.json > cpu` restrictions for this version. Skipped when empty. |
 | `libc` | string[] | `package.json > libc` restrictions for this version. Skipped when empty. |
+| `node-engine` | string \| absent | The package's `package.json > engines.node` constraint. Warm and frozen installs revalidate it against the effective Node.js version and `engine-strict` setting. |
 | `optional` | bool | Present as `true` when the package is reachable only through optional dependency edges. Used with platform filtering so warm installs can skip incompatible optional packages and fail incompatible required packages. |
 | `dependencies` | string[] | Direct deps as `<local_name>@<version>` entries. Skipped from output when empty. |
 | `alias-dependencies` | `[string, string][]` | npm-alias edges as `[local_name, target_canonical_name]` pairs. Only present when the package uses `npm:<target>@<range>` aliases. |
@@ -198,6 +215,45 @@ sig = "MEUCIQ..."
 
 When npm metadata includes `dist.signatures`, LPM CLI persists the signature payloads and the version publish timestamp. Install-time signature verification can then run from the lockfile fast path without fetching the full package metadata again. The verifier still checks the package integrity hash and registry signing keys; the lockfile stores evidence, not a cached pass/fail verdict.
 
+## `[provenance]`
+
+```toml
+[provenance."axios@1.14.0#npm-036b43b16792c643"]
+subject-name = "pkg:npm/axios@1.14.0"
+subject-sha512 = "dd8f32ae..."
+integrated-time-secs = 1774638099
+log-id = "wNI9atQG..."
+log-index = 1189268120
+bundle-sha256 = "sha256-75564031..."
+
+[provenance."axios@1.14.0#npm-036b43b16792c643".snapshot]
+present = true
+publisher = "github:axios/axios"
+workflowPath = ".github/workflows/publish.yml"
+workflowRef = "refs/tags/v1.14.0"
+attestation_cert_sha256 = "sha256-9a9a6a..."
+```
+
+The table key is `<name>@<version>#<source-id>`, so evidence is attached to one exact package version from one exact source. Only successfully verified evidence is written.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `subject-name` | string | Exact npm package URL signed by the attestation, `pkg:npm/<name>@<version>`. |
+| `subject-sha512` | string | Lowercase hexadecimal SHA-512 digest of the signed tarball subject. It must match the package entry's SHA-512 SRI integrity. |
+| `integrated-time-secs` | u64 | Rekor integrated timestamp from the verified transparency-log entry. |
+| `log-id` | string | Identity of the transparency log that recorded the attestation. |
+| `log-index` | i64 | Verified transparency-log index. |
+| `bundle-sha256` | string | SHA-256 digest of the original Sigstore bundle bytes. |
+| `snapshot.present` | bool | Must be `true`; absent or unverified provenance is never locked as evidence. |
+| `snapshot.publisher` | string \| absent | Publisher identity extracted from the verified certificate, such as `github:axios/axios`. |
+| `snapshot.workflowPath` | string \| absent | Trusted publishing workflow path. |
+| `snapshot.workflowRef` | string \| absent | Git ref used for this publication. |
+| `snapshot.attestation_cert_sha256` | string \| absent | SHA-256 digest of the verified leaf certificate. |
+
+The reader rejects orphaned evidence, empty required fields, malformed digests, non-npm subjects, subject name/version mismatches, source mismatches, and subject digests that do not match the locked package integrity. A frozen install can therefore replay internally consistent evidence without fetching the attestation again.
+
+`lpm.lock` is trusted project input. It stores derived evidence, not the original Sigstore bundle, so frozen replay does not rerun the certificate-chain, transparency-log, or signed-statement verification and cannot independently detect a sophisticated edit that changes all related derived fields consistently. Protect and review lockfile changes like source code. Online attestation-cache hits do rerun verification because that cache stores the original bundle bytes.
+
 ## `[root-aliases]`
 
 ```toml
@@ -223,6 +279,7 @@ The on-disk file is deterministic by construction:
 
 - `[[packages]]` entries are sorted by name
 - `dependencies` arrays inside each package are sorted
+- `[provenance]` entries are sorted by their full package/source key
 - Optional fields are omitted when empty / `None` rather than written as null
 
 This makes `git diff lpm.lock` actionable: a new dep adds entries, a version bump rewrites a single package's fields, and you can spot supply-chain surprises without parsing.

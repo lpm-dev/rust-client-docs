@@ -24,6 +24,8 @@ lpm config release-age-policy --set strict      # wizard form of the same policy
 lpm config set minimum-release-age-secs 3600    # 1h cooldown
 lpm config signatures --set true                # verify npm registry signatures during install
 lpm config trust-policy --set no-downgrade      # block publisher/provenance trust downgrades
+lpm config sigstore --set scope=all             # verify every resolved package's provenance
+lpm config sigstore --set availability=strict   # require provenance to be available
 lpm config typosquat --set default              # remove override; default keeps checks enabled
 lpm config firewall --set enforce               # block packages flagged by firewall.lpm.dev
 lpm config integrity --set tree                 # stricter expanded-store reuse checks
@@ -59,7 +61,7 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `release-age-policy` | Cooldown scope: direct/root dependencies only, or strict direct+transitive checks and lockfile replay checks. Set with `lpm config release-age-policy`. | `"direct"` |
 | `minimum-release-age-exclude` | Exact canonical package names exempted from the release-age cooldown. Merged with CLI and project excludes. | `[]` |
 | `signatures` | Verify npm registry package signatures during install and fail closed when a package cannot be verified. Set with `lpm config signatures`. | `false` |
-| `trust-policy` | Refuse versions that drop npm publisher/provenance trust evidence compared with an earlier published version. Set with `lpm config trust-policy`. | `"off"` |
+| `trust-policy` | Refuse weaker npm publish trust than earlier releases and, after verified provenance is locked, refuse a later version without verified provenance. Set with `lpm config trust-policy`. | `"off"` |
 | `typosquat-guard` | Suspicious direct dependency name analysis. Set with `lpm config typosquat`; use project allow-list entries for intentional package names. | unset / `"default"` (enabled) |
 | `[firewall] mode` | firewall.lpm.dev verdict checks for selected public npm package versions. `monitor` warns and continues; `enforce` blocks packages whose effective firewall action is `block`. npm metadata and tarballs still use the direct npm route. Set with `lpm config firewall`. | `"off"` |
 | `[policy.extensions.<name>]` | Local install-time policy extension. Edit `~/.lpm/config.toml` directly, then inspect with [`lpm policy`](/docs/infra/policy). | none |
@@ -75,6 +77,8 @@ The reader accepts unknown keys silently (forward compatibility), but only the f
 | `[sandbox] mode` | Default lifecycle-script sandbox posture for this machine. Set with `lpm config sandbox`. | `"default"` |
 | `[sandbox] allow-degraded` | Allow degraded sandbox fallback when full containment is unavailable. | `false` |
 | `[sigstore] verify` | Sigstore provenance verification posture used by installs and related flows. Set with `lpm config sigstore`. | `"deny"` |
+| `[sigstore] scope` | Verify only packages with approved provenance identities, or every resolved package. Set with `lpm config sigstore --set scope=all`. | `"approved"` |
+| `[sigstore] availability` | Continue when an attestation is absent/unavailable, or require one. Set with `lpm config sigstore --set availability=strict`. | `"best-effort"` |
 | `[tunnel] relay-url` | WebSocket relay URL for `lpm tunnel`; override per process with `LPM_TUNNEL_RELAY`. | `"wss://relay.lpm.fyi/connect"` |
 
 The full reference for these keys, their types, defaults, and precedence chain is on [`~/.lpm/config.toml`](/docs/reference/config-toml).
@@ -115,8 +119,11 @@ lpm config triage --set claude-cli          # non-interactive
 lpm config sandbox                          # pick default / strict / none
 lpm config sandbox --set strict             # non-interactive
 
-lpm config sigstore                         # pick deny / warn / off
-lpm config sigstore --set deny              # non-interactive
+lpm config sigstore                                  # pick verify / scope / availability
+lpm config sigstore --set deny                       # verify=deny (backward compatible)
+lpm config sigstore --set verify=deny                # explicit verification posture
+lpm config sigstore --set scope=all                  # verify every resolved package
+lpm config sigstore --set availability=strict        # require an attestation
 
 lpm config signatures                       # pick enabled / disabled
 lpm config signatures --set true            # non-interactive
@@ -146,6 +153,8 @@ lpm config lpm-skills --set false           # non-interactive
 `lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox` adds an extra approval step, and picking `off` in `lpm config sigstore`, `lpm config typosquat`, or `lpm config firewall` does the same when it weakens the approved floor. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
 
 `lpm config signatures` and `lpm config trust-policy` are opt-in hardening controls. Their defaults are disabled, so enabling them does not require a security unlock.
+
+The Sigstore axes are independent. `verify = "deny"` is the default response to a bundle that is present but fails cryptographic or artifact-binding checks. `scope = "approved"` keeps verification limited to packages with a previously approved provenance identity; `scope = "all"` opts every resolved package into verification and lockfile evidence. `availability = "best-effort"` keeps missing or temporarily unavailable attestations non-blocking; `availability = "strict"` requires evidence. The defaults remain `deny`, `approved`, and `best-effort`. An enabled `trust-policy = "no-downgrade"` is a separate floor: it checks npm publish-trust history during resolution, and prior artifact-verified lockfile history must remain verified even when one of these Sigstore controls would otherwise warn, skip, or fail open.
 
 `lpm config lpm-skills` controls only automatic package-published skill reconciliation for `@lpm.dev/*` packages. The default is enabled. Setting it to `false` keeps existing `.lpm/skills/` files and skips future automatic fetches; use [`lpm skills clean`](/docs/packages/skills) when you also want to remove existing package-owned skill content. Explicit [`lpm skills add`](/docs/packages/skills) commands are unaffected.
 
