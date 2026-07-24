@@ -31,10 +31,11 @@ $ lpm dev
 1. **Managed runtimes** — uses versions pinned in `lpm.json`; Node can also fall back to `.nvmrc` / `.node-version`. Auto-installs if missing (see [`lpm use`](/docs/dev/use)).
 2. **Dependencies** — re-runs the install pipeline if `package.json` / lockfile / install hash drift. Skip with `--no-install`.
 3. **Env** — if `.env` is missing but `.env.example` exists, copies it once, then loads `.env`, `.env.local`, and, when `--env=<MODE>` is set, `.env.<MODE>` plus `.env.<MODE>.local`.
-4. **HTTPS** — if `lpm.json` has `https: true` (top-level) or you pass `--https`, serves over `https://localhost` using the local CA. When `lpm.json` declares local-domain proxy hosts, `lpm dev` also prepares constrained project certificate-chain coverage for those hosts without enabling app HTTPS, and writes managed hosts-file entries for non-`.localhost` hosts when needed. See [`lpm cert`](/docs/infra/cert) for the trust store install.
-5. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the dev server through an LPM CLI tunnel.
-6. **Services** — if `lpm.json` declares `services`, starts each one with prefixed log output and ready-check waits. Otherwise runs the `dev` script from `package.json`, chooses the local port, injects it as `PORT` for frameworks that read the standard dev-server env var, and automatically prepares project-local compatibility for the dev-tool binary when it needs normal `node_modules` ancestry. Next.js/Turbopack, Vite, Astro, Webpack, Remix, Nuxt, SvelteKit, and Storybook-style entrypoints work with LPM CLI's install layout without extra config.
-7. **Browser** — opens the primary service URL when ready. Skip with `--no-open`.
+4. **Endpoint discovery** — runs the child server, reads local URLs from its output, and verifies that the launched process tree owns the listener before publishing a URL. Vite can use `5173`, `5174`, or another free port; LPM CLI does not assume `3000`.
+5. **HTTPS** — if `lpm.json` has `https: true` (top-level) or you pass `--https`, starts an LPM CLI-owned TLS frontend over the verified child endpoint. The framework can stay on plain HTTP. When `lpm.json` declares local-domain proxy hosts, `lpm dev` also prepares constrained project certificate-chain coverage and writes managed hosts-file entries for non-`.localhost` hosts when needed. See [`lpm cert`](/docs/infra/cert) for the trust store install.
+6. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the same verified child endpoint through an LPM CLI tunnel.
+7. **Services** — if `lpm.json` declares `services`, assigns managed ports, starts each service with prefixed log output, and waits for owned listeners plus any explicit ready-checks. Otherwise runs the `dev` script from `package.json` and automatically prepares project-local compatibility for the dev-tool binary when it needs normal `node_modules` ancestry. Next.js/Turbopack, Vite, Astro, Webpack, Remix, Nuxt, SvelteKit, and Storybook-style entrypoints work with LPM CLI's install layout without extra config.
+8. **Browser** — opens the verified primary service URL when ready. Skip with `--no-open`.
 
 ## Examples
 
@@ -57,9 +58,11 @@ lpm dev --https
 
 Serves over `https://localhost` (or whichever host you pass with `--host`) using a certificate signed by LPM CLI's local CA. First-time setup needs the CA installed into your OS trust store; `lpm dev --https` can prompt for that step, or you can run `lpm cert trust` ahead of time. See [Local HTTPS](/docs/infra/local-https).
 
-If the CA is not trusted yet, `lpm dev --https` prompts before installing it into the system trust store. Pass `-y` / `--yes` to pre-approve that step in non-interactive runs. Add `--allow-ca-bootstrap` to serve the root CA over plain HTTP on `port + 1` for mobile-device trust bootstrap on the local network.
+If the CA is not trusted yet, `lpm dev --https` prompts before installing it into the system trust store. Pass `-y` / `--yes` to pre-approve that step in non-interactive runs. Add `--allow-ca-bootstrap` to serve the root CA over plain HTTP on an OS-assigned port for mobile-device trust bootstrap on the local network.
 
-Configured `proxy.host` and `services.<name>.host` entries use the same project certificate path for the HTTPS proxy. When the proxy daemon has an HTTPS listener, `lpm dev` prepares a leaf-first project certificate chain for those hosts; custom-host chains include a constrained project intermediate. This does not inject `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_KEY_FILE`, or framework HTTPS variables into the app unless app HTTPS is explicitly enabled.
+The framework process remains on its verified HTTP endpoint; LPM CLI terminates TLS and forwards HTTP and WebSocket/HMR traffic to it. With `--https --port 4000`, `4000` is the browser-facing HTTPS port, while the child gets a separate internal port. This avoids framework-specific certificate switches and prevents the HTTPS frontend from colliding with the app listener.
+
+Configured `proxy.host` and `services.<name>.host` entries use the same project certificate path for the HTTPS proxy. When the proxy daemon has an HTTPS listener, `lpm dev` prepares a leaf-first project certificate chain for those hosts; custom-host chains include a constrained project intermediate. LPM CLI does not inject certificate paths or framework HTTPS variables into the app process.
 
 Hosts under `localhost` / `*.localhost` usually resolve without a hosts-file entry. Other local TLDs such as `.test`, `.local`, `.internal`, and `.home.arpa` make `lpm dev` ask for consent, add a project-scoped managed block to the system hosts file, and remove that block when the dev session exits. On Unix, LPM CLI uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. If a session is interrupted, [`lpm hosts clean`](/docs/infra/hosts) removes orphaned LPM CLI-managed blocks.
 
@@ -75,6 +78,8 @@ lpm dev --tunnel --domain my-api.lpm.llc
 
 Exposes the dev server through the LPM CLI tunnel network. Webhooks land on the public URL, get logged to disk, and are visible via `lpm tunnel inspect` / `lpm tunnel replay`. See [Tunneling](/docs/infra/tunneling).
 
+The tunnel waits for endpoint discovery; it never connects to a guessed fallback port. The browser inspector and tunnel session display the verified child port, including framework-selected ports such as Vite's `5173` / `5174`.
+
 The tunnel startup row includes the account-wide request usage advertised by the relay. `lpm dev --tunnel` uses the same shared allowance as [`lpm tunnel`](/docs/infra/tunnel): Free gets 20,000 requests per UTC month, Pro gets 100,000 per billing period, and Organization gets 100,000 per billed seat. Starting the tunnel through `lpm dev` does not create a separate allowance. Live allowance and overage notices appear as warnings; if the tunnel ends with a permanent billing, quota, concurrency, or authentication error, LPM CLI reports the failure while the local dev server continues running.
 
 A browser inspector auto-starts alongside `--tunnel` on a free ephemeral port; the dashboard's `o` key opens it. Pass `--inspect-port <N>` to bind a specific port (strict — fails if `N` is in use), or `--no-inspect` to skip the inspector entirely. Both flags are no-ops without `--tunnel`.
@@ -89,6 +94,8 @@ If `lpm.json` declares services (`db`, `api`, `web`, …), `lpm dev` starts each
 
 For every other service with a resolved port, LPM CLI also injects `{SERVICE}_URL` and `{SERVICE}_PORT` into the child environment. A resolved port can come from `port`, conflict reassignment, or host-only auto-assignment. For example, an `api` service can read `DB_URL=http://localhost:5432` and `DB_PORT=5432`, while `web` can read `API_URL` and `API_PORT`.
 
+The primary service always receives a managed port, even when its `port` field is omitted. LPM CLI passes framework-native flags where needed: Vite receives `--port <N> --strictPort`; Next.js, Nuxt, SvelteKit, Remix, and Astro receive `--port <N>`; generic servers continue to receive `PORT=<N>`. A service that ignores its assigned port fails with an explicit diagnostic instead of allowing browser, proxy, certificate, or tunnel setup to target the wrong listener.
+
 `--dashboard` swaps the prefixed-log output for a TUI dashboard with per-service log panels, local-domain host URLs, and webhook inspection. `--no-dashboard` forces the prefixed-log output even if the dashboard is configured.
 
 ## Flags
@@ -99,7 +106,7 @@ For every other service with a resolved port, LPM CLI also injects `{SERVICE}_UR
 | `--tunnel` / `--no-tunnel` | Force-on or force-off the tunnel                                                                             |
 | `--tunnel-auth`            | Require an auth token to access the tunnel URL (Pro/Org)                                                     |
 | `--network`                | Show LAN URLs and a QR code for mobile testing                                                               |
-| `--port <N>`               | Override the dev server port; single-script dev also receives `PORT=<N>`                                     |
+| `--port <N>`               | Use this non-zero public dev port; passed through framework-native args when supported                        |
 | `--host <NAME>`            | Custom hostname for the HTTPS certificate                                                                    |
 | `--domain <NAME>`          | Tunnel domain (overrides `lpm.json > tunnel.domain`)                                                         |
 | `--env=<MODE>`             | Load `.env.<MODE>` and `.env.<MODE>.local` after `.env` and `.env.local`                                     |
@@ -112,7 +119,7 @@ For every other service with a resolved port, LPM CLI also injects `{SERVICE}_UR
 | `--no-inspect`             | Skip the auto-started webhook inspector (no-op without `--tunnel`)                                           |
 | `--inspect-port <N>`       | Bind the inspector to exactly this port (default: auto-pick a free ephemeral port; no-op without `--tunnel`) |
 | `-y`, `--yes`              | Pre-approve the trust-store install and local-domain hosts-file update prompts                               |
-| `--allow-ca-bootstrap`     | Serve the root CA over `http://<lan-ip>:<port+1>` for mobile trust bootstrap                                 |
+| `--allow-ca-bootstrap`     | Serve the root CA over `http://<lan-ip>:<auto-port>` for mobile trust bootstrap                              |
 
 Anything after `--` is forwarded verbatim to the dev script.
 
@@ -249,14 +256,14 @@ Use [`lpm proxy status`](/docs/infra/proxy) to inspect the local proxy route tab
 | Field          | Type     | Default              | Notes                                                                                     |
 | -------------- | -------- | -------------------- | ----------------------------------------------------------------------------------------- |
 | `command`      | string   | **required**         | Shell command to run                                                                      |
-| `port`         | number   | —                    | Port the service listens on. If omitted for a host-only service, `lpm dev` auto-assigns and persists one |
+| `port`         | number   | —                    | Port the service listens on. The primary service and host-routed services receive a managed port when omitted |
 | `dependsOn`    | string[] | `[]`                 | Services that must be ready before this one starts                                        |
 | `readyPort`    | number   | falls back to `port` | TCP port to poll for readiness                                                            |
 | `readyUrl`     | string   | —                    | HTTP URL to poll for readiness — first 2xx wins                                           |
 | `readyTimeout` | number   | `30`                 | Seconds to wait before failing                                                            |
 | `env`          | object   | `{}`                 | Extra env vars injected into this service only                                            |
 | `restart`      | bool     | `false`              | Auto-restart on crash, exponential backoff                                                |
-| `primary`      | bool     | `false`              | Primary service receives `--https` / `--tunnel` / `--network` flags and the browser-open  |
+| `primary`      | bool     | `false`              | Its verified endpoint receives HTTPS, tunnel, network, and browser-open handling           |
 | `host`         | string   | —                    | Friendly local hostname registered by `lpm dev` against the final assigned service port when the proxy daemon has an HTTPS listener. `lpm dev` also prepares constrained project cert-chain coverage and updates the hosts file when the host is not under `.localhost`. With `port`, `localhost:<port>` keeps working; without `port`, `lpm dev` injects the assigned port as `PORT`. |
 | `cwd`          | string   | project root         | Working directory, relative to project root                                               |
 

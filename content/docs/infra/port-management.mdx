@@ -25,7 +25,7 @@ Two related fields:
 
 | Field       | Purpose                                                                                 |
 | ----------- | --------------------------------------------------------------------------------------- |
-| `port`      | Where the service listens. Used for env injection, display, and the readiness fallback. |
+| `port`      | Preferred listener port. The primary and host-routed services get a managed port when this is omitted. |
 | `readyPort` | TCP port to poll for readiness. Defaults to `port` when absent.                         |
 
 The split exists for services that listen on a different port than they expose for readiness — uncommon, but real (e.g., Postgres listens on 5432 and that's also its readiness probe; a service behind a sidecar might split them).
@@ -40,7 +40,9 @@ TcpListener::bind(("127.0.0.1", port))
 
 If the bind fails, LPM CLI reports who's holding the port. Availability probes both IPv4 and IPv6 loopback, so an `::1` listener is not treated as a free port. Linux reads `/proc`, macOS / BSD use `lsof` and `ps`, and Windows uses the native IP Helper API plus documented process APIs. LPM CLI does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
 
-That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. To reclaim the original port later:
+That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. LPM CLI injects the final value as `PORT` and passes framework-native arguments where required: Vite gets `--port <N> --strictPort`; Next.js, Nuxt, SvelteKit, Remix, and Astro get `--port <N>`. Multi-service managed endpoints coordinate through per-port leases, so concurrent orchestrators do not select the same replacement.
+
+The primary service receives a managed port even without `port` or `host`. This gives browser-open, HTTPS, LAN forwarding, local-domain routes, the dashboard, and tunnels one final endpoint instead of a `localhost:3000` guess. To reclaim an original port later:
 
 ```bash
 lpm ports kill 3000        # kill the process holding the port
@@ -94,7 +96,7 @@ For service "api":
   WEB_URL=http://localhost:3000
 ```
 
-Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Hyphens in service names become underscores (a service named `my-api` injects `MY_API_PORT` / `MY_API_URL`). A service never receives its own `_PORT`/`_URL` — only peers do. The URL scheme follows the dev server's HTTPS state: `lpm dev --https` swaps `http://localhost:<port>` for `https://localhost:<port>` in every injected URL. Pretty much every service in a typical `lpm.json` ends up with a usable URL for its peers without writing them out manually.
+Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Hyphens in service names become underscores (a service named `my-api` injects `MY_API_PORT` / `MY_API_URL`). A service never receives its own `_PORT`/`_URL` — only peers do. These internal URLs remain `http://localhost:<port>` when `lpm dev --https` is active: LPM CLI terminates browser-facing TLS at its own frontend while service-to-service traffic keeps using the verified child HTTP ports.
 
 Plus per-service overrides from `lpm.json > services.<name>.env`:
 
@@ -115,16 +117,17 @@ Plus per-service overrides from `lpm.json > services.<name>.env`:
 
 ## Readiness checks
 
-A service is "ready" when one of these signals fires:
+A managed service is ready only after LPM CLI confirms that the launched process tree owns its assigned listener. This prevents an unrelated process that already happens to answer on the same port from satisfying readiness.
 
-| Mechanism | Field                          | What it checks                              |
-| --------- | ------------------------------ | ------------------------------------------- |
-| TCP poll  | `readyPort` (default = `port`) | A connection to `localhost:<port>` succeeds |
-| HTTP poll | `readyUrl`                     | A GET against the URL returns a 2xx         |
+| Mechanism | Field          | What it checks                                                       |
+| --------- | -------------- | -------------------------------------------------------------------- |
+| Owned TCP | managed `port` | The assigned port is reachable and belongs to the launched service   |
+| TCP poll  | `readyPort`    | An additional connection to `localhost:<port>` succeeds              |
+| HTTP poll | `readyUrl`     | An additional GET against the URL returns a 2xx                      |
 
-Polled every ~100ms up to `readyTimeout` (default 30s). Once ready, the next service in the topology can start.
+Child stdout and stderr are also inspected for loopback URLs such as Vite's `Local: http://localhost:5173/`. The advertised scheme and base path are preserved, but the listener still has to be new, reachable, and owned by the launched process tree. Checks run up to `readyTimeout` (default 30s). Once ready, the next service in the topology can start.
 
-If both `readyPort` and `readyUrl` are set, `readyUrl` wins. If neither is set and the service has no `port`, the service is treated as "ready immediately on launch" — useful for fire-and-forget services like log collectors.
+For a managed service, `readyUrl` or a distinct `readyPort` is an additional application-level check after listener ownership. A service with no managed port and no explicit readiness field is treated as ready after a short launch grace period — useful for fire-and-forget workers and log collectors.
 
 ## `dependsOn` ordering
 
@@ -134,13 +137,14 @@ Independent branches start in parallel. If `web` and `api` both depend on `db` (
 
 ## What `port` is "the dev port"?
 
-The service marked `primary: true` is the one that:
+The service marked `primary: true` is the one whose verified endpoint:
 
-- Receives `--https` / `--tunnel` / `--network` flags from `lpm dev`
+- Receives the LPM CLI-owned HTTPS / tunnel / network frontends
 - Gets the browser-open
 - Has its URL printed prominently in the banner
+- Is published as the active dev endpoint for bare `lpm tunnel`
 
-Mark exactly one service as `primary`. If none is marked, `lpm dev`'s flag-routing has no clear target and the browser-open is skipped.
+A one-service configuration is implicitly primary. With multiple services, mark exactly one as `primary`; `--port`, `--https`, `--network`, and `--tunnel` fail clearly when no unique primary exists.
 
 ## Auto-restart
 

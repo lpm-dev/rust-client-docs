@@ -136,7 +136,7 @@ CLI flags: `lpm dev --tunnel`, `lpm dev --domain <NAME>`, `lpm tunnel <port> <do
 
 `proxy.host` and `services.<name>.host` are normalized to lowercase, must use a local TLD (`.localhost`, `.test`, `.local`, `.internal`, `.home.arpa`) unless `cert.allowPublicDns` is true, and cannot duplicate another local-domain host in the same file.
 
-When local-domain config is present and no daemon is running, `lpm dev` starts `lpm proxy start --detach` automatically. With no explicit listener flags, that start path uses `proxy.port` and `proxy.httpRedirect`. With a running HTTPS listener, `lpm dev` prepares the project certificate chain for configured hosts through the normal trust consent flow, writes managed hosts-file entries for hosts that are not `localhost` / `*.localhost`, registers routes against final assigned service ports, and releases both route and hosts-file entries when the dev session exits. On Unix, LPM CLI uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. Use [`lpm hosts clean`](/docs/infra/hosts) to remove orphaned managed blocks after interrupted sessions. The TLS daemon also prepares or refreshes project certificate chains during route registration, but it does not install the root CA into the trust store. The startup banner shows configured proxy hosts, exact route lines print after registration, and dashboard service rows include the host URLs. Proxy-only cert preparation does not inject framework HTTPS env vars into the app; app HTTPS remains controlled by `https` / `--https`.
+When local-domain config is present and no daemon is running, `lpm dev` starts `lpm proxy start --detach` automatically. With no explicit listener flags, that start path uses `proxy.port` and `proxy.httpRedirect`. With a running HTTPS listener, `lpm dev` prepares the project certificate chain for configured hosts through the normal trust consent flow, writes managed hosts-file entries for hosts that are not `localhost` / `*.localhost`, registers routes against final assigned service ports, and releases both route and hosts-file entries when the dev session exits. On Unix, LPM CLI uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. Use [`lpm hosts clean`](/docs/infra/hosts) to remove orphaned managed blocks after interrupted sessions. The TLS daemon also prepares or refreshes project certificate chains during route registration, but it does not install the root CA into the trust store. The startup banner marks proxy endpoints as resolving until assignment; exact route lines print after registration, and dashboard service rows update to the final ports. LPM CLI does not inject certificate paths or framework HTTPS variables into the app; `https` / `--https` enables a separate LPM CLI-owned TLS frontend over the verified HTTP child endpoint.
 
 ## `vault`
 
@@ -305,14 +305,14 @@ Secret-looking loaded env vars (`TOKEN`, `SECRET`, `PASSWORD`, `DATABASE_URL`, `
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `command` | string | **required** | Shell command to run |
-| `port` | number | — | Port the service listens on. If omitted for a host-only service, `lpm dev` auto-assigns and persists one |
+| `port` | number | — | Port the service listens on. If omitted for a host-only service or the implicit or explicit primary service, `lpm dev` auto-assigns and persists one |
 | `dependsOn` | string[] | `[]` | Services that must be ready before this one starts |
 | `readyPort` | number | falls back to `port` | TCP port to poll for readiness |
 | `readyUrl` | string | — | HTTP URL to poll for readiness — first 2xx wins |
 | `readyTimeout` | number | `30` | Seconds to wait before failing |
 | `env` | object | `{}` | Extra env vars injected into this service only |
 | `restart` | bool | `false` | Auto-restart on crash with exponential backoff |
-| `primary` | bool | `false` | Receives `--https` / `--tunnel` / `--network` flags from `lpm dev`, plus the browser-open |
+| `primary` | bool | `false` | Its verified endpoint receives HTTPS, tunnel, network, and browser-open handling |
 | `host` | string | — | Friendly local hostname registered by `lpm dev` against the final assigned service port when the proxy daemon has an HTTPS listener. `lpm dev` also prepares constrained project cert-chain coverage and updates the hosts file when the host is not under `.localhost`. With `port`, `localhost:<port>` keeps working; without `port`, `lpm dev` injects the assigned port as `PORT`. |
 | `cwd` | string | project root | Working directory, relative to project root |
 

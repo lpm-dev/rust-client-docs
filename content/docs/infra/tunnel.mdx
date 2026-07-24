@@ -14,7 +14,7 @@ Webhooks that arrive at the public URL are captured to disk. You can browse, fil
 ## Examples
 
 ```bash
-lpm tunnel                                # default — start on port 3000
+lpm tunnel                                # tunnel the only active lpm dev endpoint
 lpm tunnel 4000                           # start on port 4000
 lpm tunnel claim acme-api.lpm.llc         # claim a stable domain (Pro/Org)
 lpm tunnel unclaim acme-api.lpm.llc       # release a claimed domain
@@ -29,10 +29,18 @@ lpm tunnel log                            # browse event log
 ## Starting a tunnel
 
 ```bash
+lpm dev
+lpm tunnel
+
+# Or target an explicit server:
 lpm tunnel 3000
 ```
 
-Returns an `https://` URL that proxies to `localhost:3000`. Requires a refresh-backed LPM.dev Registry login session — `lpm tunnel` rejects `--token`, `LPM_TOKEN`, and CI-only tokens for relay-facing actions. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
+Returns an `https://` URL that proxies to `http://127.0.0.1:3000/`. Requires a refresh-backed LPM.dev Registry login session — `lpm tunnel` rejects `--token`, `LPM_TOKEN`, and CI-only tokens for relay-facing actions. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
+
+With no numeric port, `lpm tunnel` discovers the verified endpoint published by a running `lpm dev` session. This preserves the child server's loopback address, port, and base path, so Vite on `5173` or a second Vite process on `5174` works without restating the port. No active session is a clear error. If multiple dev sessions are active, pass the intended port explicitly; LPM CLI never guesses between them.
+
+Tunnel and replay forwarding require a plain HTTP child. LPM CLI never disables certificate verification for an arbitrary framework HTTPS server. If the child advertises HTTPS, disable framework-level HTTPS and use `lpm dev --https`: LPM CLI terminates trusted browser-facing TLS while the tunnel safely forwards to the verified HTTP child.
 
 ```bash
 lpm tunnel 3000 acme-api.lpm.llc          # use a claimed domain
@@ -45,7 +53,7 @@ The domain must include a base — `lpm.fyi` (free + Pro/Org) or `lpm.llc` (Pro/
 
 `--auto-ack` is useful when you're not running a server but need webhook providers to keep their endpoint active — providers typically deactivate endpoints after repeated 5xx responses.
 
-Once connected, the startup block prints the public URL, inspector URL, plan, expiry when the relay advertises one, active limits, current accepted/included request usage, overage state, session, local port, and domain. `--json` includes the same additive `limits` and `usage` objects for scripts. Current CLI versions also print live usage warnings when the relay sends allowance or overage threshold notices. Press `o` to open the inspector when it is running, or `q` to quit the tunnel. Incoming requests stream as compact rows such as `→ POST /hooks/stripe 201 42ms`.
+Once connected, the startup block prints the public URL, inspector URL, plan, expiry when the relay advertises one, active limits, current accepted/included request usage, overage state, session, complete local URL, and domain. `--json` keeps `local_port` for compatibility and adds `local_url` so scripts retain the scheme, IPv4/IPv6 authority, and base path; it also includes the additive `limits` and `usage` objects. Current CLI versions print live usage warnings when the relay sends allowance or overage threshold notices. Press `o` to open the inspector when it is running, or `q` to quit the tunnel. Incoming requests stream as compact rows such as `→ POST /hooks/stripe 201 42ms`.
 
 ## Request allowance
 
@@ -84,7 +92,7 @@ lpm tunnel replay 3               # re-deliver event #3 to the local server
 lpm tunnel replay 3 -- --port 4000
 ```
 
-Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Local `inspect`, `log`, and `replay` flags are forwarded after `--`. Replays POST the original request back at the local port, so you can iterate on a bug without waiting for the upstream provider to fire again.
+Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Local `inspect`, `log`, and `replay` flags are forwarded after `--`. Replays use an explicit `--port`, or the single active `lpm dev` endpoint when no replay port is given. Ports must be in `1..=65535`; zero, negative, and overflowing values fail instead of wrapping.
 
 ## Inspector port
 
@@ -96,9 +104,9 @@ lpm tunnel 3000 --inspect-port 4500   # inspector at http://127.0.0.1:4500
 lpm tunnel 3000 --no-inspect          # skip the inspector entirely
 ```
 
-The auto-pick keeps the inspector race-free against the dev server's own port and any other local service. An explicit `--inspect-port N` is strict — if `N` is already in use, the command fails with a clear diagnostic instead of silently rolling to another port.
+The auto-pick keeps the inspector race-free against the dev server's own port and any other local service. An explicit non-zero `--inspect-port N` is strict — if `N` is already in use, the command fails with a clear diagnostic instead of silently rolling to another port.
 
-`lpm dev --tunnel` accepts the same `--inspect-port` and `--no-inspect` flags and surfaces the inspector URL in the startup banner. The tunnel footer's `o` key opens the inspector in a browser.
+`lpm dev --tunnel` accepts the same `--inspect-port` and `--no-inspect` flags and surfaces the inspector URL in the startup banner. During multi-service startup the inspector reports that it is waiting for the dev server instead of showing a guessed port; after ownership verification its status includes the resolved `local_url`. The tunnel footer's `o` key opens the inspector in a browser.
 
 ## Flags
 
