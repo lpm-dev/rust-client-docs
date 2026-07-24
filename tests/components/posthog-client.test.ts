@@ -11,16 +11,50 @@ vi.mock("posthog-js", () => ({
 }));
 
 const originalKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
+const originalLocalStorage = Object.getOwnPropertyDescriptor(
+  window,
+  "localStorage",
+);
+const storedValues = new Map<string, string>();
+const localStorageMock: Storage = {
+  get length() {
+    return storedValues.size;
+  },
+  clear() {
+    storedValues.clear();
+  },
+  getItem(key) {
+    return storedValues.get(key) ?? null;
+  },
+  key(index) {
+    return [...storedValues.keys()][index] ?? null;
+  },
+  removeItem(key) {
+    storedValues.delete(key);
+  },
+  setItem(key, value) {
+    storedValues.set(key, value);
+  },
+};
 
 beforeEach(() => {
   vi.resetModules();
   mocks.init.mockReset();
-  localStorage.clear();
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: localStorageMock,
+  });
+  window.localStorage.clear();
   process.env.NEXT_PUBLIC_POSTHOG_KEY = "test-key";
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (originalLocalStorage) {
+    Object.defineProperty(window, "localStorage", originalLocalStorage);
+  } else {
+    Reflect.deleteProperty(window, "localStorage");
+  }
   if (originalKey === undefined) {
     delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
   } else {
