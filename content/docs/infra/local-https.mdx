@@ -5,7 +5,7 @@ description: "How LPM CLI ships zero-config HTTPS for localhost — root CA, pro
 
 `lpm dev --https` serves your dev server over `https://localhost`. Browsers trust the certificate. No `--insecure` flag, no warnings, no per-project setup beyond a one-time CA install.
 
-This page covers the design — what gets generated, where it lives, how trust-store installation works on each OS, and how the cert is wired into the dev server.
+This page covers the design — what gets generated, where it lives, how trust-store installation works on each OS, and how LPM CLI terminates TLS in front of the dev server.
 
 ## How it works
 
@@ -25,16 +25,16 @@ This page covers the design — what gets generated, where it lives, how trust-s
    └─ SAN includes localhost, 127.0.0.1, and any --host arguments
    └─ Custom-host cert.pem files include a constrained project intermediate
 
-4. Inject env vars into the dev server process
-   └─ HTTPS=true
-   └─ SSL_CRT_FILE=<project>/.lpm/certs/cert.pem
-   └─ SSL_KEY_FILE=<project>/.lpm/certs/key.pem
-   └─ Plus framework-specific vars (Next.js, Vite, etc.)
+4. Discover and verify the child server endpoint
+   └─ Child can stay on plain HTTP
+   └─ Listener must belong to the launched process tree
 
-5. The dev server uses the cert; browsers trust it because the CA is trusted.
+5. Start an LPM CLI-owned TLS frontend
+   └─ Browser HTTPS/WSS → LPM CLI frontend → child HTTP/WS
+   └─ Browser trusts the frontend certificate because the CA is trusted
 ```
 
-You only do steps 1 and 2 once per machine (`lpm cert trust`). Steps 3–5 happen automatically on every `lpm dev --https` (or any project where `lpm.json > https: true`).
+You only do steps 1 and 2 once per machine (`lpm cert trust`). Steps 3–5 happen automatically on every `lpm dev --https` (or any project where `lpm.json > https: true`). The child must serve plain HTTP in this mode; disable framework-level HTTPS and let LPM CLI own TLS termination.
 
 ## File layout
 
@@ -98,23 +98,19 @@ Pair with a `/etc/hosts` entry:
 127.0.0.1 my-app.local
 ```
 
-Now `https://my-app.local:3000` works in any browser. Useful for projects that need a real hostname (cookies scoped to a domain, OAuth callbacks, etc.).
+Now `https://my-app.local:<resolved-port>` works in any browser. Useful for projects that need a real hostname (cookies scoped to a domain, OAuth callbacks, etc.).
 
 `lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. The default `localhost`, `127.0.0.1`, and `::1` SANs are always included.
 
 When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, `cert.pem` is written as a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. If your root CA was created before intermediate support, LPM CLI may ask you to run `lpm cert rotate` before issuing custom-host certificates.
 
-## Framework integration
+## Framework independence
 
-LPM CLI detects which framework `lpm dev` is starting and injects the right env vars:
+LPM CLI does not inject `HTTPS`, `SSL_CRT_FILE`, `SSL_KEY_FILE`, or framework-specific certificate variables into the child. It discovers the child endpoint first, then terminates HTTPS and secure WebSockets at its own frontend.
 
-| Framework | Env vars |
-| --- | --- |
-| Next.js | `HTTPS=true`, `SSL_CRT_FILE`, `SSL_KEY_FILE` |
-| Vite | `VITE_HTTPS=true`, `VITE_SSL_CERT`, `VITE_SSL_KEY` (or via Vite's `https` config object) |
-| Generic | `SSL_CRT_FILE`, `SSL_KEY_FILE`, `HTTPS=true` |
+Port selection is separate from certificate setup. Vite receives a strict managed port when LPM CLI must assign one; Next.js, Nuxt, SvelteKit, Remix, and Astro receive their native port argument; generic servers receive `PORT`. If a child ignores an explicit managed port, startup fails before the browser, proxy, or tunnel can target the wrong listener.
 
-If your framework needs different vars, you can read the cert paths yourself from the env LPM CLI injects and configure the server manually.
+With `lpm dev --https --port 4000`, `4000` is the browser-facing TLS port and the plain-HTTP child receives a separate internal port. Without `--port`, the frontend asks the OS for an available port, avoiding a probe-then-bind race.
 
 ## Status check
 
