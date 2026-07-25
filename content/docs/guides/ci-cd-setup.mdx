@@ -24,57 +24,21 @@ For Linux runners that don't have npm bootstrapped, use the standalone installer
 
 ## 2. Authenticate reproducibly
 
-For private packages on lpm.dev, two approaches:
+For private packages on lpm.dev, use a read-scoped Registry token.
 
-### OIDC (recommended for GitHub Actions, GitLab CI)
-
-```yaml
-permissions:
-  id-token: write # required for OIDC
-
-jobs:
-  install:
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm install -g @lpm-registry/cli
-      - run: lpm setup ci npmrc --oidc # writes .npmrc by exchanging OIDC token at install time
-      - run: lpm ci --offline --strict-integrity
-```
-
-    `lpm setup ci npmrc --oidc` exchanges the workflow's OIDC token for an LPM.dev Registry session token at runtime. Nothing committed, nothing in secret storage — the trust model is the workflow's identity.
-
-### Static token (the universal fallback)
+### Static token
 
 ```yaml
 - run: npm install -g @lpm-registry/cli
-- run: lpm setup ci npmrc # writes .npmrc with ${LPM_TOKEN} placeholder
+- run: lpm fetch
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
 - run: lpm ci --offline --strict-integrity
-  env:
-    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
 ```
 
-Generate the token via `lpm setup local` locally with a short lifetime:
+Create a read-scoped token at [lpm.dev/dashboard/settings/tokens](https://lpm.dev/dashboard/settings/tokens), then store it as `LPM_TOKEN` in your CI's secret store. The token is shown only once when created. LPM CLI reads it directly and routes `@lpm.dev/*` packages without an `.npmrc`; use [`lpm setup ci npmrc`](/docs/infra/setup) only when another npm-compatible client in the job needs Registry authentication.
 
-```bash
-lpm setup local -d 30        # 30-day read-only token
-```
-
-Store the printed token as `LPM_TOKEN` in your CI's secret store.
-
-For GitLab CI, mint `LPM_OIDC_TOKEN` via the `id_tokens` block with `aud: https://lpm.dev` — `lpm setup ci gitlab` emits a ready-to-paste snippet. The legacy `LPM_GITLAB_OIDC_TOKEN` env var is accepted as a back-compat alias. See [Environment variables](/docs/reference/env-vars#auth-and-routing).
-
-## 3. Generate the workflow with `lpm setup ci`
-
-```bash
-lpm setup ci github-actions       # prints a starter workflow snippet + auth command
-lpm setup ci gitlab               # GitLab equivalent
-```
-
-Prints a starter snippet (OIDC permissions, `lpm env pull`, a deploy step) to stdout, followed by the `lpm env oidc allow` command you need to run once to authorize the repo. No files are written — copy the snippet into `.github/workflows/<name>.yml` (or `.gitlab-ci.yml`) yourself and adapt. `--env=<mode>` controls which env mode the snippet references (default `production`).
-
-## 4. Reproducible installs
+## 3. Reproducible installs
 
 ```bash
 lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-summary
@@ -90,11 +54,9 @@ lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-
 
 If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM CLI writes it.
 
-## 5. npm firewall in CI
+## 4. npm firewall in CI
 
 The npm firewall is a network verdict check, so the command that runs it cannot be `--offline`. Use `LPM_NPM_FIREWALL=monitor` or `LPM_NPM_FIREWALL=enforce` for a per-job policy, or run `lpm config firewall --set enforce` on runners where the home directory is intentionally persistent.
-
-### Static token
 
 ```yaml
 - run: npm install -g @lpm-registry/cli
@@ -105,37 +67,6 @@ The npm firewall is a network verdict check, so the command that runs it cannot 
 
 `LPM_TOKEN` is used for the firewall verdict API and any lpm.dev package auth in the same run.
 
-### OIDC
-
-On GitHub Actions, the same `permissions: id-token: write` setting used by `lpm setup ci npmrc --oidc` is enough for firewall checks:
-
-```yaml
-permissions:
-  id-token: write
-  contents: read
-
-jobs:
-  install:
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm install -g @lpm-registry/cli
-      - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
-```
-
-When active LPM Firewall checks need auth and no `LPM_TOKEN` or stored LPM.dev Registry auth is already available, LPM CLI exchanges the CI OIDC token for a short-lived LPM.dev Registry token. If `LPM_TOKEN` or stored auth is available, there is no OIDC exchange.
-
-On GitLab CI, mint `LPM_OIDC_TOKEN` with audience `https://lpm.dev`:
-
-```yaml
-install:
-  id_tokens:
-    LPM_OIDC_TOKEN:
-      aud: https://lpm.dev
-  script:
-    - npm install -g @lpm-registry/cli
-    - LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
-```
-
 If the workflow deliberately separates an online store warm from an offline replay, put the firewall on the online step and keep the replay offline:
 
 ```yaml
@@ -143,7 +74,7 @@ If the workflow deliberately separates an online store warm from an offline repl
 - run: lpm ci --offline --strict-integrity
 ```
 
-## 6. Gating
+## 5. Gating
 
 The standard gate sequence:
 
@@ -174,7 +105,7 @@ For compliance gates, use [`lpm licenses`](/docs/packages/licenses):
 - run: lpm licenses --deny GPL-3.0 --deny AGPL-3.0
 ```
 
-## 7. Caching `~/.lpm/`
+## 6. Caching `~/.lpm/`
 
 Cache the content LPM CLI can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM CLI recreates from the lockfile and store.
 
@@ -217,22 +148,21 @@ lpm cache clean dlx
 lpm cache prune --apply
 ```
 
-## 8. Publishing from CI
+## 7. Publishing from CI
 
 ```yaml
-- run: lpm setup ci npmrc --oidc
-- run: lpm publish --provenance --min-score 80 -y
+- run: lpm publish --provenance --min-score 60 -y
 ```
 
-`--provenance` requires OIDC and produces a Sigstore attestation. `--min-score 80` blocks publishing if quality drops. `-y` skips the interactive prompt.
+`--provenance` requires OIDC and produces a Sigstore attestation. `--min-score 60` blocks an LPM.dev Registry publish if its locally available quality score drops below the chosen floor. Some points remain pending until Registry analysis, so set the threshold from a representative `lpm publish --check` result. `-y` skips the interactive prompt.
 
 For npm-compatible publish provenance, target npm explicitly:
 
 ```yaml
-- run: lpm publish --npm --provenance --min-score 80 -y
+- run: lpm publish --npm --provenance -y
 ```
 
-Generated npm provenance requires public access. LPM CLI's npm default is public; if your config sets restricted access, change it to public or skip generated provenance.
+Generated npm provenance requires public access. LPM CLI's npm default is public; if your config sets restricted access, change it to public or skip generated provenance. A normal npm-only publish does not run the LPM.dev quality scorer, so `--min-score` is not a quality gate for this command; keep the project's lint, test, type-check, and audit jobs explicit in CI.
 
 For multi-registry publishing in one job, configure `lpm.json > publish.registries` and pass nothing — `lpm publish` walks every configured target. Custom npm-compatible registries need an exact registry-scoped token from `lpm login --login-registry <URL> --token <T>`; `NPM_TOKEN` only authenticates `https://registry.npmjs.org`.
 
@@ -241,14 +171,13 @@ For multi-registry publishing in one job, configure `lpm.json > publish.registri
 - **`@latest` in CI.** Don't pin the binary to floating tags. Reproducible builds need a fixed toolchain.
 - **`lpm install` without `--offline` in CI.** Lets lockfile drift slip through unnoticed.
 - **Combining active npm firewall with `--offline`.** Firewall verdicts need network access. Run the firewall-protected install online, or firewall-gate an online `lpm fetch` before the offline replay.
-- **Forgetting `permissions: id-token: write`** for OIDC in GitHub Actions.
+- **Forgetting `permissions: id-token: write`** when publishing with OIDC or generated provenance in GitHub Actions.
 - **Caching `node_modules/` instead of `~/.lpm/store/`.** The LPM CLI store is the right cache key — `node_modules` is a layout, the store is content.
 - **Skipping `lpm audit` to "save time".** It's a few hundred ms; the time-not-paid is paid back on the next CVE.
 
 ## See also
 
-- [`lpm setup ci npmrc`](/docs/infra/setup) — generate `.npmrc` for CI
-- [`lpm setup ci <platform>`](/docs/infra/setup) — generate OIDC workflow snippets
+- [`lpm setup ci npmrc`](/docs/infra/setup) — generate `.npmrc` for npm-compatible CI clients
 - [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) — frozen lockfile install
 - [`lpm env print --ci`](/docs/dev/env#ci-output) — CI-native env output
 - [`lpm audit`](/docs/packages/audit) — security gating

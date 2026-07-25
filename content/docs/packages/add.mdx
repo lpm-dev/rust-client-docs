@@ -23,7 +23,7 @@ lpm add lpm-source-package
 
 Like [`lpm install`](/docs/packages/install#typosquat-guard), `lpm add` rejects a likely typosquatted package name before any registry fetch. Intentional names use the committed [`policy.typosquat.allow`](/docs/reference/lpm-toml#typosquat-policy) list in `lpm.toml`.
 
-When npm firewall mode is `monitor` or `enforce`, LPM CLI checks the selected source package with LPM Firewall at `firewall.lpm.dev` when it is a routed public npm package. LPM Firewall is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI. `monitor` warns and continues when entitlement is denied, while `enforce` blocks packages whose effective firewall action is `block` or denied by entitlement before the source tarball is downloaded or copied. In human output, the source-package download line shows `🔥 LPM Firewall active` when that check is active. LPM.dev Registry packages and other `.npmrc`-declared private/custom registry packages are not sent to the npm firewall verdict API. Dependencies installed after a config-aware source copy use the normal install pipeline and its firewall checks. The legacy string `report` is still accepted as a `monitor` alias.
+When npm firewall mode is `monitor` or `enforce`, LPM CLI checks the selected source package with LPM Firewall at `firewall.lpm.dev` when it is a routed public npm package. LPM Firewall is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally or set `LPM_TOKEN` in CI. `monitor` warns and continues when entitlement is denied, while `enforce` blocks packages whose effective firewall action is `block` or denied by entitlement before the source tarball is downloaded or copied. In human output, the source-package download line shows `🔥 LPM Firewall active` when that check is active. LPM.dev Registry packages and other `.npmrc`-declared private/custom registry packages are not sent to the npm firewall verdict API. Dependencies installed after a config-aware source copy use the normal install pipeline and its firewall checks. The legacy string `report` is still accepted as a `monitor` alias.
 
 ## Examples
 
@@ -74,7 +74,9 @@ For `@lpm.dev/*` source packages, `lpm add` also reconciles package-published ag
 
 ## Swift packages
 
-For Swift packages, prefer **[`lpm install`](/docs/packages/install)** — it's the right command for SPM dependencies (resolves through the [SE-0292 registry](/docs/packages/swift-package-registry) and edits `Package.swift`). `lpm add` still works for Swift sources today and respects `--target` for Xcode-target wiring, but consider it the legacy path for that ecosystem.
+For Swift packages, prefer **[`lpm install`](/docs/packages/install)** — it resolves SPM dependencies through the [SE-0292 Registry](/docs/packages/swift-package-registry) and edits `Package.swift`.
+
+`lpm add` remains a legacy source-delivery path for Swift. On that path, `--target <NAME>` only appends a directory to the automatic destination: `Sources/<NAME>` for an SPM project or `Packages/LPMComponents/Sources/<NAME>` when an Xcode project or workspace is present. It does not edit `Package.swift` or wire an Xcode target.
 
 ## Authoring config-aware packages: `lpm.config.json`
 
@@ -83,7 +85,7 @@ Ship `lpm.config.json` at the root of your tarball to control how `lpm add` extr
 Install the [`lpm-guide`](https://github.com/lpm-dev/lpm-guide) skill if you want an agent to draft the config from your source tree:
 
 ```bash
-npx skills add lpm-dev/lpm-guide
+lpm skills add lpm-dev/lpm-guide
 ```
 
 Then paste a prompt like this into your agent:
@@ -139,7 +141,8 @@ Inline values bypass the prompt entirely. With `--yes`, prompts are skipped and 
 | --- | --- |
 | No `lpm.config.json` | Plain copy of the package's source. No prompts. No auto-install. Surfaces bare imports for you to install yourself. |
 | `lpm.config.json` present, TTY | Prompts for every `configSchema` key not already inlined; copies per `files[]` rules; installs `dependencies` matching the chosen values. |
-| `lpm.config.json` present, `--yes` / `--json` / non-TTY | Skips prompts; uses defaults for `required` fields; copies per matching rules; installs deps. |
+| `lpm.config.json` present, `--yes` | Skips prompts and fills missing `required` fields from `defaultConfig` or the field's `default`. |
+| `lpm.config.json` present, `--json` or non-TTY without `--yes` | Skips prompts but does not fill required defaults. Only query-string values are populated; missing file conditions use include-by-default behavior and unmatched conditional dependencies are not installed. |
 
 ### Prerequisites
 
@@ -171,8 +174,8 @@ If you only want the source files (and you'll handle the imports yourself), pass
 | `--no-editor-setup` | Compatibility flag. Package skills do not create editor integrations. |
 | `--pm <NAME>` | Package manager for dep installation (`lpm`, `npm`, `pnpm`, `yarn`, `bun`, `auto`; default `lpm`) |
 | `--alias <ALIAS>` | Import alias prefix (e.g., `@/components`) — overrides auto-detection |
-| `--target <NAME>` | Swift SPM target name (Swift packages only) |
-| `--no-engine-strict` | Use warning-only root checks and, when LPM installs dependencies, dependency checks (see [`lpm install`](/docs/packages/install#engines-enforcement)). Root preflight runs before any manifest mutation, so a constraint violation can't leave the project half-modified. |
+| `--target <NAME>` | Swift source-copy destination suffix; does not perform SPM or Xcode target wiring |
+| `--no-engine-strict` | Use warning-only root checks and, when LPM CLI installs dependencies, dependency checks (see [`lpm install`](/docs/packages/install#engines-enforcement)). Root preflight runs before any manifest mutation, so a constraint violation can't leave the project half-modified. |
 
 Plus the [global flags](/docs/commands#global-flags).
 

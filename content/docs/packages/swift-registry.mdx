@@ -4,13 +4,22 @@ description: "Configure Swift Package Manager to use LPM.dev Registry as a SE-02
 ---
 
 ```bash
-lpm swift-registry              # one-shot setup; idempotent
-lpm swift-registry --force      # re-download the signing certificate
+lpm swift-registry              # repair or explicitly rerun setup
+lpm swift-registry --force      # refresh the signing certificate
 ```
 
-Wires `swift` (the SPM CLI) to talk to LPM.dev Registry's [SE-0292 Swift Package Registry](/docs/packages/swift-package-registry). Run once per machine; after that, `swift package resolve` and `lpm install <swift-pkg>` both pull from LPM.dev Registry natively — no fork-as-git-dep, no shim.
+Most users do not need to run this command before installing a package. [`lpm install`](/docs/packages/install) automatically configures Swift Package Manager (SPM) when it adds a Swift package from LPM.dev Registry.
 
-`lpm install` auto-runs the same setup the first time it encounters a Swift package in an unconfigured project, so most users never have to invoke `lpm swift-registry` directly. Sign in with `lpm login` before resolving a Swift package: LPM.dev Registry requires a valid token for every Swift package request. Reach for this command explicitly when setting up a fresh machine or rotating the signing certificate.
+Use `lpm swift-registry` when setup needs to be repaired or rerun explicitly. Use `--force` after a documented certificate rotation or when the local certificate may be stale. Sign in with [`lpm login`](/docs/infra/login) before resolving a Swift package; LPM.dev Registry requires authentication for every Swift package request.
+
+## Normal install flow
+
+```bash
+lpm login
+lpm install @lpm.dev/owner.swift-pkg
+```
+
+On the first install in an unconfigured Swift project, LPM CLI sets the `lpmdev` Registry scope, passes the current Registry session to SPM, installs the signing certificate, configures signing trust, updates `Package.swift`, and resolves the dependency.
 
 ## What it does
 
@@ -21,7 +30,7 @@ Four setup steps. Scope, certificate, and signing-trust failures abort the run. 
 3. **Install the signing certificate.** Downloads the CMS signing cert (DER) from `<registry-url>/api/swift-registry/certificate` and writes it to `~/.swiftpm/security/trusted-root-certs/lpm.der`. The DER body is size-checked before being written — an empty / truncated / HTML-error response aborts instead of leaving a broken cert on disk.
 4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with a default `signing.onUnsigned = "warn"` + `signing.onUntrustedCertificate = "warn"` policy and a scope-specific override pinning `lpmdev` to `signing.onUntrustedCertificate = "silentAllow"`. See [Trust model](/docs/packages/swift-package-registry#trust-model) for the rationale.
 
-Idempotent — already-configured paths short-circuit silently, so re-running is safe.
+The operation is idempotent. Existing valid certificate and trust configuration can be retained, so rerunning it is safe.
 
 The existing `~/.swiftpm/configuration/registries.json` file has a 16 MiB limit enforced before JSON parsing. Missing retains the setup command's normal create behavior; an oversized file fails with its path and byte limit instead of being treated as absent or overwritten. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
 
@@ -68,5 +77,5 @@ Plus the [global flags](/docs/commands#global-flags) — `--json` is documented 
 
 - [Swift Package Registry (SE-0292)](/docs/packages/swift-package-registry) — design overview, identity mapping, trust model, wire format
 - [Using LPM CLI with Swift](/docs/guides/using-with-swift) — end-to-end setup + publish walkthrough
-- [`lpm install`](/docs/packages/install) — the right command for Swift dependencies (auto-runs this setup on first encounter)
+- [`lpm install`](/docs/packages/install) — the normal command for Swift dependencies; it configures SPM when needed
 - [`lpm publish`](/docs/packages/publish) — publishes Swift packages with CMS signatures

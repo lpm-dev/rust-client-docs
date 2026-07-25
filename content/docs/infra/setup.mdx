@@ -1,29 +1,19 @@
 ---
 title: lpm setup
-description: "Generate project .npmrc auth for CI or local development, and print OIDC-ready workflow snippets for supported CI platforms."
+description: "Generate scoped .npmrc authentication for npm-compatible CI clients and configure safe local LPM.dev Registry access."
 ---
 
-Write project auth files or print CI snippets for installing private LPM.dev Registry packages and pulling encrypted environment files.
+Generate scoped authentication for npm-compatible clients in CI. For LPM CLI itself, `LPM_TOKEN` is the direct non-interactive authentication surface.
 
 ```bash
 lpm setup ci npmrc
-lpm setup ci github-actions
-lpm setup local
 ```
 
 ## Examples
 
 ```bash
-lpm setup ci npmrc                       # generate .npmrc with stored token or ${LPM_TOKEN}
-lpm setup ci npmrc --oidc                # exchange a CI OIDC token at runtime
-lpm setup ci npmrc --scoped              # make scoped routing explicit
+lpm setup ci npmrc                       # generate .npmrc with resolved auth or ${LPM_TOKEN}
 lpm setup ci npmrc -r https://lpm.dev    # override registry URL
-
-lpm setup ci github-actions              # print GitHub Actions OIDC snippet
-lpm setup ci gitlab                      # print GitLab CI OIDC snippet
-
-lpm setup local                          # 30-day read-only .npmrc token
-lpm setup local -d 7                     # 7-day token
 ```
 
 ## `lpm setup ci npmrc`
@@ -39,55 +29,38 @@ By default, the generated file uses scoped routing:
 
 Generated setup files are always scoped to `@lpm.dev`. Public npm packages keep using the normal npm route or whatever default registry your existing `.npmrc` declares.
 
-When neither a stored token nor an OIDC token is available, the generated `.npmrc` falls back to a literal `${LPM_TOKEN}` placeholder so CI can interpolate it at runtime.
+When no stored token or `LPM_TOKEN` is available, the generated `.npmrc` uses a literal `${LPM_TOKEN}` placeholder for npm, pnpm, or yarn to interpolate at runtime. Run setup before exposing the token when you want this placeholder form. If auth is already available, the on-disk file contains the resolved token instead.
 
 Under `--json`, `lpm setup ci npmrc` still writes the on-disk `.npmrc`. The JSON envelope is safe for logs because its `content` field always uses the `${LPM_TOKEN}` placeholder, even when the on-disk file carries a real token at `0o600`.
+
+LPM CLI reads `LPM_TOKEN` directly. Its parser deliberately refuses environment-variable expansion for auth inside a repository-controlled `.npmrc`, so LPM CLI does not rely on the generated placeholder line.
 
 | Flag | Effect |
 | --- | --- |
 | `-r`, `--registry <URL>` | Override the registry URL written to `.npmrc` |
-| `--oidc` | Exchange an OIDC token at runtime instead of using stored auth |
-| `--scoped` | Use scoped `@lpm.dev:registry=` routing; this is the default |
 
-## `lpm setup ci <platform>`
+## Local authentication
 
-```bash
-lpm setup ci github-actions
-lpm setup ci gitlab
-lpm setup ci github-actions --env=staging
-```
-
-Prints OIDC-wired starter workflow snippets plus the [`lpm env oidc allow`](/docs/dev/env#oidc-policies-ci) command to run after committing the workflow. These targets do not write `.npmrc`; use `lpm setup ci npmrc` for that.
-
-GitHub Actions snippets rely on the GitHub runtime's `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, available when the job declares `permissions: id-token: write`.
-
-GitLab snippets mint `LPM_OIDC_TOKEN` through the `id_tokens` block with `aud: https://lpm.dev`, which is the canonical input the registry-exchange path expects.
-
-The same OIDC signal can authenticate LPM Firewall checks for `lpm install`, `lpm ci`, `lpm fetch`, `lpm download`, and `lpm add` when `LPM_NPM_FIREWALL=monitor|enforce` is active. If `LPM_TOKEN` or stored LPM.dev Registry auth is already available, firewall checks use that and skip OIDC exchange.
-
-| Flag | Effect |
-| --- | --- |
-| `--env <name>` | Environment name used in workflow snippets; default `production` |
-
-## `lpm setup local`
-
-Generates a read-only `.npmrc` token for local development. The token has narrower scope than the full session token and a configurable validity window. The command also adds `.npmrc` to `.gitignore` automatically so the embedded token cannot be committed by accident.
+Create a read-scoped token at [lpm.dev/dashboard/settings/tokens](https://lpm.dev/dashboard/settings/tokens) and expose it directly to LPM CLI:
 
 ```bash
-lpm setup local
-lpm setup local -d 7
-lpm setup local --scoped
+export LPM_TOKEN=<token>
+lpm install @lpm.dev/owner.package
 ```
 
-| Flag | Effect |
-| --- | --- |
-| `-d`, `--days <N>` | Token validity in days; default `30` |
-| `--scoped` | Use scoped `@lpm.dev:registry=` routing; this is the default |
+No `.npmrc` entry is required for LPM CLI: the `@lpm.dev/*` route is built in. If npm, pnpm, or yarn also needs the same access during local development, put the env-backed auth in your user-level `~/.npmrc`, not a committed project file:
+
+```text title="~/.npmrc"
+//lpm.dev/:_authToken=${LPM_TOKEN}
+@lpm.dev:registry=https://lpm.dev/api/registry/
+```
+
+Only `@lpm.dev/*` packages use this route. Public npm packages and other configured registries keep their existing routing. Never commit a literal token.
 
 ## See also
 
 - [Authentication](/docs/infra/authentication) - how tokens are stored
-- [`lpm login / logout / whoami`](/docs/infra/login) - manage registry sessions
+- [`lpm login / logout / whoami`](/docs/infra/login) - manage local registry sessions
 - [`lpm env`](/docs/dev/env) - environment variables, secret sync, and CI OIDC policies
 - [CI/CD setup](/docs/guides/ci-cd-setup) - full workflow setup
 - [`.npmrc` format](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc)
