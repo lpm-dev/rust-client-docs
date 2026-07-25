@@ -100,6 +100,12 @@ The lockfile is deterministic by construction:
 
 This is what makes `git diff lpm.lock` actionable. A new dep adds entries. A version bump rewrites a single package's fields. Supply-chain surprises (a transitive integrity change without a version bump, a new package appearing without a corresponding `package.json` change) are visible without parsing.
 
+## Safe atomic rewrites
+
+When LPM CLI replaces `lpm.lock` or `lpm.lockb`, it writes through an exclusively created, collision-resistant file in the same directory and then atomically replaces the destination. An attacker-preplanted temporary symlink, hardlink, junction, or reparse entry is not followed, so an ordinary lockfile update cannot use a predictable staging name to overwrite its external target.
+
+This guarantee covers LPM-managed atomic rewrites and their temporary leaf entries. It does not confine an attacker-controlled parent directory, apply to every filesystem write made by LPM CLI or package scripts, or by itself promise that a completed write survives sudden power loss.
+
 ## Should I commit `lpm.lockb`?
 
 Commit `lpm.lock` always. Commit `lpm.lockb` when LPM CLI wrote it. If the project is TOML-only because the graph carries metadata outside the binary subset, do not synthesize a binary file by hand.
