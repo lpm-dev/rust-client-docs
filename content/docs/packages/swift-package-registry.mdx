@@ -3,7 +3,7 @@ title: Swift Package Registry (SE-0292)
 description: "How LPM.dev Registry implements the SE-0292 Swift Package Registry spec — identity mapping, signing, certificates."
 ---
 
-LPM.dev Registry implements the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md). Once you've run `lpm swift-registry` once, Swift Package Manager (SPM) on your machine can resolve LPM.dev Registry-hosted Swift packages natively — no manual fork-as-git-dep, no shim.
+LPM.dev Registry implements the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md). [`lpm install`](/docs/packages/install) configures Swift Package Manager (SPM) when needed, then resolves LPM.dev Registry-hosted Swift packages natively — no manual fork-as-git-dep and no separate setup command for the normal install flow.
 
 This page is the conceptual reference. For the user-facing setup walkthrough, see [Using LPM CLI with Swift](/docs/guides/using-with-swift).
 
@@ -35,14 +35,14 @@ Rules:
 
 Identity translation is automatic — `lpm install @lpm.dev/owner.swift-pkg` writes the SE-0292 identity into `Package.swift`. You don't deal with the mapping by hand.
 
-## Setup: `lpm swift-registry`
+## Automatic setup during install
 
 ```bash
-lpm swift-registry              # idempotent
-lpm swift-registry --force      # re-download the signing certificate (cert rotation)
+lpm login
+lpm install @lpm.dev/owner.swift-pkg
 ```
 
-Four setup steps under the hood. Scope, certificate, and signing-trust failures abort the command. Authentication setup warns instead when no token is available or SPM rejects the login:
+Before resolving the first Swift package in an unconfigured project, LPM CLI performs four setup steps. Scope, certificate, and signing-trust failures abort the install. Authentication setup warns when no token is available or SPM rejects the login, but LPM.dev Registry requests will return `401` until you sign in:
 
 1. **Set the registry for the `lpmdev` scope.**
    ```bash
@@ -52,9 +52,7 @@ Four setup steps under the hood. Scope, certificate, and signing-trust failures 
 3. **Install the signing certificate.** Downloads the CMS signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`. The DER body is size-checked before being written; an empty / truncated / HTML-error response aborts instead of leaving a broken cert on disk.
 4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with a default `signing.onUnsigned = "warn"` + `signing.onUntrustedCertificate = "warn"` policy and a scope-specific override pinning `lpmdev` to `signing.onUntrustedCertificate = "silentAllow"` — see [Trust model](#trust-model) for the rationale.
 
-`--force` re-downloads the cert even when a valid one is on disk. A failed re-download with `--force` is fatal even if a stale cert is still on disk — silently keeping the stale cert would defeat the explicit rotation the user asked for.
-
-When `lpm install` first encounters a Swift package in a project that hasn't been set up, it runs the same four-step path (in `ensure_configured` mode) before resolving the dep. Scope, certificate, and signing-trust failures abort setup; a missing token warns during setup, but LPM.dev Registry returns `401` until you run `lpm login`.
+[`lpm swift-registry`](/docs/packages/swift-registry) exposes this setup explicitly for repair and certificate rotation. Its `--force` flag re-downloads the certificate even when a valid file is present. A failed forced refresh is fatal rather than silently retaining the stale certificate.
 
 ## Trust model
 
@@ -84,7 +82,7 @@ Behind the scenes:
 2. Updates `Package.swift` — appends the dep into `dependencies:`, wires it into the requested target's `targets:` array.
 3. Triggers `swift package resolve` so SPM downloads the source archive, verifies the signature, and writes `Package.resolved`.
 
-> Use [`lpm install`](/docs/packages/install) for Swift, **not** `lpm add`. `lpm add` is source-delivery (copies bytes into your project); `lpm install` is the registry-resolved-dep path. `lpm add` still works for Swift today (with `--target`) but it's the legacy path for that ecosystem.
+> Use [`lpm install`](/docs/packages/install) for Swift, **not** `lpm add`. `lpm install` is the Registry-resolved SPM dependency path; `lpm add` is the legacy source-delivery path.
 
 ## Publishing a Swift package
 
@@ -92,7 +90,7 @@ Behind the scenes:
 lpm publish
 ```
 
-Detected as a Swift package when `lpm.config.json` declares `ecosystem: "swift"` and the repo has a `Package.swift` at the root. The publish pipeline does the standard pack + secret scan + quality + upload, plus three Swift-specific steps:
+Detected as a Swift package when the repository has `Package.swift` at its root. The publish pipeline does the standard pack, secret scan, quality pass, and upload, plus three Swift-specific steps:
 
 1. **Generate the SE-0292 source archive.** Wraps the pack output into a `{pkgName}-{version}/` top-level directory and creates the `.zip` SPM expects. The wrapper is a hard SE-0292 requirement (SPM uses `stripFirstLevel` semantics on the archive).
 2. **Compute and record the SHA-256 checksum.** SPM verifies this on download. The hex is stored in the release metadata; the base64 form is sent in the `Digest` HTTP response header on download.
@@ -103,7 +101,7 @@ Detected as a Swift package when `lpm.config.json` declares `ecosystem: "swift"`
 
 ## Verifying signatures
 
-SPM verifies the CMS detached signature on every package archive at install time. With `lpm swift-registry` configured (or `--force` after a documented cert rotation), the verifier path runs cleanly without prompting.
+SPM verifies the CMS detached signature on every package archive at install time. LPM CLI configures the certificate and signing policy during the normal install flow. Use `lpm swift-registry --force` only when a documented certificate rotation or local corruption requires an explicit refresh.
 
 Two failure shapes a user can run into:
 
@@ -122,20 +120,20 @@ For the curious — the things SPM expects from the server side:
 | `GET /{scope}/{name}/{version}` | Release metadata (JSON) — signature, checksum, dependencies |
 | `GET /{scope}/{name}/{version}.zip` | Source archive with `{name}-{version}/` top level, `Digest: SHA-256={base64}` header |
 | `GET /{scope}/{name}/{version}/Package.swift` | Manifest with signature in a comment block |
-| `POST /login` | Auth flow (handled by `lpm swift-registry` automatically) |
+| `POST /login` | Auth flow configured automatically during `lpm install` |
 | `GET /certificate` | Public cert in DER format |
 
 Implementation lives in the LPM.dev Registry origin server and registry worker. LPM CLI is a client of this API; it doesn't implement the server side itself.
 
 ## Limitations
 
-- Today `lpm swift-registry` configures the `lpmdev` scope only. Custom-scope publishing (e.g., `acme` for a private LPM.dev Registry tenant) isn't surfaced in LPM CLI yet.
+- Automatic and explicit Swift Registry setup configure the `lpmdev` scope only. Custom-scope publishing (for example, `acme` for a private LPM.dev Registry tenant) is not surfaced in LPM CLI.
 - Cert rotation is manual — no automatic refresh on schedule. The signing cert is long-lived; rotation events will be communicated via release notes.
 - The SE-0292 `--allow-insecure-http` flag is honored only for `http://` registry URLs (i.e., local dev against `http://localhost`). The hosted LPM.dev Registry endpoint is HTTPS-only.
 
 ## See also
 
 - [Using LPM CLI with Swift](/docs/guides/using-with-swift) — setup walkthrough + publish flow
-- [`lpm swift-registry`](/docs/packages/swift-registry) — CLI command reference
+- [`lpm swift-registry`](/docs/packages/swift-registry) — repair and certificate-refresh reference
 - [`lpm install`](/docs/packages/install) — the right command for SPM deps
 - [SE-0292 spec](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) — the upstream protocol

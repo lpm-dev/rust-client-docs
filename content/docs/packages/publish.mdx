@@ -9,14 +9,14 @@ lpm publish   # alias: lpm p
 
 Packs the current directory and uploads it to a registry. By default, the target is **LPM.dev Registry** (where every package is private until you flip distribution to Pool or Marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
 
-`lpm publish` runs the same quality and security checks regardless of target — it scans for hardcoded secrets, computes a quality score, and refuses to publish if `--min-score` is not met.
+Every target is packed and scanned for hardcoded secrets. When LPM.dev Registry is one of the targets, LPM CLI also computes the local quality score and enforces `--min-score`. Normal npm, GitHub Packages, GitLab Packages, and custom-registry publishes do not run that quality gate.
 
 ## Examples
 
 ```bash
 lpm publish                                  # publish to LPM.dev Registry
-lpm publish --dry-run                        # pack + check, don't upload
-lpm publish --check                          # quality report only
+lpm publish --dry-run                        # prepare and show the publish plan
+lpm publish --check                          # local preparation, no registry calls
 lpm publish --npm                            # publish to registry.npmjs.org
 lpm publish --github                         # publish to GitHub Packages
 lpm publish --publish-registry https://r.example.com   # custom npm-compatible
@@ -24,7 +24,7 @@ lpm publish --provenance                     # require Sigstore provenance (CI)
 lpm publish --npm --provenance               # npm-compatible publish provenance
 lpm publish --npm --provenance-file bundle.sigstore
 lpm publish --no-provenance                  # override provenance config
-lpm publish --min-score 80                   # gate on quality score
+lpm publish --min-score 60                   # gate an LPM.dev publish on local quality
 lpm stage publish --tag next                 # stage a version on npm
 lpm stage list @scope/pkg                    # list staged npm versions
 lpm stage approve <stage-id> --otp 123456    # promote the staged version
@@ -34,19 +34,20 @@ lpm stage approve <stage-id> --otp 123456    # promote the staged version
 
 In order:
 
-1. **Pack** — assemble the tarball from `files`, `main`, `bin`, etc. Tarballs over **500 MB** are rejected outright.
-2. **Workspace protocol rewrite** — in monorepos, `workspace:*` and `catalog:` specifiers in `dependencies` get replaced with their resolved versions before hashing. Registries can't resolve those protocols; the rewrite happens on the in-memory tarball so the on-disk `package.json` stays untouched.
-3. **Secret scan** — refuse to publish if known secret patterns are found in the pack contents (skip with `--allow-secrets`, not recommended).
-4. **Quality score** — compute readme/license/types/tests/maintenance signals. The publish path prints one compact score line and lists only failing checks. With `--min-score N`, abort if the score is below the threshold.
-5. **Skills validation** (LPM.dev Registry target only) — when the project ships `.lpm/skills/`, validate every skill file and run a security pattern check on the content; either failing aborts the publish.
-6. **Confirm** — interactive confirmation in a TTY. Skip with `-y`.
-7. **Upload** — push the tarball to each target registry with the appropriate auth.
+1. **Skills validation** (LPM.dev Registry target only) — when the project ships authored files under `.lpm/skills/`, validate their format and run the skill security-pattern check.
+2. **Pack** — assemble an in-memory tarball from the package manifest. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
+3. **Workspace protocol rewrite** — in monorepos, replace publishable `workspace:` and `catalog:` dependency specifiers inside the in-memory tarball. The source manifest stays unchanged.
+4. **Provenance-file validation** — when `--provenance-file` is used for an npm-compatible target, verify the bundle and confirm its subject and SHA-512 digest match the final target artifact.
+5. **Secret scan** — scan supported text files in the project tree, excluding `.git`, `node_modules`, and paths ignored by Git. Skip with `--allow-secrets` only when you have reviewed the package carefully.
+6. **Quality score** (LPM.dev Registry target only) — compute the local readme/license/types/tests/maintenance signals. With `--min-score N`, abort if the local score is below the threshold.
+7. **Confirm** — ask before a real interactive publish. Skip with `-y`.
+8. **Authenticate, generate requested provenance, and upload** — resolve auth for each target, generate Sigstore provenance when requested, then upload sequentially.
 
 Successful human output is a compact status stream:
 
 ```text
 ✓ Secret scan passed
-✓ Quality score: 91/100
+✓ Quality score: 64/100
 › Uploading tarball to LPM.dev Registry
     target     @lpm.dev/owner.pkg@1.2.3
     visibility private
@@ -56,9 +57,11 @@ Successful human output is a compact status stream:
 
 If quality checks fail or are missing, only those rows are shown beneath the score. The full per-category breakdown lives in [`lpm quality`](/docs/packages/quality).
 
-`--check` is the local-validation surface — it runs the local pack + secret scan + quality scoring and stops. It never contacts a registry: no OIDC exchange, no skills-staleness lookup, no auth handshake. Use it as a fast pre-commit gate.
+`--check` is the network-free preparation mode. It resolves the target configuration and names, validates authored LPM.dev skills, assembles the tarball, validates any supplied provenance file, runs the secret scan, and computes the local quality score when LPM.dev Registry is a target. It stops before OIDC exchange, target authentication, generated provenance, confirmation, and upload.
 
-`--dry-run` runs everything `--check` does, plus an LPM.dev Registry preflight: OIDC exchange (when LPM.dev Registry is a target) and a skills-metadata lookup. It stops there. It does **not** prompt for confirmation, does **not** verify the resolved token can actually publish *this* package (no `whoami` / permission check), and does **not** contact `--npm` / `--github` / `--gitlab` targets. Use it to catch local issues plus LPM.dev Registry auth misconfiguration — it won't tell you whether the upload itself would land.
+`--dry-run` runs the same local preparation. For an LPM.dev Registry target, it may also attempt an available CI OIDC exchange and, when authored skills exist, fetch the previously published skills for a staleness warning. Failures from those two optional reads do not fail the dry run. It does not resolve npm/GitHub/GitLab upload credentials, check publish permission or version availability, generate `--provenance`, or upload anything. A supplied `--provenance-file` is still validated locally.
+
+Neither mode is currently guaranteed to leave the working tree untouched. When authored skills exist and `package.json > files` does not include `.lpm/skills`, publish preparation adds that entry before packing. Review the resulting manifest change and commit it when appropriate.
 
 ## npm Trusted Publishing
 
@@ -190,13 +193,13 @@ LPM CLI advertises npm web auth on npm-compatible publish requests (`npm-auth-ty
 
 | Flag | Effect |
 | --- | --- |
-| `--dry-run` | Pack and check, don't upload |
-| `--check` | Run quality report only |
+| `--dry-run` | Prepare and show the publish plan without resolving upload auth or uploading |
+| `--check` | Run network-free local publish preparation and stop before upload |
 | `-y`, `--yes` | Skip interactive confirmation |
 | `--provenance` | Require Sigstore provenance (CI with OIDC only) |
 | `--no-provenance` | Disable provenance even when npm config enables it |
 | `--provenance-file <PATH>` | Attach a pre-generated Sigstore bundle to npm-compatible targets |
-| `--min-score <N>` | Minimum quality score required (0–100) |
+| `--min-score <N>` | Minimum local quality score required when LPM.dev Registry is a target |
 | `--allow-secrets` | Skip pre-publish secret scanning (not recommended) |
 | `--npm` / `--lpm` / `--github` / `--gitlab` | Target a specific registry |
 | `--publish-registry <URL>` | Custom npm-compatible registry (`https://` only) |

@@ -5,7 +5,7 @@ description: "Configure firewall.lpm.dev verdict checks, monitor mode, enforceme
 
 LPM Firewall checks selected public npm package versions with [firewall.lpm.dev](https://firewall.lpm.dev) before LPM CLI materializes package bytes. Metadata and tarballs still come from the normal npm registry path; the firewall request only asks for a package-version verdict.
 
-The hosted verdict service is an LPM.dev Registry Pro/Org feature. Active modes send LPM.dev Registry auth; run `lpm login` locally, or use `LPM_TOKEN` / registry-audience OIDC in CI.
+The hosted verdict service is an LPM.dev Registry Pro/Org feature. Active modes send LPM.dev Registry auth; run `lpm login` locally or provide `LPM_TOKEN` in CI.
 
 ## Quickstart
 
@@ -49,37 +49,12 @@ When a human-output materialization command has eligible packages to check, its 
 
 Firewall checks run for `lpm install`, `lpm ci`, `lpm fetch`, `lpm download`, and the source-package download step of `lpm add`. Because the verdict check calls firewall.lpm.dev, an active firewall check cannot run under `--offline`.
 
-Static-token CI can enable the firewall for one command with `LPM_NPM_FIREWALL`:
+CI can enable the firewall for one command with `LPM_NPM_FIREWALL` and a Registry token:
 
 ```yaml
 - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
-```
-
-OIDC-capable CI can avoid storing `LPM_TOKEN`. When firewall mode is active and no existing bearer or refreshable stored session is available, LPM CLI exchanges a registry-audience OIDC token for a short-lived LPM.dev Registry token before calling the verdict API. If `LPM_TOKEN` or stored LPM.dev Registry auth is already available, the OIDC exchange is skipped.
-
-```yaml title="GitHub Actions"
-permissions:
-  id-token: write
-  contents: read
-
-jobs:
-  install:
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm install -g @lpm-registry/cli
-      - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
-```
-
-```yaml title="GitLab CI"
-install:
-  id_tokens:
-    LPM_OIDC_TOKEN:
-      aud: https://lpm.dev
-  script:
-    - npm install -g @lpm-registry/cli
-    - LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
 ```
 
 For offline replay workflows, run the firewall during the online fetch step instead:
@@ -190,7 +165,7 @@ Older firewall records can omit `policy` and `authority`. Those records fall bac
 ## See also
 
 - [`lpm config`](/docs/infra/config#npm-firewall) — interactive and non-interactive setup
-- [CI/CD setup](/docs/guides/ci-cd-setup#5-npm-firewall-in-ci) — token and OIDC examples
+- [CI/CD setup](/docs/guides/ci-cd-setup#4-npm-firewall-in-ci) — token example
 - [`~/.lpm/config.toml`](/docs/reference/config-toml#npm-firewall-policy-profile) — exact config keys
 - [`lpm install`](/docs/packages/install#npm-firewall) — install-time behavior
 - [Public firewall policy](https://firewall.lpm.dev/policy)
