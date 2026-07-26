@@ -9,7 +9,7 @@ lpm publish   # alias: lpm p
 
 Packs the current directory and uploads it to a registry. By default, the target is **LPM.dev Registry** (where every package is private until you flip distribution to Pool or Marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
 
-Every target is packed and scanned for hardcoded secrets. When LPM.dev Registry is one of the targets, LPM CLI also computes the local quality score and enforces `--min-score`. Normal npm, GitHub Packages, GitLab Packages, and custom-registry publishes do not run that quality gate.
+The final artifact for every target is scanned for hardcoded secrets. When LPM.dev Registry is one of the targets, LPM CLI also computes the local quality score and enforces `--min-score`. Normal npm, GitHub Packages, GitLab Packages, and custom-registry publishes do not run that quality gate.
 
 ## Examples
 
@@ -35,10 +35,10 @@ lpm stage approve <stage-id> --otp 123456    # promote the staged version
 In order:
 
 1. **Skills validation** (LPM.dev Registry target only) — when the project ships authored files under `.lpm/skills/`, validate their format and run the skill security-pattern check.
-2. **Pack** — assemble an in-memory tarball from the package manifest. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
+2. **Pack** — assemble an in-memory tarball from the package manifest. Without `package.json > files`, the implicit set excludes project-local `.lpm` state except valid direct publisher-authored `.lpm/skills/*.md` files. Installed dependency skill sets remain excluded. An explicit `files` list controls deliberate inclusion, but cannot re-include installed dependency skills. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
 3. **Workspace protocol rewrite** — in monorepos, replace publishable `workspace:` and `catalog:` dependency specifiers inside the in-memory tarball. The source manifest stays unchanged.
 4. **Provenance-file validation** — when `--provenance-file` is used for an npm-compatible target, verify the bundle and confirm its subject and SHA-512 digest match the final target artifact.
-5. **Secret scan** — scan supported text files in the project tree, excluding `.git`, `node_modules`, and paths ignored by Git. Skip with `--allow-secrets` only when you have reviewed the package carefully.
+5. **Secret scan** — scan supported text files in the actual final artifact for every target, including target-specific rewrites. A file is not exempt because Git ignores it: if it is explicitly included in an artifact, it is scanned. Skip with `--allow-secrets` only when you have reviewed every target artifact carefully.
 6. **Quality score** (LPM.dev Registry target only) — compute the local readme/license/types/tests/maintenance signals. With `--min-score N`, abort if the local score is below the threshold.
 7. **Confirm** — ask before a real interactive publish. Skip with `-y`.
 8. **Authenticate, generate requested provenance, and upload** — resolve auth for each target, generate Sigstore provenance when requested, then upload sequentially.
