@@ -50,19 +50,27 @@ Each editor configuration file has a 16 MiB limit enforced before JSON parsing. 
   "mcpServers": {
     "lpm-registry": {
       "command": "npx",
-      "args": ["-y", "@lpm.dev/lpm-mcp-server"]
+      "args": ["-y", "@lpm-registry/mcp-server@latest"]
     }
   }
 }
 ```
 
-VS Code uses the same shape under the `servers` key instead of `mcpServers`. The server itself is the `@lpm.dev/lpm-mcp-server` npm package — `npx -y` fetches and runs it on demand, so no separate install step is required.
+VS Code uses the same shape under the `servers` key instead of `mcpServers`. The published package is `@lpm-registry/mcp-server`; LPM CLI deliberately writes its `latest` dist-tag. `npx -y` resolves and runs the current published release when the editor starts, so no separate install step is required.
+
+LPM CLI writes editor configuration atomically and preserves the existing file's permissions, container key, unrelated servers, and other settings. Re-running `setup` replaces only the named entry with the same command and arguments.
+
+## Authentication and custom registries
+
+The MCP server uses `LPM_TOKEN` first. When it is unset, the server reads the OS keychain credential created by `lpm login` for the effective registry URL. Keychain lookup is registry-scoped, so `https://lpm.dev`, local development registries, and custom registries do not accidentally share credentials.
+
+The registry defaults to `https://lpm.dev`. To use another trusted registry, set `LPM_REGISTRY_URL` in the environment inherited by the editor or in that editor's MCP server environment configuration. `lpm mcp setup` does not copy the current shell's registry override into editor configuration.
 
 After `setup`, restart the editor and ask the agent something like "find a JSON-schema validator on the LPM.dev Registry" — it'll route through the MCP tools to LPM.dev Registry search and quality endpoints rather than guessing from training data.
 
 ## Flags
 
-`lpm mcp` takes no specific flags besides the global flags. `--json` emits structured output (`success`, `server`, plus `configured` / `removed_from` / `editors` depending on the subcommand) for scripting.
+`lpm mcp` takes no specific flags besides the global flags. `--json` emits one structured document. Setup output includes `package`, `package_spec`, `version_policy`, `command`, and `args` alongside `success`, `server`, and `configured`; remove and status use `removed_from` and `editors`.
 
 ## See also
 

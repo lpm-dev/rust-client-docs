@@ -9,7 +9,7 @@ lpm tunnel <port-or-action> [domain]
 
 Exposes a local port to the public internet through the LPM.dev Registry tunnel network. Used by [`lpm dev --tunnel`](/docs/dev/dev) under the hood, and directly when you need a public URL outside the dev server (running an MCP server locally, hosting a webhook receiver, sharing a preview).
 
-Webhooks that arrive at the public URL are captured to disk. You can browse, filter, and replay them from the CLI or a browser inspector.
+Webhooks that arrive at the public URL are captured in the current project's `.lpm/inspector.db`. Terminal inspection, replay, sessions, and the browser inspector all use that same project-local history.
 
 ## Examples
 
@@ -21,7 +21,7 @@ lpm tunnel unclaim acme-api.lpm.llc       # release a claimed domain
 lpm tunnel list                           # your claimed domains
 lpm tunnel domains                        # available base domains
 lpm tunnel inspect                        # captured webhook event log
-lpm tunnel inspect -- --ui                # open browser inspector
+lpm tunnel inspect --ui                   # open browser inspector
 lpm tunnel replay 3                       # replay event #3 to localhost
 lpm tunnel log                            # browse event log
 ```
@@ -82,17 +82,21 @@ Claimed domains persist across runs — the same URL keeps working as long as yo
 
 ```bash
 lpm tunnel inspect                # show captured events (terminal table)
-lpm tunnel inspect -- --ui        # open the inspector in a browser
-lpm tunnel inspect -- --last 10
-lpm tunnel inspect -- --status 4xx
-lpm tunnel inspect -- --filter stripe
+lpm tunnel inspect --ui           # open this project's history in a browser
+lpm tunnel inspect --last 10
+lpm tunnel inspect --status 4xx
+lpm tunnel inspect --filter stripe
 lpm tunnel log                    # event log browse view
 
 lpm tunnel replay 3               # re-deliver event #3 to the local server
-lpm tunnel replay 3 -- --port 4000
+lpm tunnel replay 3 --port 4000
 ```
 
-Captured webhook bodies, headers, and statuses live under the project's tunnel log directory. Local `inspect`, `log`, and `replay` flags are forwarded after `--`. Replays use an explicit `--port`, or the single active `lpm dev` endpoint when no replay port is given. Ports must be in `1..=65535`; zero, negative, and overflowing values fail instead of wrapping.
+Captured request and response bodies, headers, statuses, and session metadata live in `.lpm/inspector.db`. The terminal `inspect` / `log` views, replay, and `inspect --ui` select the database from the current project, so one project cannot inspect or replay another project's captures. The browser view also refreshes when a running tunnel process adds records.
+
+Legacy `.lpm/webhook-log*.jsonl` and `.lpm/webhooks/*.json` files are preserved if they already exist, but current LPM CLI versions no longer read, write, merge, or delete them. `lpm tunnel log --clear` clears the active SQLite history only.
+
+Replays use an explicit `--port`, or the single active `lpm dev` endpoint when no replay port is given. Ports must be in `1..=65535`; zero, negative, and overflowing values fail instead of wrapping.
 
 ## Inspector port
 
@@ -106,7 +110,7 @@ lpm tunnel 3000 --no-inspect          # skip the inspector entirely
 
 The auto-pick keeps the inspector race-free against the dev server's own port and any other local service. An explicit non-zero `--inspect-port N` is strict — if `N` is already in use, the command fails with a clear diagnostic instead of silently rolling to another port.
 
-`lpm dev --tunnel` accepts the same `--inspect-port` and `--no-inspect` flags and surfaces the inspector URL in the startup banner. During multi-service startup the inspector reports that it is waiting for the dev server instead of showing a guessed port; after ownership verification its status includes the resolved `local_url`. The tunnel footer's `o` key opens the inspector in a browser.
+`lpm dev --tunnel` accepts the same `--inspect-port` and `--no-inspect` flags and surfaces the inspector URL in the startup banner. `--no-inspect` skips only the browser server; capture still persists to `.lpm/inspector.db`. During multi-service startup the inspector reports that it is waiting for the dev server instead of showing a guessed port; after ownership verification its status includes the resolved `local_url`. The tunnel footer's `o` key opens the inspector in a browser.
 
 ## Flags
 
@@ -119,7 +123,7 @@ The auto-pick keeps the inspector race-free against the dev server's own port an
 | `--no-inspect`       | Disable the auto-started inspector UI                                              |
 | `--inspect-port <N>` | Bind the inspector to exactly this port (default: auto-pick a free ephemeral port) |
 
-Trailing arguments are forwarded to inspect / replay / log subcommands after `--` (for example: `lpm tunnel inspect -- --last 10`, `lpm tunnel replay 3 -- --port 4000`).
+Inspect, replay, and log options can follow the action directly (for example: `lpm tunnel inspect --last 10`, `lpm tunnel replay 3 --port 4000`).
 
 Plus the [global flags](/docs/commands#global-flags).
 
