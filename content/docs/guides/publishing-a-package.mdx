@@ -63,23 +63,25 @@ Tighten `files` to whatever you actually want shipped. Anything not listed (READ
 lpm publish --dry-run
 ```
 
-Validates the package configuration and authored skills, packs each target artifact, scans the actual final artifacts for hardcoded secrets, and computes the local LPM.dev quality score. Explicitly included files are scanned even when Git ignores them. It does not verify that your account can publish this package, check whether the version is available, generate requested provenance, or upload.
+Validates the package configuration and authored skills, packs each target artifact, scans the actual final artifacts for hardcoded secrets, computes the normalized local LPM.dev quality score, resolves real LPM.dev authentication, and performs a non-mutating Registry permission/version preflight. Explicitly included files are scanned even when Git ignores them. It does not reserve or upload a version, create Registry state, generate requested provenance, or claim publication occurred.
 
 ```bash
 lpm publish --check
 ```
 
-Runs the network-free preparation path and stops before the optional LPM.dev OIDC and skills lookups. Both preview modes update only the effective manifest used in memory when authored skills require `.lpm/skills`; they do not modify `package.json`. A real publish may persist the entry.
+Runs the network-free preparation path and stops before LPM.dev OIDC, skills staleness, and publish-permission lookups. Both preview modes update only the effective manifest used in memory when authored skills require `.lpm/skills`; they do not modify `package.json`. A real publish may persist the entry.
 
 ## 5. Set a quality floor (optional)
 
 ```bash
-lpm publish --min-score 60
+lpm publish --min-score 80
 ```
 
-Aborts an LPM.dev Registry publish if its local score is below 60. The score is an aggregate, so use the failing rows from `lpm publish --check` to decide which improvements matter rather than treating the threshold as a substitute for specific project checks.
+Aborts an LPM.dev Registry publish if its normalized local score is below 80. The score is an aggregate, so use the failing rows from `lpm publish --check` to decide which improvements matter rather than treating the threshold as a substitute for specific project checks.
 
-The local score is computed from readme presence/length, license declaration, types coverage, test signals, and maintenance heuristics. Some points are reserved for server-side checks and remain pending before upload, so choose a threshold based on the score `--check` can produce today. See [`lpm quality`](/docs/packages/quality) for the completed report of an already-published LPM.dev Registry package.
+The local score is computed from readme presence/length, license declaration, types coverage, test signals, and maintenance heuristics, normalized over locally applicable weights. A package passing every local check reaches 100. Server-only checks are reported as `not_evaluated`, never fabricated as passes or counted as local failures. The Registry computes its separate final server score after upload. See [`lpm quality`](/docs/packages/quality) for the completed report of an already-published package.
+
+If `package.json` declares `bundledDependencies` or `bundleDependencies`, install first so every requested direct and transitive package is available in the verified LPM layout. Bundled content counts toward tarball limits, secret scanning, and provenance. Missing packages or unsafe symlinks stop the publish.
 
 ## 6. Publish
 
