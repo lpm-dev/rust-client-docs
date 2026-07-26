@@ -35,7 +35,7 @@ lpm stage approve <stage-id> --otp 123456    # promote the staged version
 In order:
 
 1. **Skills validation** (LPM.dev Registry target only) — when the project ships authored files under `.lpm/skills/`, validate their format and run the skill security-pattern check.
-2. **Pack** — assemble an in-memory tarball from the package manifest. Without `package.json > files`, the implicit set excludes project-local `.lpm` state except valid direct publisher-authored `.lpm/skills/*.md` files. Installed dependency skill sets remain excluded. An explicit `files` list controls deliberate inclusion, but cannot re-include installed dependency skills. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
+2. **Pack** — assemble an in-memory tarball from the package manifest. Without `package.json > files`, the implicit set excludes project-local `.lpm` state except direct publisher-authored `.lpm/skills/*.md` candidates. LPM.dev Registry publishes validate those candidates first; npm, GitHub Packages, GitLab Packages, and custom-registry-only publishes include them by path shape without skill-schema validation. Installed dependency skill sets remain excluded. An explicit `files` list controls deliberate inclusion, but cannot re-include installed dependency skills. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
 3. **Workspace protocol rewrite** — in monorepos, replace publishable `workspace:` and `catalog:` dependency specifiers inside the in-memory tarball. The source manifest stays unchanged.
 4. **Provenance-file validation** — when `--provenance-file` is used for an npm-compatible target, verify the bundle and confirm its subject and SHA-512 digest match the final target artifact.
 5. **Secret scan** — scan supported text files in the actual final artifact for every target, including target-specific rewrites. A file is not exempt because Git ignores it: if it is explicitly included in an artifact, it is scanned. Skip with `--allow-secrets` only when you have reviewed every target artifact carefully.
@@ -61,7 +61,7 @@ If quality checks fail or are missing, only those rows are shown beneath the sco
 
 `--dry-run` runs the same local preparation. For an LPM.dev Registry target, it may also attempt an available CI OIDC exchange and, when authored skills exist, fetch the previously published skills for a staleness warning. Failures from those two optional reads do not fail the dry run. It does not resolve npm/GitHub/GitLab upload credentials, check publish permission or version availability, generate `--provenance`, or upload anything. A supplied `--provenance-file` is still validated locally.
 
-Neither mode is currently guaranteed to leave the working tree untouched. When authored skills exist and `package.json > files` does not include `.lpm/skills`, publish preparation adds that entry before packing. Review the resulting manifest change and commit it when appropriate.
+Both modes leave `package.json` unchanged. When authored skills exist and `package.json > files` does not include `.lpm/skills`, preparation adds that entry only to the effective manifest used in memory. A real publish may persist the entry.
 
 ## npm Trusted Publishing
 
