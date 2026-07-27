@@ -5,7 +5,7 @@ description: "Install LPM CLI via npm, Homebrew, curl, or cargo."
 
 import { Card, Cards } from "fumadocs-ui/components/card";
 
-LPM CLI ships as a single binary, distributed through several channels. Pick whichever fits your workflow — they install the same release.
+LPM CLI ships as a single binary through npm, Homebrew, a standalone installer, and Cargo. Stable is the default release channel. Nightly snapshots are also available through npm and the standalone installer.
 
 ## npm
 
@@ -13,7 +13,15 @@ LPM CLI ships as a single binary, distributed through several channels. Pick whi
 npm install -g @lpm-registry/cli
 ```
 
-Works on every currently supported platform, including Windows. Official x64 Alpine Linux packages are upcoming and are not included in v0.67.0. The npm package is a dependency-free launcher; npm installs the matching platform-native Rust package through `optionalDependencies`, then runs a small `postinstall` verifier that checks the native binary and wires the global command to it.
+Works on every currently supported platform, including Windows and x64 Alpine Linux. The npm package is a dependency-free launcher; npm installs the matching platform-native Rust package through `optionalDependencies`, then runs a small `postinstall` verifier that checks the native binary and wires the global command to it.
+
+Install the latest nightly instead:
+
+```bash
+npm install -g @lpm-registry/cli@nightly
+```
+
+`latest` always points to stable; `nightly` points to the newest nightly snapshot.
 
 If your npm config omits optional dependencies (`--omit=optional`, `--no-optional`, or a package-manager policy), reinstall with optional dependencies enabled. If install scripts are disabled (`--ignore-scripts`), the JS launcher stays in place and resolves the native package at runtime, but first-run validation and zero-overhead Unix linking are skipped.
 
@@ -24,7 +32,7 @@ brew tap lpm-dev/lpm
 brew install lpm
 ```
 
-The formula auto-updates with every release.
+The formula auto-updates with every stable release.
 
 ## Standalone installer (macOS, Linux)
 
@@ -32,11 +40,23 @@ The formula auto-updates with every release.
 curl -fsSL https://cli.lpm.dev/install | sh
 ```
 
-Downloads the latest binary into `~/.lpm/bin` and adds it to your `PATH` (`.zshrc`, `.bashrc`, or `config.fish` depending on your shell). The upcoming x64 Alpine Linux release will make the installer distinguish glibc from musl and select the matching binary automatically. Open a new terminal — or `source` the rc file — and you're done.
+Downloads the latest binary into `~/.lpm/bin` and adds it to your `PATH` (`.zshrc`, `.bashrc`, or `config.fish` depending on your shell). On Linux x64, the installer distinguishes glibc from musl and selects the matching binary automatically. Open a new terminal — or `source` the rc file — and you're done.
 
 The installer always verifies the downloaded binary's SHA-256 digest against the release manifest. When `cosign` is available, it also authenticates that manifest against the release workflow's Sigstore identity; without `cosign`, the check proves consistency with the downloaded manifest but does not authenticate who produced it. The installer also refuses releases below its minimum security floor. Two recovery overrides exist for release incidents and broken bootstrap environments: `LPM_INSTALL_INSECURE=1` skips all integrity checks, while `LPM_INSTALL_MIN_VERSION_OVERRIDE=1` permits an older release but keeps the normal verification behavior.
 
 For Windows, use the npm installer above.
+
+Install the latest nightly:
+
+```bash
+curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=nightly sh
+```
+
+Pin an exact stable or nightly GitHub release tag with `LPM_INSTALL_VERSION`:
+
+```bash
+curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_VERSION=v0.71.0-nightly.20260728.42.d82ceea sh
+```
 
 ## From source (Cargo)
 
@@ -73,7 +93,17 @@ lpm doctor
 lpm self-update
 ```
 
-Pulls the latest release for whichever channel you installed from, pinning the exact resolved version on npm and Cargo. (Homebrew users can also run `brew upgrade lpm`; npm users can use `npm install -g @lpm-registry/cli@latest` for the channel-latest dist-tag.)
+The release channel is sticky: stable installations follow stable, while nightly installations follow nightly.
+
+```bash
+lpm self-update                    # next release on the installed channel
+lpm self-update --channel nightly  # switch stable → nightly
+lpm self-update --channel stable   # switch nightly → stable
+```
+
+An explicit nightly-to-stable switch is allowed even when the stable version is semantically lower than the installed nightly. npm users can make the same switches with `@nightly` and `@latest`.
+
+Nightly releases are currently available through npm and standalone installs. Homebrew and Cargo installs stay on stable; `lpm self-update --channel nightly` reports that the channel is unsupported for those install methods.
 
 ## Uninstalling
 

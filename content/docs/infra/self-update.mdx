@@ -1,29 +1,42 @@
 ---
 title: lpm self-update
-description: "Update LPM CLI to the latest release."
+description: "Update LPM CLI on the stable or nightly release channel."
 ---
 
 ```bash
 lpm self-update
 ```
 
-Checks the npm registry for the latest LPM CLI version, falling back to GitHub Releases when npm is unavailable. It compares that release with the running version and detects the installation method from the executable path.
+Follows the running binary's release channel, checks npm first, falls back to GitHub Releases, and updates through the detected installation method.
+
+Stable and nightly channels are sticky:
+
+```bash
+lpm self-update                    # follow the installed channel
+lpm self-update --channel nightly  # switch to nightly
+lpm self-update --channel stable   # switch to stable
+```
+
+A version such as `0.71.0-nightly.20260728.42.d82ceea` follows nightly. A version without the `nightly` prerelease identifier follows stable.
 
 ## How it works
 
-1. **Probe for the latest version.** The npm registry is the primary source — `https://registry.npmjs.org/@lpm-registry/cli/latest` — which is anonymous and unmetered, so most users never touch a rate-limited path. If npm is unreachable, falls back to GitHub Releases (`api.github.com/repos/lpm-dev/rust-client/releases/latest`). The two sources stay in lockstep because every release publishes from the same tag.
-2. **Cache the result.** Successful probes write `~/.lpm/update-check.json` with a 10-minute TTL — a second `lpm self-update` inside that window short-circuits the network call. Use `--refresh` to bypass the cache. A recent probe failure also caches a cooldown so the network isn't hammered after an outage.
-3. Compare against the current binary's version (baked in at build time).
-4. If newer, detect the install channel from the executable path:
+1. **Select the release channel.** Without `--channel`, the running version selects stable or nightly. An explicit `--channel` switches channels.
+2. **Probe for the latest version.** Stable reads npm's `latest` dist-tag and falls back to GitHub's latest stable release. Nightly reads npm's `nightly` dist-tag and falls back to the published GitHub prerelease list. A stable lookup rejects prereleases; a nightly lookup rejects stable and non-nightly prerelease versions.
+3. **Cache the result.** Successful probes write `~/.lpm/update-check.json` with separate stable and nightly state and a 10-minute TTL. Use `--refresh` to bypass the cache. Recent failures also have independent per-channel cooldowns.
+4. Compare against the current binary's version (baked in at build time). An explicit channel switch is applied even when it is a semantic downgrade, such as a newer nightly switching back to the current stable release.
+5. If an update or channel switch is needed, detect the installation method from the executable path:
 
-| Detected via | Channel |
+| Detected via | Installation method |
 | --- | --- |
 | Path under a Homebrew Cellar | `brew upgrade lpm` |
 | Path under an npm global root | `npm install -g @lpm-registry/cli@<latest>` |
-| Path under a Cargo install root | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force` |
+| Path under a Cargo install root | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force --locked` |
 | Anything else (standalone curl install) | Direct download of `lpm-<platform>` for `v<latest>` from GitHub Releases, replacing the running binary in place |
 
-5. Apply the update according to the channel. npm, Homebrew, and Cargo installations spawn their package manager in normal output mode. Standalone installations download, verify, and replace the binary in-process. With `--json`, external channels return a plan without spawning a command, while standalone updates are still verified and applied.
+6. Apply the update. npm, Homebrew, and Cargo installations spawn their package manager in normal output mode. Standalone installations download, verify, and replace the binary in-process. With `--json`, external install methods return a plan without spawning a command, while standalone updates are still verified and applied.
+
+Nightly is supported for npm and standalone installations. Homebrew and Cargo installations remain stable-only and return a clear error if you request `--channel nightly`.
 
 If the running version is already the latest, prints `Already on the latest version (<v>)` and exits cleanly.
 
@@ -41,34 +54,41 @@ GitHub API rate limit hit. Try again in 17 minutes. Set GITHUB_TOKEN or GH_TOKEN
 
 ```bash
 lpm self-update
+lpm self-update --channel nightly  # switch to, or continue on, nightly
+lpm self-update --channel stable   # switch back to stable
 lpm self-update --refresh   # ignore the 10-minute version-lookup cache
 lpm self-update --json      # structured result; external-channel updates are plan-only
 ```
 
-Successful JSON responses always include `success`, `current`, `latest`, `up_to_date`, and `cache_hit`. Additional fields depend on the outcome:
+Successful JSON responses always include `success`, `current`, `latest`, `up_to_date`, `cache_hit`, `channel`, `target_channel`, and `channel_changed`. Additional fields depend on the outcome:
 
 | Outcome | Additional fields |
 | --- | --- |
-| Already up to date | None |
+| Already up to date | No additional fields |
 | Update available through npm, Homebrew, or Cargo | `install_method`, `update_command` — the command is reported but not run |
 | Standalone update applied | `install_method`, `verified`, `attestation` — no `update_command`; `attestation` contains the verified publisher, workflow, transparency-log, manifest, and asset details |
 
-## Channel-specific update paths
+## Install-method-specific update paths
 
 If you'd rather drive the upgrade yourself:
 
-| Channel | Manual command |
+| Installation method | Manual command |
 | --- | --- |
 | Homebrew | `brew upgrade lpm` |
 | npm | `npm install -g @lpm-registry/cli@<latest>` |
-| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force` |
+| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force --locked` |
 | Standalone (macOS / Linux / Windows) | `lpm self-update` |
 
-For npm and Cargo, `lpm self-update` chooses the matching command and substitutes the exact version it resolved into `<latest>`. The npm `@latest` dist-tag and an unpinned `cargo install --git` provide channel-latest semantics if you drive those package managers yourself.
+For npm and Cargo, `lpm self-update` chooses the matching command and substitutes the exact version it resolved into `<latest>`. npm users can install the moving channel tags directly:
+
+```bash
+npm install -g @lpm-registry/cli@nightly  # newest nightly
+npm install -g @lpm-registry/cli@latest   # newest stable
+```
 
 For standalone installations, use `lpm self-update`. Its in-place updater verifies the release manifest's Sigstore identity and replay window, then verifies the selected asset against the authenticated manifest before replacing the running binary. A raw `curl` or `Invoke-WebRequest` directly over the executable does none of those checks and is not an equivalent update procedure; reserve that approach for explicitly insecure emergency recovery where you independently verify the downloaded artifact.
 
-The standalone installer at `https://cli.lpm.dev/install` is the get-started helper for new users — it always resolves `releases/latest` itself and writes to `~/.lpm/bin/`. Use it for first installs, not for in-place upgrades.
+The standalone installer at `https://cli.lpm.dev/install` is the get-started helper for new users. It installs stable by default, accepts `LPM_INSTALL_CHANNEL=nightly`, and writes to `~/.lpm/bin/`. Use it for first installs, not for in-place upgrades.
 
 ## CI
 
@@ -80,6 +100,7 @@ For a smoke test that the registry is reachable, use [`lpm health`](/docs/infra/
 
 | Flag | Description |
 | --- | --- |
+| `--channel <stable\|nightly>` | Switch to a release channel. When omitted, follow the running binary's channel. |
 | `--refresh` | Bypass successful-result and failure-backoff caches, then perform the normal npm-first lookup with GitHub fallback. Only affects version discovery. |
 | `--json` | Emit structured JSON. Field shape depends on whether LPM CLI is current, reports an external-channel plan, or applies a verified standalone update. |
 
