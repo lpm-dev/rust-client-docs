@@ -9,6 +9,8 @@ The file is **optional**. Without it, `lpm add` is a plain source copy of every 
 
 LPM CLI reads `lpm.config.json` with a 16 MiB limit enforced before JSON parsing. A missing file retains the plain-copy path; an oversized file fails instead of being treated as absent, so it cannot silently change file selection or dependency injection. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
 
+When publishing to the LPM.dev Registry, the submitted canonical JSON representation has a separate 128 KiB ceiling. The smaller Registry limit protects the hosted publish and downstream metadata surfaces; the 16 MiB local ceiling protects local file reads. Other registries remain server-authoritative and may apply different limits.
+
 This page is the schema-by-field reference. For the `lpm add` consumer flow, see [`lpm add`](/docs/packages/add).
 
 ## Editor autocomplete
@@ -21,6 +23,19 @@ LPM CLI publishes a JSON Schema for `lpm.config.json` at [`https://cli.lpm.dev/s
   "ecosystem": "js"
 }
 ```
+
+## `type`
+
+`type` is optional and controls LPM.dev Registry classification. When omitted, the Registry infers the classification from the published contents. The only supported public values are:
+
+| Value | Meaning |
+|---|---|
+| `"package"` | Classify the package as a dependency package in LPM.dev Registry |
+| `"source"` | Classify the package as a source package in LPM.dev Registry |
+
+The CLI and Registry reject undocumented values—including `mcp-server`, `vscode-extension`, `cursor-rules`, `github-action`, and `xcframework`—as well as unknown top-level fields. New types must first become an explicit public contract; they are not accepted speculatively for forward compatibility.
+
+Classification does not switch off this file's install behavior. The presence of a valid `lpm.config.json` always activates LPM CLI's configured `lpm add` path, including when `type` is `"package"`.
 
 Or emit the schema yourself:
 
@@ -58,6 +73,7 @@ Use required fields when including every option would create conflicts. Make lpm
 ```json title="lpm.config.json"
 {
   "$schema":      "https://cli.lpm.dev/schemas/lpm.config.json",
+  "type":           "source",
   "ecosystem":    "js",
   "importAlias":  "@/components",
   "configSchema": { "<field>": { /* ConfigField */ } },

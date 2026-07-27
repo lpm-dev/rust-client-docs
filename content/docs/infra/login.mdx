@@ -9,6 +9,7 @@ Manage registry identity for the LPM.dev Registry, npm, GitHub Packages, GitLab 
 lpm login
 lpm whoami
 lpm logout
+lpm logout --revoke
 ```
 
 ## Examples
@@ -66,15 +67,20 @@ lpm logout --github
 lpm logout --gitlab
 lpm logout --logout-registry https://npm.my-co.com
 lpm logout --all
+lpm logout --all --revoke
 ```
 
 Passing one of `--npm`, `--github`, `--gitlab`, or `--logout-registry <URL>` clears only that target. Your LPM.dev Registry session stays signed in. Use `--all` to clear every stored registry token.
 
 For GitHub and GitLab, logout clears only LPM CLI-stored fallback tokens. `gh` and `glab` sessions remain managed by those tools.
 
-When the current LPM.dev Registry login has a refresh-backed CLI session, `lpm logout` also makes a best-effort request to revoke its browser vault pairings. A pairing cleanup failure does not prevent local logout.
+Plain `lpm logout` is local-only and makes no network requests. Use `lpm logout --revoke` to revoke browser pairings first, then revoke the authenticated CLI session, its refresh capability, and linked access tokens. The server derives the session from the bearer; the caller cannot name another session.
 
-Local logout does not invalidate the server-side CLI session. To revoke that session and its refresh capability, open [Security settings](https://lpm.dev/dashboard/settings/security) and remove the device from the active sessions list.
+`--revoke` applies to the LPM.dev Registry session, so targeted combinations such as `--revoke --npm` are rejected before any credentials are changed. Use `--all --revoke` to attempt LPM.dev remote revocation and clear every local registry credential. All local targets are still cleared if that remote attempt fails.
+
+Every selected local credential store is attempted even if a remote request or another local deletion fails. The command exits non-zero whenever any selected credential could not be removed; human output reports whether local cleanup completed, and JSON reports `success: false` with separate `pairings_revoked`, `server_revoked`, and `local_cleared` fields plus bounded errors. A legacy token cannot revoke a CLI session but is still cleared locally. Repeating logout with neither stored state nor `LPM_TOKEN` succeeds without network access.
+
+LPM CLI cannot unset environment variables in its parent shell. If a non-empty `LPM_TOKEN` remains active alongside a stored refresh-backed session, `lpm logout --revoke` uses the stored session—not the environment token—to revoke browser pairings and the server-side session before clearing it locally. The command still exits non-zero, reports `success: false` and `local_cleared: false`, and tells you to unset `LPM_TOKEN` in that shell or CI environment.
 
 | Flag | Effect |
 | --- | --- |
@@ -83,6 +89,7 @@ Local logout does not invalidate the server-side CLI session. To revoke that ses
 | `--gitlab` | Clear the GitLab Packages fallback token only |
 | `--logout-registry <URL>` | Clear a custom registry token only |
 | `--all` | Clear the LPM.dev Registry, npm, GitHub, GitLab, and every stored custom registry token |
+| `--revoke` | Also revoke browser pairings and the current refresh-backed LPM.dev CLI session; combine only with `--all` or no target |
 
 ## `lpm whoami`
 
