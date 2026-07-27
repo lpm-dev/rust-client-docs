@@ -22,6 +22,7 @@ Never use `lpm add` to add a dependency. Details: [install](https://cli.lpm.dev/
 
 ```bash
 lpm install              # install all deps from package.json
+lpm install --recursive  # widen a member install to its owning workspace
 lpm install zod          # add a dependency (saves "^x.y.z")
 lpm uninstall zod        # remove a dependency
 lpm run build            # run a package.json script
@@ -59,6 +60,7 @@ lpm dev                  # start the orchestrated dev environment
 - **Dependency lifecycle scripts are blocked by default** (supply-chain protection). After an install reports blocked scripts, run `lpm approve-scripts` to review and approve, then `lpm rebuild` to execute them sandboxed. Do not switch package managers to "fix" this.
 - **`lpm rebuild` runs lifecycle scripts; there is no `lpm build` command.**
 - **Saved ranges:** `lpm install zod` saves `"^x.y.z"`. Explicit input (`zod@4.3.6`, `zod@^4.3.0`) is preserved verbatim; prereleases save exact.
+- **Workspace roots recurse by default:** bare `lpm install` installs members in dependency order and the root last. Inside a member it stays local unless `--recursive` is passed. Use `--no-recursive` for a root-only refresh.
 - **Typosquat guard:** new direct names that look like popular packages fail in CI/non-TTY/`--json`/`--yes` runs with `error_code: "typosquat_suspected"`. Interactive prompts default to cancel; choose the suggested package or commit a `lpm.toml > policy.typosquat.allow` entry with a reason only when that package name is intentional. Machine-wide mode is `lpm config typosquat --set default|on|off`; `default` removes the override, `on` ignores the diagnostic env toggle, and `off` is security-approval-gated. Prefer allow-listing legitimate names over turning the guard off globally.
 - **Lockfiles are committed:** always commit `lpm.lock` (TOML, diffable). Commit `lpm.lockb` when LPM writes it; do not synthesize it for TOML-only lockfiles.
 - **Monorepos auto-use isolated (pnpm-style) linking;** single-package projects use hoisted (npm-style). Override with `--linker=isolated|hoisted`.

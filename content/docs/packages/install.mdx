@@ -7,13 +7,15 @@ description: "Install dependencies from package.json, or add new ones."
 lpm install [packages...]   # alias: lpm i
 ```
 
-With no arguments, installs every dependency declared in `package.json` against the lockfile. With one or more package names, resolves and adds them to `package.json` and installs them.
+With no arguments, installs every dependency declared in `package.json` against the lockfile. At a workspace root, the same no-argument command installs every member and then the root. With one or more package names, resolves and adds them to `package.json` and installs them.
 
 Before a new direct dependency enters the project, LPM CLI checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM CLI defaults to cancel and only switches to the suggested package or writes a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy) when you choose that action. Existing lockfile replays are not blocked by this check.
 
 ## Project discovery
 
 `lpm install` (and `lpm i`) discovers the project root the same way npm, pnpm, yarn, and bun do: it walks up from the current directory looking for the nearest ancestor `package.json` and treats that directory as the project root. All install side-effects — manifest edits, `lpm.lock`, `lpm.lockb` when representable, `node_modules/` — land at the discovered root, not in the subdirectory you happened to run the command from.
+
+In a workspace, bare `lpm install` from the workspace root recurses by default. Running it from a member remains local to that member. Use `lpm install --recursive` from a member when you want to widen the operation to its owning workspace.
 
 If `lpm i <pkg>` runs in a directory with no `package.json` anywhere up the tree, LPM CLI auto-creates a minimal `{"dependencies": {}}` manifest in the current directory before installing — matching `npm i <pkg>`'s fresh-dir behavior. Bare `lpm install` (no package args) still errors when nothing can be found, since it has nothing to install against.
 
@@ -35,6 +37,8 @@ lpm install --frozen-lockfile # fail if package.json and lpm.lock differ
 lpm fetch                     # warm the store from lpm.lock, no node_modules
 lpm tidy                      # find unused deps and undeclared imports
 lpm install --force           # full re-install, bypass every fast path
+lpm install --recursive       # install the owning workspace explicitly
+lpm install --no-recursive    # install only the root project
 lpm install --strict-peer-dependencies # fail on peer warnings/conflicts
 lpm install --no-skills        # skip @lpm.dev package skills for this run
 lpm install --verbose         # append per-phase timings + lockfile size
@@ -446,16 +450,39 @@ Use [`lpm security`](/docs/infra/security) to create the unlock explicitly or to
 
 ## Workspaces
 
-In a monorepo, target a specific member or the workspace root:
+At a workspace root, no-argument install is recursive by default:
+
+```bash
+lpm install                   # every member in dependency order, root last
+lpm install --no-recursive    # root project only
+```
+
+LPM CLI discovers the workspace once and runs each selected project through the normal install and security pipeline. Member project lifecycles run in dependency order; the root lifecycle runs last. A failure stops later targets. Cyclic graphs fall back to stable path order.
+
+`lpm install --recursive` and `lpm -r install` request the same behavior explicitly. From inside a member, the explicit form widens to the owning workspace. `--recursive` is a manifest refresh operation and cannot be combined with package specs.
+
+Filter a recursive refresh when only part of the workspace needs work:
+
+```bash
+lpm install --filter web              # web plus all workspace dependencies
+lpm install --filter-prod web         # production dependency closure only
+lpm install --filter web --fail-if-no-match
+```
+
+A filtered refresh omits unrelated members and the workspace root. Required workspace dependencies are included automatically, even when the filter only names the consuming member.
+
+When adding a package, target a specific member or the workspace root:
 
 ```bash
 lpm install react --filter web    # add react to packages/web/
 lpm install -w typescript -D      # add to the root package.json
-lpm install --filter './apps/*'   # any glob the workspace filter accepts
-lpm install react --filter-prod ...web # prod dependency closure only
+lpm install react --filter './apps/*' # any glob the workspace filter accepts
+lpm install react --filter-prod ...web # production closure only
 ```
 
 `--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM CLI prompts for confirmation; pass `-y` to skip the prompt.
+
+With `--json`, a recursive install emits one aggregate envelope with `recursive: true`, `workspace_root`, a `targets` array, and success counts under `summary`. Per-target install envelopes are suppressed, so stdout remains one JSON document.
 
 Workspace selection is ecosystem-aware. An `@lpm.dev/*` version whose Registry metadata says `ecosystem: "swift"` is routed through the SE-0292 installer for each selected member that owns a direct `Package.swift`; it is never staged into `package.json`. Root (`-w`), member-cwd, and filtered installs mutate and resolve from that same selected Swift package directory. Mixed requests keep JavaScript packages on the existing `package.json` path. One eligible Swift target is automatic; multiple targets prompt unless `-y` selects the first, and zero eligible targets fail without mutating an unrelated manifest.
 
@@ -670,6 +697,8 @@ The workspace-root preflight also runs for [`lpm rebuild`](/docs/packages/rebuil
 
 | Flag | Effect |
 | --- | --- |
+| `-r`, `--recursive` | Install every package in the owning workspace; dependencies first, root last |
+| `--no-recursive` | Install only the current project, even at a workspace root |
 | `-D`, `--save-dev` | Save under `devDependencies` |
 | `-g`, `--global` | Install into `~/.lpm/global/` instead of the project (exposes bins on PATH) |
 | `--omit <dev\|optional>` | Omit dependency types from `node_modules` (comma-separated or repeatable) |
