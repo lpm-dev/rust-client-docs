@@ -25,6 +25,34 @@ Both globs match recursively under the project root. Each match is a workspace *
 
 Root and member `package.json` files and `pnpm-workspace.yaml` each have a 16 MiB limit enforced before parsing. A missing `pnpm-workspace.yaml` keeps the fallback behavior above; an oversized file fails before workspace discovery proceeds or the resolver contacts a registry. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
 
+## Installing the workspace
+
+Run no-argument install from the workspace root:
+
+```bash
+lpm install
+```
+
+LPM CLI installs members in dependency order and installs the root last. Workspace discovery is shared across the operation instead of repeated in one process per member. Each target still gets its own lockfiles, `node_modules`, lifecycle, engine checks, and security-policy evaluation. A member failure stops later targets.
+
+Bare install from inside a member stays member-local. Widen it explicitly when needed:
+
+```bash
+lpm install --recursive
+lpm -r install
+```
+
+Use `--no-recursive` at the workspace root for a root-only refresh. `--recursive` only refreshes existing manifests; to add a dependency, keep using `lpm install <pkg> --filter <member>` or `-w` for the root.
+
+Filters scope recursive refreshes and automatically include the selected members' required workspace dependency closure:
+
+```bash
+lpm install --filter web
+lpm install --filter-prod web
+```
+
+The production form omits `devDependencies` edges. Filtered refreshes do not install the workspace root or unrelated members.
+
 ## Filter grammar
 
 The filter expression — used by `--filter` and `--filter-prod` on every workspace-aware command — has its own small DSL. Filters compose: `--filter web --filter api` unions the two sets.
