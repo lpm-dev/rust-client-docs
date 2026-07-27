@@ -7,18 +7,20 @@ description: "Manage ephemeral caches and prune the global package store."
 lpm cache <action>
 ```
 
-`lpm cache` covers two adjacent concerns: ephemeral caches under `~/.lpm/cache/` (registry metadata, task results, dlx tarballs) and the global package store at `~/.lpm/store/`.
+`lpm cache` covers two adjacent concerns: ephemeral caches under `~/.lpm/cache/` (registry metadata, task results, dlx installs, and the verified MCP runtime) and the global package store at `~/.lpm/store/`.
 
 ## Examples
 
 ```bash
 lpm cache path                          # print ~/.lpm/cache/
 lpm cache path metadata                 # print ~/.lpm/cache/metadata/
+lpm cache path mcp                      # print ~/.lpm/cache/mcp/
 
-lpm cache clean                         # wipe metadata + tasks + dlx
+lpm cache clean                         # wipe metadata + tasks + dlx + mcp
 lpm cache clean metadata                # only wipe registry metadata
 lpm cache clean tasks                   # only wipe task-runner cache
-lpm cache clean dlx                     # only wipe dlx tarball cache
+lpm cache clean dlx                     # only wipe dlx install cache
+lpm cache clean mcp                     # only wipe the verified MCP runtime
 
 lpm cache status                        # local task cache usage + remote status
 lpm cache status --json                 # structured status for CI
@@ -38,7 +40,9 @@ lpm cache prune --project ./my-app      # manual repair: walk one project only
 | `status` | Report local task-cache usage and hosted remote-cache status for the current project |
 | `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) plus a sweep of deferred global-install tombstones |
 
-`clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`); without one, all three are wiped. `clean` never touches the global package store — for that, use `prune`.
+`clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`, `mcp`); without one, all four are wiped. `clean` never touches the global package store — for that, use `prune`.
+
+The MCP runtime is locked while an editor is using it. A blanket `lpm cache clean` skips that one category and reports it as in use while still cleaning the others. `lpm cache clean mcp` fails with an actionable error instead of deleting files underneath a running server.
 
 ## Status
 
@@ -132,7 +136,7 @@ lpm cache prune --apply --json    # post-apply report (same shape, mutations rec
 | `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Reachability-degraded flags — when either is true, link/object orphan arrays are empty because that walk was skipped; compatibility-island, native-build-artifact, lock, and tombstone cleanup still operate independently |
 | `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |
 
-`lpm cache clean` emits a parallel `{success, cleaned[], total_bytes_freed, total_freed}` envelope per subcategory.
+`lpm cache clean` emits a parallel `{success, cleaned[], skipped[], total_bytes_freed, total_freed}` envelope per subcategory. A busy MCP runtime appears in `skipped` with `reason: "in use"`.
 
 ## See also
 
