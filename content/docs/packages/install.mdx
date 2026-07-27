@@ -82,6 +82,22 @@ lpm install -y @lpm.dev/owner.swift-pkg
 
 LPM CLI performs the required [Swift Registry setup](/docs/packages/swift-registry), updates `Package.swift`, and runs `swift package resolve`. If the package has one eligible non-test target, LPM CLI selects it automatically. With multiple eligible targets, a normal install opens the target selector; `-y` / `--yes` skips it and selects the first eligible target, matching the selector's default.
 
+Swift manifest changes are transactional. If resolution fails—or a later JavaScript package in the same mixed install fails—LPM CLI restores the selected package's original `Package.swift` and `Package.resolved`; a `Package.resolved` created during the failed run is removed.
+
+For a fresh Swift dependency, `--json` includes the automatic setup disposition:
+
+```json
+{
+  "registry_setup": {
+    "scope": "repaired",
+    "signing_certificate": "retained",
+    "signing_trust": "retained"
+  }
+}
+```
+
+Each value is `"repaired"` when LPM CLI changed that part of the setup or `"retained"` when the existing state already matched. `registry_setup` is omitted when the dependency already existed and no automatic setup ran.
+
 Use [`lpm swift-registry --force`](/docs/packages/swift-registry#--force) only to repair stale or corrupt Registry configuration or refresh the signing certificate. It is not a prerequisite for the normal install flow. `lpm add` remains the legacy Swift source-copy path.
 
 ## How it works
@@ -440,6 +456,8 @@ lpm install react --filter-prod ...web # prod dependency closure only
 ```
 
 `--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When a filtered install would mutate more than one member's `package.json`, LPM CLI prompts for confirmation; pass `-y` to skip the prompt.
+
+Workspace selection is ecosystem-aware. An `@lpm.dev/*` version whose Registry metadata says `ecosystem: "swift"` is routed through the SE-0292 installer for each selected member that owns a direct `Package.swift`; it is never staged into `package.json`. Root (`-w`), member-cwd, and filtered installs mutate and resolve from that same selected Swift package directory. Mixed requests keep JavaScript packages on the existing `package.json` path. One eligible Swift target is automatic; multiple targets prompt unless `-y` selects the first, and zero eligible targets fail without mutating an unrelated manifest.
 
 See [Workspaces](/docs/packages/workspaces) for filter grammar.
 
