@@ -69,6 +69,26 @@ lpm install --offline --strict-integrity
 
 `--strict-integrity` tightens the contract further: tarball-URL deps must declare their SRI inline. Trust-on-first-use is disabled.
 
+### Unavailable pinned artifacts
+
+An online lockfile replay keeps the exact package version, source, and integrity pinned in `lpm.lock`. If a cached tarball URL returns 404, LPM CLI may refresh registry metadata once and retry a moved URL only when the package, version, source, and integrity contract stays unchanged. It never uses that recovery to select a newer version or another registry.
+
+If the pinned artifact remains unavailable, install fails and preserves the existing bytes of both `lpm.lock` and `lpm.lockb`. This applies to ordinary mutable replay, explicit `--frozen-lockfile`, plain `lpm install` automatically frozen by CI, and `lpm ci`. A mutable replay does not silently replace the pin.
+
+For a direct dependency, run the reported command using its `package.json` key, then commit the result:
+
+```bash
+lpm upgrade <manifest-key>
+git add lpm.lock
+git commit
+```
+
+Aliases use their local manifest key. For example, `"local": "npm:canonical@1.0.0"` is upgraded with `lpm upgrade local`. An unavailable transitive package has no machine-actionable upgrade command because its canonical name is not a direct `package.json` entry. Restore the artifact, or update the owning direct dependency or an override in a mutable development environment.
+
+Also stage `lpm.lockb` when LPM CLI writes the binary companion.
+
+The failure reports the pinned package and version with a sanitized registry/source identity. Credentials and secret-bearing URL components are omitted. Authentication, rate-limit, timeout, transport, and registry 5xx failures remain distinct errors rather than being collapsed into an artifact-unavailable error.
+
 ### Tier 4: Resolve-and-install (cold)
 
 If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, writes a fresh lockfile.
@@ -103,6 +123,8 @@ This is what makes `git diff lpm.lock` actionable. A new dep adds entries. A ver
 ## Safe atomic rewrites
 
 When LPM CLI replaces `lpm.lock` or `lpm.lockb`, it writes through an exclusively created, collision-resistant file in the same directory and then atomically replaces the destination. An attacker-preplanted temporary symlink, hardlink, junction, or reparse entry is not followed, so an ordinary lockfile update cannot use a predictable staging name to overwrite its external target.
+
+Metadata and artifact fetch failures happen before lockfile replacement and leave any existing `lpm.lock` and `lpm.lockb` byte-for-byte unchanged.
 
 This guarantee covers LPM-managed atomic rewrites and their temporary leaf entries. It does not confine an attacker-controlled parent directory, apply to every filesystem write made by LPM CLI or package scripts, or by itself promise that a completed write survives sudden power loss.
 
