@@ -73,13 +73,17 @@ lpm install --offline --strict-integrity
 
 An online lockfile replay keeps the exact package version, source, and integrity pinned in `lpm.lock`. If a cached tarball URL returns 404, LPM CLI may refresh registry metadata once and retry a moved URL only when the package, version, source, and integrity contract stays unchanged. It never uses that recovery to select a newer version or another registry.
 
-If the pinned artifact remains unavailable, install fails and preserves the existing bytes of both `lpm.lock` and `lpm.lockb`. This applies to ordinary mutable replay, explicit `--frozen-lockfile`, and `lpm ci`. A mutable replay does not silently replace the pin; select a replacement explicitly, then commit the result:
+If the pinned artifact remains unavailable, install fails and preserves the existing bytes of both `lpm.lock` and `lpm.lockb`. This applies to ordinary mutable replay, explicit `--frozen-lockfile`, plain `lpm install` automatically frozen by CI, and `lpm ci`. A mutable replay does not silently replace the pin.
+
+For a direct dependency, run the reported command using its `package.json` key, then commit the result:
 
 ```bash
-lpm upgrade <package>
+lpm upgrade <manifest-key>
 git add lpm.lock
 git commit
 ```
+
+Aliases use their local manifest key. For example, `"local": "npm:canonical@1.0.0"` is upgraded with `lpm upgrade local`. An unavailable transitive package has no machine-actionable upgrade command because its canonical name is not a direct `package.json` entry. Restore the artifact, or update the owning direct dependency or an override in a mutable development environment.
 
 Also stage `lpm.lockb` when LPM CLI writes the binary companion.
 
