@@ -23,6 +23,25 @@ afterEach(() => {
 });
 
 describe("SiteHeader mobile navigation", () => {
+  it("does not use the collision-prone global hidden class for desktop items", () => {
+    render(<SiteHeader />);
+
+    const desktopNavigation = screen.getByRole("navigation");
+    const githubLink = screen.getByRole("link", {
+      name: "Open lpm-dev/rust-client on GitHub",
+    });
+
+    expect(Array.from(desktopNavigation.classList)).not.toContain("hidden");
+    expect(desktopNavigation.classList.contains("flex")).toBe(true);
+    expect(desktopNavigation.classList.contains("max-[890px]:hidden")).toBe(
+      true,
+    );
+
+    expect(Array.from(githubLink.classList)).not.toContain("hidden");
+    expect(githubLink.classList.contains("inline-flex")).toBe(true);
+    expect(githubLink.classList.contains("max-[890px]:hidden")).toBe(true);
+  });
+
   it("restores trigger focus when Escape closes the disclosure", async () => {
     const user = userEvent.setup();
     render(<SiteHeader />);
