@@ -112,7 +112,7 @@ export function SiteHeader() {
           </span>
         </Link>
 
-        <nav className="hidden min-[890px]:flex items-center gap-1 flex-1">
+        <nav className="flex max-[890px]:hidden items-center gap-1 flex-1">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.href}
@@ -159,7 +159,7 @@ export function SiteHeader() {
               target="_blank"
               rel="noreferrer"
               aria-label="Open lpm-dev/rust-client on GitHub"
-              className="hidden min-[890px]:inline-flex items-center justify-center size-9 rounded-md text-fd-muted-foreground hover:text-fd-foreground hover:bg-fd-muted/50 transition-colors"
+              className="inline-flex max-[890px]:hidden items-center justify-center size-9 rounded-md text-fd-muted-foreground hover:text-fd-foreground hover:bg-fd-muted/50 transition-colors"
             >
               <GitHubMark className="size-4" />
             </a>
