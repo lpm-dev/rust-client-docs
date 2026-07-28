@@ -67,6 +67,13 @@ const HTML_RESPONSE_HEADERS = [
     value: HTML_CACHE_CONTROL,
   },
 ];
+const INSTALLER_URL =
+  "https://raw.githubusercontent.com/lpm-dev/rust-client/main/install.sh";
+const INSTALLER_REDIRECTS = ["/install", "/install.sh"].map((source) => ({
+  source,
+  destination: INSTALLER_URL,
+  permanent: false,
+}));
 const LEGACY_DOCS_REDIRECTS = [
   ["/docs/configuration/config-toml", "/docs/reference/config-toml"],
   ["/docs/infra/graph", "/docs/packages/graph"],
@@ -87,14 +94,17 @@ const config = {
     LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
   },
   async redirects() {
-    return LEGACY_DOCS_REDIRECTS.flatMap(([source, destination]) => [
-      { source, destination, permanent: true },
-      {
-        source: `${source}.mdx`,
-        destination: `${destination}.mdx`,
-        permanent: true,
-      },
-    ]);
+    return [
+      ...INSTALLER_REDIRECTS,
+      ...LEGACY_DOCS_REDIRECTS.flatMap(([source, destination]) => [
+        { source, destination, permanent: true },
+        {
+          source: `${source}.mdx`,
+          destination: `${destination}.mdx`,
+          permanent: true,
+        },
+      ]),
+    ];
   },
   async headers() {
     return [
