@@ -73,6 +73,8 @@ LPM_TIMING_DETAIL=trace lpm install --json
 
 `LPM_TIMING_DETAIL=1` adds `timing.detail` with metadata request attribution by purpose, resolver wall/metadata/scheduler/CPU/policy counters, fetch-stage plan/cache/download attribution, cache-classification branch timing, v2 reusable-object validation counters, registry-signature/provenance timing, v2 link-task timing, link finalize substages, and tail writes such as lockfile and build-state persistence. `LPM_TIMING_DETAIL=trace` also adds `timing.detail.trace.slow_packages` buckets for the slowest tarball HTTP, extract, security, finalize, v2 link task, and provenance verification work, plus per-purpose duplicate metadata request rankings.
 
+Resolver concurrency appears under `timing.resolve.dispatcher` and, in detail mode, `timing.detail.resolve.scheduler.dispatcher`. `configured_fanout` is the metadata-fetch permit limit, `active_fetch_high_water` is the peak number of direct jobs holding permits, and `pending_high_water` is the peak number of canonical requests pending in the resolver dispatcher, including direct jobs waiting for permits and Worker root or tail batch candidates. `semaphore_wait_count` and `semaphore_wait_ms` show direct-route permit contention. The compatibility field `inflight_high_water` has the same value as `active_fetch_high_water`.
+
 `LPM_TIMING_DETAIL=1` and `LPM_TIMING_DETAIL=trace` imply `timing`, so they work without also passing `--timing`. Use detail mode for local performance investigations and cold/warm install comparisons, not as a stable production API.
 
 ## Swift packages
@@ -144,7 +146,7 @@ The combined `lpm config lpm-dev` editor manages this setting alongside automati
 
 `--no-security-summary` skips the post-install cache aggregation and human report. It does not change the install-time source-analysis setting or remove existing `.lpm-security.json` cache files.
 
-With `--json --timing`, source analysis appears under `timing.fetch_breakdown.source_scan` as `sum_ns` and `max_ns`. On the fused cold-install path this work happens while extraction is running, so it is already included in cold install wall time and `extract_ms`; do not add it to the total again.
+With `--json --timing`, source analysis from the authoritative fetch path appears under `timing.fetch_breakdown.source_scan` as `sum_ns` and `max_ns`. Fused overlap-prefetch tasks report the same counters under `timing.detail.fetch.overlap.breakdown.source_scan`, so use detail mode when measuring the complete cold-install scan attribution. Both paths scan while extraction is running: the work is already included in cold install wall time and `extract_ms`, and the counters must not be added to the total again.
 
 ## Package-published LPM.dev skills
 
@@ -503,6 +505,8 @@ lpm install --filter web --fail-if-no-match
 ```
 
 A filtered refresh omits unrelated members and the workspace root. Required workspace dependencies are included automatically, even when the filter only names the consuming member.
+
+`workspace:` references resolve by declared package name against both discovered members and a named workspace root. A selected project's own `devDependencies` are installed normally unless production filtering omits them. When another workspace package is consumed as a dependency, its `dependencies`, `peerDependencies`, and `optionalDependencies` can extend the local dependency closure; its `devDependencies` do not become transitives.
 
 When adding a package, target a specific member or the workspace root:
 
