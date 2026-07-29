@@ -17,6 +17,7 @@ LPM CLI treats some security-lowering requests as guarded operations. Examples:
 - `package.json > lpm.minimumReleaseAgePolicy = "direct"` on a machine approved for strict cooldown scope
 - `lpm.toml > [sandbox] mode = "none"`
 - `~/.lpm/config.toml > [firewall] mode = "off"` on a machine approved for monitor or enforce mode
+- `~/.lpm/config.toml > install-time-source-analysis = false`
 
 `lpm security` is the command surface for two related jobs:
 
@@ -104,7 +105,7 @@ Use `--package <name>` only with a concrete scope when the weakening is package-
 ### Bundle selectors
 
 - `all` expands to every concrete unlock scope.
-- `default` expands to the common install/runtime weakeners: `cooldown-bypass`, `cooldown-window`, `provenance-ignore-drift`, `provenance-unverified`, `scripts-triage`, `scripts-allow`, `sandbox-default`, `sandbox-none`, `sandbox-allow-degraded`, `typosquat-disable`, and `firewall-disable`.
+- `default` expands to the common install/runtime weakeners: `cooldown-bypass`, `cooldown-window`, `provenance-ignore-drift`, `provenance-unverified`, `scripts-triage`, `scripts-allow`, `sandbox-default`, `sandbox-none`, `sandbox-allow-degraded`, `typosquat-disable`, `firewall-disable`, and `source-analysis-disable`.
 - `default` intentionally excludes `trust-bulk-approve`, `trust-scope-widen`, `capability-widen`, and `floor-edit`.
 
 ### Common scopes
@@ -127,6 +128,7 @@ Copy the exact scope from the error's `suggested_command` whenever possible. The
 | `provenance-unverified`   | `LPM_PROVENANCE_ENFORCE=warn`, `LPM_PROVENANCE_ENFORCE=off`, raw or persisted `[sigstore].verify = "warn"` or `"off"`, or `--unverified-provenance*` |
 | `typosquat-disable`       | raw or persisted `typosquat-guard = "off"` when the approved floor keeps suspicious-name analysis enabled                                            |
 | `firewall-disable`        | raw or persisted `[firewall].mode = "off"` or `"monitor"` when the approved floor requires stronger firewall.lpm.dev verdict checks                 |
+| `source-analysis-disable` | raw or persisted `install-time-source-analysis = false` when the approved floor requires install-time source analysis                               |
 | `floor-edit`              | guarded edits to the signed approved security floor; usually copied from a suggested command                                                        |
 
 ## `lock`
@@ -167,7 +169,7 @@ Human output includes:
 
 - the selected target (`project` or `global`)
 - the selected root for that target: `project` in project mode, `global-root` in global mode
-- the effective values for script policy, release-age floor, release-age policy, sandbox mode, sandbox degraded mode, Sigstore verification, typosquat guard, and npm firewall mode
+- the effective values for script policy, release-age floor, release-age policy, sandbox mode, sandbox degraded mode, Sigstore verification, typosquat guard, npm firewall mode, and install-time source analysis
 - whether each value came from the built-in default, the signed approved-posture store, or a managed policy
 - the path to the signed approved-posture store
 - the active managed policy file, if one is present
@@ -190,7 +192,8 @@ With `--json`, the envelope looks like:
       "sandbox_allow_degraded": false,
       "sigstore_verify": "deny",
       "typosquat_guard": "default",
-      "firewall_mode": "off"
+      "firewall_mode": "off",
+      "install_time_source_analysis": true
     },
     "floor_sources": {
       "script_policy": "approved-store",
@@ -200,7 +203,8 @@ With `--json`, the envelope looks like:
       "sandbox_allow_degraded": "builtin-default",
       "sigstore_verify": "approved-store",
       "typosquat_guard": "builtin-default",
-      "firewall_mode": "builtin-default"
+      "firewall_mode": "builtin-default",
+      "install_time_source_analysis": "builtin-default"
     },
     "approved_posture_path": "/Users/alice/.lpm/security/approved-posture.json",
     "approved_posture_source": "approved-store",
@@ -354,6 +358,7 @@ lpm config release-age-policy --set direct
 lpm config sandbox --set none
 lpm config sigstore --set off
 lpm config firewall --set off
+lpm config source-analysis --set false
 ```
 
 LPM CLI asks for interactive confirmation in a TTY before persisting the weaker machine posture.
@@ -385,6 +390,7 @@ script-policy = "deny"
 minimum-release-age-secs = 86400
 release-age-policy = "strict"
 typosquat-guard = "on"
+install-time-source-analysis = true
 
 [policy]
 name = "corp-default"

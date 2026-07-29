@@ -118,13 +118,33 @@ Source identity is preserved during linking. A registry package, tarball, `file:
 
 Package source is analyzed locally while its extracted bytes enter the store. The scanner records behavioral, supply-chain, and manifest signals in `.lpm-security.json` next to the stored package bytes. This applies to npm, custom-registry, and `@lpm.dev/*` packages; it does not depend on an LPM.dev Registry package being present.
 
+Install-time source analysis is enabled by default. Manage it with [`lpm config source-analysis`](/docs/infra/config#install-time-source-analysis):
+
+```bash
+lpm config source-analysis --set true   # default
+lpm config source-analysis --set false  # requires security approval
+```
+
+Disabling it skips new install-time scans and cache creation without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed package source when no usable cache exists and stores its fallback result in the project audit cache. Re-enabling source analysis makes the next install backfill any missing, malformed, or outdated store cache from the already-extracted package bytes; it does not need to download the tarball again.
+
 At the end of an install, LPM CLI reads those cached results for every installed package. It does not upload package source during this summary step. For installs larger than 50 packages, progress is reported as `Checking cached security results for N packages` / `Checked cached security results for N packages`, reflecting that this phase reads analysis already produced during extraction rather than rescanning source.
 
 If the same `name@version` has findings from multiple sources, the summary distinguishes registry packages by credential-free origin and uses an opaque source ID for tarball, directory, link, and git packages. Registry credentials, paths, queries, and fragments are never included in these labels.
 
-For `@lpm.dev/*` packages only, LPM CLI makes one batch metadata request to the configured LPM.dev Registry and merges registry behavioral tags, vulnerabilities, lifecycle-script metadata, and AI security findings into the local result. npm-only installs still receive the local security summary; they do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages.
+For `@lpm.dev/*` packages only, LPM CLI makes one batch metadata request to the configured LPM.dev Registry and merges registry behavioral tags, vulnerabilities, lifecycle-script metadata, and AI security findings into the local result. The request contains package names, not source bytes, local findings, versions, or filesystem paths.
 
-`--no-security-summary` skips the post-install cache aggregation and human report. It does not disable the extraction-time local scan or remove existing `.lpm-security.json` cache files.
+This best-effort enrichment is enabled by default and is independent of the local scanner:
+
+```bash
+lpm config lpm-insights --set false  # keep local findings; skip enrichment
+lpm config lpm-insights --set true
+```
+
+The combined `lpm config lpm-dev` editor manages this setting alongside automatic LPM.dev package skills. npm-only installs still receive the local security summary; they do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages.
+
+`--no-security-summary` skips the post-install cache aggregation and human report. It does not change the install-time source-analysis setting or remove existing `.lpm-security.json` cache files.
+
+With `--json --timing`, source analysis appears under `timing.fetch_breakdown.source_scan` as `sum_ns` and `max_ns`. On the fused cold-install path this work happens while extraction is running, so it is already included in cold install wall time and `extract_ms`; do not add it to the total again.
 
 ## Package-published LPM.dev skills
 

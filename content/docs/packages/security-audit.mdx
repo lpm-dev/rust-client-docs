@@ -12,7 +12,7 @@ The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm q
 | Layer                     | What it catches                                         | Where it runs                                          |
 | ------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
 | **Lifecycle script gate** | Postinstall script supply-chain attacks                 | At install time, blocks until approval                 |
-| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time (cached forever per `(name, version)`) |
+| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time by default, with schema-versioned local caching |
 | **Vulnerability data**    | Known CVEs from OSV.dev + registry advisories           | At `lpm audit` time                                    |
 | **Publisher trust + cooldown** | Recently-published direct versions, registry-signature failures, trust downgrades, or publisher-identity drift | At install time and via `lpm audit signatures` |
 | **Triage**                | Tiered automation for the script gate                   | At install time, per-package                           |
@@ -33,7 +33,9 @@ The dependency lifecycle phases that actually run during `lpm install`'s build p
 
 ## Layer 2: Behavioral analysis
 
-The `lpm-security` crate's `behavioral` module performs static analysis on every extracted package. Results are cached in `.lpm-security.json` next to the package files — computed once per `(name, version)`, forever.
+The `lpm-security` crate's `behavioral` module performs static analysis while package bytes are extracted into the store by default. Results are cached in a schema-versioned `.lpm-security.json` next to the package files. Cache identity includes package source and integrity, so the same `name@version` from different registries does not share findings.
+
+Use `lpm config source-analysis` to manage install-time analysis. Disabling it is an approval-gated security weakening; it skips new install-time scans and cache writes without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed source when it cannot use a cache. After analysis is re-enabled, the next install backfills any missing, malformed, or outdated store cache from the already-extracted bytes without downloading the tarball again.
 
 Three groups of tags — source behavior (what the code does), supply-chain signals (what the artifact looks like), and manifest declarations (what `package.json` declares):
 
