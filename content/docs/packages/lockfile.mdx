@@ -49,6 +49,8 @@ If the install-hash file (`.lpm/install-hash`) matches the current state of `pac
 
 This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in a few milliseconds on small projects and around 14 ms on the VitePress docs benchmark fixture.
 
+`lpm install <pkg>` finalizes its saved range (for example, the bare `zod` request becomes `^4.3.6`) and reconciles the importer snapshot plus install hash inside the same manifest transaction. An immediate bare `lpm install` therefore sees the finalized `package.json` and lockfile as one completed state and can take this tier instead of repairing a transient `*` importer.
+
 ### Tier 2: Warm install (~387 ms)
 
 If `lpm.lock` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the [global content-addressable store](/docs/packages/content-addressable-store).
@@ -100,6 +102,8 @@ This is the slow path, but "slow" is relative — cold install on the 535-packag
 The TOML lockfile is **schema-versioned** (current: `7`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots and patch checksum records, version `6` added per-package `engines.node` constraints, and version `7` added artifact-bound Sigstore provenance evidence.
 
 The binary lockfile has its own wire-format version (current: `3`). Version `2` added the per-entry `tarball_off`/`tarball_len` pair; version `3` added a sparse provenance section and an 8-byte footer while preserving the 36-byte package entries. On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
+
+LPM CLI reports a binary writeback only when it actually writes a representable `lpm.lockb`. TOML-only maintenance such as reconciling an importer snapshot, patch record, or lockfile schema does not produce a misleading binary-format upgrade message.
 
 ## When the binary lockfile is skipped
 
