@@ -118,7 +118,28 @@ Use [`lpm swift-registry --force`](/docs/packages/swift-registry#--force) only t
 4. **Run root lifecycle, gate dependency scripts.** Bare installs run the root project's install lifecycle (`pnpm:devPreinstall` before dependency work, then `preinstall` / `install` / `postinstall` / `preprepare` / `prepare` / `postprepare` after a successful install). Dependency package scripts stay blocked by default; when policy permits them to run (`--policy=allow` / `--yolo`, or a triage-green tier), only dependency `preinstall`, `install`, and `postinstall` fire. Other recognized dependency phase names (`prepare`, `prepublishOnly`, `preuninstall` / `uninstall` / `postuninstall`) are surfaced in detection but never executed by install. See [lifecycle scripts](#lifecycle-scripts) below.
 5. **Summarize cached security results.** LPM CLI reads the local behavioral-analysis cache for every installed package and reports actionable findings. LPM.dev Registry packages can also receive registry-side enrichment.
 
-Source identity is preserved during linking. A registry package, tarball, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
+Source identity is preserved during linking. A registry package, tarball, Git package, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
+
+## GitHub dependencies
+
+`package.json` can declare public GitHub repositories with GitHub shorthand or a public `git+https` URL:
+
+```json title="package.json"
+{
+  "dependencies": {
+    "wa-sqlite": "github:rhashimoto/wa-sqlite#779219540f66cecaa159da32b3b8936697ba10a7",
+    "ci-info": "git+https://github.com/watson/ci-info.git#main"
+  }
+}
+```
+
+An exact 40-character commit is used directly. A branch, tag, or omitted ref is resolved through GitHub's public API, then `lpm.lock` records the exact commit. Package bytes are downloaded directly from GitHub's codeload origin, assigned SHA-512 integrity, securely extracted, and passed through the same install-time source analysis as registry packages. Public GitHub traffic does not pass through LPM.dev Registry services.
+
+GitHub URLs must use public `git+https://github.com/<owner>/<repository>.git` form. Credentials, custom ports, query parameters, redirects, non-GitHub hosts, and non-HTTPS Git transports are rejected. Private/authenticated Git repositories are not currently supported.
+
+Frozen and offline installs replay the commit and integrity from `lpm.lock` without contacting GitHub when the package is already in the global store. [`lpm fetch`](/docs/packages/fetch) can populate that store from the lockfile. A frozen offline install fails if the required Git object is missing instead of resolving or downloading a replacement.
+
+Direct GitHub dependencies work at a project root and in recursive workspace members. Registry dependencies declared by the Git package remain part of its locked graph; nested non-registry dependencies inside that package are rejected.
 
 ## Post-install security summary
 

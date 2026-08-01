@@ -3,7 +3,7 @@ title: lpm.lock format
 description: "TOML lockfile schema — what every field means and why it's there."
 ---
 
-`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source registry, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
+`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source identity, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
 
 The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is generated when the current binary wire format can represent the graph. `lpm.lock` is always authoritative; commit `lpm.lockb` when LPM CLI writes it.
 
@@ -15,7 +15,7 @@ The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is gen
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 7
+lockfile-version = 9
 resolved-with = "greedy-fusion"
 # Only present when the default linker auto-switched to isolated
 # after detecting incompatible peer requirements.
@@ -71,6 +71,12 @@ cpu = ["arm64", "x64"]
 libc = ["glibc"]
 optional = true
 
+[[packages]]
+name = "wa-sqlite"
+version = "1.0.0"
+source = "git+https://github.com/rhashimoto/wa-sqlite.git#779219540f66cecaa159da32b3b8936697ba10a7"
+integrity = "sha512-..."
+
 # Only present when at least one root dep uses npm:<target>@<range>
 [root-aliases]
 my-react-alias = "react"
@@ -84,7 +90,7 @@ ambient-peer-installs = ["loose-envify"]
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `7`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots and patch checksum records; version `6` added per-package `engines.node`; version `7` added artifact-bound Sigstore provenance evidence. |
+| `lockfile-version` | u32 | Schema version. Current: `9`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots and patch checksum records; version `6` added per-package `engines.node`; version `7` added artifact-bound Sigstore provenance evidence; version `8` added exact root-link selections; version `9` added exact-commit Git sources. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 | `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
 
@@ -148,12 +154,14 @@ Patch records bind `package.json > lpm.patchedDependencies` to the exact patch f
 
 One entry per resolved package. Sorted by `name` for deterministic diffs and minimal merge conflicts.
 
+GitHub packages use a commit-pinned `source` value and SHA-512 `integrity`. The user-written branch, tag, shorthand, or commit remains in the importer snapshot, while the package entry always records the resolved lowercase 40-character commit. This separation lets frozen and offline installs verify the manifest is unchanged while replaying immutable package bytes.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | Package name (e.g. `react`, `@lpm.dev/owner.pkg`) |
 | `version` | string | Exact resolved version |
-| `source` | string \| absent | Source registry, e.g. `registry+https://registry.npmjs.org`. Absent for packages without a known source. |
-| `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated when the registry provides it. Always trusted on subsequent installs. |
+| `source` | string \| absent | Typed source identity, such as `registry+https://registry.npmjs.org`, `tarball+https://…`, `directory+…`, `link+…`, or commit-pinned `git+https://github.com/…#<commit>`. Absent for packages without a known source. |
+| `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated from registry metadata or computed for supported remote sources. Required and verified when replaying registry, remote tarball, and GitHub packages. |
 | `registry-signatures` | table[] | npm-compatible `dist.signatures` entries persisted as nested `[[packages.registry-signatures]]` tables. Skipped when absent. |
 | `registry-published-at` | string \| absent | Publish timestamp used to verify npm registry signing-key expiry without rehydrating package metadata. |
 | `os` | string[] | `package.json > os` restrictions for this version. Skipped when empty. |
