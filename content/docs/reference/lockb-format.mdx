@@ -69,7 +69,7 @@ All numeric fields are little-endian. Packages are sorted by their package ident
 
 ## Wire-format version
 
-Current: `v3` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`. The `2 → 3` bump added the sparse provenance section and its `PRV3` footer without changing the 36-byte package entry. A v3 file with no provenance therefore costs only the 8-byte footer over v2; each evidence record costs 68 bytes plus its unique strings. This binary wire version is independent from the TOML `lockfile-version`, which is currently `7`.
+Current: `v3` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`. The `2 → 3` bump added the sparse provenance section and its `PRV3` footer without changing the 36-byte package entry. A v3 file with no provenance therefore costs only the 8-byte footer over v2; each evidence record costs 68 bytes plus its unique strings. This binary wire version is independent from the TOML `lockfile-version`, which is currently `10`.
 
 The binary reader rejects any file whose header `version` is not exactly `BINARY_VERSION` — strict by design. Layout differs across versions, so interpreting one version as another could produce garbage or drop security evidence. `lpm.lock` remains the authoritative input; the next compatible `write_all` rewrites `lpm.lockb` as the current version.
 
@@ -85,6 +85,7 @@ The binary format is intentionally smaller than the TOML format. These fields ar
 
 - **`alias-dependencies`** — npm-alias edges
 - **`importers`** — manifest snapshots used by frozen installs
+- **`workspace-packages`** — content-addressed workspace union rows and importer projections
 - **`patches`** — patch paths and patch-file SHA-256 records
 - **`root-aliases`** — root-level npm-alias map
 - **`ambient-peer-installs`** — root-level auto-installed peer links
@@ -94,7 +95,7 @@ The binary format is intentionally smaller than the TOML format. These fields ar
 - **`os` / `cpu` / `libc` / `optional` / `node-engine`** — platform, optional-reachability, and dependency engine state
 - **`registry-signatures` / `registry-published-at`** — npm registry signature evidence
 
-Lockfiles that use any unsupported field are written as TOML-only — the binary file is skipped entirely, and any stale binary file is removed. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile.
+Lockfiles that use any unsupported field are written as TOML-only — the binary file is skipped entirely, and any stale binary file is removed. A schema-v10 workspace union always takes this path. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile.
 
 Verified provenance itself is supported by v3. If the same project also uses frozen-install importer snapshots, npm aliases, peer pinning, dependency engine constraints, platform-specific optional packages, catalogs, or registry signatures, seeing only `lpm.lock` is still correct.
 

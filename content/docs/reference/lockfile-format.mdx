@@ -3,19 +3,21 @@ title: lpm.lock format
 description: "TOML lockfile schema — what every field means and why it's there."
 ---
 
-`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` after every `lpm install`. It pins every transitive dependency by exact version, source identity, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
+`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` for a standalone project or at the root of a workspace. It pins every transitive dependency by exact version, source identity, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
 
 The companion [`lpm.lockb`](/docs/reference/lockb-format) binary lockfile is generated when the current binary wire format can represent the graph. `lpm.lock` is always authoritative; commit `lpm.lockb` when LPM CLI writes it.
 
 ## File location
 
-`<project-root>/lpm.lock`
+Standalone project: `<project-root>/lpm.lock`
+
+Workspace: `<workspace-root>/lpm.lock`. Member commands read their importer projection from this file; successful recursive migration removes legacy member lockfiles.
 
 ## Top-level shape
 
 ```toml title="lpm.lock"
 [metadata]
-lockfile-version = 9
+lockfile-version = 10
 resolved-with = "greedy-fusion"
 # Only present when the default linker auto-switched to isolated
 # after detecting incompatible peer requirements.
@@ -86,11 +88,37 @@ my-react-alias = "react"
 ambient-peer-installs = ["loose-envify"]
 ```
 
+The example above shows the standalone package table. A workspace union replaces `[[packages]]` with content-addressed rows and gives every importer an explicit projection:
+
+```toml title="workspace lpm.lock"
+[metadata]
+lockfile-version = 10
+resolved-with = "greedy-fusion"
+
+[importers."."]
+locked-packages = ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+
+[importers."packages/web"]
+locked-packages = [
+  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+]
+
+[importers."packages/web".dependencies]
+react = "^19.0.0"
+
+[workspace-packages."sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+name = "react"
+version = "19.0.0"
+source = "registry+https://registry.npmjs.org"
+integrity = "sha512-..."
+```
+
 ## `[metadata]`
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `9`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots and patch checksum records; version `6` added per-package `engines.node`; version `7` added artifact-bound Sigstore provenance evidence; version `8` added exact root-link selections; version `9` added exact-commit Git sources. |
+| `lockfile-version` | u32 | Schema version. Current: `10`. Schema-versioned (not tool-versioned) so older clients can refuse cleanly when the schema bumps. Version `2` made peer state authoritative; version `3` added platform + optional metadata; version `4` added registry signature metadata; version `5` added importer snapshots and patch checksum records; version `6` added per-package `engines.node`; version `7` added artifact-bound Sigstore provenance evidence; version `8` added exact root-link selections; version `9` added exact-commit Git sources; version `10` added one root workspace package union with importer projections. |
 | `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
 | `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
 
@@ -115,7 +143,7 @@ peer-dependency-rules-fingerprint = "sha256-..."
 auto-install-peers = true
 ```
 
-Importer snapshots record the manifest inputs that must match before a frozen install can replay the lockfile. LPM CLI currently writes the root importer as `"."`.
+Importer snapshots record the manifest inputs that must match before a frozen install can replay the lockfile. A standalone lockfile uses `"."`. A workspace union also uses member-relative keys such as `"packages/web"`; paths must remain safely below the lockfile root.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -130,6 +158,23 @@ Importer snapshots record the manifest inputs that must match before a frozen in
 | `patches-fingerprint` | string | Hash of `lpm.patchedDependencies`; absent when no patches are declared. |
 | `peer-dependency-rules-fingerprint` | string | Hash of `lpm.peerDependencyRules`; absent when default/empty. |
 | `auto-install-peers` | bool | Effective `autoInstallPeers` value captured for frozen replay. |
+| `workspace-root-peer-providers-fingerprint` | string | Exact workspace-root provider graph used when satisfying this importer's peers. |
+| `locked-packages` | string[] | Sorted SHA-256 IDs in `workspace-packages` that form this importer's package closure. Workspace unions only. |
+| `root-aliases` | table | Importer-local npm alias links. |
+| `root-resolutions` | table | Importer-local exact root package selections. |
+| `ambient-peer-installs` | string[] | Importer-local peers surfaced at its `node_modules` root. |
+| `patches` | table | Importer-local patch evidence. |
+| `catalog_resolutions` | nested table | Importer-local resolved catalog snapshot. |
+| `provenance` | table | Importer-local verified provenance evidence. |
+| `auto-isolated-peer-conflicts` | bool | Whether this importer automatically selected isolated linking for peer conflicts. |
+
+## `[workspace-packages]`
+
+Schema-v10 workspace lockfiles store the union graph as tables keyed by `sha256:<hex>`. The digest is computed from the complete serialized locked package row, so rows with different dependency edges, peer bindings, source identity, optional state, or security metadata do not collide. Identical rows reachable from many importers are written once.
+
+Every `importers.<path>.locked-packages` entry must reference an existing row. The reader rejects unsafe importer paths, duplicate IDs inside one importer, unreferenced union rows, content-address mismatches, and ambiguous package identities inside a projection. These checks run before commands consume the graph.
+
+Projecting an importer rebuilds the standalone view expected by install and read-only commands: its package rows, root aliases and selections, ambient peers, patches, catalogs, provenance, and automatic linker state. Other importers' rows remain invisible.
 
 ## `[patches]`
 
@@ -150,9 +195,9 @@ Patch records bind `package.json > lpm.patchedDependencies` to the exact patch f
 
 `[patches]` is TOML-only metadata. Projects with patch records skip `lpm.lockb` and remove any stale binary companion.
 
-## `[[packages]]`
+## `[[packages]]` and workspace package rows
 
-One entry per resolved package. Sorted by `name` for deterministic diffs and minimal merge conflicts.
+Standalone lockfiles use one `[[packages]]` entry per resolved package. Workspace unions use the same fields below each `[workspace-packages."sha256:..."]` key. Standalone entries are sorted by package identity; workspace rows are sorted by content address for deterministic diffs and minimal merge conflicts.
 
 GitHub packages use a commit-pinned `source` value and SHA-512 `integrity`. The user-written branch, tag, shorthand, or commit remains in the importer snapshot, while the package entry always records the resolved lowercase 40-character commit. This separation lets frozen and offline installs verify the manifest is unchanged while replaying immutable package bytes.
 
@@ -286,6 +331,8 @@ Empty and omitted from output on the common no-auto-install path (project's `dep
 The on-disk file is deterministic by construction:
 
 - `[[packages]]` entries are sorted by name
+- `[workspace-packages]` rows are sorted by content address
+- importer package IDs are sorted and deduplicated
 - `dependencies` arrays inside each package are sorted
 - `[provenance]` entries are sorted by their full package/source key
 - Optional fields are omitted when empty / `None` rather than written as null

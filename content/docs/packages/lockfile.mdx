@@ -1,9 +1,9 @@
 ---
 title: Lockfile
-description: "Why LPM CLI ships two lockfile files, when each is read, and how the warm-install fast path works."
+description: "How LPM CLI pins standalone and workspace graphs, importer projections, and warm-install state."
 ---
 
-LPM CLI's lockfile starts with **`lpm.lock`**: the TOML, git-diffable, authoritative graph. When the graph fits the current binary subset, LPM CLI also writes **`lpm.lockb`**, a generated binary companion. Commit `lpm.lock` always; commit `lpm.lockb` when LPM CLI writes it.
+LPM CLI's authoritative lockfile is **`lpm.lock`**: TOML, deterministic, and git-diffable. A standalone graph may also receive **`lpm.lockb`**, a generated binary companion, when every field fits the binary subset. A workspace uses one TOML `lpm.lock` at its root with importer projections and does not write `lpm.lockb`.
 
 This page is the conceptual overview — when each file gets read, what the dual format buys you, and how the warm-install fast paths work. For the on-disk schema, see [`lpm.lock` format](/docs/reference/lockfile-format) and [`lpm.lockb` format](/docs/reference/lockb-format).
 
@@ -14,7 +14,7 @@ This page is the conceptual overview — when each file gets read, what the dual
 | `lpm.lock` | Humans, git diffs, authoritative install input | Read by install, audit, graph, and review workflows |
 | `lpm.lockb` | Generated binary companion for the representable subset | Used for binary validation/writeback and cheap generated-cache inspection when present |
 
-The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary companion is intentionally smaller: its v3 wire format represents fixed-width package records plus sparse verified-provenance records. If the TOML lockfile contains importer snapshots, patch records, aliases, peer pinning, dependency engine constraints, platform metadata, optional-reachability state, catalogs, or registry signatures, LPM CLI skips `lpm.lockb` and removes any stale binary file.
+The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary companion is intentionally smaller: its v3 wire format represents fixed-width package records plus sparse verified-provenance records. If the TOML lockfile contains importer snapshots, workspace projections, patch records, aliases, peer pinning, dependency engine constraints, platform metadata, optional-reachability state, catalogs, or registry signatures, LPM CLI skips `lpm.lockb` and removes any stale binary file.
 
 You don't choose the mode manually. Edit `lpm.lock` by hand if you ever need to (humans do that sometimes); the next install either regenerates a compatible `lpm.lockb` or leaves the project TOML-only.
 
@@ -32,12 +32,27 @@ Each entry in the lockfile records:
 - **Direct dep names + versions** — for transitive walking
 - **Tarball URL hint** — cached resolved URL that lets warm installs skip the per-package metadata round-trip
 - **Importer snapshot** — the package.json dependency sections and resolver-affecting settings that frozen installs compare before replaying the lockfile
+- **Workspace importer projection** — content-addressed package IDs plus importer-local root selections, peers, aliases, patches, catalogs, provenance, and automatic linker state
 - **(if any)** npm-alias edges — `local_name → target_canonical_name` pairs
 
-After `lpm install`, two further files exist:
+After a standalone `lpm install`:
 
 - `lpm.lock` — commit it
 - `lpm.lockb` — commit it when present (mark it as binary in `.gitattributes` — `lpm init` does this automatically)
+
+After a recursive workspace install, commit the single root `lpm.lock`. LPM CLI migrates legacy member lockfiles into that root union after a successful install, then removes the obsolete member `lpm.lock` / `lpm.lockb` files.
+
+## Workspace lockfiles
+
+A schema-v10 workspace lockfile separates storage from importer views:
+
+- `workspace-packages` stores each distinct locked package row under a SHA-256 content address.
+- `importers` maps `"."` and member-relative paths such as `"packages/web"` to the package IDs and root state visible to that project.
+- Member commands locate the nearest owning root lockfile and materialize only their projection. A conflicting version or peer context in another member is not visible unless it is also reachable from the current importer.
+
+Cold recursive installs fuse eligible importers into one synthetic-root greedy-fusion traversal, then project the result per importer. Conflicting roots, aliases, optional reachability, peer bindings, overrides, and release policy remain importer-specific. If one importer cannot be projected safely, only that importer runs an isolated resolver fallback.
+
+Workspace mutations use the root lockfile as their commit point. Filtered add, uninstall, upgrade, audit fix, patch, and tidy changes do not commit their manifests or patches until the corresponding importer projection has been written successfully. A failure restores the previous manifests, patches, and lockfiles, then deletes affected install hashes so the next install repairs any provisional `node_modules` changes.
 
 ## Install fast paths
 
@@ -45,7 +60,7 @@ The install pipeline has a tiered fast-path hierarchy. Each tier skips more work
 
 ### Tier 1: Up-to-date install (~14 ms)
 
-If the install-hash file (`.lpm/install-hash`) matches the current state of `package.json`, the authoritative lockfile, and the resolved linker mode, install exits immediately. Nothing to do.
+If the install-hash file (`.lpm/install-hash`) matches the current state of `package.json`, its authoritative lockfile projection, and the resolved linker mode, install exits immediately. Nothing to do.
 
 This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in a few milliseconds on small projects and around 14 ms on the VitePress docs benchmark fixture.
 
@@ -53,7 +68,7 @@ This is the "I just ran `lpm install` and now I'm running it again" case. Hits i
 
 ### Tier 2: Warm install (~387 ms)
 
-If `lpm.lock` matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from the lockfile + the [global content-addressable store](/docs/packages/content-addressable-store).
+If the current standalone lockfile or workspace importer projection matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from that projected graph + the [global content-addressable store](/docs/packages/content-addressable-store).
 
 No metadata fetches. No tarball downloads. Project `node_modules/<pkg>` is created as a symlink into the matching link entry under `~/.lpm/store/v2/links/<graph-key>/`. The link entries live in the **global** store, not in the project, so `rm -rf node_modules` between iterations only loses the cheap project-side symlinks — the canonical extracted bytes and the per-graph wrappers stay put. Warm install is a symlink rebuild over already-materialized link entries.
 
@@ -93,13 +108,13 @@ The failure reports the pinned package and version with a sanitized registry/sou
 
 ### Tier 4: Resolve-and-install (cold)
 
-If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, writes a fresh lockfile.
+If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, and writes a fresh lockfile. In a cold recursive workspace install, eligible importers share one union resolution, with shared expansion passes as needed, and one root lockfile commit.
 
 This is the slow path, but "slow" is relative — cold install on the 535-package VitePress docs fixture is **2,945 ms** in our benchmarks (vs npm 17,354 ms / pnpm 6,125 ms).
 
 ## Lockfile-version
 
-The TOML lockfile is **schema-versioned** (current: `7`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots and patch checksum records, version `6` added per-package `engines.node` constraints, and version `7` added artifact-bound Sigstore provenance evidence.
+The TOML lockfile is **schema-versioned** (current: `10`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots and patch checksum records, version `6` added per-package `engines.node` constraints, version `7` added artifact-bound Sigstore provenance evidence, version `8` exact root selections, version `9` exact-commit Git sources, and version `10` root workspace unions with importer projections.
 
 The binary lockfile has its own wire-format version (current: `3`). Version `2` added the per-entry `tarball_off`/`tarball_len` pair; version `3` added a sparse provenance section and an 8-byte footer while preserving the 36-byte package entries. On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
 
@@ -107,7 +122,7 @@ LPM CLI reports a binary writeback only when it actually writes a representable 
 
 ## When the binary lockfile is skipped
 
-`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — importer snapshots, patch records, npm-alias metadata, ambient peer installs, per-package peers, dependency engine constraints, platform metadata, optional reachability, catalogs, and registry signatures live only in TOML. Projects with any of those fields write **only `lpm.lock`**. Verified provenance is representable in v3, but importer snapshots normally keep install-produced lockfiles TOML-only.
+`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — importer snapshots, workspace package projections, patch records, npm-alias metadata, ambient peer installs, per-package peers, dependency engine constraints, platform metadata, optional reachability, catalogs, and registry signatures live only in TOML. Projects with any of those fields write **only `lpm.lock`**. Verified provenance is representable in v3, but importer snapshots normally keep install-produced lockfiles TOML-only. Workspace unions always skip the companion.
 
 Why: silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile. Skipping the write and removing stale binary state is the safe behavior.
 
@@ -118,6 +133,8 @@ If your project only has `lpm.lock`, that's expected when the graph needs TOML-o
 The lockfile is deterministic by construction:
 
 - Entries sorted by name
+- Workspace package rows keyed by a SHA-256 digest of their serialized locked content
+- Importer package IDs sorted and deduplicated
 - Per-entry `dependencies` arrays sorted
 - Optional fields omitted (never written as `null`)
 - Schema-versioned
@@ -134,7 +151,7 @@ This guarantee covers LPM-managed atomic rewrites and their temporary leaf entri
 
 ## Should I commit `lpm.lockb`?
 
-Commit `lpm.lock` always. Commit `lpm.lockb` when LPM CLI wrote it. If the project is TOML-only because the graph carries metadata outside the binary subset, do not synthesize a binary file by hand.
+Commit `lpm.lock` always. In a workspace, commit only the root `lpm.lock`; member lockfiles are obsolete after migration. Commit `lpm.lockb` when LPM CLI wrote it for a representable standalone project. If the project is TOML-only because the graph carries metadata outside the binary subset, do not synthesize a binary file by hand.
 
 The only special handling: mark `lpm.lockb` as binary in `.gitattributes`:
 

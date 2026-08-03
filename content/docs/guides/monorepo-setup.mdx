@@ -27,9 +27,13 @@ LPM CLI accepts both. Add member packages under those globs — each member has 
 lpm install
 ```
 
-LPM CLI walks the workspace, builds a topological graph, and links every member's deps (including cross-member `workspace:*` references) into the right `node_modules/`.
+LPM CLI walks the workspace, resolves eligible importers together, projects the shared result back into isolated member graphs, and links every member's deps (including cross-member `workspace:*` references) into the right `node_modules/`.
+
+The result is one authoritative `lpm.lock` at the workspace root. Commit that file; do not create or keep one lockfile per member. Each importer in the root lockfile points at its own content-addressed package closure, so member-local commands still see only that member's graph. Workspace lockfiles are TOML-only and do not have an `lpm.lockb` companion.
 
 No flag is required at the workspace root: bare `lpm install` installs every member in dependency order and the root last. From inside a member it remains member-local; use `lpm install --recursive` to widen to the owning workspace, or `lpm install --no-recursive` at the root when you intentionally want only the root project.
+
+The first successful recursive install after upgrading migrates legacy member lockfiles into the root union and removes the obsolete member `lpm.lock` / `lpm.lockb` files. The root lockfile is committed only after every selected target succeeds, so a failed migration leaves the previous lockfiles intact.
 
 The workspace root can also be a named local package. A member may depend on that root package with `workspace:*`; LPM CLI resolves and links it locally just like a member-to-member edge.
 
@@ -40,6 +44,8 @@ lpm install react --filter web
 ```
 
 Adds `react` to `packages/web/package.json` and runs the install pipeline scoped to `packages/web/`. The other members are untouched.
+
+The command updates `packages/web`'s importer projection in the root lockfile. Manifest and lockfile replacement are atomic as a workspace mutation: if the install fails, LPM CLI restores the prior manifest and lockfile.
 
 For a tooling dep that lives at the workspace root:
 
@@ -166,6 +172,7 @@ Constraints:
 
 - **`--filter core` doesn't match `@babel/core`.** Substring matching is not supported. Use `--filter '*/core'`.
 - **Multi-member install prompts you for confirmation by default.** If a `--filter` expression would mutate more than one member's `package.json`, `lpm install` asks before writing. Use `-y` in scripts.
+- **Keep only the root `lpm.lock`.** A successful recursive install removes migrated member lockfiles. `lpm.lockb` is not written for a workspace union.
 - **`lpm deploy` targets one member.** If your filter matches more than one workspace package, narrow it before deploying.
 
 ## See also
