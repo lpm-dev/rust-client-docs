@@ -33,7 +33,11 @@ Run no-argument install from the workspace root:
 lpm install
 ```
 
-LPM CLI installs members in dependency order and installs the root last. Workspace discovery is shared across the operation instead of repeated in one process per member. Each target still gets its own lockfiles, `node_modules`, lifecycle, engine checks, and security-policy evaluation. A member failure stops later targets.
+LPM CLI installs members in dependency order and installs the root last. On a cold recursive install, eligible members enter one shared union resolution, with shared expansion passes when an importer requires an additional ambient peer package; LPM CLI then projects an isolated dependency graph for each importer, preserving conflicting direct versions, aliases, optional reachability, peer bindings, overrides, and policy decisions. An importer that cannot be projected safely falls back to its own resolver pass without disabling the union for other members.
+
+The workspace writes one authoritative `lpm.lock` at the root. Its content-addressed `workspace-packages` table stores each distinct locked package row once, while `importers` records the package IDs and root state visible to each member. Member commands read only their importer projection, so `lpm graph`, `lpm licenses`, `lpm sbom`, audit, upgrade, patch, uninstall, tidy, doctor, frozen installs, and ordinary member-local installs keep member semantics without per-member lockfiles. Recursive install commits the root lockfile only after every selected target succeeds.
+
+Existing workspaces migrate automatically: a successful recursive install absorbs legacy member `lpm.lock` files into the root union and removes the obsolete member files and `lpm.lockb` companions. Union workspace lockfiles are TOML-only because the binary companion format cannot represent importer projections.
 
 Bare install from inside a member stays member-local. Widen it explicitly when needed:
 
@@ -52,6 +56,8 @@ lpm install --filter-prod web
 ```
 
 The production form omits `devDependencies` edges. Filtered refreshes do not install the workspace root or unrelated members.
+
+Filtered mutations update the selected importer projections inside the same root lockfile. Manifest, patch, and lockfile changes share one transaction boundary: if resolution, materialization, or the root lockfile commit fails, LPM CLI restores those files and invalidates affected install hashes. `node_modules` is not copied for rollback; the missing hash makes the next install re-link and converge it.
 
 ## Filter grammar
 

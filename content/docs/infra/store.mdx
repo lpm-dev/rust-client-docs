@@ -9,6 +9,8 @@ lpm store <action>
 
 Maintenance commands for the global content-addressable store at `~/.lpm/store/`. Every `lpm install` deduplicates packages into this store and then links them into project `node_modules` trees — so the store is shared across every project on your machine.
 
+The v2 layout is the default. The file-level CAS in v3 is experimental and is used only when explicitly selected with `LPM_STORE_VERSION=v3`; LPM CLI never selects it automatically from the filesystem or execution environment. Store maintenance commands inspect both layouts regardless of which one the current install process selects.
+
 The v2 store also contains native lifecycle-build artifacts at
 `~/.lpm/store/v2/builds/<build-key>/`. Strict macOS and Linux rebuilds can
 restore these package trees across reinstalls when every keyed input matches.
@@ -34,8 +36,8 @@ For reachability-aware orphan cleanup, use [`lpm cache prune`](/docs/packages/ca
 
 ```bash
 lpm store path                          # print the store root
-lpm store verify                        # check integrity (fast)
-lpm store verify --deep                 # also parse package.json + check name/version match
+lpm store verify                        # check structure and CAS metadata (fast)
+lpm store verify --deep                 # also parse manifests and rehash v3 blobs
 lpm store verify --fix                  # auto-fix what it can (e.g., refresh stale caches)
 lpm store clean                         # wipe the entire store (rare)
 ```
@@ -45,7 +47,7 @@ lpm store clean                         # wipe the entire store (rare)
 | Subcommand | Effect |
 | --- | --- |
 | `path` | Print the store root path |
-| `verify` | Integrity-check entries against their declared SRI |
+| `verify` | Integrity-check v1/v2 entries and v3 CAS metadata |
 | `clean` | Blunt wipe — removes everything under the store root |
 
 ## Locking model
@@ -78,21 +80,22 @@ Locks release on normal exit and on panic — there's no stale-lock recovery to 
 ## Verify
 
 ```bash
-lpm store verify          # fast pass
-lpm store verify --deep   # also parse package.json + lockfile cross-check
+lpm store verify          # fast structural and metadata pass
+lpm store verify --deep   # also rehash v3 blobs + parse package.json + check lpm.lock
 lpm store verify --fix    # regenerate stale behavioral-analysis caches
 ```
 
-The fast pass walks every store entry and confirms three things: the directory exists, `package.json` is present, and the directory is non-empty. For v2 entries, it also checks that the link sidecar's source hash maps to the recorded object path and that the referenced object is present. Mismatches surface as `corrupted` entries with a remediation hint.
+The fast pass walks every v1, v2, and v3 store entry and confirms that package directories exist, contain `package.json`, and are non-empty. For v2 and v3 link entries, it also checks that each sidecar's source hash maps to the recorded object path and that the referenced object is present. The v3 pass additionally validates source records, tree manifests, blob metadata, materialized-tree caches, and reachability between those CAS tiers without recomputing blob content hashes. Mismatches surface as `corrupted` entries with a remediation hint.
 
-`--deep` extends the pass with two extra checks per entry:
+`--deep` extends the pass with these checks:
 
 - **Parses `package.json`** and confirms the on-disk `name` and `version` match the directory's coordinates.
 - **Cross-checks the integrity hash** against `lpm.lock` in the current directory. Mismatches surface as `integrity mismatch` errors — they catch a re-published version with different bytes, accidental edits, or partial extraction. Run from a project root for this to do anything; without a lockfile, the cross-check is a no-op. If `lpm.lock` exists but cannot be read or parsed, deep verification exits non-zero instead of silently skipping the cross-check.
+- **Rehashes every v3 CAS blob** and validates its content-plus-normalized-mode identity. Legacy v1/v2 extracted directories retain marker-consistency verification rather than a full expanded-tree content hash.
 
 `--fix` writes one specific thing: missing or stale `.lpm-security.json` behavioral-analysis caches alongside each package. It implies the deep/cache-analysis path even when `--deep` is omitted. If a cache cannot be written, the command exits non-zero and the failed `.lpm-security.json` write appears in `issues[]`. It does **not** repair integrity mismatches, restore missing directories, or fix invalid `package.json` — those are reported as corrupted regardless. Use `lpm store clean` for the blunt repair.
 
-The output distinguishes **entries** (one per directory on disk; may double-count during a v1↔v2 migration or under cross-project graph-key splits where the same `name@version` legitimately lives at multiple paths) from **unique coordinates** (deduped on `name@version`). Both counts appear in human + JSON output so an in-flight migration doesn't look like an inflated package count.
+The output distinguishes **entries** (one per directory on disk; may double-count during a store-version migration or under cross-project graph-key splits where the same `name@version` legitimately lives at multiple paths) from **unique coordinates** (deduped on `name@version`). Both counts appear in human + JSON output so an in-flight migration doesn't look like an inflated package count. CAS source, tree, blob, and materialization counts are reported separately.
 
 ## Clean (full wipe)
 
@@ -100,7 +103,7 @@ The output distinguishes **entries** (one per directory on disk; may double-coun
 lpm store clean
 ```
 
-Removes `~/.lpm/store/v1/` and `~/.lpm/store/v2/` in their entirety — every extracted package, every link entry, every cached integrity sidecar. The outer `~/.lpm/store/` directory plus the `.gc.lock*` control files stay so the next operation doesn't have to reinitialize them. The next `lpm install` rebuilds whatever it needs.
+Removes `~/.lpm/store/v1/`, `~/.lpm/store/v2/`, and `~/.lpm/store/v3/` in their entirety — every extracted package, link entry, CAS blob, manifest, materialized tree, and cached integrity sidecar. The outer `~/.lpm/store/` directory plus the `.gc.lock*` control files stay so the next operation doesn't have to reinitialize them. The next `lpm install` rebuilds whatever it needs.
 
 This is the "I want a from-scratch state" escape hatch. For normal maintenance use [`lpm cache prune`](/docs/packages/cache), which is reference-aware and won't evict entries a project still needs.
 
@@ -109,7 +112,7 @@ This is the "I want a from-scratch state" escape hatch. For normal maintenance u
 ```bash
 lpm store path --json     # { "success": true, "path": "/Users/you/.lpm/store" }
 lpm store verify --json   # entry counts, unique coords, corrupted list
-lpm store clean --json    # bytes freed across v1 + v2 subdirectories
+lpm store clean --json    # bytes freed across v1 + v2 + v3 subdirectories
 ```
 
 `verify` envelope:
@@ -117,30 +120,35 @@ lpm store clean --json    # bytes freed across v1 + v2 subdirectories
 | Field | Meaning |
 | --- | --- |
 | `success` | `false` when any integrity/sidecar/lockfile/cache-write issue prevents a clean verify |
-| `check_kind` | `presence` for the fast pass, `lockfile_marker_consistency` for `--deep` or `--fix` |
-| `bytes_integrity_recomputed` | Always `false` today — verify checks markers/metadata, not a Merkle hash of extracted bytes |
+| `legacy_check_kind` | Scope for v1/v2 extracted entries: `presence` for the fast pass, `lockfile_marker_consistency` for `--deep` or `--fix` |
+| `check_kind` | Compatibility alias of `legacy_check_kind` |
+| `bytes_integrity_recomputed` | `true` when a deep pass rehashed at least one v3 blob; otherwise `false` |
 | `entries_verified` | Number of store entries walked (one per directory on disk) |
 | `verified` | Legacy alias of `entries_verified` for older consumers |
-| `unique_coords` | Deduped count over `name@version` — different from `entries_verified` during v1↔v2 migration |
+| `unique_coords` | Deduped count over `name@version` — different from `entries_verified` during store-version migration |
 | `duplicated_entries` | `entries_verified − unique_coords` |
 | `corrupted` | Number of entries with at least one failed check |
 | `issues[]` | Per-entry human-readable issue strings (e.g., `"sharp@0.34.4 — integrity mismatch: stored 'sha512-aaa...' != lockfile 'sha512-bbb...'"`) |
 | `securityMismatches` / `securityReanalyzed` | Present on deep/fix runs; cache mismatches found vs. caches successfully refreshed |
+| `cas.check_kind` | `metadata` for the fast pass; `content_hash` for `--deep` or `--fix` |
+| `cas.sources` / `trees` / `blobs` / `materialized` | Number of v3 CAS entries inspected in each tier |
+| `cas.blobs_rehashed` / `blob_integrity_recomputed` | Blob content-hash work performed by this pass |
+| `cas.orphaned_sources` / `orphaned_trees` / `orphaned_blobs` / `orphaned_materialized` | Structurally valid v3 entries not reachable from a live source/tree relationship |
 
 `clean` envelope:
 
 | Field | Meaning |
 | --- | --- |
-| `removed_bytes` / `removed` | Total bytes / formatted total across `v1` + `v2` |
-| `v1_removed_bytes` / `v2_removed_bytes` | Per-subdirectory breakdown |
-| `v1_path` / `v2_path` | Absolute paths that were removed |
-| `path` | Legacy alias of `v1_path` retained for pre-v2 consumers — prefer `v1_path` / `v2_path` |
+| `removed_bytes` / `removed` | Total bytes / formatted total across `v1` + `v2` + `v3` |
+| `v1_removed_bytes` / `v2_removed_bytes` / `v3_removed_bytes` | Per-subdirectory breakdown |
+| `v1_path` / `v2_path` / `v3_path` | Absolute paths that were removed |
+| `path` | Legacy alias of `v1_path` retained for older consumers — prefer the versioned path fields |
 
 ## Flags
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--deep` | `verify` | Also parse package.json, validate name/version, and cross-check lockfile integrity markers |
+| `--deep` | `verify` | Also parse package.json, validate name/version, cross-check lockfile integrity markers, and rehash v3 CAS blobs |
 | `--fix` | `verify` | Refresh stale/missing security caches; implies the deep/cache-analysis path |
 
 Plus the [global flags](/docs/commands#global-flags).

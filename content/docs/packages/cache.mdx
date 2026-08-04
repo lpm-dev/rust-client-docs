@@ -52,7 +52,7 @@ Remote status failures do not make `lpm cache status` fail; the JSON envelope in
 
 ## Prune
 
-`lpm cache prune` walks the global store and removes entries no project still references, then sweeps any deferred global-install tombstones left behind by `lpm uninstall -g`. Default is dry-run; pass `--apply` to mutate.
+`lpm cache prune` walks both the default v2 store and the experimental v3 store, removes entries no project still references, then sweeps any deferred global-install tombstones left behind by `lpm uninstall -g`. Default is dry-run; pass `--apply` to mutate.
 Human output ends with an elapsed summary; `--json` keeps the machine-readable report shape and includes `success`.
 
 The tombstone sweep runs even when the orphan walk is skipped (registry missing or corrupt — see [Safety rails](#safety-rails)), so `lpm uninstall -g`'s deferred cleanup always has a way to reach disk.
@@ -66,7 +66,11 @@ problem; tombstone inspection and sweep failures are reported separately.
 
 ### How it decides what to keep
 
-LPM CLI tracks every project it has installed into in a registry at `~/.lpm/known-projects.json`. For each registered project, prune walks the project's `node_modules/` symlinks back into `~/.lpm/store/v2/links/<graph-key>/`, then BFS through each link entry's sidecar metadata to mark every reachable graph-key. Anything not marked is an orphan. Object directories under `~/.lpm/store/v2/objects/` are pruned the same way — by collecting every surviving link entry's object reference and removing the rest. On macOS, cached compatibility islands under `~/.lpm/store/v2/compat/` are pruned by crash recovery and LRU age: incomplete islands are eligible immediately, and complete islands are eligible only when their last-used sentinel is older than `--max-age`.
+LPM CLI tracks every project it has installed into in a registry at `~/.lpm/known-projects.json`. For each registered project, prune walks the project's `node_modules/` symlinks back into `~/.lpm/store/v2/links/<graph-key>/` or `~/.lpm/store/v3/links/<graph-key>/`, then BFS through each link entry's sidecar metadata to mark every reachable graph-key. Anything not marked is an orphan. Object directories under each layout's `objects/` directory are pruned by collecting every surviving link entry's object reference and removing the rest.
+
+For v3, each surviving object identifies a live source record; source records identify tree manifests; manifests identify content-and-mode blobs. Prune retains that complete transitive closure and reports orphan source metadata, trees, blobs, and macOS materialized-tree caches separately. If a live source record or manifest is malformed, prune fails closed instead of guessing which CAS content is safe to delete.
+
+On macOS, cached compatibility islands under each virtual-store layout's `compat/` directory are pruned by crash recovery and LRU age: incomplete islands are eligible immediately, and complete islands are eligible only when their last-used sentinel is older than `--max-age`.
 
 Native lifecycle-build artifacts under `~/.lpm/store/v2/builds/` use the same
 crash-recovery and LRU rule on macOS and Linux. An incomplete publication is
@@ -88,7 +92,8 @@ This mode is for scripted cleanup of a single project's footprint. **Default mod
 ### Safety rails
 
 - **Dry-run by default.** No deletions without `--apply`.
-- **Reachability-degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify link/object orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips only link/object orphan removal. Reachability-independent compatibility-island and native-build-artifact cleanup, orphan lock cleanup, and the tombstone sweep still run. LPM CLI prints a warning naming the cause; for corrupt registries it includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
+- **Reachability-degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify link/object or v3 CAS orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips those reachability-dependent removals. Compatibility-island and native-build-artifact cleanup, orphan lock cleanup, and the tombstone sweep still run. LPM CLI prints a warning naming the cause; for corrupt registries it includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
+- **Malformed live CAS metadata fails closed.** Prune does not delete v3 trees or blobs when it cannot prove the complete live closure.
 - **Canonicalized paths.** The registry stores fully resolved absolute paths, so symlink-cwd quirks don't accumulate aliased entries.
 - **Atomic registry rewrites.** Updates go through `<path>.tmp.<pid>` → rename. No partial-write corruption.
 - **In-flight installs are respected.** Prune coordinates with concurrent `lpm install`, `lpm audit`, and `lpm query` invocations through the store reader/writer lock — dry-run takes the shared half, `--apply` takes the exclusive half. See [`lpm store` — Locking model](/docs/infra/store#locking-model).
@@ -130,9 +135,14 @@ lpm cache prune --apply --json    # post-apply report (same shape, mutations rec
 | `projects_walked` / `registry_entries_dropped` | Project-registry coverage stats |
 | `link_entries_total` / `_reachable` / `_orphaned[]` | Link-entry walk results; `_orphaned[]` is a list of paths |
 | `object_entries_total` / `_reachable` / `_orphaned[]` | Object-entry walk results |
+| `cas_trees_total` / `cas_tree_files_orphaned[]` | v3 tree-manifest inventory and orphan paths |
+| `cas_blobs_total` / `cas_blob_files_orphaned[]` | v3 content-and-mode blob inventory and orphan paths |
+| `cas_source_record_files_orphaned[]` / `cas_source_validation_files_orphaned[]` | Unreferenced v3 source identity and validation metadata |
+| `cas_materialized_total` / `cas_materialized_entries_orphaned[]` | v3 macOS materialized-tree cache inventory and orphan paths |
 | `compat_islands_total` / `_orphaned[]` | Cached compatibility-island results; `_orphaned[]` lists incomplete or stale LRU islands |
 | `build_artifacts_total` / `_orphaned[]` | Native lifecycle-build artifact results; `_orphaned[]` lists incomplete or stale LRU artifacts |
-| `bytes_freed_or_eligible` | Bytes the orphan walk would free (dry-run) or did free (apply) |
+| `bytes_freed_or_eligible` / `logical_bytes_freed_or_eligible` | Logical bytes the orphan walk would free (dry-run) or selected for removal (apply) |
+| `observed_physical_bytes_freed` | Filesystem usage actually released by an applied prune; may differ from logical bytes on copy-on-write or hardlinked store-internal data |
 | `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Reachability-degraded flags — when either is true, link/object orphan arrays are empty because that walk was skipped; compatibility-island, native-build-artifact, lock, and tombstone cleanup still operate independently |
 | `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |
 
