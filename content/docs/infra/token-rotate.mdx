@@ -1,39 +1,148 @@
 ---
 title: lpm token-rotate
-description: "Rotate the active LPM.dev Registry session token, invalidate the old token server-side, and store the replacement securely."
+description: "Rotate an LPM-compatible registry token and save the replacement in local secure storage."
 ---
 
-Rotate the current LPM.dev Registry session token after a suspected leak or routine credential rotation.
+Use `lpm token-rotate` after token exposure or during planned credential maintenance.
 
 ```bash
-lpm token-rotate
+lpm token-rotate [--registry <URL>] [--json]
 ```
 
-## Examples
+The command rotates the active token for the LPM.dev Registry or another LPM-compatible registry.
+
+## Rotate a locally stored token
+
+Sign in, rotate the token, and confirm that the new token works:
 
 ```bash
+lpm login
 lpm token-rotate
+lpm whoami
+```
+
+Use this workflow when LPM CLI manages the registry credential on your computer.
+
+## When to use it
+
+| Situation | Action |
+| --- | --- |
+| You think a locally stored token was exposed | Rotate it immediately |
+| Your security policy requires regular rotation | Rotate it during the planned maintenance window |
+| You use another LPM-compatible registry | Select that registry with `--registry` |
+| A CI secret contains `LPM_TOKEN` | Replace the token in the registry dashboard and update the secret store |
+| You use npm, GitHub Packages, or GitLab Packages | Rotate the token with that provider |
+
+This command does not rotate npm, GitHub, or GitLab tokens.
+
+## What the command changes
+
+The registry creates a new value for the current token record. The token keeps its owner, organization, access scope, and expiry.
+
+After a successful rotation:
+
+- The old token value becomes invalid.
+- LPM CLI stores the replacement in local secure storage.
+- The replacement token does not appear in terminal or JSON output.
+
+The LPM.dev Registry can process five rotation requests per minute for one token record.
+
+In rare cases, an edge cache can accept the old value for up to 60 seconds after rotation.
+
+## Rotate a token for another registry
+
+Use the same registry URL for login, rotation, and verification:
+
+```bash
+lpm login --registry https://registry.example.com
+lpm token-rotate --registry https://registry.example.com
+lpm whoami --registry https://registry.example.com
+```
+
+The registry must support the LPM-compatible token rotation endpoint.
+
+## Do not use an external token for rotation
+
+Do not authenticate this command with `LPM_TOKEN` or `--token`. The command cannot update an environment variable or an external secret store.
+
+It also does not print the replacement token. The external source will contain the invalid old value after rotation.
+
+For CI, rotate the token in the LPM.dev Registry dashboard. Then update `LPM_TOKEN` in the CI secret store.
+
+If you already rotated an active `LPM_TOKEN`, remove it before you verify the stored replacement:
+
+```bash
+unset LPM_TOKEN
+lpm whoami
+```
+
+## Rotate other registry credentials
+
+Use the token controls of each registry to revoke the old value and create a replacement.
+
+| Credential | Save the replacement |
+| --- | --- |
+| npm token | `lpm login --npm --token <TOKEN>` or update `NPM_TOKEN` |
+| GitHub Packages token | Update `gh` authentication, the saved fallback token, or `GITHUB_TOKEN` |
+| GitLab Packages token | Update `glab` authentication, the saved fallback token, `GITLAB_TOKEN`, or `CI_JOB_TOKEN` |
+| Project `.npmrc` token from LPM.dev Registry | Run [`lpm setup local`](/docs/infra/setup#create-a-local-project-token) again |
+
+## Recover from a failed rotation
+
+First, check whether the active credential still works:
+
+```bash
+lpm whoami
+```
+
+If authentication fails, sign in again and verify the new session:
+
+```bash
+lpm login
+lpm whoami
+```
+
+## JSON output
+
+Use JSON output in an automation that checks the result:
+
+```bash
 lpm token-rotate --json
 ```
 
-`lpm token-rotate` is only for the LPM.dev Registry session token. It creates a new token, invalidates the old one on the server, stores the replacement in local secure storage, and records the returned expiry for [`lpm whoami`](/docs/infra/login#lpm-whoami) warnings.
+```json
+{
+  "expires_at": null,
+  "rotated": true,
+  "storage_backend": "keychain",
+  "storage_degraded": false,
+  "success": true
+}
+```
 
-There is no equivalent command for npm, GitHub, or GitLab:
+| Field | Meaning |
+| --- | --- |
+| `success` | The command completed successfully |
+| `rotated` | The registry rotated the token |
+| `expires_at` | The expiry returned by the registry, or `null` if the registry returns no expiry |
+| `storage_backend` | `keychain` or `encrypted_file_fallback` |
+| `storage_degraded` | `true` when LPM CLI used the encrypted file fallback |
 
-- Rotate npm auth by running `lpm login --npm` again or replacing `NPM_TOKEN`.
-- Rotate GitHub and GitLab host-CLI auth in `gh` / `glab`.
-- Replace explicit fallback tokens with `lpm login --<target> --token <T>`.
-
-Human output reports the old token invalidation, new token storage, secure-storage backend, and expiry timestamp when the registry returns one.
-
-With `--json`, the envelope includes `{success, rotated, expires_at, storage_backend, storage_degraded}`.
+The LPM.dev Registry currently returns no expiry during rotation. It keeps the existing expiry, so `expires_at` is `null`.
 
 ## Flags
 
-`lpm token-rotate` takes no command-specific flags besides the [global flags](/docs/commands#global-flags). Use `--json` for structured output.
+`lpm token-rotate` has no command-specific flags. These [global flags](/docs/commands#global-flags) are relevant:
+
+| Flag | Purpose |
+| --- | --- |
+| `--registry <URL>` | Select the LPM-compatible registry |
+| `--json` | Print the result as JSON without printing the token |
+| `--token <TOKEN>` | Supply the active token. Do not use this flag for rotation because LPM CLI cannot return the replacement |
 
 ## See also
 
-- [`lpm login / logout / whoami`](/docs/infra/login) - manage registry sessions
-- [Authentication](/docs/infra/authentication) - token storage backends
-- [Environment variables](/docs/reference/env-vars) - token overrides for automation
+- [`lpm login / logout / whoami`](/docs/infra/login) - manage and verify registry sessions
+- [`lpm setup`](/docs/infra/setup) - create local project or CI authentication
+- [Authentication](/docs/infra/authentication) - understand credential sources and storage backends
+- [Environment variables](/docs/reference/env-vars) - use registry credentials in automation

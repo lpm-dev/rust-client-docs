@@ -1,0 +1,253 @@
+---
+title: Dependency graph
+description: "Understand package relationships, duplicate versions, graph filters, statistics, and exported graph data."
+---
+
+The dependency graph shows the packages in `lpm.lock` and the relationships between them.
+
+Use the graph to inspect resolved versions, trace transitive packages, find duplicates, or export dependency data.
+
+[`lpm graph`](/docs/packages/graph) is the command interface. This page explains how to interpret its results.
+
+## Understand the graph
+
+The project and each resolved package are graph nodes. A connection from one node to another shows a dependency relationship.
+
+| Node type | Meaning |
+| --- | --- |
+| Project root | The current project from `package.json` |
+| Direct package | A package in the selected `dependencies` or `devDependencies` set |
+| Transitive package | A package required by another package |
+| Duplicate package | One package name that has more than one resolved version |
+
+A package name and version identify one node. For example, `react@18.3.1` and `react@19.0.0` are separate nodes.
+
+LPM CLI marks both nodes as duplicates because the package name is the same. A repeated path to one version is not a duplicate.
+
+## Know where the data comes from
+
+LPM CLI reads resolved packages and dependency relationships from `lpm.lock`. It does not run the resolver or contact a registry.
+
+LPM CLI reads `package.json` for the project identity and direct-dependency classification. The command uses only local project files.
+
+If `package.json` changed after the last install, the graph can differ from the current manifest. Run an install before you inspect the graph:
+
+```bash
+lpm install
+lpm graph
+```
+
+The graph command requires a usable `lpm.lock`. The HTML format also writes `.lpm/graph.html` in the project.
+
+## Inspect the complete tree
+
+Show the complete dependency tree in the terminal:
+
+```bash
+lpm graph
+```
+
+The project is the first node. Direct packages follow the project, and transitive packages follow their parents.
+
+Use `lpm ls` for the same command:
+
+```bash
+lpm ls
+```
+
+## Inspect one package subtree
+
+Give the command a package name to show that package and its dependencies:
+
+```bash
+lpm graph react
+```
+
+If the graph contains multiple versions, a name-only query selects the version nearest to the project root.
+
+Give the complete package identity to select an exact version:
+
+```bash
+lpm graph react@18.3.1
+```
+
+## Find why a package is installed
+
+Use [`lpm why`](/docs/packages/graph#lpm-why-package) to show each path from the project to a package:
+
+```bash
+lpm why lodash
+```
+
+You can use the equivalent graph form:
+
+```bash
+lpm graph --why lodash
+```
+
+Each path identifies the packages that require the selected package. The result also identifies multiple installed versions.
+
+If an override or patch affected the package, the result includes the recorded change.
+
+> Current limitation: LPM CLI returns at most 100 paths for each matching package version. It does not report omitted paths.
+
+## Find duplicate versions
+
+Use the statistics format for a short dependency summary:
+
+```bash
+lpm graph --format stats
+```
+
+Example output:
+
+```text
+42 packages (3 LPM, 37 npm)
+Max depth: 5
+Duplicates: 1
+  react@18.3.1, react@19.0.0
+```
+
+| Result | Meaning |
+| --- | --- |
+| `packages` | Resolved package nodes. This count excludes the project root. |
+| `LPM` | Packages from the LPM.dev Registry |
+| `npm` | Packages from `registry.npmjs.org` |
+| `Max depth` | Deepest graph level. The project root is level 1. |
+| `Duplicates` | Package names that have more than one resolved version |
+
+Custom-registry packages use `unknown` registry attribution. They count toward `packages`, but not toward the `LPM` or `npm` values.
+
+The difference between the total and the registry values can therefore identify packages from other sources.
+
+## Focus the graph
+
+Use graph filters to reduce a large result:
+
+```bash
+lpm graph --depth 2
+lpm graph --filter react
+lpm graph --prod
+lpm graph --dev
+```
+
+| Filter | Result |
+| --- | --- |
+| `--depth <N>` | Keep the first `N` levels. Level 1 is the project root. |
+| `--filter <NAME>` | Keep matching package subtrees and the paths that connect them to the root. |
+| `--prod` | Keep production packages and their reachable transitive packages. |
+| `--dev` | Keep development packages and their reachable transitive packages. |
+
+The name filter uses a substring match. For example, `--filter press` matches `express`.
+
+All output formats use the selected subtree and filters.
+
+## Choose an output format
+
+| Format | Destination | Use it for |
+| --- | --- | --- |
+| `tree` | Standard output | Terminal inspection |
+| `dot` | Standard output | Graphviz diagrams |
+| `mermaid` | Standard output | Markdown documentation |
+| `json` | Standard output | Scripts, tools, and agents |
+| `stats` | Standard output | Package counts, depth, and duplicates |
+| `html` | `.lpm/graph.html` | Interactive browser inspection |
+
+Create a Graphviz image:
+
+```bash
+lpm graph --format dot | dot -Tpng > graph.png
+```
+
+Create an HTML graph without opening a browser:
+
+```bash
+lpm graph --format html --no-open
+```
+
+## Read JSON graph data
+
+Export the graph for a script or another tool:
+
+```bash
+lpm graph --format json
+```
+
+The top-level object contains these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `success` | Whether LPM CLI created the result |
+| `root` | Project name and version |
+| `packages` | Package count. This count excludes the project root. |
+| `lpm_packages` | LPM.dev Registry package count |
+| `npm_packages` | npm registry package count |
+| `max_depth` | Deepest graph level |
+| `duplicates` | Package names with their resolved versions |
+| `nodes` | Project and package nodes |
+| `edges` | Dependency relationships between nodes |
+
+Each item in `nodes` contains these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `key` | Package identity in `name@version` form |
+| `name` | Package name |
+| `version` | Resolved package version |
+| `registry` | `lpm`, `npm`, or `unknown` |
+| `depth` | Zero-based node depth in JSON |
+| `is_direct` | Whether the selected dependency set contains the package |
+| `is_duplicate` | Whether another resolved version has the same name |
+| `is_root` | Whether the node represents the project |
+| `dependency_count` | Number of dependency relationships from this node |
+| `deps` | Package identities for direct child nodes |
+
+The `nodes` array includes the project root. The top-level `packages` count excludes that root.
+
+## Fix common problems
+
+### No usable lockfile
+
+If LPM CLI cannot find a usable `lpm.lock`, create or update it:
+
+```bash
+lpm install
+```
+
+### The graph does not match `package.json`
+
+If the manifest changed after the last install, update the lockfile:
+
+```bash
+lpm install
+lpm graph
+```
+
+### The package is not in the graph
+
+Run the complete graph without filters:
+
+```bash
+lpm graph
+```
+
+Then use the exact `name@version` value for a subtree query.
+
+### A browser cannot open the HTML graph
+
+Create the file without the browser action:
+
+```bash
+lpm graph --format html --no-open
+```
+
+Then open `.lpm/graph.html` with another browser or transfer the file.
+
+## See also
+
+- [`lpm graph`](/docs/packages/graph) — use the complete command syntax and flags
+- [`lpm query`](/docs/packages/query) — select installed packages by package properties
+- [`lpm audit`](/docs/packages/audit) — inspect package security results
+- [Lockfile](/docs/packages/lockfile) — understand the source of resolved dependency data
+- [Overrides](/docs/packages/install#overrides) — replace dependency versions during installation
+- [Patching dependencies](/docs/packages/patch) — apply local changes to installed packages

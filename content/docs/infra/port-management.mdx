@@ -1,163 +1,357 @@
 ---
 title: Port management
-description: "How LPM CLI handles port assignment, conflict detection, and cross-service env injection for dev orchestration."
+description: "Understand how LPM CLI assigns ports, handles conflicts, and connects development services."
 ---
 
-When `lpm dev` runs a multi-service project, it needs to know which port each service listens on, detect conflicts before starting, remap busy ports without mutating `lpm.json`, and tell each service how to reach its peers. This page covers what LPM CLI does behind the scenes — declared-port checks, persisted override remapping, cross-service env injection, and the readiness model.
+Port management keeps a multi-service development run usable during a preferred-port conflict.
 
-The CLI surface is [`lpm ports`](/docs/infra/ports). The configuration field is [`lpm.json > services`](/docs/reference/lpm-json#servicesname).
+LPM CLI assigns final service ports, saves local replacements, injects peer addresses, and selects the browser-facing endpoint.
 
-## Port declaration
+Declare the project topology in `lpm.json`. Use [`lpm ports`](/docs/infra/ports) to inspect or reset machine-local port state.
 
-Services declare their port in `lpm.json`:
+## Understand the port types
+
+One development run can use four types of ports:
+
+| Port type | Purpose |
+| --- | --- |
+| Preferred port | The `services.<name>.port` value in `lpm.json` |
+| Assigned port | The port that the child service uses after conflict handling |
+| Public port | The browser-facing HTTPS, proxy, or network listener |
+| Readiness target | The `readyPort` or `readyUrl` used during startup |
+
+These ports can have the same number in a simple HTTP project. HTTPS and proxy workflows often use separate public and child ports.
+
+## Configure services in `lpm.json`
+
+Define each development service below `services`:
 
 ```json title="lpm.json"
 {
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
   "services": {
-    "db": { "command": "docker compose up postgres", "readyPort": 5432 },
-    "api": { "command": "node server.js", "port": 4000, "dependsOn": ["db"] },
-    "web": { "command": "next dev", "port": 3000, "primary": true }
-  }
-}
-```
-
-Two related fields:
-
-| Field       | Purpose                                                                                 |
-| ----------- | --------------------------------------------------------------------------------------- |
-| `port`      | Preferred listener port. The primary and host-routed services get a managed port when this is omitted. |
-| `readyPort` | TCP port to poll for readiness. Defaults to `port` when absent.                         |
-
-The split exists for services that listen on a different port than they expose for readiness — uncommon, but real (e.g., Postgres listens on 5432 and that's also its readiness probe; a service behind a sidecar might split them).
-
-## Conflict detection
-
-Before starting any service, `lpm dev` walks every declared port and checks whether it's free:
-
-```rust
-TcpListener::bind(("127.0.0.1", port))
-```
-
-If the bind fails, LPM CLI reports who's holding the port. Availability probes both IPv4 and IPv6 loopback, so an `::1` listener is not treated as a free port. Linux reads `/proc`, macOS / BSD use `lsof` and `ps`, and Windows uses the native IP Helper API plus documented process APIs. LPM CLI does **not** kill that process, but it also doesn't stop there: it picks the next available port, persists that remap for the current project in `~/.lpm/ports.toml`, and continues startup with the reassigned value.
-
-That means a declared `web.port = 3000` can temporarily become `3001` on a machine where `:3000` is already occupied, without editing `lpm.json`. LPM CLI injects the final value as `PORT` and passes framework-native arguments where required: Vite gets `--port <N> --strictPort`; Next.js, Nuxt, SvelteKit, Remix, and Astro get `--port <N>`. Multi-service managed endpoints coordinate through per-port leases, so concurrent orchestrators do not select the same replacement.
-
-The primary service receives a managed port even without `port` or `host`. This gives browser-open, HTTPS, LAN forwarding, local-domain routes, the dashboard, and tunnels one final endpoint instead of a `localhost:3000` guess. To reclaim an original port later:
-
-```bash
-lpm ports kill 3000        # kill the process holding the port
-lpm ports inspect 3000     # inspect PID, command, cwd, project, and framework
-lpm ports reset            # forget this project's persisted override
-lpm dev                    # retry
-```
-
-`lpm ports kill <port>` includes a TOCTOU mitigation — after finding the PID, it re-checks that the **same PID** still owns the **same port** before sending SIGTERM. If the owner changed in the 50ms gap, the kill is aborted. Defends against PID-reuse races.
-
-For broader cleanup, `lpm ports kill <start>-<end>` snapshots listeners in the inclusive range, dedupes PIDs, prompts for confirmation unless `--yes` is passed, then re-checks ownership before terminating. PID kills are explicit: use `lpm ports kill --pid <pid>` so a bare number always means a port.
-
-## `lpm ports list`
-
-```bash
-lpm ports list
-lpm ports                    # default action
-```
-
-Reads `lpm.json > services`, then for each declared `port` runs the same `TcpListener::bind` check as the conflict detector. Prints one row per service with the declared port, a `ready` or `listening` status dot, and (when listening) the owning PID + process name. Host-only services appear after `lpm dev` has persisted their assigned port. Services with only `readyPort` and no declared `port` or assigned host port are omitted.
-
-Important: `list` shows the declared `lpm.json` ports, not the current persisted override map. If `lpm dev` previously remapped `web` from `3000` to `3001`, `lpm ports list` still reports the declared `3000` row and whether `:3000` is currently free or occupied.
-
-If the current directory has no `lpm.json` services, `lpm ports` falls back to visible listening processes whose cwd is under the current project directory. Use `lpm ports all` or `lpm ports --all` for a system-wide table of listening TCP ports. On Windows, generic process cwd is not available through a stable public API, so system-wide rows show PID/process/image path/uptime but leave cwd/project/framework blank unless future LPM CLI-owned process tracking can provide them.
-
-## `lpm ports reset`
-
-```bash
-lpm ports reset
-```
-
-Clears persisted port **overrides** for the current project. LPM CLI keeps per-project port overrides in `~/.lpm/ports.toml` (keyed by a hash of the project directory), so a service whose default port collides on this machine can be remapped without editing `lpm.json`. `reset` removes only this project's entry from that file — other projects' overrides are untouched.
-
-Useful for the "I have no idea why my dev server won't start on the port I expected" escape hatch. Doesn't kill any processes; doesn't touch `lpm.json`. After reset, the next `lpm dev` falls back to the declared ports.
-
-## Cross-service env injection
-
-When `lpm dev` starts a multi-service project, each service gets env vars exposing its peers' addresses:
-
-```text
-For service "web":
-  DB_PORT=5432
-  DB_URL=http://localhost:5432
-  API_PORT=4000
-  API_URL=http://localhost:4000
-
-For service "api":
-  DB_PORT=5432
-  DB_URL=http://localhost:5432
-  WEB_PORT=3000
-  WEB_URL=http://localhost:3000
-```
-
-Pattern: `{SERVICE_NAME_UPPERCASED}_PORT` and `{SERVICE_NAME_UPPERCASED}_URL`. Hyphens in service names become underscores (a service named `my-api` injects `MY_API_PORT` / `MY_API_URL`). A service never receives its own `_PORT`/`_URL` — only peers do. These internal URLs remain `http://localhost:<port>` when `lpm dev --https` is active: LPM CLI terminates browser-facing TLS at its own frontend while service-to-service traffic keeps using the verified child HTTP ports.
-
-Plus per-service overrides from `lpm.json > services.<name>.env`:
-
-```json
-{
-  "services": {
+    "db": {
+      "command": "docker compose up postgres",
+      "port": 5432,
+      "readyTimeout": 60
+    },
     "api": {
-      "command": "node server.js",
+      "command": "node api.js",
       "port": 4000,
-      "dependsOn": ["db"],
-      "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" }
+      "readyUrl": "http://localhost:4000/health",
+      "dependsOn": ["db"]
+    },
+    "web": {
+      "command": "vite",
+      "port": 5173,
+      "dependsOn": ["api"],
+      "primary": true
     }
   }
 }
 ```
 
-`api` gets `DATABASE_URL` plus the auto-injected `DB_PORT`/`DB_URL`/`WEB_PORT`/`WEB_URL`.
+Start the complete service graph:
 
-## Readiness checks
-
-A managed service is ready only after LPM CLI confirms that the launched process tree owns its assigned listener. This prevents an unrelated process that already happens to answer on the same port from satisfying readiness.
-
-| Mechanism | Field          | What it checks                                                       |
-| --------- | -------------- | -------------------------------------------------------------------- |
-| Owned TCP | managed `port` | The assigned port is reachable and belongs to the launched service   |
-| TCP poll  | `readyPort`    | An additional connection to `localhost:<port>` succeeds              |
-| HTTP poll | `readyUrl`     | An additional GET against the URL returns a 2xx                      |
-
-Child stdout and stderr are also inspected for loopback URLs such as Vite's `Local: http://localhost:5173/`. The advertised scheme and base path are preserved, but the listener still has to be new, reachable, and owned by the launched process tree. Checks run up to `readyTimeout` (default 30s). Once ready, the next service in the topology can start.
-
-For a managed service, `readyUrl` or a distinct `readyPort` is an additional application-level check after listener ownership. A service with no managed port and no explicit readiness field is treated as ready after a short launch grace period — useful for fire-and-forget workers and log collectors.
-
-## `dependsOn` ordering
-
-`lpm dev` runs services in topological order — a service with `dependsOn: ["db"]` waits for `db` to report ready before launching. The graph is computed at startup; cycles are an error.
-
-Independent branches start in parallel. If `web` and `api` both depend on `db` (but not on each other), they start concurrently as soon as `db` is ready.
-
-## What `port` is "the dev port"?
-
-The service marked `primary: true` is the one whose verified endpoint:
-
-- Receives the LPM CLI-owned HTTPS / tunnel / network frontends
-- Gets the browser-open
-- Has its URL printed prominently in the banner
-- Is published as the active dev endpoint for bare `lpm tunnel`
-
-A one-service configuration is implicitly primary. With multiple services, mark exactly one as `primary`; `--port`, `--https`, `--network`, and `--tunnel` fail clearly when no unique primary exists.
-
-## Auto-restart
-
-```json
-{ "services": { "worker": { "command": "node worker.js", "restart": true } } }
+```bash
+lpm dev
 ```
 
-`restart: true` enables auto-restart on crash with exponential backoff. Useful for crash-on-error workers during dev.
+The example starts `db`, then `api`, then `web`. LPM CLI starts independent services in the same dependency level together.
 
-The restart loop respects `dependsOn` — if a downstream service crashes and a dep is no longer ready (e.g., the db went down too), the downstream waits for the dep to come back before restarting.
+### Service fields related to ports
+
+| Field | Purpose |
+| --- | --- |
+| `port` | Preferred listener port for the service |
+| `readyPort` | Separate TCP readiness target |
+| `readyUrl` | HTTP readiness target that must return a 2xx response |
+| `readyTimeout` | Maximum readiness wait, in seconds. The default is `30`. |
+| `dependsOn` | Services that enter their ready state before this service starts |
+| `primary` | Service that receives browser, HTTPS, network, and tunnel handling |
+| `host` | Friendly hostname that routes to the final assigned port |
+| `restart` | Restart the service after a non-zero exit |
+| `cwd` | Working directory relative to the project root |
+
+See the [`lpm.json` service reference](/docs/reference/lpm-json#servicesname) for every field.
+
+## Assign service ports
+
+LPM CLI assigns ports before it starts the service commands. A service gets a managed port in these cases:
+
+- The service has a `port` value.
+- The service is the primary service.
+- The service has a `host` value.
+
+If `port` is absent, the primary and host-routed services still receive a port. Automatic assignment starts at port `3000` and selects the next available port.
+
+LPM CLI passes the final port through `PORT`. It also adds framework-specific port arguments where the framework requires them.
+
+For example, Vite receives a strict assigned port. Next.js, Nuxt, SvelteKit, Remix, and Astro receive their supported port argument.
+
+A service with only `readyPort` does not receive a managed service port. Its command must start the process that owns the readiness target.
+
+## Replace a busy port
+
+If a preferred port is busy, LPM CLI selects the next available port. It reports available process-owner information.
+
+For example, a preferred port of `5173` can become `5174`:
+
+```text
+web → :5174 (port 5173 in use by another process)
+```
+
+LPM CLI does not edit `lpm.json` and does not stop the existing process. It saves the replacement for this project in:
+
+```text
+~/.lpm/ports.toml
+```
+
+The next `lpm dev` run tries the saved replacement before the preferred port. The service can continue to use `5174` after `5173` becomes free.
+
+Concurrent `lpm dev` runs reserve assigned ports. This reservation prevents two LPM CLI processes from selecting the same replacement.
+
+### Return to the preferred port
+
+Inspect the preferred port before you stop its owner:
+
+```bash
+lpm ports inspect 5173
+```
+
+If the owner can stop safely, stop it and clear the saved replacement:
+
+```bash
+lpm ports kill 5173
+lpm ports reset
+lpm dev
+```
+
+`lpm ports reset` clears only the saved replacements for the current project. It does not stop processes or edit `lpm.json`.
+
+If the preferred port remains busy, the next development run selects another replacement.
+
+## Choose the primary service
+
+The primary service provides the main development endpoint. It receives these features:
+
+- Browser-open handling
+- Local HTTPS
+- Local network access
+- Tunnel forwarding
+- Top-level `proxy.host` routing
+
+A project with one service has an implicit primary service.
+
+If a multi-service project uses a main public endpoint, set `primary: true` on one service.
+
+These options require one primary service in a multi-service project:
+
+- `--port`
+- `--https`
+- `--network`
+- `--tunnel`
+
+More than one primary service causes an error.
+
+## Separate public and child ports
+
+Without HTTPS, `--port` requests the assigned port for the primary child service:
+
+```bash
+lpm dev --port 4000
+```
+
+With HTTPS, the same value belongs to the browser-facing TLS frontend:
+
+```bash
+lpm dev --https --port 4000
+```
+
+In the HTTPS example, the browser connects to port `4000`. The primary child receives a separate managed port and continues to use plain HTTP.
+
+The local proxy has its own public listener. A tunnel has a public URL that forwards to the verified primary child endpoint.
+
+See [Local HTTPS](/docs/infra/local-https), [`lpm proxy`](/docs/infra/proxy), and [Tunneling](/docs/infra/tunneling) for those public frontends.
+
+## Connect services with environment variables
+
+LPM CLI gives each service the final ports of its peers:
+
+```text
+For service "web":
+  API_PORT=4000
+  API_URL=http://localhost:4000
+  DB_PORT=5432
+  DB_URL=http://localhost:5432
+
+For service "api":
+  WEB_PORT=5173
+  WEB_URL=http://localhost:5173
+  DB_PORT=5432
+  DB_URL=http://localhost:5432
+```
+
+The variable pattern is `{SERVICE_NAME}_PORT` and `{SERVICE_NAME}_URL`. LPM CLI converts the service name to uppercase and changes hyphens to underscores.
+
+For example, a service named `my-api` becomes `MY_API_PORT` and `MY_API_URL`.
+
+A service does not receive variables for itself. It receives variables only for peers with an assigned service port.
+
+The values use the final assigned ports. A replacement port appears in these variables automatically.
+
+Peer URLs continue to use `http://localhost:<port>` during local HTTPS. LPM CLI terminates browser HTTPS in front of the plain HTTP services.
+
+Service-specific `env` values are also available:
+
+```json title="lpm.json"
+{
+  "services": {
+    "api": {
+      "command": "node api.js",
+      "port": 4000,
+      "env": {
+        "LOG_LEVEL": "debug"
+      }
+    }
+  }
+}
+```
+
+## Wait for service readiness
+
+For a managed port, LPM CLI waits for a new listener that belongs to the launched service process.
+
+This ownership rule prevents an unrelated process from satisfying the managed-port readiness step.
+
+You can add an application readiness target:
+
+| Configuration | Behavior |
+| --- | --- |
+| Managed `port` only | Wait for the assigned listener and make sure that the launched process owns it. |
+| `readyPort` | Poll the separate TCP port after managed-listener ownership. |
+| `readyUrl` | Poll the URL until it returns a 2xx response. |
+| No managed port or readiness target | Use a short launch grace period. |
+
+If both `readyUrl` and a distinct `readyPort` exist, `readyUrl` is the application readiness target.
+
+LPM CLI also recognizes advertised loopback URLs in service output. It preserves the advertised scheme and base path after it verifies the listener.
+
+The readiness wait uses `readyTimeout`, with a default of 30 seconds.
+
+If the process still runs after a readiness timeout, LPM CLI prints a `not ready` warning. It then continues the startup graph.
+
+This warning state currently lets dependent services start. It does not stop the development run.
+
+## Start services in dependency order
+
+`dependsOn` defines the initial startup order:
+
+```json title="lpm.json"
+{
+  "services": {
+    "db": { "command": "docker compose up postgres", "port": 5432 },
+    "api": { "command": "node api.js", "port": 4000, "dependsOn": ["db"] },
+    "web": { "command": "vite", "port": 5173, "dependsOn": ["api"] }
+  }
+}
+```
+
+LPM CLI reports an error for a missing dependency or a dependency cycle.
+
+Independent branches start together. Dependent services start after the preceding dependency level reaches ready or readiness-warning state.
+
+During shutdown, LPM CLI stops dependents before their dependencies. This order gives dependent services time to close active connections.
+
+## Restart crashed services
+
+Set `restart: true` for a service that must restart after a non-zero exit:
+
+```json title="lpm.json"
+{
+  "services": {
+    "worker": {
+      "command": "node worker.js",
+      "restart": true
+    }
+  }
+}
+```
+
+LPM CLI uses increasing restart delays from 1 second to 30 seconds. It stops after 10 failed restart attempts.
+
+If the service stays active for more than 60 seconds, the next crash starts a new retry sequence.
+
+A service restart currently does not re-evaluate `dependsOn`. Existing dependents remain active while their restarting dependency is unavailable.
+
+If a dependency crashes without restart enabled, LPM CLI stops its active transitive dependents.
+
+## Inspect port state
+
+Use the complete command syntax:
+
+```bash
+lpm ports [action] [target]
+```
+
+Common read-only commands:
+
+```bash
+lpm ports                 # show ports for this project
+lpm ports all             # show visible TCP listeners
+lpm ports inspect 5173    # inspect one port
+```
+
+Reset machine-local replacements:
+
+```bash
+lpm ports reset
+```
+
+For an explicit service `port`, `lpm ports` reports the configured port. It does not replace that row with a saved conflict port.
+
+Use the `lpm dev` startup output or `lpm ports all` to find the active replacement. A host-only service can appear with its saved assigned port.
+
+See [`lpm ports`](/docs/infra/ports) for inspection output, process termination, JSON output, and platform differences.
+
+## Common problems
+
+### `lpm dev` uses a different port on every restart
+
+Run `lpm ports all` to find listeners near the requested port. Concurrent development processes can make LPM CLI select another replacement.
+
+### A service stays on its replacement after the preferred port is free
+
+Clear the project replacement, then restart the development run:
+
+```bash
+lpm ports reset
+lpm dev
+```
+
+### `lpm ports` shows the preferred port, but `lpm dev` uses another port
+
+This behavior applies to explicit service ports. The project table shows the configured value, while startup uses the saved replacement.
+
+Use the startup output or `lpm ports all` to find the active listener.
+
+### The browser port is not the child port
+
+HTTPS, proxy, and network frontends can use separate public ports. Read the URL that `lpm dev` prints.
+
+### A dependent starts after a readiness warning
+
+The current readiness timeout is not fatal. LPM CLI marks the service ready for graph progress while it keeps the process active.
+
+### A peer variable is missing
+
+Make sure that the peer has an assigned service port. A `readyPort` without `port`, `primary`, or `host` does not create peer variables.
 
 ## See also
 
-- [`lpm ports`](/docs/infra/ports) — CLI command reference
-- [`lpm dev`](/docs/dev/dev) — what consumes the service config
-- [`lpm.json` services](/docs/reference/lpm-json#servicesname) — full field reference
+- [`lpm ports`](/docs/infra/ports) — inspect listeners and reset saved replacements
+- [`lpm dev`](/docs/dev/dev) — run the development service graph
+- [`lpm.json` services](/docs/reference/lpm-json#servicesname) — configure services and readiness
+- [`lpm proxy`](/docs/infra/proxy) — route friendly hostnames to assigned ports
+- [Local HTTPS](/docs/infra/local-https) — separate the browser TLS port from child ports
+- [Tunneling](/docs/infra/tunneling) — forward a public URL to the primary service

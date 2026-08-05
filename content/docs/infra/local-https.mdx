@@ -1,150 +1,312 @@
 ---
 title: Local HTTPS
-description: "How LPM CLI ships zero-config HTTPS for localhost — root CA, project certs, trust store install."
+description: "Use trusted HTTPS for local development without adding TLS to your application."
 ---
 
-`lpm dev --https` serves your dev server over `https://localhost`. Browsers trust the certificate. No `--insecure` flag, no warnings, no per-project setup beyond a one-time CA install.
+Local HTTPS gives your development site a browser-trusted HTTPS URL. LPM CLI handles TLS in front of your application.
 
-This page covers the design — what gets generated, where it lives, how trust-store installation works on each OS, and how LPM CLI terminates TLS in front of the dev server.
+Your application continues to use plain HTTP. Use local HTTPS for secure cookies, OAuth callbacks, service workers, secure WebSockets, and browser features that require a trusted origin.
 
-## How it works
+The trust applies only to devices that trust your local certificate authority (CA).
 
-```text
-1. Generate a root CA (one time, machine-global)
-   └─ ~/.lpm/certs/rootCA.pem        ← cert
-   └─ ~/.lpm/certs/rootCA-key.pem    ← private key (mode 0o600)
+## How local HTTPS works
 
-2. Install the CA into the OS trust store
-   └─ macOS:   security add-trusted-cert (user login keychain, no sudo)
-   └─ Linux:   /usr/local/share/ca-certificates/ + update-ca-certificates (sudo)
-   └─ Windows: certutil -addstore Root (UAC)
-
-3. Generate a per-project certificate
-   └─ <project>/.lpm/certs/cert.pem
-   └─ <project>/.lpm/certs/key.pem (mode 0o600)
-   └─ SAN includes localhost, 127.0.0.1, and any --host arguments
-   └─ Custom-host cert.pem files include a constrained project intermediate
-
-4. Discover and verify the child server endpoint
-   └─ Child can stay on plain HTTP
-   └─ Listener must belong to the launched process tree
-
-5. Start an LPM CLI-owned TLS frontend
-   └─ Browser HTTPS/WSS → LPM CLI frontend → child HTTP/WS
-   └─ Browser trusts the frontend certificate because the CA is trusted
-```
-
-You only do steps 1 and 2 once per machine (`lpm cert trust`). Steps 3–5 happen automatically on every `lpm dev --https` (or any project where `lpm.json > https: true`). The child must serve plain HTTP in this mode; disable framework-level HTTPS and let LPM CLI own TLS termination.
-
-## File layout
+LPM CLI accepts the HTTPS or secure WebSocket connection. It sends the request to your application over plain HTTP or WebSocket.
 
 ```text
-~/.lpm/certs/                         ← global, one per machine
-├── rootCA.pem                        ← root CA certificate
-└── rootCA-key.pem                    ← private key, mode 0o600
-
-<project>/.lpm/certs/                 ← per-project
-├── cert.pem                          ← server certificate, or leaf + intermediate chain
-└── key.pem                           ← private key, mode 0o600
+Browser HTTPS/WSS → LPM CLI → Application HTTP/WS
 ```
 
-Project certs live under `.lpm/certs/` next to `package.json`. Add `.lpm/` to `.gitignore` if you don't already — generated certs are environment-specific and shouldn't be committed.
+LPM CLI creates one root CA for each machine. This CA signs the certificates for your local projects.
 
-## Key file safety
+```text
+Per-machine root CA → Project certificate → Browser trust
+```
 
-Private keys are written with **mode `0o600` from creation** (`create_new` + `OpenOptionsExt::mode()`), not chmod-after-write. This eliminates the TOCTOU window where the file would briefly be world-readable.
+The root CA is not part of LPM CLI. Its private key stays on your machine.
 
-If a key file already exists, it's removed first so the `create_new` succeeds on regeneration. This means `lpm cert generate` always produces a fresh key — there's no "preserve existing key" path.
+If you run `lpm dev --https --port 4000`, the browser connects to port `4000`. LPM CLI gives the application a separate managed port.
 
-## Trust store install
+Your application must use plain HTTP in this workflow. Disable framework HTTPS and let LPM CLI manage TLS.
 
-`lpm cert trust` installs `rootCA.pem` into the OS trust store. Per-OS:
+## Choose a workflow
 
-| OS | Mechanism | Elevation? |
-| --- | --- | --- |
-| macOS | `security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db rootCA.pem` (user login keychain) | No sudo |
-| Linux | Copy to `/usr/local/share/ca-certificates/lpm-local-ca.crt`, then `update-ca-certificates` | Sudo (both steps) |
-| Windows | `certutil -addstore Root rootCA.pem` | UAC prompt |
+| Goal | Configuration or command |
+| --- | --- |
+| Use HTTPS for the project | `"https": true` in `lpm.json` |
+| Use HTTPS for one run | `lpm dev --https` |
+| Disable project HTTPS for one run | `lpm dev --no-https` |
+| Prepare trust before development | `lpm cert trust` |
 
-Untrust:
+## Enable HTTPS in `lpm.json`
+
+Add `https: true` to the `lpm.json` file next to `package.json`:
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "https": true
+}
+```
+
+Start the project:
+
+```bash
+lpm dev
+```
+
+LPM CLI creates the project certificate and starts the HTTPS frontend. It renews the project certificate before it expires.
+
+Use a command-line override for one run:
+
+```bash
+lpm dev --https       # enable HTTPS for this run
+lpm dev --no-https    # disable HTTPS for this run
+```
+
+## Approve the local CA
+
+The first HTTPS run can require approval to install the local CA. LPM CLI asks only when the trust-store installation is necessary.
+
+Approve the installation in an interactive terminal. If you decline, LPM CLI stops the HTTPS development run.
+
+For an approved non-interactive run, use `--yes`:
+
+```bash
+lpm dev --https --yes
+```
+
+If `lpm.json` enables HTTPS, use this command:
+
+```bash
+lpm dev --yes
+```
+
+You can also prepare the machine before a development run:
+
+```bash
+lpm cert trust
+lpm dev
+```
+
+To remove the CA from the trust store, run:
 
 ```bash
 lpm cert uninstall
 ```
 
-Removes the CA from the trust store. Doesn't delete the on-disk CA — re-install with `lpm cert trust`. To wipe the CA itself: `rm -rf ~/.lpm/certs/`.
+This command keeps the CA files on disk. You can trust the same CA again with `lpm cert trust`.
 
-## Browser support
+## Use project hostnames
 
-Once the CA is trusted at the OS level, browsers that use the system trust store (Chrome, Edge, Safari, most Linux browsers) accept LPM CLI-generated certs without warnings.
+If one local service needs a project hostname, use `proxy.host`:
 
-**Firefox uses its own trust store** by default. To trust the LPM CLI CA in Firefox, either:
-
-- Set `security.enterprise_roots.enabled = true` in `about:config` (Firefox then reads the system trust store), or
-- Manually import `~/.lpm/certs/rootCA.pem` via Settings → Privacy → Certificates → View Certificates → Authorities → Import.
-
-## Adding hostnames
-
-By default, the project cert's Subject Alternative Name (SAN) includes `localhost` and `127.0.0.1`. To serve under a custom hostname:
+```json title="lpm.json"
+{
+  "https": true,
+  "proxy": {
+    "host": "app.localhost",
+    "port": 9443,
+    "httpRedirect": false
+  }
+}
+```
 
 ```bash
-lpm cert generate --host my-app.local
-lpm cert generate --host a.local --host b.local      # repeatable
+lpm dev
 ```
 
-Pair with a `/etc/hosts` entry:
+Open the HTTPS URL that `lpm dev` prints. For a project with multiple services, give each service a different `services.<name>.host` value.
 
-```text title="/etc/hosts"
-127.0.0.1 my-app.local
+Names below `.localhost` usually need no hosts-file entry. Names below these suffixes can require a managed hosts-file entry:
+
+- `.local`
+- `.test`
+- `.internal`
+- `.home.arpa`
+
+See [`lpm proxy`](/docs/infra/proxy) and [`lpm hosts`](/docs/infra/hosts) for local routing and hosts-file management.
+
+You can add a certificate hostname manually:
+
+```bash
+lpm cert generate --host api.app.local
 ```
 
-Now `https://my-app.local:<resolved-port>` works in any browser. Useful for projects that need a real hostname (cookies scoped to a domain, OAuth callbacks, etc.).
+This command adds a certificate name. It does not create a proxy route or a hosts-file entry.
 
-`lpm cert generate` regenerates the project cert from scratch — there's no "add a hostname to the existing SAN" path. The default `localhost`, `127.0.0.1`, and `::1` SANs are always included.
+## Permit more DNS names
 
-When custom hostnames or `lpm.json > cert.extraPermittedDns` entries are present, `cert.pem` is written as a leaf-first TLS chain with a project-scoped constrained intermediate. `extraPermittedDns` adds validated NameConstraints subtrees; it does not add browser SANs. If your root CA was created before intermediate support, LPM CLI may ask you to run `lpm cert rotate` before issuing custom-host certificates.
+The `cert` block controls the DNS subtrees that a project certificate can cover:
 
-## Framework independence
+```json title="lpm.json"
+{
+  "https": true,
+  "cert": {
+    "extraPermittedDns": ["myapp.internal"],
+    "allowPublicDns": false
+  }
+}
+```
 
-LPM CLI does not inject `HTTPS`, `SSL_CRT_FILE`, `SSL_KEY_FILE`, or framework-specific certificate variables into the child. It discovers the child endpoint first, then terminates HTTPS and secure WebSockets at its own frontend.
+`extraPermittedDns` expands the permitted DNS subtrees. It does not add a certificate hostname, browser URL, proxy route, or hosts-file entry.
 
-Port selection is separate from certificate setup. Vite receives a strict managed port when LPM CLI must assign one; Next.js, Nuxt, SvelteKit, Remix, and Astro receive their native port argument; generic servers receive `PORT`. If a child ignores an explicit managed port, startup fails before the browser, proxy, or tunnel can target the wrong listener.
+Add the actual browser hostname with one of these options:
 
-With `lpm dev --https --port 4000`, `4000` is the browser-facing TLS port and the plain-HTTP child receives a separate internal port. Without `--port`, the frontend asks the OS for an available port, avoiding a probe-then-bind race.
+- `proxy.host`
+- `services.<name>.host`
+- `lpm cert generate --host`
 
-## Status check
+Public DNS names require an explicit opt-in:
+
+```json title="lpm.json"
+{
+  "cert": {
+    "extraPermittedDns": ["staging.example.com"],
+    "allowPublicDns": true
+  }
+}
+```
+
+> CAUTION: Enable `allowPublicDns` only for DNS names that you control. This field increases the authority of your local CA.
+
+## Protect the local CA
+
+The root CA is unique to your machine. LPM CLI does not ship or download a shared root CA.
+
+Anyone with the root CA private key can create certificates that your machine trusts. Do not copy or commit this key.
+
+On Unix systems, certificate directories must use mode `0700`. Private keys must use mode `0600`.
+
+LPM CLI refuses to sign with a group-readable or world-readable CA private key. Run `lpm cert status` to get the repair command.
+
+Project certificates for custom hostnames use a constrained project chain. The requested DNS permissions limit that project chain.
+
+## Platform and browser behavior
+
+| Platform | Trust-store behavior |
+| --- | --- |
+| macOS | LPM CLI uses the user login Keychain. The operation does not require `sudo`. |
+| Linux | LPM CLI uses the system CA store. The operation requires `sudo`. |
+| Windows | LPM CLI uses the Root certificate store. Windows can request UAC approval. |
+
+Chrome, Edge, Safari, and many Linux browsers use the operating-system trust store.
+
+Firefox can use a separate trust store. If Firefox shows a warning, use one of these options:
+
+- Set `security.enterprise_roots.enabled` to `true` in `about:config`.
+- Import `~/.lpm/certs/rootCA.pem` as a certificate authority in Firefox.
+
+## Use HTTPS on another device
+
+A phone or another computer must trust your local CA before it accepts the project certificate.
+
+Start a network development server with CA bootstrap enabled:
+
+```bash
+lpm dev --https --network --allow-ca-bootstrap
+```
+
+LPM CLI prints a plain HTTP URL for CA installation. Open that URL on the other device, then install and trust the CA.
+
+CA bootstrap is off by default. The operating system selects its LAN port.
+
+> CAUTION: Anyone on the local network can download the CA certificate while the bootstrap server runs. The private key does not leave your machine.
+
+Without CA bootstrap, copy `~/.lpm/certs/rootCA.pem` to the device through a trusted method. Then install and trust the certificate manually.
+
+## Certificate files
+
+| Scope | Files |
+| --- | --- |
+| Machine | `~/.lpm/certs/rootCA.pem` and `~/.lpm/certs/rootCA-key.pem` |
+| Project | `<project>/.lpm/certs/cert.pem` and `<project>/.lpm/certs/key.pem` |
+
+Do not commit the generated project files. If the project does not ignore `.lpm/`, add it to `.gitignore`.
+
+The default project certificate contains these names:
+
+- `localhost`
+- `127.0.0.1`
+- `::1`
+
+## Renewal and rotation
+
+LPM CLI creates a new project certificate in these cases:
+
+- The certificate is missing.
+- The certificate expires soon.
+- The certificate does not contain a requested hostname.
+- The certificate is not compatible with the active CA.
+
+Project certificate renewal starts within 30 days of expiry. Root CA warnings start within 60 days and become urgent within 30 days.
+
+LPM CLI never rotates the root CA automatically because rotation changes machine trust. When `lpm cert status` reports an expiry warning, rotate the CA:
+
+```bash
+lpm cert rotate
+```
+
+If rotation stops before it is complete, reconcile its state:
+
+```bash
+lpm cert reconcile --dry-run
+lpm cert reconcile
+```
+
+The reconcile command also removes expired grace entries.
+
+## Common problems
+
+### The browser shows a certificate warning
+
+Show the trust and certificate status:
 
 ```bash
 lpm cert status
 ```
 
-Reports:
-
-- **Root CA** — exists / trusted, subject, expiry
-- **Project cert** — exists, expiry, hostnames in SAN, whether renewal is recommended
-
-`--json` returns the same structurally.
-
-## Renewal
-
-Project certs have a long-ish but bounded lifetime. `lpm cert status` flags `needs_renewal: true` when expiry is within ~30 days. Regenerate:
+If the CA is not trusted, install it:
 
 ```bash
-lpm cert generate
+lpm cert trust
 ```
 
-The CA itself has a much longer lifetime — once you `lpm cert trust`, it lasts years. Re-running `lpm cert trust` is safe (idempotent — installs are deduped on cert serial).
+If only Firefox shows the warning, configure Firefox to use the operating-system trust store or import the CA.
 
-## Why a per-machine root CA
+### The browser reports a hostname mismatch
 
-LPM CLI doesn't ship a baked-in CA. Every machine generates its own root CA on first `lpm cert trust`. Reasons:
+Make sure that the URL hostname is in the project certificate. Add it with `proxy.host`, `services.<name>.host`, or `lpm cert generate --host`.
 
-- The private key never leaves the machine. A compromised shared CA distributed by LPM CLI would be a supply-chain attack against every user.
-- Removing trust is a local operation — `lpm cert uninstall` doesn't have to coordinate with anything.
-- Project certs are signed by your local CA, so they're only trusted on machines that have run `lpm cert trust`. Sharing a project cert across machines doesn't accidentally trust its issuer everywhere.
+`extraPermittedDns` is not a certificate hostname. It only permits certificates below the configured DNS subtree.
+
+### LPM CLI reports unsafe permissions
+
+Run `lpm cert status`. Then run the exact permission-repair command from its output.
+
+### The root CA expires soon
+
+Run `lpm cert rotate`. LPM CLI replaces the CA and reissues the known project certificates.
+
+### Root CA rotation stopped
+
+Preview the repair with `lpm cert reconcile --dry-run`. Then run `lpm cert reconcile`.
+
+### Another device does not trust the site
+
+Install and trust `rootCA.pem` on that device. Use CA bootstrap or copy the certificate through a trusted method.
+
+## Local HTTPS or a tunnel?
+
+If the site stays on your computer or local network, use local HTTPS. Each client device must trust your local CA.
+
+If a remote person or service needs a public URL, use a [tunnel](/docs/infra/tunneling).
 
 ## See also
 
-- [`lpm cert`](/docs/infra/cert) — CLI command reference
-- [`lpm dev --https`](/docs/dev/dev) — most common consumer
-- [`lpm.json` https](/docs/reference/lpm-json#https) — persistent config
+- [`lpm cert`](/docs/infra/cert) — manage the local CA and project certificates
+- [`lpm dev`](/docs/dev/dev) — start the development server
+- [`lpm proxy`](/docs/infra/proxy) — configure local hostnames and proxy ports
+- [`lpm hosts`](/docs/infra/hosts) — manage local hosts-file entries
+- [Tunneling](/docs/infra/tunneling) — expose a local service through a public URL
+- [`lpm.json`](/docs/reference/lpm-json) — configure project HTTPS

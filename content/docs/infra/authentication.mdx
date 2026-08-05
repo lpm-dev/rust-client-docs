@@ -1,58 +1,250 @@
 ---
 title: Authentication
-description: "How LPM CLI stores registry sessions, separates the LPM.dev Registry from npm-compatible registries, and reports secure-storage backend health."
+description: "How LPM CLI selects, stores, refreshes, and clears credentials for each package registry."
 ---
 
-LPM CLI stores auth material in your local secure store and keeps each registry separate. A normal [`lpm login`](/docs/infra/login) session authenticates you to the LPM.dev Registry, while npm, GitHub Packages, GitLab Packages, and custom npm-compatible registries can each have their own token source.
+Authentication in LPM CLI is registry-specific. LPM CLI first selects the registry that receives a request. Then it selects a credential for that registry.
 
-GitHub and GitLab can use the host CLIs directly. When `gh` or `glab` already has a valid session, LPM CLI can read that token at command time without copying it into LPM CLI storage. Explicit token fallbacks, npm web-login tokens, custom registry tokens, and LPM.dev Registry sessions are stored by LPM CLI.
+Credentials for the LPM.dev Registry, npm, GitHub Packages, GitLab Packages, and custom registries remain separate. LPM CLI does not send a token to an unrelated registry.
 
-## Registry model
+## How authentication works
 
-| Registry target | Auth source |
+Each authenticated request uses the same model:
+
+1. A package name, publish target, or registry option selects the destination registry.
+2. LPM CLI selects the first available credential for that registry.
+3. LPM CLI sends the credential only to the selected registry.
+
+This order matters because an environment variable can override a stored credential. A project file can also select a different registry.
+
+## Credential priority
+
+LPM CLI uses the first available source in each row.
+
+| Registry or target | Credential priority |
 | --- | --- |
-| LPM.dev Registry | Browser login stored by LPM CLI, or `LPM_TOKEN` in automation |
-| npm (`registry.npmjs.org`) | npm web login, `NPM_TOKEN`, or an explicit `--token` fallback |
-| GitHub Packages | `gh auth token`, `GITHUB_TOKEN`, or an explicit `--token` fallback |
-| GitLab Packages | `glab auth token`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, or an explicit `--token` fallback |
-| Custom registry | Exact registry-scoped token from `--token` or masked interactive input |
+| LPM.dev Registry | `--token` → `LPM_TOKEN` → stored access token |
+| npm (`registry.npmjs.org`) | `NPM_TOKEN` → token from `lpm login --npm` → project `.npmrc` → home `.npmrc` |
+| GitHub Packages | `GITHUB_TOKEN` → `gh auth token --hostname github.com` → stored fallback token |
+| GitLab Packages on `gitlab.com` | `GITLAB_TOKEN` → `CI_JOB_TOKEN` → `glab auth token` → stored fallback token |
+| Self-managed GitLab | `GITLAB_TOKEN` → `CI_JOB_TOKEN` → stored fallback token |
+| Custom publish registry | Token stored for the selected registry URL |
 
-This storage split is why `lpm logout` without flags clears only the LPM.dev Registry session. Use [`lpm logout --all`](/docs/infra/login#lpm-logout) when you want to clear every stored registry token.
+The `gh` and `glab` commands provide their tokens at request time. LPM CLI does not copy these tokens into its credential storage.
 
-`NPM_TOKEN` and tokens stored by `lpm login --npm` are scoped to `https://registry.npmjs.org`. A repo can route publishing or staging to a custom npm-compatible registry in `lpm.json`, but that route does not redirect npmjs.org credentials. Use `lpm login --login-registry <URL> --token <T>` for each custom publish registry.
+An install route from `.npmrc` uses the credential for the matching registry origin. This rule also applies to custom registries and package tarballs.
 
-## Token storage
+## Choose a credential method
 
-| Platform | Backend |
+| Method | Use it for | Persistence |
+| --- | --- | --- |
+| Browser login | Regular local work with the LPM.dev Registry | Stored session |
+| Environment variable | CI, containers, or temporary access | Current process or CI job |
+| `gh` or `glab` session | Local GitHub Packages or GitLab Packages work | Managed by the host CLI |
+| Stored third-party token | Regular local work without a host CLI | Stored token |
+| `.npmrc` credential | npm-compatible install routing and origin-scoped authentication | Project or home file |
+
+Use [`lpm login`](/docs/infra/login) to create a stored session or token. You do not need authentication to install public packages.
+
+## Sessions and tokens
+
+A browser login to the LPM.dev Registry can store an access token and a refresh token. LPM CLI can refresh this session without another browser login.
+
+Tokens from `--token`, `LPM_TOKEN`, CI, or older login flows do not refresh automatically. Third-party registry tokens also remain static until you replace them.
+
+Use [`lpm token-rotate`](/docs/infra/token-rotate) to rotate a stored LPM.dev Registry session. This command does not rotate npm, GitHub, GitLab, or custom registry tokens.
+
+## Project configuration and registry routing
+
+Project configuration can select a registry, but it does not change the credential priority. Do not put registry tokens in `lpm.json`.
+
+For example, this `lpm.json` selects a custom npm-compatible publish registry:
+
+```json title="lpm.json"
+{
+  "publish": {
+    "registries": ["npm"],
+    "npm": {
+      "registry": "https://npm.example.com"
+    }
+  }
+}
+```
+
+Store a token for that registry, then publish:
+
+```bash
+lpm login --login-registry https://npm.example.com --token <TOKEN>
+lpm publish
+```
+
+The registry URL selects the stored credential. A token for `registry.npmjs.org` does not become a token for `npm.example.com`.
+
+Use `.npmrc` for install routes and credentials for npm-compatible registries:
+
+```ini title=".npmrc"
+@acme:registry=https://npm.example.com/
+//npm.example.com/:_authToken=${NPM_TOKEN}
+```
+
+Set the variable for the install process:
+
+```bash
+NPM_TOKEN=<TOKEN> lpm install
+```
+
+Do not commit a literal token to `.npmrc`. Use an environment-variable reference or another protected credential source.
+
+## Secure credential storage
+
+LPM CLI stores local credentials in the secure storage service for your operating system.
+
+| Platform | Secure storage service |
 | --- | --- |
-| macOS | Keychain (`security` framework) |
-| Linux | Secret Service-compatible keyring (via `keyring`) |
+| macOS | Keychain |
+| Linux | Secret Service-compatible keyring |
 | Windows | Credential Manager |
 
-Service name: `lpm-cli`. Account names are scoped per registry: the LPM.dev Registry, npm, GitHub, GitLab, and custom registries each get their own keychain entry.
+The service name is `lpm-cli`. LPM CLI separates stored credentials by registry.
 
-If the system keychain is unavailable, such as in a sandboxed environment, headless Linux session without D-Bus, or locked store, the CLI falls back to encrypted file storage at `~/.lpm/.credentials`. Tokens still do not land in plaintext on disk.
+If secure storage is unavailable, LPM CLI uses an encrypted file at `~/.lpm/.credentials`. LPM CLI does not store tokens as plain text in this file.
 
-On macOS, LPM CLI first probes a stored access or refresh credential with Keychain interaction disabled. A credential that is already authorized is returned silently. If macOS reports that user interaction is required, LPM CLI prints the matching Keychain guidance and immediately retries with UI allowed; this is the point where the permission sheet can appear. Missing credentials, unrelated Keychain failures, and encrypted-file fallback reads do not print the guidance. After you choose **Always Allow**, later authorized reads remain silent.
+The encrypted fallback is valid, but it has less protection than the operating-system service. [`lpm doctor`](/docs/infra/doctor) reports this fallback as degraded.
 
-You can see the active backend in:
+## macOS Keychain permission
+
+LPM CLI first tries to read an authorized Keychain item without a prompt. If macOS requires permission, LPM CLI prints guidance and opens the permission sheet.
+
+Select **Always Allow** to keep later authorized reads silent. If you deny access, LPM CLI cannot use the stored credential for that request.
+
+## Common recipes
+
+### Use the LPM.dev Registry on your computer
+
+Sign in through the browser, then inspect the active account:
 
 ```bash
 lpm login
 lpm whoami
-lpm whoami --json
-lpm setup ci npmrc --json
-lpm doctor
 ```
 
-`setup ci npmrc` requires `LPM_TOKEN`, an eligible stored session, or explicit OIDC. Its JSON output reports the source/backend and a redacted file shape; the live bearer appears only in the protected on-disk `.npmrc`.
+### Use npm in CI
 
-The human wording is `secure storage backend: keychain` or `secure storage backend: encrypted file fallback`. The encrypted fallback is valid and encrypted, but [`lpm doctor`](/docs/infra/doctor) treats it as degraded because it does not have the same OS-managed per-app protections as the keychain-backed path.
+Pass `NPM_TOKEN` to the package command. This method does not store the token:
+
+```bash
+NPM_TOKEN=<TOKEN> lpm install
+NPM_TOKEN=<TOKEN> lpm publish --npm
+```
+
+### Use an existing GitHub CLI session
+
+Authenticate `gh`, then publish to GitHub Packages:
+
+```bash
+gh auth login --hostname github.com
+lpm publish --github
+```
+
+LPM CLI reads the `gh` token for the request. The token remains under the control of GitHub CLI.
+
+### Use GitLab CI
+
+GitLab CI provides `CI_JOB_TOKEN` to eligible jobs. LPM CLI selects it after `GITLAB_TOKEN`:
+
+```bash
+CI_JOB_TOKEN=<TOKEN> lpm publish --gitlab
+```
+
+The GitLab publish target also requires `publish.gitlab.projectId` in `lpm.json`. See the [`lpm publish` targets](/docs/packages/publish#targets).
+
+### Use a custom publish registry
+
+Store the token for the exact publish registry:
+
+```bash
+lpm login --login-registry https://npm.example.com --token <TOKEN>
+lpm publish --publish-registry https://npm.example.com
+```
+
+Interactive login can ask for the token with masked input. JSON mode and non-interactive shells require `--token`.
+
+## Logout and revocation
+
+`lpm logout` clears only the stored LPM.dev Registry session:
+
+```bash
+lpm logout
+```
+
+Use `--all` to clear all credentials that LPM CLI stores:
+
+```bash
+lpm logout --all
+```
+
+These commands do not clear environment variables, `.npmrc` credentials, or `gh` and `glab` sessions. LPM CLI does not own those credential sources.
+
+Add `--revoke` to revoke the LPM.dev Registry session and browser pairings. See the [`lpm logout` reference](/docs/infra/login#log-out) for valid flag combinations.
+
+## Troubleshooting
+
+### You logged out but remain authenticated
+
+A higher-priority credential can remain active after local logout. Inspect `LPM_TOKEN`, the registry-specific environment variables, `.npmrc`, and host CLI sessions.
+
+For example, clear `LPM_TOKEN` from the current shell:
+
+```bash
+unset LPM_TOKEN
+lpm logout
+```
+
+### LPM CLI selects an unexpected token
+
+Read the credential-priority table and remove the earlier source. For example, `GITHUB_TOKEN` overrides both `gh` and the stored GitHub fallback token.
+
+### LPM CLI selects `gh` or `glab` unexpectedly
+
+Disable host CLI authentication for one command:
+
+```bash
+LPM_DISABLE_HOST_CLI_AUTH=1 lpm publish --github
+```
+
+If a stored fallback token is available, LPM CLI uses it. An environment token still has higher priority.
+
+### A default npm operation ignores the `.npmrc` token on Unix
+
+LPM CLI refuses the default npm-token fallback from an `.npmrc` file with permissions more open than `0600`. Restrict the file permissions:
+
+```bash
+chmod 600 .npmrc
+```
+
+### The secure storage service is unavailable
+
+Run [`lpm doctor`](/docs/infra/doctor) to inspect the active storage service. If that service is unavailable, LPM CLI uses encrypted file storage.
+
+## Inspect authentication
+
+These commands report the active account, available credential sources, or storage health:
+
+```bash
+lpm whoami
+lpm whoami --json
+lpm doctor
+lpm setup ci npmrc --json
+```
+
+`lpm whoami` reports available third-party credentials. It does not send a request to each third-party registry to test every token.
+
+`lpm setup ci npmrc --json` reports a redacted file shape. The live bearer appears only in the protected `.npmrc` file on disk.
 
 ## See also
 
-- [`lpm login / logout / whoami`](/docs/infra/login) - sign in, sign out, and inspect the active identity
-- [`lpm setup`](/docs/infra/setup) - write `.npmrc` auth for CI or local development
+- [`lpm login`, `lpm logout`, and `lpm whoami`](/docs/infra/login) - manage stored registry credentials
+- [`lpm setup`](/docs/infra/setup) - write `.npmrc` authentication for local use or CI
 - [`lpm token-rotate`](/docs/infra/token-rotate) - rotate the LPM.dev Registry session token
-- [Registries](/docs/registries) - how LPM CLI routes between the LPM.dev Registry, npm, and private registries
-- [Environment variables](/docs/reference/env-vars) - `LPM_TOKEN`, `LPM_OIDC_TOKEN`, and registry auth overrides
+- [Registries](/docs/registries) - route packages to npm-compatible registries
+- [Environment variables](/docs/reference/env-vars) - use temporary credentials and registry overrides
