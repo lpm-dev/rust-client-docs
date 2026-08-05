@@ -120,6 +120,25 @@ Use [`lpm swift-registry --force`](/docs/packages/swift-registry#--force) only t
 
 Source identity is preserved during linking. A registry package, tarball, Git package, `file:` package, and `link:` package may share the same `name@version`; each dependency edge points at the source declared by that edge instead of guessing from name and version alone. Local `file:` and `link:` source snapshots refresh when you run `lpm install` again.
 
+## Project `node_modules` path
+
+The project-level `node_modules` path must be a real directory. Do not replace this path with a symlink or directory junction.
+
+LPM CLI checks the project root before it accesses the registry. A recursive install checks the root and each selected workspace member before it starts install work.
+
+Give each worktree its own `node_modules` directory. LPM CLI still shares canonical package data and graph link entries through `~/.lpm/store/`.
+
+If LPM CLI reports `Project layout error`, run:
+
+```bash
+lpm doctor --fix
+lpm install
+```
+
+The doctor command removes only the project link entry. It does not remove the target or its contents.
+
+`lpm cache prune` and `lpm store clean` do not repair this project layout.
+
 ## GitHub dependencies
 
 `package.json` can declare public GitHub repositories with GitHub shorthand or a public `git+https` URL:
@@ -507,6 +526,32 @@ Repo-file weakeners are treated differently. If a repo asks for a weaker posture
 install or rebuild does **not** prompt inline. LPM CLI treats those file values as proposals, fails the command, and points you at `lpm security unlock ...` for a temporary project exception.
 
 Use [`lpm security`](/docs/infra/security) to create the unlock explicitly or to inspect the current floor with `lpm security status`.
+
+## Dependency overrides
+
+Use `package.json > lpm.overrides`, top-level `overrides`, or top-level `resolutions` to replace direct or transitive dependency versions.
+
+```json title="package.json"
+{
+  "lpm": {
+    "overrides": {
+      "ms": "2.1.3"
+    }
+  }
+}
+```
+
+An override target replaces the declared range of each matching consumer. An exact target pins that version, even when the consumer declares another range.
+
+This behavior changed from older LPM CLI releases. Older releases intersected the override target with each consumer range. Current releases replace the consumer range, so an existing lockfile can select different versions after an upgrade.
+
+A range target selects the newest eligible published version in the override range. Security and platform policies still apply to the selected version.
+
+Workspace-root overrides apply to the root and all members. A member can add overrides or replace a root selector in the same field.
+
+Field precedence is `lpm.overrides`, then `overrides`, then `resolutions`. LPM CLI lists an override as applied only when it changes the selected version.
+
+If an override target is unavailable or blocked by policy, LPM CLI warns and keeps the natural version. See [`package.json > lpm.overrides`](/docs/reference/package-json-lpm#overrides) for selector forms.
 
 ## Workspaces
 

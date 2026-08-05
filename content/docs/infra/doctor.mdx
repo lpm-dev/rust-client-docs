@@ -118,10 +118,26 @@ lpm doctor --fix
 Walks the failing checks and asks before each remediation. Common fixes include:
 
 - Install the missing managed runtime
+- Replace a project-level `node_modules` link with a real directory
 - Run `lpm install` to reconcile `node_modules/`
 - Run `lpm fmt` to reconcile formatting
 - Reconcile `lpm.lockb` with `lpm.lock` when the graph fits the binary format, or remove stale binary bytes for TOML-only graphs
 - Update `.gitattributes` so `lpm.lockb` is marked as binary
+
+### Repair a linked project `node_modules`
+
+The `node_modules_symlinked` check reports a project-level symlink or directory junction. LPM CLI does not install through this path.
+
+```bash
+lpm doctor --fix
+lpm install
+```
+
+The fix removes only the link entry and creates a real `node_modules` directory. The linked target and its contents stay unchanged.
+
+You can also remove the link entry manually. Then run `lpm install` to create and populate the directory.
+
+Do not run `lpm cache prune` or `lpm store clean` for this error. The global store is not the cause.
 
 Pass `-y` (which implies `--fix`) to skip every prompt — useful in CI bootstrap scripts.
 
@@ -217,6 +233,7 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 | `node_modules_isolated_healthy` | pass     | `node_modules/` exists and is backed by an isolated `.lpm/wrappers/` store.                                                                                                                                                     |
 | `node_modules_hoisted_healthy`  | pass     | `node_modules/` exists and uses the hoisted layout.                                                                                                                                                                             |
 | `node_modules_virtual_healthy`  | pass     | `node_modules/` symlinks point into the active global virtual store.                                                                                                                                                            |
+| `node_modules_symlinked`        | fail     | The project-level `node_modules` path is a symlink or directory junction. **Fix:** Run `lpm doctor --fix`, then run `lpm install`.                                                                                              |
 | `v2_store_orphans`              | warn     | The v2 or v3 store has entries no longer reachable from any registered project. The stable code name is retained for compatibility. **Fix:** `lpm cache prune` (dry-run) then `lpm cache prune --apply`.                         |
 | `node_modules_mixed_layout`     | warn     | Both isolated and hoisted layout state are present in `node_modules/`. **Fix:** Re-run `lpm install` to converge on the configured linker layout.                                                                               |
 | `node_modules_no_store`         | warn     | `node_modules/` exists but no LPM CLI-owned store is present. **Fix:** Run `lpm install` to rebuild the layout under LPM CLI ownership.                                                                                         |
@@ -362,15 +379,16 @@ This table is hand-maintained alongside the catalog source in [`crates/lpm-cli/s
 
 ### Manifest compat
 
-| Code                    | Severity | Description                                                                                                                                                                                                                                                                          |
-| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm_overrides_drift`  | warn     | Entries in `pnpm.overrides` that LPM CLI is not honoring through `lpm.overrides`, top-level `overrides`, or `resolutions`. **Fix:** Run `lpm migrate` to translate, or mirror the entries verbatim in `lpm.overrides`.                                                               |
-| `pnpm_patches_drift`    | warn     | Entries in `pnpm.patchedDependencies` whose patch files LPM CLI cannot bind to via `lpm.patchedDependencies`. **Fix:** Re-author with `lpm patch` or mirror the entries into `lpm.patchedDependencies` after verifying the patch applies cleanly under LPM CLI's stricter integrity binding. |
-| `pnpm_peer_rules_drift` | warn     | Sub-key entries (`ignoreMissing`, `allowedVersions`, `allowAny`) that LPM CLI is not honoring via `lpm.peerDependencyRules`. **Fix:** Run `lpm migrate` (the planner translates selector keys 1:1) or mirror the rules under `lpm.peerDependencyRules`.                              |
-| `engines_npm_ignored`   | warn     | `engines.npm` is declared but LPM CLI is not the npm CLI and does not enforce its constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                               |
-| `engines_pnpm_ignored`  | warn     | `engines.pnpm` is declared but LPM CLI does not enforce pnpm's version constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                                          |
-| `engines_yarn_ignored`  | warn     | `engines.yarn` is declared but LPM CLI does not enforce yarn's version constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                                          |
-| `engines_bun_ignored`   | warn     | `engines.bun` is declared but LPM CLI does not enforce bun's version constraint. **Fix:** Use `lpm.json > runtime.bun` when the project needs managed Bun on `PATH`; `engines.node` and `engines.lpm` are enforced.                                                                  |
+| Code                          | Severity | Description                                                                                                                                                                                                                                                                          |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unsupported_override_values` | warn     | Top-level `overrides` or `resolutions` values are not strings, so LPM CLI ignores them. **Fix:** Use string targets and parent selectors such as `parent>dependency`.                                                                                                                   |
+| `pnpm_overrides_drift`        | warn     | Entries in `pnpm.overrides` that LPM CLI is not honoring through `lpm.overrides`, top-level `overrides`, or `resolutions`. **Fix:** Run `lpm migrate` to translate, or mirror the entries verbatim in `lpm.overrides`.                                                               |
+| `pnpm_patches_drift`          | warn     | Entries in `pnpm.patchedDependencies` whose patch files LPM CLI cannot bind to via `lpm.patchedDependencies`. **Fix:** Re-author with `lpm patch` or mirror the entries into `lpm.patchedDependencies` after verifying the patch applies cleanly under LPM CLI's stricter integrity binding. |
+| `pnpm_peer_rules_drift`       | warn     | Sub-key entries (`ignoreMissing`, `allowedVersions`, `allowAny`) that LPM CLI is not honoring via `lpm.peerDependencyRules`. **Fix:** Run `lpm migrate` (the planner translates selector keys 1:1) or mirror the rules under `lpm.peerDependencyRules`.                              |
+| `engines_npm_ignored`         | warn     | `engines.npm` is declared but LPM CLI is not the npm CLI and does not enforce its constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                               |
+| `engines_pnpm_ignored`        | warn     | `engines.pnpm` is declared but LPM CLI does not enforce pnpm's version constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                                          |
+| `engines_yarn_ignored`        | warn     | `engines.yarn` is declared but LPM CLI does not enforce yarn's version constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                                          |
+| `engines_bun_ignored`         | warn     | `engines.bun` is declared but LPM CLI does not enforce bun's version constraint. **Fix:** Use `lpm.json > runtime.bun` when the project needs managed Bun on `PATH`. LPM CLI enforces `engines.node` and `engines.lpm`.                                                               |
 
 ## See also
 
