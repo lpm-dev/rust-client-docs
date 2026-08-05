@@ -237,11 +237,13 @@ If both `readyUrl` and a distinct `readyPort` exist, `readyUrl` is the applicati
 
 LPM CLI also recognizes advertised loopback URLs in service output. It preserves the advertised scheme and base path after it verifies the listener.
 
-The readiness wait uses `readyTimeout`, with a default of 30 seconds.
+The readiness wait uses `readyTimeout`. The default is 30 seconds.
 
-If the process still runs after a readiness timeout, LPM CLI prints a `not ready` warning. It then continues the startup graph.
+If a service fails a readiness check, LPM CLI stops the initial startup.
 
-This warning state currently lets dependent services start. It does not stop the development run.
+LPM CLI terminates each service that it started and returns an error.
+
+If a `dependsOn` service fails readiness, LPM CLI does not start the dependent service.
 
 ## Start services in dependency order
 
@@ -259,7 +261,7 @@ This warning state currently lets dependent services start. It does not stop the
 
 LPM CLI reports an error for a missing dependency or a dependency cycle.
 
-Independent branches start together. Dependent services start after the preceding dependency level reaches ready or readiness-warning state.
+Independent branches start together. A dependent service starts only after all its declared dependencies are ready.
 
 During shutdown, LPM CLI stops dependents before their dependencies. This order gives dependent services time to close active connections.
 
@@ -339,9 +341,11 @@ Use the startup output or `lpm ports all` to find the active listener.
 
 HTTPS, proxy, and network frontends can use separate public ports. Read the URL that `lpm dev` prints.
 
-### A dependent starts after a readiness warning
+### Startup stops after a readiness failure
 
-The current readiness timeout is not fatal. LPM CLI marks the service ready for graph progress while it keeps the process active.
+An ownership, `readyPort`, or `readyUrl` failure stops the initial startup.
+
+Read the service output. Then correct the readiness target or increase `readyTimeout`.
 
 ### A peer variable is missing
 
