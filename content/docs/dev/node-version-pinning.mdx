@@ -13,13 +13,12 @@ When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lp
 
 ### Node
 
-| Priority   | Source                        | Format                                                 |
-| ---------- | ----------------------------- | ------------------------------------------------------ |
-| 1          | `lpm.json > runtime.node`     | Semver: `">=22.0.0"`, `"22.5.0"`, `"22"`               |
-| 2          | `package.json > engines.node` | Semver                                                 |
-| 3          | `.nvmrc`                      | Plain version: `22.5.0`, `lts/iron`, `v22`             |
-| 4          | `.node-version`               | Plain version                                          |
-| (fallback) | None of the above             | Use the system `node` from `PATH` — no managed runtime |
+| Priority   | Source                    | Format                                                 |
+| ---------- | ------------------------- | ------------------------------------------------------ |
+| 1          | `lpm.json > runtime.node` | Semver: `">=22.0.0"`, `"22.5.0"`, `"22"`               |
+| 2          | `.nvmrc`                  | Plain version: `22.5.0`, `lts/iron`, `v22`             |
+| 3          | `.node-version`           | Plain version                                          |
+| (fallback) | None of the above         | Use the first Node on the constructed script `PATH` — no managed runtime |
 
 `.nvmrc` lives in this list intentionally — projects migrating from `nvm` get Node pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` because it sits next to the rest of the LPM CLI config.
 
@@ -34,13 +33,13 @@ When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lp
 
 ## Auto-Install
 
-If a detected version is not already installed, LPM CLI downloads it before running the script unless auto-install is disabled:
+If a runtime selector is not already installed, LPM CLI downloads it before running the script unless auto-install is disabled:
 
 ```bash
 LPM_NO_AUTO_INSTALL=true lpm dev
 ```
 
-`LPM_NO_AUTO_INSTALL=true` applies to both Node and Bun. When auto-install is off and a managed runtime is missing, LPM CLI warns and leaves the system `PATH` in place for that runtime.
+`LPM_NO_AUTO_INSTALL=true` applies to Node and Bun selectors. When auto-install is off and a managed runtime is missing, LPM CLI warns and leaves the system `PATH` in place for that runtime. It has no effect on `package.json > engines.node`, because an engine constraint never triggers installation.
 
 Node releases come from `https://nodejs.org/dist/index.json`, cached for 1 hour at `~/.lpm/runtimes/index-cache.json`. Downloads are SHA-256 verified against the matching `SHASUMS256.txt` entry.
 
@@ -81,16 +80,22 @@ This means locally-installed CLIs win over managed runtime tools, and managed No
 
 ## Node Engine Enforcement
 
-The workspace root's `engines.node` plays two roles. As a **detection source** it tells LPM CLI which managed Node runtime to install for `lpm dev` / `lpm run` when `runtime.node` is absent. As an **enforcement constraint** it gates `lpm install` / `lpm rebuild` / `lpm add`. Selected dependencies' `engines.node` ranges are install-time enforcement only: required mismatches abort, optional-only incompatible packages are skipped, and the ranges are persisted for lockfile replay.
+The workspace root's `engines.node` is a compatibility constraint, never a runtime selector. LPM CLI first applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`. It then constructs the same `PATH` scripts receive—project and workspace `node_modules/.bin` directories, the selected managed runtime, then inherited `PATH`—and validates the first Node resolved from it against `engines.node`.
+
+For workspace runs, LPM CLI resolves every runnable selected member's local Node selector and validates the first Node on that member's script `PATH` against the root constraint before scheduling any member scripts. Members without the requested script or task are skipped without runtime preparation. A runnable member cannot pass the root check under one Node version and then execute under an incompatible runtime.
+
+An engine range never selects another installed managed runtime, downloads Node, or prepends a different Node to `PATH`. This preserves externally selected runtimes in CI matrices. If no Node is available, the engine check fails with the declared constraint and an explicit `lpm use node@<version>` hint. `package.json > lpm > engineStrict: false` and `~/.lpm/config.toml > engine-strict = false` retain warning-only behavior.
+
+Root constraints gate `lpm run`, `lpm install`, `lpm rebuild`, and `lpm add`. Selected dependencies' `engines.node` ranges are install-time enforcement only: required mismatches abort, optional-only incompatible packages are skipped, and the ranges are persisted for lockfile replay.
 
 ```text
 $ lpm install
 Error: lpm::engine_mismatch
   × node version 18.20.4 does not satisfy required >=22.0.0 (from package.json
-  │ > engines.node (compared against system PATH))
+  │ > engines.node (compared against script PATH))
 ```
 
-Resolution: install the matching managed runtime first (`lpm use node@22`), or relax the constraint.
+Resolution: select a matching managed runtime (`lpm use node@22`), provide a compatible Node on `PATH`, or relax the constraint.
 
 `engines.bun` is not enforced in this first Bun runtime pass. Put the desired Bun version in `lpm.json > runtime.bun` to manage Bun availability.
 

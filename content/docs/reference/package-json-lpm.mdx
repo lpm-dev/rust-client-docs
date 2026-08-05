@@ -251,7 +251,7 @@ Unsupported in v1: globs such as `@scope/*`, version selectors such as `react@19
 { "lpm": { "engineStrict": true } }
 ```
 
-Whether workspace-root `engines.lpm` / `engines.node` and, during installs, selected dependencies' `engines.node` constraints are enforced. Default `true` — workspace-root mismatches abort install / rebuild / add, and required dependency mismatches abort installation. Packages reachable only through optional dependency edges are skipped when their Node constraint is incompatible.
+Whether workspace-root `engines.lpm` / `engines.node` and, during installs, selected dependencies' `engines.node` constraints are enforced. Default `true` — workspace-root mismatches abort install / rebuild / add, `lpm run` validates the effective Node, and required dependency mismatches abort installation. Packages reachable only through optional dependency edges are skipped when their Node constraint is incompatible.
 
 Precedence: `lpm install --no-engine-strict` (CLI) > `package.json > lpm.engineStrict` > `~/.lpm/config.toml > engine-strict` > `true` default.
 
@@ -403,7 +403,9 @@ Both shapes accepted. See [Workspaces](/docs/packages/workspaces).
 { "engines": { "node": ">=22.0.0", "lpm": ">=0.32.0" } }
 ```
 
-Runtime / CLI version constraints. LPM CLI enforces both `engines.node` (against the effective Node version) and `engines.lpm` (against the running CLI version) on the workspace root by default. It also enforces `engines.node` from selected dependency versions, persisting those ranges in `lpm.lock` for warm, frozen, and offline replay. Required mismatches abort; optional-only incompatible packages are skipped. `lpm.json > runtime.node` takes precedence over the root `engines.node` as a **pin source** for runtime auto-install; every Node **enforcement** check still runs against the resolved Node version.
+Runtime / CLI version constraints. LPM CLI enforces both `engines.node` (against the effective Node version) and `engines.lpm` (against the running CLI version) on the workspace root by default. It also enforces `engines.node` from selected dependency versions, persisting those ranges in `lpm.lock` for warm, frozen, and offline replay. Required mismatches abort; optional-only incompatible packages are skipped.
+
+`engines.node` never selects or installs a runtime. LPM CLI applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version` first; without one, it preserves the Node already on `PATH`. Engine enforcement then validates that effective version. If no Node is available, the constraint fails with an explicit runtime-selection hint.
 
 Other keys (`engines.npm`, `engines.pnpm`, `engines.yarn`, `engines.bun`) are recognized and surfaced as a one-line stderr warning that LPM CLI doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
 
