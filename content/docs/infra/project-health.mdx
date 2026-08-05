@@ -1,156 +1,247 @@
 ---
 title: Project health
-description: "How lpm doctor structures its checks — pass / warn / fail, parallel network probes, and the auto-fix loop."
+description: "Understand what LPM CLI examines, how health results affect automation, and which automatic fixes change a project."
 ---
 
-[`lpm doctor`](/docs/infra/doctor) is a structured environment check. Each check produces a `(name, severity, detail)` row; the run finishes with a summary and an exit code (0 if every fail is green, 1 otherwise). This page covers the design — what severity levels mean, how `--fix` decides what to repair, and how the parallel probe layer keeps a full doctor run under a second on a healthy project.
+Project health combines the state of your manifest, installed packages, runtimes, security posture, tools, and connected services.
 
-For the CLI flags, see [`lpm doctor`](/docs/infra/doctor).
+[`lpm doctor`](/docs/infra/doctor) turns these areas into named results. Use the report to find the cause of an install or environment problem.
 
-## Severity model
+This page explains the health model and common workflows. The command page contains the complete syntax, catalog, and flags.
 
-Three levels:
+## Understand the health layers
 
-| Severity | Meaning | Affects exit code? |
+LPM CLI separates core project state from broader machine and service state.
+
+| Health layer | Default mode | Full mode adds |
 | --- | --- | --- |
-| `pass` (green) | The check succeeded | No |
-| `warn` (yellow) | Suboptimal but not broken — e.g., outdated tool, expired-but-renewable cert | No |
-| `fail` (red) | Broken — e.g., missing required dep, unreachable registry, corrupted store entry | Yes (exit 1) |
+| Project and install | Manifest, linker mode, `node_modules`, lockfiles, dependency synchronization, local sources, and workspace cycles | Store orphans, `.gitattributes`, and manifest compatibility |
+| Runtime and security | Node.js, Bun, policy extensions, auth storage, vault storage, and Sigstore posture | Sandbox and lifecycle-script policy |
+| Project configuration | `lpm.json` structure, runtime pins, tasks, tools, and services | Tunnel ownership and reachability |
+| Tools and machine | None | Lint, format, TypeScript readiness, plugin versions, global installs, PATH, and shims |
+| Connected services | None | Registry health, registry authentication, and tunnel requests |
 
-A `warn` is informational — `lpm doctor` exits 0 even if every check warns. A `fail` exits 1, which is what CI gates on.
+A healthy project does not require every optional tool or service. LPM CLI emits only the results that apply to the current project.
 
-## Fast vs full run
+## Choose fast or full health
 
-By default, `lpm doctor` runs a **fast local-only preset** — no network round-trips, no subprocess spawns. The full check set runs under `--all`.
-
-Under `--all`, two infrastructure checks run **concurrently** at the start of the doctor run:
-
-- **Registry health** — `client.health_check()` against the configured registry URL.
-- **Auth check** — `client.whoami()` if a token exists in the keychain.
-
-Both are network round-trips. Running them in parallel via `tokio::join!` keeps the worst case to a single round-trip rather than two.
-
-After those two land, the rest of the checks run inline (they're filesystem-bound and fast).
-
-## Check inventory (representative)
-
-The authoritative live catalog is [`lpm doctor list`](/docs/infra/doctor#lpm-doctor-list) (or `--json` for machine-readable). Highlights:
-
-| Group | Checks |
-| --- | --- |
-| **Registry** | Reachable from this network? Latency reasonable? |
-| **Auth** | Token present? Token valid (via `whoami`)? Expiry within warning threshold? |
-| **Runtime** | Managed runtime detected? Detected version installed? PATH includes the right `bin/`? |
-| **Project state** | `package.json` present and parseable? `lpm.lock` matches `package.json`? `node_modules/` matches lockfile? |
-| **Store** | `~/.lpm/store/` exists and accessible? Lockfile-referenced entries present? Any integrity drift? |
-| **Sandbox** | Seatbelt available (macOS) or landlock available (Linux)? |
-| **Local HTTPS** | If `lpm.json > https: true` or a project cert exists — CA installed? Cert valid? |
-| **Tools** | If `lpm.json > tools` declares pins — those plugin versions present? |
-| **TypeScript** | For each `tsconfig.json` in the workspace, can `tsc` be resolved? Healthy when the project-local `node_modules/.bin/tsc` exists. Warns when only a system-PATH `tsc` is reachable (editor and CI may diverge). Fails when `tsc` is not reachable at all. |
-
-Each check produces one `Check` row. Use `--json` to get the full structured set (every check ID, severity, detail, remediation hint).
-
-## Auto-fix mode
+Run the default health report from the project root:
 
 ```bash
-lpm doctor --fix              # prompt before each remediation
-lpm doctor --fix -y           # skip prompts (CI-friendly)
-lpm doctor -y                 # implies --fix
-lpm doctor --all --fix        # full sweep + repair (pair --all with --fix to repair every catalog row)
+lpm doctor
 ```
 
-`--fix` only repairs what was actually checked — running `--fix` without `--all` cannot fix rows that the fast preset never ran.
+The default mode reads local project and LPM CLI state. It does not contact a registry or tunnel service.
 
-For each `fail` (and some `warn`s), the remediator either has a known fix or doesn't. Examples of fixable checks:
+Runtime detection can run a bounded `node --version` process. The default mode does not run lint or format tools.
 
-| Check fail | Fix action |
-| --- | --- |
-| Detected managed runtime not installed | Run [`lpm use node@<version>` or `lpm use bun@<version>`](/docs/dev/use) |
-| `node_modules/` doesn't match lockfile | Run `lpm install` |
-| Local CA not installed in trust store | Run [`lpm cert trust`](/docs/infra/cert) |
-| Store integrity issue | Run [`lpm store verify --fix`](/docs/infra/store) |
-| Project formatting drifted | Run [`lpm fmt`](/docs/dev/fmt) |
-| Plugin version pinned but not present | Run [`lpm plugin update <name>`](/docs/dev/plugin) |
-
-Examples of unfixable checks:
-
-| Check fail | Why unfixable |
-| --- | --- |
-| Registry unreachable | Network problem — outside doctor's scope |
-| Token expired | User has to log in (`lpm login`) — interactive |
-| Sandbox unavailable on this OS | OS-level limitation; nothing doctor can install |
-| TypeScript not installed | Doctor doesn't auto-install random packages — `lpm install -D typescript` is the user's call |
-
-Unfixable failures are reported with the recommended next step but no auto-action.
-
-## `lpm doctor` vs `lpm health`
+Run the full report for machine, tool, and service health:
 
 ```bash
-lpm doctor          # project + environment health (this page)
-lpm health          # registry connectivity check (different command)
+lpm doctor --all
 ```
 
-| | `lpm doctor` | `lpm health` |
+| Mode | Use case | Cost |
 | --- | --- | --- |
-| Scope | Project + environment | Just the registry |
-| Reads `package.json`? | Yes | No |
-| Hits the network? | Only under `--all` (1–2 calls); default fast preset is local-only | Yes (1 call) |
-| Auto-fix? | Yes (`--fix`) | No |
-| Use case | "Is my project in a good state?" | "Is the registry reachable from this CI runner?" |
+| Default | An install, runtime, lockfile, or local project state looks incorrect | Local file access and runtime detection |
+| `--all` | You need a complete environment report or CI evidence | Tool processes, machine inspection, and network requests |
 
-`lpm health` is the lighter-weight CI smoke test — no project context needed.
+The full mode includes every default result. Tool timeouts and network conditions can make it take longer.
 
-## JSON output
+## Use project configuration
 
-```bash
-lpm doctor --json
-```
+LPM CLI reads `lpm.json` automatically. You do not need a separate doctor flag.
 
-Structured array of check results:
+For example:
 
-```json
+```json title="lpm.json"
 {
-  "success": true,
-  "mode": "fast",
-  "no_failures": false,
-  "clean": false,
-  "has_warnings": false,
-  "passed": 2,
-  "failed": 1,
-  "warnings": 0,
-  "checks": [
-    { "code": "registry_reachable", "check": "Registry", "passed": true, "severity": "pass", "detail": "lpm.dev OK (87ms)" },
-    { "code": "node_managed_match", "check": "Node version", "passed": true, "severity": "pass", "detail": "22.12.0 from lpm.json" },
-    { "code": "deps_sync_drift", "check": "Dependencies", "passed": false, "severity": "fail", "detail": "drifted from lpm.lock — run `lpm install`" }
-  ],
-  "fixes_applied": ["lpm install"]
+  "runtime": {
+    "node": "22"
+  },
+  "tunnel": {
+    "domain": "my-api.lpm.fyi"
+  }
 }
 ```
 
-Top-level fields:
+The default mode examines the runtime pin and relevant project fields. The full mode also examines the configured tunnel domain.
+
+Doctor reports invalid JSON and unrecognized top-level fields. It also reports runtime or workspace problems that the project configuration creates.
+
+See the [`lpm.json` reference](/docs/reference/lpm-json) for the complete project configuration.
+
+## Interpret health results
+
+Each result has a stable code, a severity, a short name, and current details.
+
+| Severity | Meaning | Exit code effect |
+| --- | --- | --- |
+| `pass` | The examined state is healthy or informational | None |
+| `warn` | The state needs attention but does not block the command | None |
+| `fail` | The state is broken or required state is unavailable | Exit code `1` |
+
+Warnings keep exit code `0`. A report with warnings is not clean, but it has no failures.
+
+The default terminal output hides most passing results. It keeps failures, warnings, linker mode, and active policy extensions visible.
+
+The full terminal output includes passing results. If you need every emitted result from either mode, use JSON.
+
+## Find the meaning of a result
+
+Use the stable code from terminal or JSON output:
+
+```bash
+lpm doctor list --code <CODE>
+```
+
+The catalog describes the result, its possible severities, and the recommended action.
+
+List results by category:
+
+```bash
+lpm doctor list --category "project state"
+lpm doctor list --category runtime --json
+```
+
+Match automation on `code`. Human-readable names and details can change.
+
+## Apply fixes and examine the result again
+
+CAUTION: Save your project changes before you use `--fix`. The command can change project files and installed dependencies.
+
+Apply fixes from the default result set:
+
+```bash
+lpm doctor --fix
+lpm doctor
+```
+
+LPM CLI applies supported fixes immediately. It does not ask for confirmation.
+
+`-y` and `--yes` imply `--fix`. They currently have the same behavior as `--fix`.
+
+The fix run reports the results that existed before the fixes. It lists completed actions in `fixes_applied`.
+
+A successful fix does not change the first report or its exit code. Run doctor again to examine the new state.
+
+Use the full fix mode for fixes from the extended result set:
+
+```bash
+lpm doctor --all --fix
+lpm doctor --all
+```
+
+### Current automatic fixes
+
+| Problem | Automatic action |
+| --- | --- |
+| Missing, mixed, legacy, or unmanaged `node_modules` state | Run [lpm install](/docs/packages/install) |
+| Missing lockfile or dependency drift | Run [lpm install](/docs/packages/install) |
+| Missing, stale, or corrupt `lpm.lockb` | Reconcile it with `lpm.lock` |
+| Missing managed Node.js version | Install the selected Node.js version |
+| Project-level `node_modules` link | Replace only the link with a real directory |
+| Format result from the full mode | Run [`lpm fmt`](/docs/dev/fmt) |
+| Missing `lpm.lockb` rule from the full mode | Update `.gitattributes` |
+| Unclaimed configured tunnel from the full mode | Claim the domain for the current account |
+
+Some failures require a user decision. For example, doctor does not add TypeScript or change a tunnel domain that another account owns.
+
+> Current limitation: The `auto_fix` values from `lpm doctor list --json` do not match every runtime fix. Use `fixes_applied` after a fix run.
+
+## Use health results in CI
+
+Create a complete JSON report without changing the project:
+
+```bash
+lpm doctor --all --json > doctor-report.json
+```
+
+If the CI job must not change the workspace, do not add `--fix`.
+
+Use these fields for automation:
 
 | Field | Meaning |
 | --- | --- |
-| `mode` | `"fast"` (default, local-only) or `"all"` (under `--all`) |
-| `no_failures` | `true` when every check passed (warnings don't break this) |
-| `has_warnings` | `true` when at least one check reported `warn` |
-| `clean` | `no_failures && !has_warnings` — the "everything green" shorthand |
-| `passed` / `failed` / `warnings` | Per-severity counts |
-| `fixes_applied` | Array of remediation actions that ran under `--fix`; empty when `--fix` wasn't passed |
+| `success` | LPM CLI created the diagnostic report |
+| `no_failures` | No result has `fail` severity |
+| `clean` | No result has `warn` or `fail` severity |
+| `has_warnings` | At least one result has `warn` severity |
+| `checks[].code` | Stable identifier for one result |
+| `fixes_applied` | Actions that completed during this run |
 
-Full envelope shape (per-check fields) is documented on the [`lpm doctor`](/docs/infra/doctor#machine-readable-output---json) page. Useful for CI dashboards or agents that want to dispatch on specific failures rather than parse human output.
+`success: true` does not mean that the project is healthy. Read `clean` for a warning-sensitive policy. Otherwise, read `no_failures`.
 
-## When to run
+The process exits with code `1` for failures. Warnings alone keep exit code `0`.
 
-- **In CI**: as a pre-test step. Fast, catches "the lockfile is stale because the PR forgot to commit it" before the test suite spends 10 minutes failing for a downstream reason.
-- **After upgrading LPM CLI**: confirms nothing in the new version broke your local state.
-- **When something's wrong and you don't know what**: doctor's broad-strokes inventory often surfaces it.
-- **In onboarding scripts**: bundle `lpm install && lpm doctor --fix -y && lpm dev` for a "clone-to-running" experience.
+If warnings must block CI, require `clean: true` in the JSON report.
+
+## Compare project and registry health
+
+Use `lpm doctor` for project and environment health. Use `lpm health` for one registry request.
+
+```bash
+lpm doctor
+lpm health --registry https://registry.example.com
+```
+
+| Command | Scope | Project files | Network |
+| --- | --- | --- | --- |
+| `lpm doctor` | Fast project and local environment health | Yes | No |
+| `lpm doctor --all` | Complete project, machine, tool, and service health | Yes | Yes |
+| `lpm health` | One selected registry | No | Yes |
+
+For `lpm health --json`, read the `healthy` field. A reported unhealthy response can still produce `success: true` and exit code `0`.
+
+## Know what doctor does not examine
+
+Project health is a diagnostic layer. It does not replace these focused commands:
+
+| Need | Command |
+| --- | --- |
+| Run project tests and type checks | [`lpm check`](/docs/dev/check) |
+| Examine local certificate trust and expiry | [`lpm cert status`](/docs/infra/cert) |
+| Examine package-store content integrity | [`lpm store verify`](/docs/infra/store) |
+| Examine dependency vulnerabilities | [`lpm audit`](/docs/packages/audit) |
+| Examine one registry only | [`lpm health`](/docs/infra/doctor#registry-health) |
+
+Doctor examines TypeScript readiness in full mode. It does not run the complete project type check.
+
+## Common workflows
+
+### Diagnose an install problem
+
+```bash
+lpm doctor
+lpm doctor list --code <CODE>
+```
+
+### Examine a machine after a toolchain change
+
+```bash
+lpm doctor --all
+```
+
+### Repair supported problems
+
+```bash
+lpm doctor --fix
+lpm doctor
+```
+
+### Create a warning-sensitive CI gate
+
+```bash
+lpm doctor --all --json > doctor-report.json
+```
+
+Require `clean: true` in the next CI step.
 
 ## See also
 
-- [`lpm doctor`](/docs/infra/doctor) — CLI command reference
-- [`lpm health`](/docs/infra/doctor) — registry-only health check
-- [`lpm store verify`](/docs/infra/store) — deeper store integrity check
-- [`lpm cert status`](/docs/infra/cert) — CA + project cert detail
-- [Exit codes](/docs/reference/exit-codes) — what doctor's exit codes mean for CI gates
+- [`lpm doctor` and `lpm health`](/docs/infra/doctor) — use commands, flags, and the complete result catalog
+- [Install packages](/docs/packages/install) — repair missing or inconsistent install state
+- [Runtime management](/docs/dev/use) — install selected Node.js and Bun versions
+- [Policy extensions](/docs/infra/policy) — inspect project policy results
+- [Package store](/docs/infra/store) — examine and clean shared package content
+- [Exit codes](/docs/reference/exit-codes) — use LPM CLI results in automation

@@ -1,160 +1,333 @@
 ---
 title: lpm store
-description: "Verify integrity, print the path, or wipe the global content-addressable package store."
+description: "Find, verify, or reset the shared package store."
 ---
 
-```bash
-lpm store <action>
-```
-
-Maintenance commands for the global content-addressable store at `~/.lpm/store/`. Every `lpm install` deduplicates packages into this store and then links them into project `node_modules` trees — so the store is shared across every project on your machine.
-
-The v2 layout is the default. The file-level CAS in v3 is experimental and is used only when explicitly selected with `LPM_STORE_VERSION=v3`; LPM CLI never selects it automatically from the filesystem or execution environment. Store maintenance commands inspect both layouts regardless of which one the current install process selects.
-
-The v2 store also contains native lifecycle-build artifacts at
-`~/.lpm/store/v2/builds/<build-key>/`. Strict macOS and Linux rebuilds can
-restore these package trees across reinstalls when every keyed input matches.
-That includes the absolute checkout path and complete lifecycle environment,
-so a differently located project or a CI run with changing values such as
-`GITHUB_RUN_ID` receives a different key unless the caller normalizes those
-inputs. Per-key advisory locks under `~/.lpm/store/v2/build-locks/` prevent
-concurrent invocations from performing the same native build twice, while
-`~/.lpm/store/v2/build-entry-locks/` serializes mutations of each shared graph
-entry across different build keys. See
-[`lpm rebuild` — Native build cache](/docs/packages/rebuild#native-build-cache).
-
-The expensive host-toolchain portion of those keys has a validated snapshot
-under `~/.lpm/cache/metadata/native-toolchains/v1/`. It is metadata rather than
-a build artifact: `lpm cache clean metadata` removes it, while `lpm store
-clean` removes native build artifacts. LPM CLI recomputes the complete host
-fingerprint when the snapshot is missing, changed, invalid, or older than one
-hour.
-
-For reachability-aware orphan cleanup, use [`lpm cache prune`](/docs/packages/cache). `lpm store` covers integrity, the store path, and the blunt full wipe.
-
-## Examples
+Use `lpm store` to find, verify, or remove the shared package store on your computer.
 
 ```bash
-lpm store path                          # print the store root
-lpm store verify                        # check structure and CAS metadata (fast)
-lpm store verify --deep                 # also parse manifests and rehash v3 blobs
-lpm store verify --fix                  # auto-fix what it can (e.g., refresh stale caches)
-lpm store clean                         # wipe the entire store (rare)
+lpm store <path|verify|clean> [--deep] [--fix] [--json]
 ```
 
-## Subcommands
+## Quickstart
 
-| Subcommand | Effect |
-| --- | --- |
-| `path` | Print the store root path |
-| `verify` | Integrity-check v1/v2 entries and v3 CAS metadata |
-| `clean` | Blunt wipe — removes everything under the store root |
-
-## Locking model
-
-Store operations coordinate through a writer-preference reader/writer protocol built on three advisory lock files:
-
-- **Data lock** at `~/.lpm/store/.gc.lock` — the access lock. Shared by readers in the body, exclusive by writers in the body.
-- **Writer-intent gate** at `~/.lpm/store/.gc.lock.writer-intent` — derived automatically. Held exclusive by the writer that's currently running, so new readers admitted at the gate are blocked until the writer finishes.
-- **Writer-queue baton** at `~/.lpm/store/.gc.lock.writer-queue` — derived automatically. Held shared by every queued writer (including the one in the body). Readers probe it with a non-blocking exclusive try before attempting the gate; if the probe `WouldBlock`s, at least one writer is queued and the reader backs off. This closes the multi-writer leapfrog hole the gate alone leaves open — between writer W1 releasing the gate and writer W2 polling for it, the kernel could otherwise let queued readers grab gate-shared first and starve W2.
-
-Surface:
-
-- **Shared (multi-reader):** `lpm install`, `lpm patch`, `lpm rebuild`, `lpm approve-scripts`, `lpm store verify`, and `lpm cache prune` (dry-run) always acquire the shared lock for the duration of the command. `lpm audit` and `lpm query` acquire it only when the project has LPM CLI store-backed packages, and they narrow the lock to just the store-touching slice (audit's behavioral-analysis pass; query's inventory load + lifecycle/build-state loop) — discovery, registry calls, and OSV calls run unlocked. Multiple readers run concurrently — two `lpm install` invocations in different shells share without contention.
-- **Exclusive (single-writer):** `lpm store clean` and `lpm cache prune --apply`. They take the queue baton shared (signaling "writer queued"), then the gate exclusive (blocking new reader admissions), then wait for in-flight readers to release the data lock.
-
-Native build-cache work adds two narrower locks beneath the shared store lock.
-`build-entry-locks/<graph-key>.lock` is acquired first and serializes every
-restore, rematerialization, lifecycle command, marker write, and publication
-that mutates one shared link-package tree. Different graph entries can still
-build concurrently. Inside that critical section,
-`build-locks/<build-key>.lock` deduplicates identical artifacts; a waiter checks
-the artifact again after acquiring the lock before deciding whether to execute.
-
-**Writer preference.** Once a writer is queued, no new reader is admitted until every queued writer has run. The protocol holds even with multiple writers in line — W2 stays at the head of the queue across W1's release boundary because W2's queue-shared keeps the readers' probes blocked. Bias is intentional: writes are rare; install/query is common.
-
-If contention lasts longer than one second, the blocked command emits a single `Waiting for another lpm store operation to finish...` line on stderr — no PID claim (the lock primitive doesn't expose owner introspection), but enough to confirm you aren't stuck. The hint fires once per acquisition, not on every poll iteration.
-
-Locks release on normal exit and on panic — there's no stale-lock recovery to run by hand.
-
-## Verify
+Run a fast verification of every store version:
 
 ```bash
-lpm store verify          # fast structural and metadata pass
-lpm store verify --deep   # also rehash v3 blobs + parse package.json + check lpm.lock
-lpm store verify --fix    # regenerate stale behavioral-analysis caches
+lpm store verify
 ```
 
-The fast pass walks every v1, v2, and v3 store entry and confirms that package directories exist, contain `package.json`, and are non-empty. For v2 and v3 link entries, it also checks that each sidecar's source hash maps to the recorded object path and that the referenced object is present. The v3 pass additionally validates source records, tree manifests, blob metadata, materialized-tree caches, and reachability between those CAS tiers without recomputing blob content hashes. Mismatches surface as `corrupted` entries with a remediation hint.
+## Choose an action
 
-`--deep` extends the pass with these checks:
+| Action | What it does | Use case |
+| --- | --- | --- |
+| `path` | Prints the root of the shared store | You need the store path for inspection or a script |
+| `verify` | Verifies v1, v2, and v3 store data | An install reports a store error, or you want an integrity check |
+| `clean` | Immediately removes all v1, v2, and v3 store data | You need a complete reset and accept new downloads and builds |
 
-- **Parses `package.json`** and confirms the on-disk `name` and `version` match the directory's coordinates.
-- **Cross-checks the integrity hash** against `lpm.lock` in the current directory. Mismatches surface as `integrity mismatch` errors — they catch a re-published version with different bytes, accidental edits, or partial extraction. Run from a project root for this to do anything; without a lockfile, the cross-check is a no-op. If `lpm.lock` exists but cannot be read or parsed, deep verification exits non-zero instead of silently skipping the cross-check.
-- **Rehashes every v3 CAS blob** and validates its content-plus-normalized-mode identity. Legacy v1/v2 extracted directories retain marker-consistency verification rather than a full expanded-tree content hash.
+## What the shared store does
 
-`--fix` writes one specific thing: missing or stale `.lpm-security.json` behavioral-analysis caches alongside each package. It implies the deep/cache-analysis path even when `--deep` is omitted. If a cache cannot be written, the command exits non-zero and the failed `.lpm-security.json` write appears in `issues[]`. It does **not** repair integrity mismatches, restore missing directories, or fix invalid `package.json` — those are reported as corrupted regardless. Use `lpm store clean` for the blunt repair.
+LPM CLI saves package data in `~/.lpm/store/`. Projects link to this shared data instead of keeping a separate package cache.
 
-The output distinguishes **entries** (one per directory on disk; may double-count during a store-version migration or under cross-project graph-key splits where the same `name@version` legitimately lives at multiple paths) from **unique coordinates** (deduped on `name@version`). Both counts appear in human + JSON output so an in-flight migration doesn't look like an inflated package count. CAS source, tree, blob, and materialization counts are reported separately.
+The store reduces repeat downloads and duplicate data across projects. It also contains package security caches and reusable native-build artifacts.
 
-## Clean (full wipe)
+A store version identifies the layout of saved data. It does not identify a package version or the [`lpm.lock` format](/docs/reference/lockfile-format).
+
+## Store versions
+
+| Version | Status | Layout | How to select it | Use case |
+| --- | --- | --- | --- | --- |
+| v1 | Legacy | One complete directory for each package name and version | `LPM_STORE_VERSION=v1` | Use it only for compatibility with the legacy layout |
+| v2 | Default | Shared package objects with dependency layouts for each project graph | No setting is necessary | Use it for normal development and CI |
+| v3 | Experimental | Reusable file blobs, package-tree records, and v2-style dependency layouts | `LPM_STORE_VERSION=v3` | Use it to test the experimental file-level store |
+
+### v1
+
+The v1 store keeps each extracted package under `~/.lpm/store/v1/<name>@<version>/`. It reuses matching package names and versions.
+
+v1 is the legacy layout. Select it only for compatibility or downgrade testing.
+
+### v2
+
+The v2 store keeps package content in shared objects. It also keeps separate link entries for different dependency graphs.
+
+Two projects can reuse the same package content. Each project can still have the dependency layout that its lockfile requires.
+
+v2 is the current default. An unset or empty `LPM_STORE_VERSION` value selects v2.
+
+### v3
+
+The v3 store divides package trees into reusable file blobs. Tree and source records describe how LPM CLI reconstructs each package.
+
+Identical files can share stored data across different packages. v3 retains the dependency-link model from v2.
+
+v3 is experimental. LPM CLI never selects it automatically.
+
+### Select a version for an install
+
+Set `LPM_STORE_VERSION` for the install command:
 
 ```bash
-lpm store clean
+LPM_STORE_VERSION=v1 lpm install  # use the legacy layout
+LPM_STORE_VERSION=v3 lpm install  # use the experimental layout
 ```
 
-Removes `~/.lpm/store/v1/`, `~/.lpm/store/v2/`, and `~/.lpm/store/v3/` in their entirety — every extracted package, link entry, CAS blob, manifest, materialized tree, and cached integrity sidecar. The outer `~/.lpm/store/` directory plus the `.gc.lock*` control files stay so the next operation doesn't have to reinitialize them. The next `lpm install` rebuilds whatever it needs.
+The values `1`, `2`, and `3` are aliases for `v1`, `v2`, and `v3`. An unknown value produces a warning and selects v2.
 
-This is the "I want a from-scratch state" escape hatch. For normal maintenance use [`lpm cache prune`](/docs/packages/cache), which is reference-aware and won't evict entries a project still needs.
+`lpm.json` cannot select a store version. The `LPM_STORE_VERSION` environment variable is the only current selector.
+
+The three versions can exist at the same time. `lpm store verify` and `lpm store clean` always act on all three versions.
+
+## Recipes
+
+### Print the store path
+
+```bash
+lpm store path
+```
+
+If a diagnostic tool or script needs the active store root, use this command.
+
+### Run a fast verification
+
+```bash
+lpm store verify
+```
+
+The fast verification examines package directories, manifests, link metadata, object references, and v3 store metadata.
+
+### Run a deep verification
+
+Run this command from a project root:
+
+```bash
+lpm store verify --deep
+```
+
+Deep verification parses each `package.json`. It compares package names and versions with their store entries.
+
+If the current directory contains `lpm.lock`, deep verification compares its integrity values with the saved values. It also rehashes v3 file blobs.
+
+If `lpm.lock` is absent, LPM CLI skips the lockfile comparison. If the file is invalid or unreadable, verification fails.
+
+### Refresh security caches
+
+```bash
+lpm store verify --fix
+```
+
+`--fix` implies deep verification. It refreshes missing or stale `.lpm-security.json` files.
+
+`--fix` does not restore missing packages or repair manifests and integrity errors. LPM CLI reports these errors for separate recovery.
+
+### Use verification in CI
+
+```bash
+lpm store verify --deep --json > store-report.json
+```
+
+If LPM CLI finds corruption, it writes the JSON report and then exits with status `1`.
+
+### Inspect v3 orphan counts
+
+```bash
+lpm store verify --json
+```
+
+Read the `cas.orphaned_*` fields for unreachable v3 data. Verification reports this data but does not remove it.
+
+### Preview orphan removal
+
+```bash
+lpm cache prune          # preview removals
+lpm cache prune --apply  # apply the removal plan
+```
+
+[`lpm cache prune`](/docs/packages/cache#prune) uses project references to retain required store entries. The preview does not remove data.
+
+## Verification levels
+
+| Command | Package and link structure | `package.json` contents | `lpm.lock` integrity | v3 blob hashes | Security cache |
+| --- | --- | --- | --- | --- | --- |
+| `lpm store verify` | Verifies | Does not parse | Does not compare | Does not rehash | Does not analyze |
+| `lpm store verify --deep` | Verifies | Parses and compares | Compares with the current lockfile | Rehashes | Reports missing or stale caches |
+| `lpm store verify --fix` | Verifies | Parses and compares | Compares with the current lockfile | Rehashes | Reports and refreshes missing or stale caches |
 
 ## JSON output
 
+Use the global `--json` flag with each action. Each action returns a different JSON object.
+
+### `path` output
+
 ```bash
-lpm store path --json     # { "success": true, "path": "/Users/you/.lpm/store" }
-lpm store verify --json   # entry counts, unique coords, corrupted list
-lpm store clean --json    # bytes freed across v1 + v2 + v3 subdirectories
+lpm store path --json
 ```
 
-`verify` envelope:
+```json
+{
+  "success": true,
+  "path": "/Users/you/.lpm/store"
+}
+```
 
-| Field | Meaning |
-| --- | --- |
-| `success` | `false` when any integrity/sidecar/lockfile/cache-write issue prevents a clean verify |
-| `legacy_check_kind` | Scope for v1/v2 extracted entries: `presence` for the fast pass, `lockfile_marker_consistency` for `--deep` or `--fix` |
-| `check_kind` | Compatibility alias of `legacy_check_kind` |
-| `bytes_integrity_recomputed` | `true` when a deep pass rehashed at least one v3 blob; otherwise `false` |
-| `entries_verified` | Number of store entries walked (one per directory on disk) |
-| `verified` | Legacy alias of `entries_verified` for older consumers |
-| `unique_coords` | Deduped count over `name@version` — different from `entries_verified` during store-version migration |
-| `duplicated_entries` | `entries_verified − unique_coords` |
-| `corrupted` | Number of entries with at least one failed check |
-| `issues[]` | Per-entry human-readable issue strings (e.g., `"sharp@0.34.4 — integrity mismatch: stored 'sha512-aaa...' != lockfile 'sha512-bbb...'"`) |
-| `securityMismatches` / `securityReanalyzed` | Present on deep/fix runs; cache mismatches found vs. caches successfully refreshed |
-| `cas.check_kind` | `metadata` for the fast pass; `content_hash` for `--deep` or `--fix` |
-| `cas.sources` / `trees` / `blobs` / `materialized` | Number of v3 CAS entries inspected in each tier |
-| `cas.blobs_rehashed` / `blob_integrity_recomputed` | Blob content-hash work performed by this pass |
-| `cas.orphaned_sources` / `orphaned_trees` / `orphaned_blobs` / `orphaned_materialized` | Structurally valid v3 entries not reachable from a live source/tree relationship |
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `success` | Boolean | `true` after LPM CLI resolves the store path |
+| `path` | String | Absolute path to the store root |
 
-`clean` envelope:
+### `verify` output
 
-| Field | Meaning |
-| --- | --- |
-| `removed_bytes` / `removed` | Total bytes / formatted total across `v1` + `v2` + `v3` |
-| `v1_removed_bytes` / `v2_removed_bytes` / `v3_removed_bytes` | Per-subdirectory breakdown |
-| `v1_path` / `v2_path` / `v3_path` | Absolute paths that were removed |
-| `path` | Legacy alias of `v1_path` retained for older consumers — prefer the versioned path fields |
+This example shows a successful deep verification:
+
+```bash
+lpm store verify --deep --json
+```
+
+```json
+{
+  "success": true,
+  "check_kind": "lockfile_marker_consistency",
+  "legacy_check_kind": "lockfile_marker_consistency",
+  "bytes_integrity_recomputed": true,
+  "entries_verified": 32,
+  "verified": 32,
+  "unique_coords": 30,
+  "duplicated_entries": 2,
+  "corrupted": 0,
+  "issues": [],
+  "securityMismatches": 1,
+  "securityReanalyzed": 0,
+  "cas": {
+    "check_kind": "content_hash",
+    "sources": 8,
+    "trees": 8,
+    "blobs": 240,
+    "blobs_rehashed": 240,
+    "materialized": 8,
+    "orphaned_sources": 0,
+    "orphaned_trees": 0,
+    "orphaned_blobs": 0,
+    "orphaned_materialized": 0,
+    "blob_integrity_recomputed": true
+  }
+}
+```
+
+#### Verification fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `success` | Boolean | If `issues` contains a corruption or write error, this value is `false` |
+| `check_kind` | String | Compatibility alias for `legacy_check_kind` |
+| `legacy_check_kind` | String | `presence` for fast verification or `lockfile_marker_consistency` for deep verification |
+| `bytes_integrity_recomputed` | Boolean | `true` after deep verification rehashes at least one v3 blob |
+| `entries_verified` | Integer | Number of store entries that completed verification without corruption |
+| `verified` | Integer | Compatibility alias for `entries_verified` |
+| `unique_coords` | Integer | Number of unique package name and version pairs |
+| `duplicated_entries` | Integer | Entries repeated across store versions or dependency graphs |
+| `corrupted` | Integer | Number of corruption or write errors in `issues` |
+| `issues` | String array | Error messages for failed verification work |
+| `securityMismatches` | Integer | Missing or stale security caches found by deep verification |
+| `securityReanalyzed` | Integer | Security caches that `--fix` refreshed successfully |
+| `cas` | Object | v3 file-store verification results |
+
+`securityMismatches` and `securityReanalyzed` appear only during deep verification. A security mismatch alone does not set `success` to `false`.
+
+#### v3 `cas` fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `check_kind` | String | `metadata` for fast verification or `content_hash` for deep verification |
+| `sources` | Integer | v3 source records examined |
+| `trees` | Integer | v3 package-tree records examined |
+| `blobs` | Integer | v3 file blobs examined |
+| `blobs_rehashed` | Integer | v3 file blobs rehashed during deep verification |
+| `materialized` | Integer | Reconstructed v3 package trees examined |
+| `orphaned_sources` | Integer | Source records that no live store relationship reaches |
+| `orphaned_trees` | Integer | Package-tree records that no live source reaches |
+| `orphaned_blobs` | Integer | File blobs that no live package tree reaches |
+| `orphaned_materialized` | Integer | Reconstructed package trees that no live source reaches |
+| `blob_integrity_recomputed` | Boolean | `true` after deep verification rehashes at least one v3 blob |
+
+### `clean` output
+
+> **CAUTION:** This command removes all store versions without a confirmation prompt.
+
+```bash
+lpm store clean --json
+```
+
+```json
+{
+  "success": true,
+  "removed_bytes": 1048576,
+  "removed": "1.0 MB",
+  "path": "/Users/you/.lpm/store/v1",
+  "v1_path": "/Users/you/.lpm/store/v1",
+  "v2_path": "/Users/you/.lpm/store/v2",
+  "v3_path": "/Users/you/.lpm/store/v3",
+  "v1_removed_bytes": 0,
+  "v2_removed_bytes": 1048576,
+  "v3_removed_bytes": 0
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `success` | Boolean | `true` after the clean action completes |
+| `removed_bytes` | Integer | Total bytes removed from v1, v2, and v3 |
+| `removed` | String | Formatted value of `removed_bytes` |
+| `path` | String | Compatibility alias for `v1_path` |
+| `v1_path` | String | Absolute path of the removed v1 directory |
+| `v2_path` | String | Absolute path of the removed v2 directory |
+| `v3_path` | String | Absolute path of the removed v3 directory |
+| `v1_removed_bytes` | Integer | Bytes removed from v1 |
+| `v2_removed_bytes` | Integer | Bytes removed from v2 |
+| `v3_removed_bytes` | Integer | Bytes removed from v3 |
+
+## Reset the complete store
+
+> **CAUTION:** If you need a complete reset, use `lpm store clean`. The command removes all store versions without a confirmation prompt.
+
+```bash
+lpm store clean
+lpm install
+```
+
+The clean action removes package data, link entries, security caches, and native-build artifacts. It retains the outer `~/.lpm/store/` directory.
+
+The next install downloads or rebuilds the required packages. For normal cleanup, use the reference-aware [`lpm cache prune`](/docs/packages/cache#prune) command.
+
+If verification reports corruption, first run:
+
+```bash
+lpm cache prune --apply
+lpm install
+```
+
+If the error remains, use `lpm store clean` for a complete reset.
+
+## Concurrent operations
+
+Verification can run with other read-only store operations. If another command changes or removes store data, verification waits.
+
+The clean action waits for installs and other store readers to finish. New store readers wait while a clean action is queued.
+
+After one second, a waiting command prints `Waiting for another lpm store operation to finish...`. LPM CLI releases its locks automatically.
 
 ## Flags
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--deep` | `verify` | Also parse package.json, validate name/version, cross-check lockfile integrity markers, and rehash v3 CAS blobs |
-| `--fix` | `verify` | Refresh stale/missing security caches; implies the deep/cache-analysis path |
+| `--deep` | `verify` | Parses manifests, compares lockfile integrity, and rehashes v3 blobs |
+| `--fix` | `verify` | Refreshes missing or stale security caches and implies `--deep` |
+| `--json` | All actions | Prints the action result as JSON |
 
-Plus the [global flags](/docs/commands#global-flags).
+See the [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm cache prune`](/docs/packages/cache) — reference-aware orphan removal for the global store
-- [Content-addressable store](/docs/packages/content-addressable-store) — design overview
-- [`lpm doctor`](/docs/infra/doctor) — surfaces store-integrity issues alongside other checks
+- [`lpm cache prune`](/docs/packages/cache#prune) — preview or remove unreferenced store data
+- [Content-addressable store](/docs/packages/content-addressable-store) — understand the package storage model
+- [`lpm rebuild`](/docs/packages/rebuild#native-build-cache) — reuse or refresh native-build artifacts
+- [`lpm doctor`](/docs/infra/doctor) — inspect store health with other project checks

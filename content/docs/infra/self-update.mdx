@@ -3,111 +3,325 @@ title: lpm self-update
 description: "Update LPM CLI on the stable or nightly release channel."
 ---
 
+Use `lpm self-update` to update LPM CLI or switch release channels. The command detects the installation method and uses its update process.
+
+```bash
+lpm self-update [--channel <stable|nightly>] [--refresh] [--json]
+```
+
+## Quickstart
+
+Update LPM CLI on its current release channel:
+
 ```bash
 lpm self-update
 ```
 
-Follows the running binary's release channel, checks npm first, falls back to GitHub Releases, and updates through the detected installation method.
+## Choose a task
 
-Stable and nightly channels are sticky:
-
-```bash
-lpm self-update                    # follow the installed channel
-lpm self-update --channel nightly  # switch to nightly
-lpm self-update --channel stable   # switch to stable
-```
-
-A version such as `0.71.0-nightly.20260728.42.d82ceea` follows nightly. A version without the `nightly` prerelease identifier follows stable.
-
-## How it works
-
-1. **Select the release channel.** Without `--channel`, the running version selects stable or nightly. An explicit `--channel` switches channels.
-2. **Probe for the latest version.** Stable reads npm's `latest` dist-tag and falls back to GitHub's latest stable release. Nightly reads npm's `nightly` dist-tag and falls back to the published GitHub prerelease list. A stable lookup rejects prereleases; a nightly lookup rejects stable and non-nightly prerelease versions.
-3. **Cache the result.** Successful probes write `~/.lpm/update-check.json` with separate stable and nightly state and a 10-minute TTL. Use `--refresh` to bypass the cache. Recent failures also have independent per-channel cooldowns.
-4. Compare against the current binary's version (baked in at build time). An explicit channel switch is applied even when it is a semantic downgrade, such as a newer nightly switching back to the current stable release.
-5. If an update or channel switch is needed, detect the installation method from the executable path:
-
-| Detected via | Installation method |
+| Task | Command |
 | --- | --- |
-| Path under a Homebrew Cellar | `brew upgrade lpm` |
-| Path under an npm global root | `npm install -g @lpm-registry/cli@<latest>` |
-| Path under a Cargo install root | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force --locked` |
-| Anything else (standalone curl install) | Direct download of `lpm-<platform>` for `v<latest>` from GitHub Releases, replacing the running binary in place |
+| Update on the installed channel | `lpm self-update` |
+| Switch to nightly | `lpm self-update --channel nightly` |
+| Switch to stable | `lpm self-update --channel stable` |
+| Ignore the lookup cache and retry now | `lpm self-update --refresh` |
+| Get a structured result | `lpm self-update --json` |
 
-6. Apply the update. npm, Homebrew, and Cargo installations spawn their package manager in normal output mode. Standalone installations download, verify, and replace the binary in-process. With `--json`, external install methods return a plan without spawning a command, while standalone updates are still verified and applied.
+This command manages the LPM CLI installation on your computer. `lpm.json` does not control or run CLI updates.
 
-Nightly is supported for npm and standalone installations. Homebrew and Cargo installations remain stable-only and return a clear error if you request `--channel nightly`.
+## Release channels
 
-If the running version is already the latest, prints `Already on the latest version (<v>)` and exits cleanly.
+Without `--channel`, LPM CLI uses the channel of the installed version. Stable versions continue on stable, and nightly versions continue on nightly.
 
-## GitHub fallback rate limits
+A version such as `0.71.0-nightly.20260728.42.d82ceea` selects nightly. A version without the `nightly` prerelease identifier selects stable.
 
-The npm primary path has no per-IP limit you're likely to hit. The GitHub fallback does — 60 unauthenticated requests/hour per IP. You'd only see this when npm is unreachable AND you're probing repeatedly. Set `GITHUB_TOKEN` (or `GH_TOKEN`, the `gh` CLI convention) for 5000 req/hour. The token only needs `public_repo` read scope.
+An explicit `--channel` value changes the channel. A switch from nightly to stable can install a lower semantic version.
 
-When the GitHub fallback is rate-limited, `lpm self-update` reports the reset time:
+| Installation method | Stable | Nightly |
+| --- | --- | --- |
+| npm | Supported | Supported |
+| Standalone | Supported | Supported |
+| Homebrew | Supported | Not supported |
+| Cargo | Supported | Not supported |
 
-```
-GitHub API rate limit hit. Try again in 17 minutes. Set GITHUB_TOKEN or GH_TOKEN for 5000 req/hr (vs 60 unauthenticated).
-```
+Homebrew and Cargo installations return an error for `--channel nightly`. Use npm or a standalone installation for nightly releases.
 
-## Examples
+## How the update runs
+
+LPM CLI identifies the installation method from the current executable. Normal output and JSON output have different update behavior.
+
+| Installation method | Normal output | With `--json` |
+| --- | --- | --- |
+| npm | Runs a version-pinned npm install | Returns the command and does not run it |
+| Homebrew | Runs `brew upgrade lpm` | Returns the command and does not run it |
+| Cargo | Runs a version-pinned Cargo install | Returns the command and does not run it |
+| Standalone | Verifies and replaces the binary | Verifies and replaces the binary |
+
+> **CAUTION:** `--json` is not a universal preview. It applies the update for a standalone installation.
+
+If the installed version is current, the command makes no change. If the installed version is newer, the command also makes no change.
+
+## Recipes
+
+### Update on the installed channel
 
 ```bash
 lpm self-update
-lpm self-update --channel nightly  # switch to, or continue on, nightly
-lpm self-update --channel stable   # switch back to stable
-lpm self-update --refresh   # ignore the 10-minute version-lookup cache
-lpm self-update --json      # structured result; external-channel updates are plan-only
 ```
 
-Successful JSON responses always include `success`, `current`, `latest`, `up_to_date`, `cache_hit`, `channel`, `target_channel`, and `channel_changed`. Additional fields depend on the outcome:
+Use this command for normal updates. Stable and nightly installations remain on their current channels.
 
-| Outcome | Additional fields |
-| --- | --- |
-| Already up to date | No additional fields |
-| Update available through npm, Homebrew, or Cargo | `install_method`, `update_command` — the command is reported but not run |
-| Standalone update applied | `install_method`, `verified`, `attestation` — no `update_command`; `attestation` contains the verified publisher, workflow, transparency-log, manifest, and asset details |
+### Switch to nightly
 
-## Install-method-specific update paths
+```bash
+lpm self-update --channel nightly
+```
 
-If you'd rather drive the upgrade yourself:
+Use nightly for early access to unreleased changes. Nightly releases can change more frequently than stable releases.
+
+### Return to stable
+
+```bash
+lpm self-update --channel stable
+```
+
+This command can replace a newer nightly version with a lower stable version. The channel change is intentional.
+
+### Retry a version lookup
+
+```bash
+lpm self-update --refresh
+```
+
+Use `--refresh` after a lookup failure, or after a release appears during the 10-minute cache period.
+
+The flag also bypasses the one-hour cooldown after a failed lookup. It does not change the verification or installation process.
+
+### Get an external update plan
+
+> **CAUTION:** Use this recipe only for npm, Homebrew, or Cargo installations. A standalone installation applies the update.
+
+```bash
+lpm self-update --json
+```
+
+For an external installation method, read `install_method` and `update_command`. Then run the returned command in your normal update environment.
+
+There is no universal dry-run flag for `lpm self-update`.
+
+### Run the update command manually
 
 | Installation method | Manual command |
 | --- | --- |
 | Homebrew | `brew upgrade lpm` |
-| npm | `npm install -g @lpm-registry/cli@<latest>` |
-| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<latest> lpm-cli --force --locked` |
-| Standalone (macOS / Linux / Windows) | `lpm self-update` |
+| npm | `npm install -g @lpm-registry/cli@<version>` |
+| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<version> lpm-cli --force --locked` |
+| Standalone | `lpm self-update` |
 
-For npm and Cargo, `lpm self-update` chooses the matching command and substitutes the exact version it resolved into `<latest>`. npm users can install the moving channel tags directly:
+For npm, you can also follow a channel tag:
 
 ```bash
-npm install -g @lpm-registry/cli@nightly  # newest nightly
 npm install -g @lpm-registry/cli@latest   # newest stable
+npm install -g @lpm-registry/cli@nightly  # newest nightly
 ```
 
-For standalone installations, use `lpm self-update`. Its in-place updater verifies the release manifest's Sigstore identity and replay window, then verifies the selected asset against the authenticated manifest before replacing the running binary. A raw `curl` or `Invoke-WebRequest` directly over the executable does none of those checks and is not an equivalent update procedure; reserve that approach for explicitly insecure emergency recovery where you independently verify the downloaded artifact.
+## Version lookup and cache
 
-The standalone installer at `https://cli.lpm.dev/install` is the get-started helper for new users. It installs stable by default, accepts `LPM_INSTALL_CHANNEL=nightly`, and writes to `~/.lpm/bin/`. Use it for first installs, not for in-place upgrades.
+LPM CLI reads the npm `latest` or `nightly` tag first. If that lookup fails, it uses the corresponding GitHub Releases data.
+
+Successful `lpm self-update` lookups remain cached for 10 minutes. Stable and nightly use separate cache state in `~/.lpm/update-check.json`.
+
+A failed lookup starts a one-hour cooldown for that channel. During the cooldown, the command returns the previous error state without a network request.
+
+Use `--refresh` to bypass the successful-result cache and the failure cooldown.
+
+## Background update notices
+
+Normal LPM CLI commands can print a cached update notice after their command output. JSON commands do not print this notice.
+
+LPM CLI refreshes the update information in a detached process. The command does not wait for this network request.
+
+After a successful background lookup, LPM CLI waits 24 hours before another lookup. A failed lookup has a one-hour cooldown.
+
+Disable new background lookups for a command with this environment variable:
+
+```bash
+LPM_NO_UPDATE_CHECK=1 lpm install
+```
+
+`LPM_NO_UPDATE_CHECK` does not disable an explicit `lpm self-update`. It also does not suppress a notice that already exists in the cache.
+
+## Standalone update verification
+
+For a standalone installation, LPM CLI downloads the release files and completes these steps before it replaces the binary:
+
+1. It verifies that the signed manifest comes from the expected LPM CLI release workflow.
+2. It verifies that the signature time matches the GitHub release time.
+3. It verifies the checksum of the manifest.
+4. It verifies the downloaded binary against the manifest.
+
+If any verification step fails, LPM CLI refuses the update and retains the current binary.
+
+The updater attempts to copy the current binary to `<binary>.previous`. This backup is best-effort and can be absent after a permission error.
+
+### Supported standalone targets
+
+| Operating system | Architecture |
+| --- | --- |
+| macOS | ARM64 and x64 |
+| Linux with glibc | ARM64 and x64 |
+| Linux with musl | x64 |
+| Windows | x64 |
+
+There is no standalone Linux ARM64 musl asset. On that platform, [install from source](/docs/installation#from-source-cargo).
+
+### Recover from a standalone update error
+
+If verification fails, do not replace the current binary manually with the rejected download. Retry later or install a trusted exact version.
+
+If the new binary cannot start, look for `<binary>.previous` beside it. Restore that backup manually, or reinstall an exact release.
+
+The standalone updater does not provide an automatic rollback command. See [Installation](/docs/installation) for exact-version and source installations.
+
+Do not replace the binary with a raw `curl` or `Invoke-WebRequest` download. Those commands do not apply the verification steps on this page.
+
+## JSON output
+
+> **CAUTION:** On a standalone installation, `lpm self-update --json` verifies and applies the update.
+
+### Already current
+
+```json
+{
+  "success": true,
+  "current": "0.71.0",
+  "latest": "0.71.0",
+  "up_to_date": true,
+  "cache_hit": false,
+  "channel": "stable",
+  "target_channel": "stable",
+  "channel_changed": false
+}
+```
+
+### External update plan
+
+For npm, Homebrew, and Cargo, JSON output reports the update command but does not run it:
+
+```json
+{
+  "success": true,
+  "current": "0.71.0",
+  "latest": "0.72.0",
+  "up_to_date": false,
+  "install_method": "npm",
+  "update_command": "npm install -g @lpm-registry/cli@0.72.0",
+  "cache_hit": false,
+  "channel": "stable",
+  "target_channel": "stable",
+  "channel_changed": false
+}
+```
+
+`success: true` means that version discovery and plan creation succeeded. It does not mean that the external update was applied.
+
+### Applied standalone update
+
+For a standalone installation, JSON output applies the update and includes its verification record:
+
+```json
+{
+  "success": true,
+  "current": "0.71.0",
+  "latest": "0.72.0",
+  "up_to_date": false,
+  "install_method": "standalone",
+  "cache_hit": false,
+  "channel": "stable",
+  "target_channel": "stable",
+  "channel_changed": false,
+  "verified": true,
+  "attestation": {
+    "publisher": "<verified publisher>",
+    "workflow_path": ".github/workflows/release.yml",
+    "workflow_ref": "<verified workflow reference>",
+    "integrated_time": "2026-08-05T12:00:00+00:00",
+    "log_index": 123456789,
+    "log_id": "<transparency log ID>",
+    "leaf_cert_sha256": "<certificate SHA-256>",
+    "manifest_sha256": "<manifest SHA-256>",
+    "asset_sha256": "<binary SHA-256>",
+    "asset_name": "lpm-darwin-arm64"
+  }
+}
+```
+
+### Common fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `success` | Boolean | `true` after version discovery and the action for this output mode succeed |
+| `current` | String | Version of the running binary |
+| `latest` | String | Latest version found on the target channel |
+| `up_to_date` | Boolean | `true` for a current or newer version without a channel change |
+| `cache_hit` | Boolean | `true` after the command uses a recent successful lookup |
+| `channel` | String | Channel of the current binary |
+| `target_channel` | String | Channel selected for this command |
+| `channel_changed` | Boolean | `true` for different `target_channel` and `channel` values |
+
+### Outcome fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `install_method` | String | Detected method for an available update |
+| `update_command` | String | External update plan for npm, Homebrew, or Cargo |
+| `verified` | Boolean | `true` after an applied standalone update passes all verification steps |
+| `attestation` | Object | Verification record for an applied standalone update |
+
+### `attestation` fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `publisher` | String or null | Verified publisher from the release signature |
+| `workflow_path` | String or null | Verified release-workflow path |
+| `workflow_ref` | String or null | Verified workflow reference |
+| `integrated_time` | String | Signature time in RFC 3339 format |
+| `log_index` | Integer | Entry index in the transparency log |
+| `log_id` | String | Identifier of the transparency log |
+| `leaf_cert_sha256` | String | SHA-256 digest of the signing certificate |
+| `manifest_sha256` | String | SHA-256 digest of the signed manifest |
+| `asset_sha256` | String | SHA-256 digest of the installed binary |
+| `asset_name` | String | Release asset selected for the current platform |
+
+## GitHub fallback limits
+
+GitHub permits 60 unauthenticated API requests each hour for one IP address. This limit matters only after the npm lookup fails.
+
+Set `GITHUB_TOKEN` or `GH_TOKEN` to use the authenticated limit of 5,000 requests each hour. Public repository metadata access is sufficient.
+
+If the fallback reaches its limit, LPM CLI reports the reset time. Wait for that time, or supply a token.
 
 ## CI
 
-Skip `lpm self-update` in CI. CI pipelines should pin LPM CLI to a specific version (via the npm package or a downloaded standalone binary) and bump that pin deliberately, not in-band during a build. Auto-updating CI's tooling is how reproducible builds become un-reproducible.
+Do not run `lpm self-update` during a CI job. An update changes the toolchain during the job and makes the build less reproducible.
 
-For a smoke test that the registry is reachable, use [`lpm health`](/docs/infra/doctor) instead.
+Pin an exact npm package version or standalone release instead. Change that pin in a reviewed project update.
+
+Use [`lpm health`](/docs/infra/doctor#lpm-health) for a registry connectivity test.
 
 ## Flags
 
-| Flag | Description |
+| Flag | Effect |
 | --- | --- |
-| `--channel <stable\|nightly>` | Switch to a release channel. When omitted, follow the running binary's channel. |
-| `--refresh` | Bypass successful-result and failure-backoff caches, then perform the normal npm-first lookup with GitHub fallback. Only affects version discovery. |
-| `--json` | Emit structured JSON. Field shape depends on whether LPM CLI is current, reports an external-channel plan, or applies a verified standalone update. |
+| `--channel <stable\|nightly>` | Select a release channel. Without this flag, LPM CLI follows the installed channel. |
+| `--refresh` | Bypass the 10-minute successful lookup cache and the one-hour failure cooldown. |
+| `--json` | Print structured output. External methods return a plan, but standalone updates still apply. |
 
-Plus the standard [global flags](/docs/commands#global-flags).
+See the [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [Installation](/docs/installation) — initial install methods (and uninstall)
-- [`lpm doctor`](/docs/infra/doctor) — environment health, separate from version updates
-- [Releases on GitHub](https://github.com/lpm-dev/rust-client/releases) — what's in each version
+- [Installation](/docs/installation) — install or reinstall LPM CLI
+- [`lpm doctor`](/docs/infra/doctor) — inspect the project and local environment
+- [`lpm health`](/docs/infra/doctor#lpm-health) — verify registry connectivity
+- [LPM CLI releases](https://github.com/lpm-dev/rust-client/releases) — read release notes and download exact versions

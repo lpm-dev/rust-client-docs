@@ -1,246 +1,313 @@
 ---
 title: lpm config
-description: "Open the guided config editor or manage user-level CLI configuration."
+description: "Manage user-level defaults for installs, security controls, package scripts, and LPM.dev Registry features."
 ---
 
-```bash
-lpm config [action] [key] [value]
-```
-
-Manages [`~/.lpm/config.toml`](/docs/reference/config-toml) — the per-user CLI defaults file. Run bare `lpm config` in a terminal to open the guided editor for the main security and install-posture settings. For ordinary keys it is a convenience layer over editing the file by hand. For security-sensitive keys, it is also the approved path for persisting a weaker machine posture.
-
-## Examples
+Use `lpm config` to view or change user-level defaults for LPM CLI.
 
 ```bash
-lpm config                                      # guided editor with current values
-lpm config list                                 # show every set key
-lpm config get save-prefix                      # → "^"
-lpm config set save-prefix '~'                  # write
-lpm config set script-policy triage             # write
-lpm config get release-age-policy               # read stored cooldown scope
-lpm config set release-age-policy strict        # transitive cooldown scope
-lpm config release-age --set 1d                # human-friendly release cooldown
-lpm config release-age-policy --set strict      # wizard form of the same policy
-lpm config set minimum-release-age-secs 3600    # 1h cooldown
-lpm config signatures --set true                # verify npm registry signatures during install
-lpm config trust-policy --set no-downgrade      # block publisher/provenance trust downgrades
-lpm config sigstore --set scope=all             # verify every resolved package's provenance
-lpm config sigstore --set availability=strict   # require provenance to be available
-lpm config typosquat --set default              # remove override; default keeps checks enabled
-lpm config firewall --set enforce               # block packages flagged by firewall.lpm.dev
-lpm config integrity --set tree                 # stricter expanded-store reuse checks
-lpm config source-analysis --set false          # defer source scanning to lpm audit (guarded)
-lpm config lpm-dev                              # grouped LPM.dev settings editor
-lpm config lpm-skills --set false               # stop auto-installing @lpm.dev package skills
-lpm config lpm-insights --set false             # keep local findings; skip Registry enrichment
-lpm config set workspace-concurrency 4          # workspace run/test/bench fan-out
-lpm config set audit-after-install true         # enable audit-after-install globally
-lpm config delete save-prefix                   # remove
-lpm config unset save-prefix                    # alias for delete
+lpm config
+lpm config get <key>
+lpm config set <key> <value>
+lpm config <delete|unset> <key>
+lpm config <list|ls>
+lpm config <setting> [--set <VALUE>]
 ```
 
-## Actions
+The command stores its changes in [`~/.lpm/config.toml`](/docs/reference/config-toml).
 
-| Action | Aliases | What it does |
+## Quickstart
+
+Open the guided editor:
+
+```bash
+lpm config
+```
+
+The editor shows the current values for its security and install settings. It returns to the main menu after each change.
+
+To view only the values that are saved in the file, run:
+
+```bash
+lpm config list
+```
+
+## Choose a command
+
+| Command | Purpose | Use it when |
 | --- | --- | --- |
-| `get <key>` | — | Print the value of a single key (empty if unset) |
-| `set <key> <value>` | — | Write the value into `~/.lpm/config.toml` |
-| `delete <key>` | `unset` | Remove the key from the file |
-| `list` | `ls` | Print every key/value pair currently stored |
+| `lpm config` | Open the guided editor | You want to review settings interactively |
+| `lpm config get <key>` | Print one saved top-level value | You know the configuration key |
+| `lpm config set <key> <value>` | Save one top-level value | The key has no focused editor |
+| `lpm config delete <key>` | Remove one top-level value | You want the built-in or project value again |
+| `lpm config unset <key>` | Alias for `delete` | You prefer the `unset` name |
+| `lpm config list` | Print all saved values | You want to inspect the configuration file |
+| `lpm config ls` | Alias for `list` | You want a shorter command |
+| `lpm config <setting>` | Open one focused editor | You want value selection and validation |
+| `lpm config <setting> --set <VALUE>` | Save a focused value without its menu | You use a script or already know the value |
 
-Generic `set` writes ordinary values as TOML strings. Known typed keys can preserve their native type; boolean security and LPM.dev preference keys are written as booleans. The reader accepts both string and native forms for typed keys — see [String coercion](/docs/reference/config-toml#string-coercion) for the rationale.
+`get` and `list` show saved values. They do not calculate built-in defaults or project overrides.
 
-## Known keys and defaults
+## Focused settings
 
-The reader accepts unknown keys silently (forward compatibility), but only the following keys actually do anything today:
+Omit `--set` to select a value in an interactive terminal. Use `--set` in scripts and non-interactive shells.
 
-| Config | Description | Default value |
+| Setting | Accepted values | Purpose |
 | --- | --- | --- |
-| `save-prefix` | Prefix used when `lpm install <pkg>` writes dependency ranges to `package.json`. See [Save policy](/docs/packages/save-policy). | `"^"` |
-| `save-exact` | Force exact dependency saves regardless of `save-prefix`. | `false` |
-| `script-policy` | Dependency lifecycle-script gate for `lpm install`, `lpm install -g`, and `lpm rebuild`. Set with `lpm config scripts`. | `"deny"` |
-| `triage-advisor` | Optional LLM advisor for amber-tier lifecycle scripts. Only active when `script-policy = "triage"`; approvals are ephemeral. Set with `lpm config triage`. | `"none"` |
-| `minimum-release-age-secs` | Cooldown before a freshly published version can be selected. The friendly setup surface is `lpm config release-age`. | `86400` (24h) |
-| `release-age-policy` | Cooldown scope: direct/root dependencies only, or strict direct+transitive checks and lockfile replay checks. Set with `lpm config release-age-policy`. | `"direct"` |
-| `minimum-release-age-exclude` | Exact canonical package names exempted from the release-age cooldown. Merged with CLI and project excludes. | `[]` |
-| `signatures` | Verify npm registry package signatures during install and fail closed when a package cannot be verified. Set with `lpm config signatures`. | `false` |
-| `trust-policy` | Refuse weaker npm publish trust than earlier releases and, after verified provenance is locked, refuse a later version without verified provenance. Set with `lpm config trust-policy`. | `"off"` |
-| `typosquat-guard` | Suspicious direct dependency name analysis. Set with `lpm config typosquat`; use project allow-list entries for intentional package names. | unset / `"default"` (enabled) |
-| `[firewall] mode` | firewall.lpm.dev verdict checks for selected public npm package versions. `monitor` warns and continues; `enforce` blocks packages whose effective firewall action is `block`. npm metadata and tarballs still use the direct npm route. Set with `lpm config firewall`. | `"off"` |
-| `[policy.extensions.<name>]` | Local install-time policy extension. Edit `~/.lpm/config.toml` directly, then inspect with [`lpm policy`](/docs/infra/policy). | none |
-| `integrity` | Reused v2 store object validation. `"source"` checks source identity without rehashing expanded files; `"tree"` rehashes expanded files to detect local store tampering/corruption. Set with `lpm config integrity`. | `"source"` |
-| `install-time-source-analysis` | Analyze extracted package source during install and maintain `.lpm-security.json`. Disabling is guarded and defers missing analysis to `lpm audit`. Set with `lpm config source-analysis`. | `true` |
-| `auto-install-peers` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. | `true` |
-| `auto-install-lpm-skills` | Reconcile package-published skills from installed `@lpm.dev/*` packages. Set with `lpm config lpm-skills`. | `true` |
-| `fetch-lpm-security-insights` | Fetch best-effort install-summary enrichment for `@lpm.dev/*` packages. Set with `lpm config lpm-insights` or the grouped `lpm config lpm-dev` editor. | `true` |
-| `strict-peer-dependencies` | Turn missing required peers, peer version mismatches, and peer-conflict warnings into install failures. | `false` |
-| `engine-strict` | Enforce workspace-root `engines.lpm` / `engines.node`, `lpm run` Node compatibility, and dependency `engines.node` constraints. | `true` |
-| `workspace-concurrency` | User default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. | available parallelism |
-| `audit-after-install` | Run `lpm audit` silently after successful `lpm install` and print a one-line advisory. Findings do not fail the install. | `false` |
-| `linker` | Preferred `node_modules` layout for installs run by this user. Overrides `package.json > lpm > linker`; per-invocation override is `lpm install --linker`. | `"hoisted"`; workspaces and default peer-conflict installs use `"isolated"` |
-| `script-read-allow` | Project-relative paths lifecycle scripts may read despite matching the secret-file deny list. | `[]` |
-| `[sandbox] mode` | Default lifecycle-script sandbox posture for this machine. Set with `lpm config sandbox`. | `"default"` |
-| `[sandbox] allow-degraded` | Allow degraded sandbox fallback when full containment is unavailable. | `false` |
-| `[sigstore] verify` | Sigstore provenance verification posture used by installs and related flows. Set with `lpm config sigstore`. | `"deny"` |
-| `[sigstore] scope` | Verify only packages with approved provenance identities, or every resolved package. Set with `lpm config sigstore --set scope=all`. | `"approved"` |
-| `[sigstore] availability` | Continue when an attestation is absent/unavailable, or require one. Set with `lpm config sigstore --set availability=strict`. | `"best-effort"` |
-| `[tunnel] relay-url` | WebSocket relay URL for `lpm tunnel`; override per process with `LPM_TUNNEL_RELAY`. | `"wss://relay.lpm.fyi/connect"` |
+| `scripts` | `deny`, `triage`, `allow` | Control dependency lifecycle scripts |
+| `triage` | `none`, `claude-cli`, `codex`, `ollama` | Select an optional advisor for `triage` script policy |
+| `sandbox` | `default`, `strict`, `none` | Control containment for lifecycle scripts |
+| `sigstore` | `deny`, `warn`, `off` | Control failures during provenance verification |
+| `sigstore` | `scope=approved`, `scope=all` | Select packages for provenance verification |
+| `sigstore` | `availability=best-effort`, `availability=strict` | Control missing or unavailable attestations |
+| `signatures` | `true`, `false` | Verify npm registry package signatures during install |
+| `trust-policy` | `off`, `no-downgrade` | Block weaker npm publisher or provenance trust |
+| `typosquat` | `default`, `on`, `off` | Control suspicious direct dependency name analysis |
+| `firewall` | `off`, `monitor`, `enforce` | Control LPM Firewall verdicts for public npm packages |
+| `integrity` | `source`, `tree` | Control validation of reused package-store objects |
+| `release-age` | `default`, `off`, `0`, or a duration | Set the cooldown for new package releases |
+| `release-age-policy` | `direct`, `strict` | Apply the cooldown to direct or all dependencies |
+| `source-analysis` | `true`, `false` | Control package source analysis during install |
+| `lpm-dev` | Interactive editor only | Manage both LPM.dev Registry package preferences |
+| `lpm-skills` | `true`, `false` | Control automatic skills from `@lpm.dev/*` packages |
+| `lpm-insights` | `true`, `false` | Control install-summary enrichment for `@lpm.dev/*` packages |
 
-The full reference for these keys, their types, defaults, and precedence chain is on [`~/.lpm/config.toml`](/docs/reference/config-toml).
+The `lpm-dev` editor manages `lpm-skills` and `lpm-insights` together. It does not accept `--set` or `--json`.
 
-## Guided editor
+The interactive `triage` editor lists the advisor providers that it detects. Cloud advisors receive lifecycle script text, while Ollama keeps the text local.
 
-Bare `lpm config` opens a single interactive menu. Each row shows the current value and routes into the focused wizard for that setting:
+## Common generic keys
 
-```text
-◆  What do you want to configure?
-│  ○ Lifecycle scripts      current: deny
-│  ○ Triage advisor         current: none
-│  ○ Sandbox mode           current: default
-│  ○ Sigstore provenance    current: deny
-│  ○ Registry signatures    current: disabled
-│  ○ Trust downgrade policy current: off
-│  ○ Typosquat guard        current: default (enabled)
-│  ○ Firewall for npm       current: off
-│  ○ Store integrity        current: source
-│  ○ Minimum release age    current: default (1d)
-│  ○ Release-age scope      current: direct
-│  ○ Install-time source analysis current: enabled
-│  ○ LPM.dev settings       skills=enabled (default), insights=enabled
-```
+Use `lpm config set` for user defaults that have no focused editor.
 
-After a setting is changed, the editor returns to the menu with refreshed values. If you set lifecycle scripts to `triage`, LPM CLI also offers to configure the optional triage advisor next.
+| Key | Accepted value | Default | Purpose |
+| --- | --- | --- | --- |
+| `save-prefix` | `^`, `~`, or an empty string | `^` | Select the prefix for new dependency ranges |
+| `save-exact` | Boolean | `false` | Save exact dependency versions |
+| `linker` | `hoisted`, `isolated` | `hoisted` for single packages | Select the user-level `node_modules` layout. Workspaces and default peer-conflict installs use `isolated` |
+| `auto-install-peers` | Boolean | `true` | Install missing, required peer dependencies |
+| `strict-peer-dependencies` | Boolean | `false` | Fail on missing peers, version mismatches, and peer conflicts |
+| `engine-strict` | Boolean | `true` | Fail when required LPM CLI or Node versions do not match |
+| `workspace-concurrency` | Positive integer | Available parallelism | Set the default number of concurrent workspace tasks |
+| `audit-after-install` | Boolean | `false` | Run an informational audit after each successful install |
 
-## Setup wizards
+See the [complete key reference](/docs/reference/config-toml#known-keys) for arrays, nested tables, policy extensions, and all precedence rules.
 
-The focused setup surfaces handle picking and validation for you:
+The generic `set` action stores most values as TOML strings. The readers for known Boolean and integer keys accept these strings.
+
+Use the focused command for `sandbox`, `sigstore`, and `firewall`. These settings use nested TOML tables.
+
+If a key requires an array or nested table, edit the file directly. For example, `script-read-allow` requires a TOML array.
+
+## Recipes
+
+### Change saved dependency ranges
+
+Save new dependencies with a tilde range:
 
 ```bash
-lpm config scripts                          # pick deny / triage / allow
-lpm config scripts --set triage             # non-interactive
-
-lpm config triage                           # pick none / claude-cli / codex / ollama
-lpm config triage --set claude-cli          # non-interactive
-
-lpm config sandbox                          # pick default / strict / none
-lpm config sandbox --set strict             # non-interactive
-
-lpm config sigstore                                  # pick verify / scope / availability
-lpm config sigstore --set deny                       # verify=deny (backward compatible)
-lpm config sigstore --set verify=deny                # explicit verification posture
-lpm config sigstore --set scope=all                  # verify every resolved package
-lpm config sigstore --set availability=strict        # require an attestation
-
-lpm config signatures                       # pick enabled / disabled
-lpm config signatures --set true            # non-interactive
-
-lpm config trust-policy                     # pick off / no-downgrade
-lpm config trust-policy --set no-downgrade  # non-interactive
-
-lpm config typosquat                        # pick default / on / off
-lpm config typosquat --set default          # non-interactive
-
-lpm config firewall                         # pick off / monitor / enforce, then review policy groups
-lpm config firewall --set enforce           # non-interactive
-
-lpm config integrity                        # pick source / tree
-lpm config integrity --set tree             # non-interactive
-
-lpm config release-age                      # pick default / 3d / off / custom
-lpm config release-age --set 3d             # non-interactive
-
-lpm config release-age-policy               # pick direct / strict
-lpm config release-age-policy --set strict  # non-interactive
-
-lpm config source-analysis                  # pick enabled / disabled
-lpm config source-analysis --set false      # guarded non-interactive setter
-
-lpm config lpm-dev                          # grouped skills + insights editor
-lpm config lpm-skills                       # pick enabled / disabled
-lpm config lpm-skills --set false           # non-interactive
-lpm config lpm-insights                     # pick enabled / disabled
-lpm config lpm-insights --set false         # non-interactive
+lpm config set save-prefix '~'
 ```
 
-`lpm config triage` auto-detects which advisor providers are installed on your machine and only offers the available ones (plus `none`). Picking `none` in `lpm config sandbox`, disabling source analysis, or picking `off` in `lpm config sigstore`, `lpm config typosquat`, or `lpm config firewall` adds an approval step when it weakens the approved floor. The `--set` forms still persist through the same guarded flow for guarded weakeners: in an interactive TTY they ask for native system approval, and in `--json` / CI / non-TTY mode they fail with `security_approval_required` instead of silently weakening the machine floor.
-
-`lpm config signatures` and `lpm config trust-policy` are opt-in hardening controls. Their defaults are disabled, so enabling them does not require a security unlock.
-
-The Sigstore axes are independent. `verify = "deny"` is the default response to a bundle that is present but fails cryptographic or artifact-binding checks. `scope = "approved"` keeps verification limited to packages with a previously approved provenance identity; `scope = "all"` opts every resolved package into verification and lockfile evidence. `availability = "best-effort"` keeps missing or temporarily unavailable attestations non-blocking; `availability = "strict"` requires evidence. The defaults remain `deny`, `approved`, and `best-effort`. An enabled `trust-policy = "no-downgrade"` is a separate floor: it checks npm publish-trust history during resolution, and prior artifact-verified lockfile history must remain verified even when one of these Sigstore controls would otherwise warn, skip, or fail open.
-
-### LPM.dev settings
-
-`lpm config lpm-dev` opens one interactive editor for two independent LPM.dev preferences. **LPM.dev package skills** controls automatic package-published skill reconciliation. **Fetch LPM AI Insights Results** controls the best-effort install-time batch request that enriches local security summaries with server-side findings for `@lpm.dev/*` packages. The focused `lpm-skills` and `lpm-insights` commands remain available for scripts.
-
-Disabling package skills keeps existing `.lpm/skills/` files and skips future automatic fetches; use [`lpm skills clean`](/docs/packages/skills) when you also want to remove existing package-owned skill content. Explicit [`lpm skills add`](/docs/packages/skills) commands are unaffected. Disabling LPM insights does not disable local source analysis or remove local findings.
-
-### Install-time source analysis
-
-`lpm config source-analysis` manages `install-time-source-analysis`, which defaults to enabled. The enabled path analyzes package source as bytes enter the store and repairs missing, malformed, or outdated analysis caches from stored bytes. The disabled path skips new install-time scans; `lpm audit` still scans installed source when it needs a result.
-
-Disabling is a guarded machine-wide weakening under the `source-analysis-disable` approval scope. Re-enabling is hardening and does not require approval. `force-security-floor = true` and managed policy can require the enabled posture.
-
-`lpm config typosquat` accepts `default`, `on`, or `off`. `default` removes the explicit config key and follows the product default, currently enabled; `on` forces the guard on even when the diagnostic env override is set; `off` disables suspicious-name analysis machine-wide. `off` is a guarded weakening: the interactive wizard asks for confirmation and native approval before saving it, while `--json` / CI / non-TTY callers fail with `security_approval_required`. For false positives, prefer a committed [`lpm.toml` allow-list entry](/docs/reference/lpm-toml#typosquat-policy) with a reason instead of turning the guard off globally.
-
-Policy extensions are configured by editing `~/.lpm/config.toml` directly. They are local verdict-only install checks; use [`lpm policy list`](/docs/infra/policy#commands), [`lpm policy status`](/docs/infra/policy#commands), [`lpm policy doctor`](/docs/infra/policy#commands), and [`lpm policy test`](/docs/infra/policy#commands) to inspect and test them.
-
-### npm firewall
-
-`lpm config firewall` accepts `off`, `monitor`, or `enforce`. `off` keeps the default direct npm metadata and tarball path with no LPM Firewall verdict check. `monitor` sends selected public npm package versions to LPM Firewall in batches, prints block/warn verdicts, and lets the command continue. `enforce` uses the same batched check and blocks packages whose effective firewall action is `block` before package bytes are installed, fetched, downloaded, or copied through `lpm add`. The hosted firewall verdict service is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally or set `LPM_TOKEN` in CI. If entitlement is denied, `monitor` warns and continues, while `enforce` fails before package bytes are materialized. The legacy string `report` is still accepted as an alias for `monitor`, but the wizard persists `monitor`.
-
-When you choose `enforce` interactively, the wizard shows the five npm firewall policy groups on one review screen: trusted public malicious advisories, LPM Firewall AI-confirmed malware, LPM Firewall AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. Press Enter to accept the recommended profile, or change individual groups before saving. Recommended enforcement blocks trusted public malicious advisories and LPM Firewall AI-confirmed malware, and warns for AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full profile.
-
-When a human-output materialization command has eligible public npm packages to check, its progress line carries the `🔥 LPM Firewall active` badge. Private/custom registry packages and LPM.dev Registry packages are not sent to the npm firewall verdict API. JSON output for materialization commands includes a `firewall` object when the firewall is active. Turning the firewall on is hardening and does not require an unlock; after `monitor` or `enforce` is approved as the machine floor, moving to a weaker mode is guarded.
-
-### Store integrity
-
-`lpm config integrity` accepts `source` or `tree`. `source` is the default and validates reused v2 store objects by their source identity without rehashing every expanded file, which keeps warm installs fast. `tree` is stricter and rehashes expanded files before reuse so local tampering or corruption under `~/.lpm/store/v2/objects/` is detected before the object is linked into a project.
-
-This is separate from `--strict-integrity`. `--strict-integrity` controls trust-on-first-use for tarball URL dependencies that do not declare an inline SRI hash. `integrity = "tree"` controls how LPM CLI validates already-expanded v2 store objects before reuse.
-
-`lpm config release-age` accepts `default`, `off`, or human durations like `12h`, `1d`, `3d`, and `0`. The wizard persists canonical seconds into `minimum-release-age-secs`, but the interactive and `--set` surfaces stay duration-based. Picking `default` removes the global override and falls back to the built-in 24h default. In the interactive wizard, any non-off cooldown also asks whether the cooldown should use the default direct/root scope or strict direct+transitive scope.
-
-Bare `lpm config` and all focused editors write to the same `~/.lpm/config.toml` that `lpm config set` would. They require a TTY when invoked without `--set`; non-interactive callers must use an explicit action such as `lpm config list` or pass `--set <value>` to a focused setter. The grouped `lpm config lpm-dev` editor is TTY-only.
-
-## Security-sensitive writes
-
-Lowering machine-wide security posture through `lpm config` is guarded.
-
-Examples:
+Save exact versions for all new dependencies:
 
 ```bash
-lpm config scripts --set allow
-lpm config release-age --set 0
-lpm config release-age-policy --set direct
-lpm config sandbox --set none
-lpm config sigstore --set off
-lpm config typosquat --set off
-lpm config firewall --set off
-lpm config source-analysis --set false
+lpm config set save-exact true
 ```
 
-In an interactive TTY, LPM CLI asks for confirmation before persisting the weaker value.
+`save-exact` has priority over `save-prefix`. Project values in `lpm.toml` have priority over these user values.
 
-In `--json`, CI, or any non-TTY shell, the same write fails with `error_code: "security_approval_required"` instead of silently lowering the machine floor.
+### Select a `node_modules` layout
 
-If a managed policy owns that control (`/etc/lpm/security-policy.toml` on Unix/macOS, `C:\ProgramData\lpm\security-policy.toml` on Windows), the write fails with `error_code: "security_floor"` instead.
+Use the isolated layout for installs by this user:
 
-Directly editing `~/.lpm/config.toml` is not equivalent to approval for these keys. A raw file edit is only a proposal; when the value is weaker than the current approved floor, LPM CLI refuses with `security_approval_required` or `security_floor`. In particular, raw `[sigstore].verify = "warn"` / `"off"`, raw `typosquat-guard = "off"`, raw `[firewall].mode = "off"` or `"monitor"`, and raw `install-time-source-analysis = false` below the approved floor are surfaced as active runtime overrides and require the matching unlock before mutating install or trust flows proceed.
+```bash
+lpm config set linker isolated
+```
+
+This user value has priority over `LPM_LINKER` and `package.json > lpm > linker`. The `lpm install --linker` flag has higher priority.
+
+To let each project select its layout, remove the user value:
+
+```bash
+lpm config delete linker
+```
+
+### Set workspace concurrency
+
+Run four workspace members at the same time:
+
+```bash
+lpm config set workspace-concurrency 4
+```
+
+This value applies to workspace mode for `lpm run`, `lpm test`, and `lpm bench`.
+
+### Enable the audit summary after installs
+
+Run a non-blocking audit after each successful install:
+
+```bash
+lpm config set audit-after-install true
+lpm install
+```
+
+The audit prints one summary line. Its findings do not fail the install.
+
+### Set a stricter security baseline
+
+If you want stricter package and script checks on your computer, use this recipe:
+
+```bash
+lpm config scripts --set deny
+lpm config sandbox --set strict
+lpm config sigstore --set scope=all
+lpm config sigstore --set availability=strict
+lpm config signatures --set true
+lpm config trust-policy --set no-downgrade
+lpm config integrity --set tree
+```
+
+Each command changes one independent control. You can apply only the controls that you need.
+
+### Increase the release cooldown
+
+Require a three-day cooldown for direct and transitive dependencies:
+
+```bash
+lpm config release-age --set 3d
+lpm config release-age-policy --set strict
+```
+
+Use `default` to remove the user cooldown override. The built-in cooldown is one day.
+
+```bash
+lpm config release-age --set default
+```
+
+### Monitor public npm packages with LPM Firewall
+
+This recipe signs in, enables monitor mode, and runs an install:
+
+```bash
+lpm login
+lpm config firewall --set monitor
+lpm install
+```
+
+`monitor` prints verdicts and continues. `enforce` blocks a package when its effective policy action is `block`.
+
+LPM Firewall is an LPM.dev Registry Pro or Org feature. See the [LPM Firewall guide](/docs/guides/firewall) for policy-group controls.
+
+### Control LPM.dev Registry package features
+
+Disable automatic package skills and server-side insight enrichment:
+
+```bash
+lpm config lpm-skills --set false
+lpm config lpm-insights --set false
+```
+
+Disabling package skills keeps existing `.lpm/skills/` files. Disabling insights does not disable local source analysis.
+
+## Project configuration
+
+`lpm config` does not write `lpm.json`. It changes user defaults in `~/.lpm/config.toml`.
+
+Project configuration uses the file defined by each feature. For example, save policy uses `lpm.toml`, and linker configuration can use `package.json > lpm`.
+
+Read the related feature page before you add a project override. Precedence is not the same for every key.
+
+## Security-sensitive changes
+
+CAUTION: Do not weaken a security control unless the weaker value is required. A user setting can affect every project on the computer.
+
+LPM CLI guards changes that weaken an approved security setting. Guarded controls include:
+
+- Lifecycle script policy
+- The release-age duration and scope
+- The lifecycle-script sandbox
+- Sigstore verification mode
+- Typosquat analysis
+- LPM Firewall mode
+- Install-time source analysis
+
+In an interactive terminal, LPM CLI requests approval before it saves a weaker value.
+
+In JSON mode, CI, or a non-interactive shell, the command fails with `security_approval_required`.
+
+A managed policy can prohibit the change. In this case, the command fails with `security_floor`.
+
+Use [`lpm security status`](/docs/infra/security#status) to inspect the active security floor and temporary approvals.
+
+## JSON output
+
+Use `--json` with explicit actions or focused setters:
+
+```bash
+lpm config list --json
+lpm config get save-prefix --json
+lpm config integrity --set tree --json
+```
+
+For a saved key, `get --json` returns the key and its value:
+
+```json
+{
+  "save-prefix": "~",
+  "success": true
+}
+```
+
+If the key is not saved, the current command exits successfully without JSON output.
+
+The bare guided editor and `lpm config lpm-dev` do not support JSON mode.
+
+## Reset or recover the configuration
+
+Remove a simple top-level user value to use the next source in its precedence chain:
+
+```bash
+lpm config delete save-prefix
+```
+
+For a focused setting, use its focused command to select the documented default:
+
+```bash
+lpm config release-age --set default
+lpm config typosquat --set default
+lpm config sandbox --set default
+```
+
+If the file contains invalid TOML, keep a backup and start with built-in defaults:
+
+```bash
+mv ~/.lpm/config.toml ~/.lpm/config.toml.backup
+lpm config
+```
+
+After LPM CLI opens the editor successfully, copy required values from the backup.
 
 ## File location
 
-`~/.lpm/config.toml` (or `%USERPROFILE%\.lpm\config.toml` on Windows). Override the entire `~/.lpm/` root with [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout).
+The default path is `~/.lpm/config.toml`. On Windows, the path is `%USERPROFILE%\.lpm\config.toml`.
 
-The file is created on demand the first time you `set` a key.
+The [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) environment variable changes the root directory. LPM CLI creates the file when it saves the first value.
 
 ## Flags
 
-`lpm config` takes no specific flags besides the [global flags](/docs/commands#global-flags) and the focused-setter `--set <value>`. `--json` returns structured output for explicit actions — `get` / `set` / `delete` / `list` and non-interactive focused setters emit a `{success, …}` envelope under `--json`. The bare guided editor and grouped `lpm-dev` editor are interactive-only; use `lpm config list --json` for machine-readable current config.
+| Flag | Purpose |
+| --- | --- |
+| `--set <VALUE>` | Save a value through a focused setting without its menu |
+| `--json` | Print structured output for an explicit action or focused setter |
+
+Other [global flags](/docs/commands#global-flags) also apply.
 
 ## See also
 
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — the file itself, with full key reference
-- [`lpm policy`](/docs/infra/policy) — inspect and test local install policy extensions
-- [`lpm security`](/docs/infra/security) — temporary approvals and floor status
-- [`lpm.toml`](/docs/reference/lpm-toml) — project-level alternative
-- [Save policy](/docs/packages/save-policy)
+- [`~/.lpm/config.toml`](/docs/reference/config-toml) - read all keys, types, defaults, and precedence rules
+- [`lpm security`](/docs/infra/security) - inspect approvals and managed security floors
+- [`lpm policy`](/docs/infra/policy) - inspect local install policy extensions
+- [`lpm.toml`](/docs/reference/lpm-toml) - configure supported project-level behavior
+- [`package.json > lpm`](/docs/reference/package-json-lpm) - configure supported project-level package behavior
+- [Save policy](/docs/packages/save-policy) - select dependency range formats

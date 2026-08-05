@@ -142,7 +142,7 @@ export const FOOTER: { heading: string; links: FootLink[] }[] = [
     links: [
       { label: "Tunneling", href: "/docs/infra/tunneling" },
       { label: "Local HTTPS", href: "/docs/infra/local-https" },
-      { label: "Dependency graph", href: "/docs/infra/dependency-graph" },
+      { label: "Dependency graph", href: "/docs/packages/dependency-graph" },
       { label: "Project health", href: "/docs/infra/project-health" },
     ],
   },

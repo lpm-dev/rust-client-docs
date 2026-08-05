@@ -1,136 +1,446 @@
 ---
 title: lpm tunnel
-description: "Expose localhost to the internet, claim stable domains, capture and replay webhooks."
+description: "Expose a local HTTP service through a public HTTPS URL, with request capture and replay."
 ---
 
+`lpm tunnel` gives a public HTTPS URL to a local HTTP service.
+
+Use it for webhook development, API callbacks, remote-device tests, and temporary previews.
+
+For a repeatable project workflow, set a claimed domain in `lpm.json` and run `lpm dev`.
+
+When a service already runs or you manage capture history, use standalone `lpm tunnel`.
+
 ```bash
-lpm tunnel <port-or-action> [domain]
+lpm tunnel [<port>|<action>] [target] [flags]
 ```
 
-Exposes a local port to the public internet through the LPM.dev Registry tunnel network. Used by [`lpm dev --tunnel`](/docs/dev/dev) under the hood, and directly when you need a public URL outside the dev server (running an MCP server locally, hosting a webhook receiver, sharing a preview).
+## Quickstart with `lpm.json`
 
-Webhooks that arrive at the public URL are captured in the current project's `.lpm/inspector.db`. Terminal inspection, replay, sessions, and the browser inspector all use that same project-local history.
+When a project needs the same public URL across development sessions, use `lpm.json`.
+
+First, claim the domain once:
+
+```bash
+lpm login
+lpm tunnel claim acme-api.lpm.llc
+```
+
+Then add the domain to `lpm.json`, next to `package.json`:
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "tunnel": {
+    "domain": "acme-api.lpm.llc"
+  }
+}
+```
+
+Start the project:
+
+```bash
+lpm dev
+```
+
+The `domain` field enables the tunnel automatically. You do not need to add `--tunnel`.
+
+`lpm dev` starts the project and waits for its final HTTP endpoint. Then it opens the tunnel to that endpoint.
+
+If `services` is absent, `lpm dev` runs the `dev` script from `package.json`.
+
+Use this setup for stable webhook URLs, callback URLs, and preview links.
+
+The `tunnel` value is an object, not a boolean value. The object currently accepts only `domain`.
+
+For an assigned domain instead of a saved domain, omit the `tunnel` object:
+
+```bash
+lpm dev --tunnel
+```
+
+Free users receive a random `lpm.fyi` domain. A claimed domain requires a Pro or Org plan.
+
+### Override or disable the project tunnel
+
+The `lpm dev` flags override `lpm.json` for one run:
+
+```bash
+lpm dev --domain preview-api.lpm.llc # use another claimed domain and enable the tunnel
+lpm dev --no-tunnel                 # disable the configured tunnel for this run
+```
+
+The `--domain` flag belongs to `lpm dev`. Standalone `lpm tunnel` accepts the domain as a positional argument.
+
+Tunnel access and inspector flags also work with `lpm dev`:
+
+```bash
+lpm dev --tunnel-auth               # protect the public URL with a session token
+lpm dev --inspect-port 4500         # use a fixed browser-inspector port
+lpm dev --no-inspect                # keep capture but skip the browser inspector
+```
+
+### Multi-service projects
+
+If `lpm.json` contains one service, LPM CLI uses that service as the tunnel target.
+
+If it contains multiple services, mark exactly one service as `primary`:
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "tunnel": {
+    "domain": "acme-api.lpm.llc"
+  },
+  "services": {
+    "web": {
+      "command": "vite",
+      "port": 5173,
+      "primary": true
+    },
+    "api": {
+      "command": "node api.js",
+      "port": 4000
+    }
+  }
+}
+```
+
+```bash
+lpm dev
+```
+
+The public URL routes to the final endpoint of `web`. The `api` service remains available to the project on its local endpoint.
+
+See the [`lpm.json` tunnel reference](/docs/reference/lpm-json#tunnel) for the field definition.
+
+## One-time tunnel
+
+Start your local HTTP service on port `3000`. Then open the tunnel:
+
+```bash
+lpm login
+lpm tunnel 3000
+```
+
+The command prints a public URL and forwards requests to `http://127.0.0.1:3000/`.
+
+While you use the URL, keep the command open. Press `q` or `Ctrl+C` to stop the tunnel.
 
 ## Examples
 
 ```bash
+lpm dev                                   # use tunnel.domain from lpm.json
+lpm dev --tunnel                          # use an assigned domain for this run
+lpm dev --no-tunnel                       # skip the lpm.json tunnel for this run
 lpm tunnel                                # tunnel the only active lpm dev endpoint
-lpm tunnel 4000                           # start on port 4000
-lpm tunnel claim acme-api.lpm.llc         # claim a stable domain (Pro/Org)
+lpm tunnel 4000                           # tunnel an explicit local port
+lpm tunnel start acme-api.lpm.llc         # tunnel the active dev endpoint with a claimed domain
+lpm tunnel 4000 acme-api.lpm.llc          # use a claimed domain
+lpm tunnel claim acme-api.lpm.llc         # claim a personal domain
+lpm tunnel claim staging.lpm.fyi --org acme # claim an organization domain
 lpm tunnel unclaim acme-api.lpm.llc       # release a claimed domain
-lpm tunnel list                           # your claimed domains
-lpm tunnel domains                        # available base domains
-lpm tunnel inspect                        # captured webhook event log
-lpm tunnel inspect --ui                   # open browser inspector
-lpm tunnel replay 3                       # replay event #3 to localhost
-lpm tunnel log                            # browse event log
+lpm tunnel list                           # list personal domain claims
+lpm tunnel list --org acme                # list organization domain claims
+lpm tunnel domains                        # list available base domains
+lpm tunnel inspect --last 10              # show recent captured requests
+lpm tunnel inspect --ui                   # open the browser inspector
+lpm tunnel replay --last --port 4000      # replay the newest capture
+lpm tunnel log --status 5xx               # show failed requests
 ```
 
-## Starting a tunnel
+## Choose a command
+
+| Goal | Command |
+| --- | --- |
+| Start the tunnel from `lpm.json` | `lpm dev` |
+| Start the project with an assigned domain | `lpm dev --tunnel` |
+| Disable the `lpm.json` tunnel for one run | `lpm dev --no-tunnel` |
+| Tunnel the only active `lpm dev` endpoint | `lpm tunnel` |
+| Tunnel an explicit port | `lpm tunnel 3000` |
+| Tunnel the active endpoint with a claimed domain | `lpm tunnel start acme-api.lpm.llc` |
+| Tunnel with a claimed domain | `lpm tunnel 3000 acme-api.lpm.llc` |
+| Claim a stable domain | `lpm tunnel claim <domain>` |
+| Release a claimed domain | `lpm tunnel unclaim <domain>` |
+| List claimed domains | `lpm tunnel list` |
+| List available base domains | `lpm tunnel domains` |
+| Show captured requests | `lpm tunnel inspect` |
+| Replay a captured request | `lpm tunnel replay <number>` |
+| Browse or clear capture history | `lpm tunnel log` |
+
+The CLI also accepts `release`, `ls`, and `logs` as aliases.
+
+## Authentication
+
+The remote actions require a saved login session from [`lpm login`](/docs/infra/login).
+
+This requirement applies to tunnel startup, domain claims, domain lists, and base-domain lists.
 
 ```bash
-lpm dev
-lpm tunnel
-
-# Or target an explicit server:
+lpm login
 lpm tunnel 3000
 ```
 
-Returns an `https://` URL that proxies to `http://127.0.0.1:3000/`. Requires a refresh-backed LPM.dev Registry login session — `lpm tunnel` rejects `--token`, `LPM_TOKEN`, and CI-only tokens for relay-facing actions. Free users get an ephemeral random domain on every run; Pro and Org users can claim a stable one (see below).
+The remote actions do not accept `--token`, `LPM_TOKEN`, or CI-only tokens.
 
-With no numeric port, `lpm tunnel` discovers the verified endpoint published by a running `lpm dev` session. This preserves the child server's loopback address, port, and base path, so Vite on `5173` or a second Vite process on `5174` works without restating the port. No active session is a clear error. If multiple dev sessions are active, pass the intended port explicitly; LPM CLI never guesses between them.
+The `inspect`, `replay`, and `log` actions use local files. These actions do not require a login.
 
-Tunnel and replay forwarding require a plain HTTP child. LPM CLI never disables certificate verification for an arbitrary framework HTTPS server. If the child advertises HTTPS, disable framework-level HTTPS and use `lpm dev --https`: LPM CLI terminates trusted browser-facing TLS while the tunnel safely forwards to the verified HTTP child.
+## Select the local service
+
+### Use an explicit port
+
+If you know the local listener, pass its port:
 
 ```bash
-lpm tunnel 3000 acme-api.lpm.llc          # use a claimed domain
-lpm tunnel 3000 --tunnel-auth             # require an auth token to access
-lpm tunnel 3000 --auto-ack                # 200 OK while local server is down
-lpm tunnel 3000 --session "stripe-test"   # name the session in the inspector
+lpm tunnel 3000
 ```
 
-The domain must include a base — `lpm.fyi` (free + Pro/Org) or `lpm.llc` (Pro/Org). `lpm tunnel 3000 acme` (no dot) fails with `Missing base domain` and suggests the available bases; `lpm tunnel domains` lists every enabled base with the plan tier required.
+An explicit port always targets `http://127.0.0.1:<port>/`. Valid ports are from `1` through `65535`.
 
-`--auto-ack` is useful when you're not running a server but need webhook providers to keep their endpoint active — providers typically deactivate endpoints after repeated 5xx responses.
+The local service must use plain HTTP. The public tunnel URL still uses HTTPS.
 
-Once connected, the startup block prints the public URL, inspector URL, plan, expiry when the relay advertises one, active limits, current accepted/included request usage, overage state, session, complete local URL, and domain. `--json` keeps `local_port` for compatibility and adds `local_url` so scripts retain the scheme, IPv4/IPv6 authority, and base path; it also includes the additive `limits` and `usage` objects. Current CLI versions print live usage warnings when the relay sends allowance or overage threshold notices. Press `o` to open the inspector when it is running, or `q` to quit the tunnel. Incoming requests stream as compact rows such as `→ POST /hooks/stripe 201 42ms`.
+If your framework uses HTTPS, disable framework HTTPS. Use [`lpm dev --https`](/docs/dev/dev#https) for trusted local browser TLS.
 
-## Request allowance
+### Use an active `lpm dev` endpoint
 
-| Plan | Included requests | Account-wide rate | Concurrent tunnels | After allowance |
-| --- | --- | --- | --- | --- |
-| Free | 20,000/UTC month | 4,000/min | 1 | hard stop |
-| Pro | 100,000/billing period | 20,000/min | 3 | $1/100,000 proportional overage |
-| Org | 100,000/billed seat/billing period | 20,000/min/billed seat | 10 | $1/100,000 proportional overage |
+Run these commands in different terminals:
 
-Every plan also applies 600 requests/minute to each visitor IP within the account. Limits and usage are shared across the account's domains; three Pro tunnels do not receive three separate allowances. Pro and Org overage is enabled by default and can be turned off from the tunnel dashboard for a hard stop.
+```bash
+# Terminal 1
+lpm dev
 
-An admitted HTTP request counts once even if localhost later fails or times out. A successful public WebSocket upgrade counts once; its frames do not count. Public WebSockets require a current protocol-v2 CLI connection; tunnels connected by an older protocol-v1 client return `426 Upgrade Required` before quota admission. See [Request usage and overage](/docs/infra/tunneling#request-usage-and-overage) for exclusions and billing-period behavior.
+# Terminal 2
+lpm tunnel
+```
 
-## Claiming a stable domain
+Without a port, LPM CLI selects the only active `lpm dev` endpoint. It preserves the endpoint address, port, and base path.
+
+If no active endpoint exists, pass a port. If multiple endpoints exist, pass the intended port.
+
+Use [`lpm dev --tunnel`](/docs/dev/dev) to start the dev server and tunnel from one command.
+
+The tunnel forwards HTTP requests and WebSocket connections.
+
+## Recipes
+
+### Receive webhooks on localhost
+
+Run your webhook service and tunnel in different terminals:
+
+```bash
+# Terminal 1
+lpm run dev
+
+# Terminal 2
+lpm tunnel 3000 --session stripe-test
+```
+
+Add the webhook path to the printed URL. For example, use `https://<domain>/webhooks/stripe` for a `/webhooks/stripe` route.
+
+LPM CLI saves each request and local response in the current directory. The session name helps you find related requests later.
+
+### Replay a failed webhook
+
+List recent captures. Then inspect and replay the selected entry:
+
+```bash
+lpm tunnel inspect --last 10
+lpm tunnel inspect --detail 3
+lpm tunnel replay 3 --port 3000
+```
+
+Capture numbers use the newest-first list and start at `1`.
+
+Replay sends the original method, path, headers, and body to the selected local service.
+
+If one `lpm dev` endpoint is active, you can omit the replay port:
+
+```bash
+lpm tunnel replay --last
+```
+
+### Keep a webhook endpoint active
+
+When the tunnel must accept requests without the local service, use `--auto-ack`:
+
+```bash
+lpm tunnel 3000 --auto-ack
+```
+
+When LPM CLI cannot reach the local service, it returns `200 OK`. It still saves the request for later inspection and replay.
+
+> CAUTION: The provider records the request as successful, although your local service did not process it.
+
+### Protect a preview URL
+
+Pro and Org tunnels can require a per-session access token:
+
+```bash
+lpm tunnel 3000 acme-api.lpm.llc --tunnel-auth
+```
+
+The startup output prints an `X-Tunnel-Auth` header and a browser URL. Treat the token and browser URL as secrets.
+
+### Use a fixed inspector port
+
+The browser inspector starts with each tunnel and selects an available local port.
+
+Use a fixed port for a stable local bookmark:
+
+```bash
+lpm tunnel 3000 --inspect-port 4500
+```
+
+If port `4500` is busy, the command fails. Without this flag, an inspector startup error does not stop the tunnel.
+
+To run without the browser inspector, use:
+
+```bash
+lpm tunnel 3000 --no-inspect
+```
+
+When `--no-inspect` is active, capture continues.
+
+## Stable domains
+
+Free tunnels receive a random `lpm.fyi` domain for each session. Stable domain claims require a Pro or Org plan.
+
+List the enabled base domains before you select a name:
+
+```bash
+lpm tunnel domains
+```
+
+Current base domains are:
+
+- `lpm.fyi` for Free, Pro, and Org tunnels.
+- `lpm.llc` for Pro and Org tunnels.
+
+A Free tunnel can use `lpm.fyi` for its random domain. A stable claim on either base still requires Pro or Org.
+
+Claim and use a personal domain:
 
 ```bash
 lpm tunnel claim acme-api.lpm.llc
-lpm tunnel claim acme-api.lpm.llc --org acme    # claim under an org
-lpm tunnel list                                  # show claimed
-lpm tunnel unclaim acme-api.lpm.llc              # release
+lpm tunnel list
+lpm tunnel 3000 acme-api.lpm.llc
 ```
 
-Claimed domains persist across runs — the same URL keeps working as long as you hold the claim. Discover available base domains with `lpm tunnel domains`.
-
-## Inspecting and replaying webhooks
+Organization owners and administrators can manage organization domains:
 
 ```bash
-lpm tunnel inspect                # show captured events (terminal table)
-lpm tunnel inspect --ui           # open this project's history in a browser
+lpm tunnel claim staging.lpm.fyi --org acme
+lpm tunnel list --org acme
+lpm tunnel 3000 staging.lpm.fyi
+```
+
+The subdomain must contain from 3 through 32 lowercase letters, numbers, or hyphens. It must start and end with a letter or number.
+
+When you no longer need the claim, release the domain:
+
+```bash
+lpm tunnel unclaim acme-api.lpm.llc
+lpm tunnel unclaim staging.lpm.fyi --org acme
+```
+
+The release is immediate and does not stop for confirmation.
+
+## Plans and limits
+
+| Tunnel type | Public domain | Session limit | Concurrent tunnels | Stable claims | Tunnel auth |
+| --- | --- | --- | --- | --- | --- |
+| Free personal | Random `lpm.fyi` | 1 hour | 1 | 0 | No |
+| Pro personal | Account or claimed domain | No fixed limit | 3 | 3 | Yes |
+| Org | Claimed organization domain | No fixed limit | 10 | 10 | Yes |
+
+The startup output shows the current plan, expiry, active limits, and request usage.
+
+Request allowances and rates apply across the account, not to each tunnel. See [Request usage and overage](/docs/infra/tunneling#request-usage-and-overage).
+
+## Capture history
+
+LPM CLI stores captured requests, responses, and sessions in `.lpm/inspector.db` under the current directory.
+
+Captured data can include request bodies, response bodies, cookies, authorization headers, and signature headers.
+
+Add `.lpm/inspector.db*` to `.gitignore` so that Git does not track the database or its temporary files.
+
+Run tunnel history commands from the same directory that started the tunnel. This keeps each project history separate.
+
+### Inspect captures
+
+```bash
+lpm tunnel inspect                       # show the newest 20 captures
 lpm tunnel inspect --last 10
-lpm tunnel inspect --status 4xx
-lpm tunnel inspect --filter stripe
-lpm tunnel log                    # event log browse view
-
-lpm tunnel replay 3               # re-deliver event #3 to the local server
-lpm tunnel replay 3 --port 4000
+lpm tunnel inspect --detail 3            # show request and response details
+lpm tunnel inspect --filter stripe       # filter by detected provider
+lpm tunnel inspect --status 4xx          # filter by HTTP status class
+lpm tunnel inspect --status 404          # filter by exact status
 ```
 
-Captured request and response bodies, headers, statuses, and session metadata live in `.lpm/inspector.db`. The terminal `inspect` / `log` views, replay, and `inspect --ui` select the database from the current project, so one project cannot inspect or replay another project's captures. The browser view also refreshes when a running tunnel process adds records.
+The status filter accepts `2xx`, `3xx`, `4xx`, `5xx`, `error`, `err`, or an HTTP status from `100` through `599`.
 
-Legacy `.lpm/webhook-log*.jsonl` and `.lpm/webhooks/*.json` files are preserved if they already exist, but current LPM CLI versions no longer read, write, merge, or delete them. `lpm tunnel log --clear` clears captured requests and completed sessions from the active SQLite history. A currently open session row remains so its next capture stays linked and persistence can continue.
-
-Replays use an explicit `--port`, or the single active `lpm dev` endpoint when no replay port is given. Ports must be in `1..=65535`; zero, negative, and overflowing values fail instead of wrapping.
-
-The standalone browser inspector also adopts the single active `lpm dev` endpoint as its default replay target. If there is no active endpoint, or more than one, enter the intended port in the replay panel.
-
-## Inspector port
-
-The inspector (web UI) starts automatically alongside the tunnel and binds to a free ephemeral port — the URL is printed on startup. Pass an explicit port if you want a stable bookmark, or `--no-inspect` to skip the inspector:
+### Open the browser inspector
 
 ```bash
-lpm tunnel 3000                       # inspector at http://127.0.0.1:<auto-picked>
-lpm tunnel 3000 --inspect-port 4500   # inspector at http://127.0.0.1:4500
-lpm tunnel 3000 --no-inspect          # skip the inspector entirely
+lpm tunnel inspect --ui
+lpm tunnel inspect --ui --inspect-port 4500
 ```
 
-The auto-pick keeps the inspector race-free against the dev server's own port and any other local service. An explicit non-zero `--inspect-port N` is strict — if `N` is already in use, the command fails with a clear diagnostic instead of silently rolling to another port.
+This action opens the history for the current directory. Press `Ctrl+C` to stop the inspector.
 
-`lpm dev --tunnel` accepts the same `--inspect-port` and `--no-inspect` flags and surfaces the inspector URL in the startup banner. `--no-inspect` skips only the browser server; capture still persists to `.lpm/inspector.db`. During multi-service startup the inspector reports that it is waiting for the dev server instead of showing a guessed port; after ownership verification its status includes the resolved `local_url`. The tunnel footer's `o` key opens the inspector in a browser.
+When a tunnel is active, press `o` in its terminal to open the same inspector.
+
+### Browse or clear the log
+
+```bash
+lpm tunnel log                           # show the newest 50 captures
+lpm tunnel log --last 10
+lpm tunnel log --filter github
+lpm tunnel log --status 5xx
+lpm tunnel log --clear
+```
+
+> CAUTION: `lpm tunnel log --clear` deletes captured requests and completed sessions for the current directory.
+
+An active session remains available for new captures after a clear operation.
+
+## JSON and scripts
+
+Use `--json` with local history actions or domain management:
+
+```bash
+lpm tunnel list --json
+lpm tunnel inspect --last 10 --json
+lpm tunnel replay --last --port 3000 --json
+```
+
+Local history actions work in non-interactive scripts without a login.
+
+A remote tunnel still requires a saved interactive login session. The tunnel process also remains open until you stop it.
 
 ## Flags
 
-| Flag                 | Effect                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| `--org <SLUG>`       | Operate against an organization (claim/unclaim/list)                               |
-| `--tunnel-auth`      | Require an auth token to access the tunnel URL (Pro/Org only)                      |
-| `--auto-ack`         | Return 200 OK to webhooks when the local server is down                            |
-| `--session <NAME>`   | Name this tunnel session in the inspector                                          |
-| `--no-inspect`       | Disable the auto-started inspector UI                                              |
-| `--inspect-port <N>` | Bind the inspector to exactly this port (default: auto-pick a free ephemeral port) |
-
-Inspect, replay, and log options can follow the action directly (for example: `lpm tunnel inspect --last 10`, `lpm tunnel replay 3 --port 4000`).
-
-Plus the [global flags](/docs/commands#global-flags).
+| Flag | Applies to | Effect |
+| --- | --- | --- |
+| `--org <SLUG>` | `claim`, `unclaim`, `list` | Manage domains for an organization. |
+| `--tunnel-auth` | Start | Require the generated access token. Pro and Org only. |
+| `--auto-ack` | Start | Provide a `200 OK` fallback for an unavailable local service. |
+| `--session <NAME>` | Start | Name the capture session. |
+| `--no-inspect` | Start | Do not start the browser inspector. Capture continues. |
+| `--inspect-port <PORT>` | Start, `inspect --ui` | Bind the inspector to an exact port. |
+| `--ui` | `inspect` | Open the browser inspector. |
+| `--last <N>`, `-n <N>` | `inspect`, `log` | Show the newest `N` captures. |
+| `--last`, `-n` | `replay` | Replay the newest capture. |
+| `--detail <N>`, `-d <N>` | `inspect` | Show one capture by its 1-based list number. |
+| `--filter <PROVIDER>` | `inspect`, `log` | Show captures from one detected provider. |
+| `--status <STATUS>` | `inspect`, `log` | Show captures with one status or status class. |
+| `--clear` | `log` | Delete capture history for the current directory. |
+| `--port <PORT>`, `-p <PORT>` | `replay` | Send the replay to this local port. |
+| `--json` | All actions | Write machine-readable output. This is a [global flag](/docs/commands#global-flags). |
 
 ## See also
 
 - [`lpm dev --tunnel`](/docs/dev/dev) — start a tunnel as part of the dev pipeline
-- [Tunneling](/docs/infra/tunneling) — how the tunnel network and capture system work
-- [`lpm cert`](/docs/infra/cert) — local HTTPS for non-tunnel localhost
+- [Tunneling](/docs/infra/tunneling) — learn about domains, plans, request usage, and tunnel behavior
+- [`lpm cert`](/docs/infra/cert) — use trusted HTTPS for local development without a public tunnel
