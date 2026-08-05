@@ -18,7 +18,7 @@ When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lp
 | 1          | `lpm.json > runtime.node` | Semver: `">=22.0.0"`, `"22.5.0"`, `"22"`               |
 | 2          | `.nvmrc`                  | Plain version: `22.5.0`, `lts/iron`, `v22`             |
 | 3          | `.node-version`           | Plain version                                          |
-| (fallback) | None of the above         | Use the system `node` from `PATH` — no managed runtime |
+| (fallback) | None of the above         | Use the first Node on the constructed script `PATH` — no managed runtime |
 
 `.nvmrc` lives in this list intentionally — projects migrating from `nvm` get Node pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` because it sits next to the rest of the LPM CLI config.
 
@@ -80,9 +80,9 @@ This means locally-installed CLIs win over managed runtime tools, and managed No
 
 ## Node Engine Enforcement
 
-The workspace root's `engines.node` is a compatibility constraint, never a runtime selector. LPM CLI first applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`; without a selector it preserves the current `node` from `PATH`. It then validates that effective Node against `engines.node`.
+The workspace root's `engines.node` is a compatibility constraint, never a runtime selector. LPM CLI first applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`. It then constructs the same `PATH` scripts receive—project and workspace `node_modules/.bin` directories, the selected managed runtime, then inherited `PATH`—and validates the first Node resolved from it against `engines.node`.
 
-For workspace runs, LPM CLI resolves every selected member's local Node selector and validates that member's effective runtime against the root constraint before scheduling any member scripts. A member cannot pass the root check under one Node version and then execute under an incompatible managed runtime.
+For workspace runs, LPM CLI resolves every runnable selected member's local Node selector and validates the first Node on that member's script `PATH` against the root constraint before scheduling any member scripts. Members without the requested script or task are skipped without runtime preparation. A runnable member cannot pass the root check under one Node version and then execute under an incompatible runtime.
 
 An engine range never selects another installed managed runtime, downloads Node, or prepends a different Node to `PATH`. This preserves externally selected runtimes in CI matrices. If no Node is available, the engine check fails with the declared constraint and an explicit `lpm use node@<version>` hint. `package.json > lpm > engineStrict: false` and `~/.lpm/config.toml > engine-strict = false` retain warning-only behavior.
 
@@ -92,7 +92,7 @@ Root constraints gate `lpm run`, `lpm install`, `lpm rebuild`, and `lpm add`. Se
 $ lpm install
 Error: lpm::engine_mismatch
   × node version 18.20.4 does not satisfy required >=22.0.0 (from package.json
-  │ > engines.node (compared against system PATH))
+  │ > engines.node (compared against script PATH))
 ```
 
 Resolution: select a matching managed runtime (`lpm use node@22`), provide a compatible Node on `PATH`, or relax the constraint.
