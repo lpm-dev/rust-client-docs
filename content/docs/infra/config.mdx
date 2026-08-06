@@ -26,7 +26,7 @@ lpm config
 
 The editor shows the current values for its security and install settings. It returns to the main menu after each change.
 
-To view only the values that are saved in the file, run:
+To view the effective configuration for the current project and process, run:
 
 ```bash
 lpm config list
@@ -41,12 +41,16 @@ lpm config list
 | `lpm config set <key> <value>` | Save one top-level value | The key is a scalar or a supported nested alias |
 | `lpm config delete <key>` | Remove one top-level value | You want the built-in or project value again |
 | `lpm config unset <key>` | Alias for `delete` | You prefer the `unset` name |
-| `lpm config list` | Print all saved values | You want to inspect the configuration file |
+| `lpm config list` | Print all effective values and their sources | You want to inspect the active configuration |
 | `lpm config ls` | Alias for `list` | You want a shorter command |
 | `lpm config <setting>` | Open one focused editor | You want value selection and validation |
 | `lpm config <setting> --set <VALUE>` | Save a focused value without its menu | You use a script or already know the value |
 
-`get` and `list` show saved values. They do not calculate built-in defaults or project overrides.
+`get` shows one value saved in `~/.lpm/config.toml`. It does not calculate defaults or overrides.
+
+`list` resolves all known configuration keys. It includes built-in defaults, project configuration, user configuration, environment variables, and active security floors. It uses the current directory and process environment. It does not include flags from other commands.
+
+Human output groups related keys and shows the effective value and source in separate columns. Named policy extensions add entries such as `policy.extensions.<name>.mode`. Unknown keys saved in `~/.lpm/config.toml` remain visible in the **Additional saved values** group.
 
 ## Focused settings
 
@@ -261,6 +265,32 @@ lpm config list --json
 lpm config get save-prefix --json
 lpm config integrity --set tree --json
 ```
+
+`list --json` returns one ordered entry for each effective key. The following shortened example shows the envelope and entry fields:
+
+```json
+{
+  "success": true,
+  "action": "list",
+  "count": 2,
+  "entries": [
+    {
+      "key": "save-prefix",
+      "value": "^",
+      "source": "built-in default",
+      "group": "Dependency saving"
+    },
+    {
+      "key": "sandbox.mode",
+      "value": "strict",
+      "source": "lpm.toml",
+      "group": "Lifecycle scripts"
+    }
+  ]
+}
+```
+
+The real `count` is the number of objects in `entries`. Named policy extensions and unknown saved keys can increase this number.
 
 For a saved key, `get --json` returns a stable envelope:
 
