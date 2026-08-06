@@ -284,9 +284,17 @@ LPM CLI uses increasing restart delays from 1 second to 30 seconds. It stops aft
 
 If the service stays active for more than 60 seconds, the next crash starts a new retry sequence.
 
-A service restart currently does not re-evaluate `dependsOn`. Existing dependents remain active while their restarting dependency is unavailable.
+Before LPM CLI restarts a service, each direct `dependsOn` service must be ready.
 
-If a dependency crashes without restart enabled, LPM CLI stops its active transitive dependents.
+If a dependency restarts, LPM CLI stops its active transitive dependents in reverse dependency order. These dependents wait for recovery.
+
+After the dependency is ready, LPM CLI restarts the waiting dependents in dependency order. Each dependency level must become ready before the next level starts.
+
+If a restarted service fails readiness, LPM CLI stops that process. Then it schedules another attempt with the existing restart delay.
+
+Dashboard restarts use the same dependency rules. A service that you stop from the dashboard remains stopped during dependency recovery.
+
+If a dependency exits or cannot restart, LPM CLI stops its transitive dependents. LPM CLI does not resume them automatically.
 
 ## Inspect port state
 
