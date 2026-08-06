@@ -61,20 +61,22 @@ lpm whoami --registry https://registry.example.com
 
 The registry must support the LPM-compatible token rotation endpoint.
 
-## Do not use an external token for rotation
+## External tokens are rejected
 
-Do not authenticate this command with `LPM_TOKEN` or `--token`. The command cannot update an environment variable or an external secret store.
+`lpm token-rotate` accepts only a token from local secure storage.
 
-It also does not print the replacement token. The external source will contain the invalid old value after rotation.
+The command rejects `LPM_TOKEN`, `--token`, and CI-issued tokens before it sends a registry request. It does not change local credentials.
 
-For CI, rotate the token in the LPM.dev Registry dashboard. Then update `LPM_TOKEN` in the CI secret store.
+LPM CLI cannot update an environment variable or an external secret store. It also does not print the replacement token.
 
-If you already rotated an active `LPM_TOKEN`, remove it before you verify the stored replacement:
+If `LPM_TOKEN` overrides a stored token, remove it before you run the command:
 
 ```bash
 unset LPM_TOKEN
-lpm whoami
+lpm token-rotate
 ```
+
+For CI, rotate the token in the LPM.dev Registry dashboard. Then update `LPM_TOKEN` in the CI secret store.
 
 ## Rotate other registry credentials
 
@@ -130,6 +132,22 @@ lpm token-rotate --json
 
 The LPM.dev Registry currently returns no expiry during rotation. It keeps the existing expiry, so `expires_at` is `null`.
 
+If an external token is active, the command returns `unsupported_auth_source`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "unsupported_auth_source",
+  "error": {
+    "code": "UNSUPPORTED_AUTH_SOURCE",
+    "message": "unsupported authentication source for `lpm token-rotate`: LPM_TOKEN",
+    "command": "lpm token-rotate",
+    "source": "LPM_TOKEN"
+  }
+}
+```
+
 ## Flags
 
 `lpm token-rotate` has no command-specific flags. These [global flags](/docs/commands#global-flags) are relevant:
@@ -138,7 +156,7 @@ The LPM.dev Registry currently returns no expiry during rotation. It keeps the e
 | --- | --- |
 | `--registry <URL>` | Select the LPM-compatible registry |
 | `--json` | Print the result as JSON without printing the token |
-| `--token <TOKEN>` | Supply the active token. Do not use this flag for rotation because LPM CLI cannot return the replacement |
+| `--token <TOKEN>` | Rejected. Remove this flag and rotate a token from local secure storage. |
 
 ## See also
 
