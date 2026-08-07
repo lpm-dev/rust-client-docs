@@ -26,7 +26,7 @@ lpm config
 
 The editor shows the current values for its security and install settings. It returns to the main menu after each change.
 
-To view only the values that are saved in the file, run:
+To view the effective configuration for the current project and process, run:
 
 ```bash
 lpm config list
@@ -38,15 +38,19 @@ lpm config list
 | --- | --- | --- |
 | `lpm config` | Open the guided editor | You want to review settings interactively |
 | `lpm config get <key>` | Print one saved top-level value | You know the configuration key |
-| `lpm config set <key> <value>` | Save one top-level value | The key has no focused editor |
+| `lpm config set <key> <value>` | Save one top-level value | The key is a scalar or a supported nested alias |
 | `lpm config delete <key>` | Remove one top-level value | You want the built-in or project value again |
 | `lpm config unset <key>` | Alias for `delete` | You prefer the `unset` name |
-| `lpm config list` | Print all saved values | You want to inspect the configuration file |
+| `lpm config list` | Print all effective values and their sources | You want to inspect the active configuration |
 | `lpm config ls` | Alias for `list` | You want a shorter command |
 | `lpm config <setting>` | Open one focused editor | You want value selection and validation |
 | `lpm config <setting> --set <VALUE>` | Save a focused value without its menu | You use a script or already know the value |
 
-`get` and `list` show saved values. They do not calculate built-in defaults or project overrides.
+`get` shows one value saved in `~/.lpm/config.toml`. It does not calculate defaults or overrides.
+
+`list` resolves all known configuration keys. It includes built-in defaults, project configuration, user configuration, environment variables, and active security floors. It uses the current directory and process environment. It does not include flags from other commands.
+
+Human output groups related keys and shows the effective value and source in separate columns. Named policy extensions add entries such as `policy.extensions.<name>.mode`. Unknown keys saved in `~/.lpm/config.toml` remain visible in the **Additional saved values** group.
 
 ## Focused settings
 
@@ -78,7 +82,7 @@ The interactive `triage` editor lists the advisor providers that it detects. Clo
 
 ## Common generic keys
 
-Use `lpm config set` for user defaults that have no focused editor.
+Use `lpm config set` for scalar user defaults and the supported nested aliases.
 
 | Key | Accepted value | Default | Purpose |
 | --- | --- | --- | --- |
@@ -95,7 +99,19 @@ See the [complete key reference](/docs/reference/config-toml#known-keys) for arr
 
 The generic `set` action stores most values as TOML strings. The readers for known Boolean and integer keys accept these strings.
 
-Use the focused command for `sandbox`, `sigstore`, and `firewall`. These settings use nested TOML tables.
+The generic action also accepts these validated aliases for nested settings:
+
+```bash
+lpm config set sandbox strict
+lpm config set sigstore scope=all
+lpm config set firewall monitor
+```
+
+These aliases update one field in the related TOML table. They keep the other fields in that table. They use the same validation and security approval as the focused commands.
+
+Use the focused `sandbox`, `sigstore`, and `firewall` commands in new scripts. The focused forms make the nested field clear.
+
+The generic action rejects `policy`, `tunnel`, and dotted keys such as `sandbox.mode`. It does not change the file after this error. Edit `~/.lpm/config.toml` directly when you must change an unsupported nested value.
 
 If a key requires an array or nested table, edit the file directly. For example, `script-read-allow` requires a TOML array.
 
@@ -250,16 +266,57 @@ lpm config get save-prefix --json
 lpm config integrity --set tree --json
 ```
 
-For a saved key, `get --json` returns the key and its value:
+`list --json` returns one ordered entry for each effective key. The following shortened example shows the envelope and entry fields:
 
 ```json
 {
-  "save-prefix": "~",
-  "success": true
+  "success": true,
+  "action": "list",
+  "count": 2,
+  "entries": [
+    {
+      "key": "save-prefix",
+      "value": "^",
+      "source": "built-in default",
+      "group": "Dependency saving"
+    },
+    {
+      "key": "sandbox.mode",
+      "value": "strict",
+      "source": "lpm.toml",
+      "group": "Lifecycle scripts"
+    }
+  ]
 }
 ```
 
-If the key is not saved, the current command exits successfully without JSON output.
+The real `count` is the number of objects in `entries`. Named policy extensions and unknown saved keys can increase this number.
+
+For a saved key, `get --json` returns a stable envelope:
+
+```json
+{
+  "success": true,
+  "action": "get",
+  "key": "save-prefix",
+  "value": "~",
+  "found": true
+}
+```
+
+If the key is not saved, the command returns the same envelope with a null value:
+
+```json
+{
+  "success": true,
+  "action": "get",
+  "key": "save-prefix",
+  "value": null,
+  "found": false
+}
+```
+
+The command exits successfully for both states. Use `found` to determine if the configuration file contains the key.
 
 The bare guided editor and `lpm config lpm-dev` do not support JSON mode.
 

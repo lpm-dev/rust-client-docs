@@ -111,12 +111,14 @@ The first run reports the original check results. Run doctor again to make sure 
 
 Use `--all --fix` to include fixes from the full check set:
 
+CAUTION: `--all --fix` can prune the shared store, update installed plugins, and claim a tunnel domain.
+
 ```bash
 lpm doctor --all --fix
 lpm doctor --all
 ```
 
-The full fix mode can claim a configured tunnel domain. It can also update `.gitattributes` and project formatting.
+The full fix mode can also update `.gitattributes` and project formatting.
 
 ### Find one check in the catalog
 
@@ -160,11 +162,13 @@ For example:
 }
 ```
 
-The fast mode examines the JSON structure. It also examines runtime, task, tool, and service fields.
+The fast mode checks the JSON structure and every top-level field in the canonical [`lpm.json` schema](/docs/reference/lpm-json). It reports unknown fields as warnings.
 
-The fast mode also examines the configured Node.js or Bun version.
+It also checks value types and the details of runtime, task, tool, and service fields.
 
-The full mode examines the configured tunnel domain. If authentication is available, it also examines ownership and reachability.
+The fast mode also checks the configured Node.js or Bun version.
+
+The full mode checks the configured tunnel domain. If authentication is available, it also checks ownership and reachability.
 
 Read [lpm tunnel](/docs/infra/tunnel) for the complete tunnel configuration.
 
@@ -175,16 +179,34 @@ Doctor can apply fixes for selected results. The available fix depends on the em
 Supported fixes include:
 
 - Install the pinned Node.js version
+- Install the pinned Bun version
 - Run [lpm install](/docs/packages/install) for missing or inconsistent project state
 - Run `lpm fmt` for formatting failures
 - Reconcile `lpm.lockb` with `lpm.lock`
 - Add the binary lockfile rule to `.gitattributes`
 - Replace a linked project `node_modules` path with a real directory
+- Prune unreachable entries from the shared store during a full run
 - Claim an available tunnel domain during a full run
+- Update an installed plugin during a full run
+
+`lpm doctor list --json` shows the supported action before a fix run. For each code, `auto_fix` identifies the action or is null.
 
 The JSON field `fixes_applied` lists the fixes that doctor completed successfully.
 
-`-y` and `--yes` imply `--fix`. They currently have the same effect as `--fix` because doctor does not show confirmation prompts.
+`lpm doctor --fix` runs the selected checks before it changes the project. If automatic fixes exist, doctor shows the planned actions and asks once.
+
+The default response is `No`. If you decline, doctor makes no changes.
+
+`-y` and `--yes` imply `--fix` and skip the confirmation. Use either flag for CI, scripts, or JSON output:
+
+```bash
+lpm doctor --yes
+lpm --json doctor --yes
+```
+
+Without `--yes`, `--fix` returns an error when standard input is not a terminal. It also returns an error with `--json`.
+
+Doctor makes no changes in both cases. If no automatic fix exists, doctor returns the normal result without a prompt.
 
 ## Check catalog
 
@@ -193,6 +215,8 @@ This catalog explains every check that `lpm doctor` can report. The tables group
 Match automation on the `code` value. Human-readable descriptions can change.
 
 Run `lpm doctor list` for the same catalog in the terminal. Use `lpm doctor list --json` for the complete machine-readable metadata.
+
+In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for each code. A null value means that no automatic fix exists.
 
 `pass` is a healthy or informational result. `warn` needs attention but keeps exit code `0`. `fail` causes exit code `1`.
 
@@ -547,8 +571,8 @@ lpm doctor list --code <CODE>
 | Flag | Effect |
 | --- | --- |
 | `--all` | Run the fast and extended checks |
-| `--fix` | Apply supported fixes immediately |
-| `-y`, `--yes` | Imply `--fix` and currently have the same behavior as `--fix` |
+| `--fix` | Show a plan, then ask once before applying supported fixes |
+| `-y`, `--yes` | Imply `--fix` and skip the confirmation prompt |
 | `--json` | Print structured output |
 
 If you use `lpm doctor list`, doctor ignores `--all`, `--fix`, and `--yes`.

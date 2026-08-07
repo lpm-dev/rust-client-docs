@@ -91,10 +91,11 @@ trusted_public_malicious_advisories = "block"
 lpm_ai_confirmed_malware = "block"
 lpm_ai_agent_control_surface = "warn"
 critical_vulnerability = "warn"
-static_only_suspicious = "warn"
+lpm_ai_suspicious = "warn"
 
 # Local install policy extensions
 [policy.extensions.local-feed]
+enabled = true
 command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
 mode = "enforce"
 on-error = "block"
@@ -134,7 +135,8 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `firewall.npm.policies.lpm_ai_confirmed_malware` | `"allow"` \| `"warn"` \| `"block"` | `"block"` | User action for LPM Firewall AI-confirmed malware behavior such as exfiltration, remote payload execution, persistence/destructive behavior, dependency confusion, and classic malware. |
 | `firewall.npm.policies.lpm_ai_agent_control_surface` | `"allow"` \| `"warn"` \| `"block"` | `"warn"` | User action for LPM Firewall AI-agent control-surface policy findings. This is a dangerous-capability policy, not necessarily a malware-intent finding. |
 | `firewall.npm.policies.critical_vulnerability` | `"allow"` \| `"warn"` \| `"block"` | `"warn"` | User action for critical vulnerability advisories. The wizard offers block, warn, or allow for this warn-default group. |
-| `firewall.npm.policies.static_only_suspicious` | `"allow"` \| `"warn"` \| `"block"` | `"warn"` | User action for static-only suspicious signals that LPM Firewall has not confirmed with AI or trusted public intel. The wizard offers warn or allow for this warn-default group; hand-edited `"block"` values are preserved when you review the profile. |
+| `firewall.npm.policies.lpm_ai_suspicious` | `"allow"` \| `"warn"` \| `"block"` | `"warn"` | User action for suspicious signals that LPM Firewall AI does not classify as malware. Trusted public sources also do not identify these signals as malicious. The wizard offers warn or allow for this warn-default group. It preserves a hand-edited `"block"` value during profile review. |
+| `policy.extensions.<name>.enabled` | bool | `true` | Enable or disable this extension. A disabled extension does not require `command`. |
 | `policy.extensions.<name>.command` | string array | required | Direct-spawn command for a local install policy extension. The first entry must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths are rejected, and relative or empty `PATH` entries are ignored. Later entries are argv. LPM CLI never runs this through a shell. |
 | `policy.extensions.<name>.mode` | `"report"` \| `"enforce"` | `"report"` | `report` prints policy decisions and continues; `enforce` fails the install when the extension returns a `block` decision. |
 | `policy.extensions.<name>.on-error` | `"warn"` \| `"block"` | `warn` in report, `block` in enforce | What to do when the extension cannot be spawned, times out, exits non-zero, emits oversized output, or returns invalid JSON. |
@@ -197,10 +199,10 @@ trusted_public_malicious_advisories = "block"
 lpm_ai_confirmed_malware = "block"
 lpm_ai_agent_control_surface = "warn"
 critical_vulnerability = "warn"
-static_only_suspicious = "warn"
+lpm_ai_suspicious = "warn"
 ```
 
-Every policy group accepts `allow`, `warn`, or `block` in hand-edited config. The interactive wizard shows the profile on one review screen when you choose `enforce`: `critical_vulnerability` offers block, warn, or allow; `static_only_suspicious` normally offers warn or allow, while preserving a hand-edited `block` value if one already exists. See the [Firewall for npm guide](/docs/guides/firewall#policy-groups) for group meanings and examples.
+Every policy group accepts `allow`, `warn`, or `block` in hand-edited config. If you choose `enforce`, the interactive wizard shows one profile review screen. `critical_vulnerability` offers block, warn, or allow. `lpm_ai_suspicious` normally offers warn or allow. It also preserves an existing hand-edited `block` value. If the canonical `lpm_ai_suspicious` key is absent, LPM CLI accepts the legacy `static_only_suspicious` key. `lpm config firewall` rewrites the value with the canonical key. See the [Firewall for npm guide](/docs/guides/firewall#policy-groups) for group meanings and examples.
 
 ## Policy extensions
 
@@ -210,6 +212,7 @@ Extensions are configured by hand in `~/.lpm/config.toml`:
 
 ```toml
 [policy.extensions.local-feed]
+enabled = true
 command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
 mode = "enforce"       # report | enforce
 on-error = "block"     # warn | block
@@ -219,7 +222,7 @@ events = ["package.candidate"]
 
 LPM CLI spawns the command directly with the provided argv, sends one JSON document on stdin, and reads one JSON document from stdout. `command[0]` must be an absolute path or a program name found on an absolute `PATH` directory; relative executable paths such as `./policy-extension` are rejected, and relative or empty `PATH` entries are ignored. The child environment is cleared except for minimal process/runtime variables such as `PATH`; package names and versions are never interpolated into a shell command.
 
-Only `command`, `enabled`, `events`, `mode`, `on-error`, and `timeout-ms` are accepted under each extension. Unknown fields fail config loading, so typos such as `mdoe = "enforce"` cannot fall back to report mode.
+Only `command`, `enabled`, `events`, `mode`, `on-error`, and `timeout-ms` are accepted under each extension. `enabled` defaults to `true`. A table with `enabled = false` can omit `command`. Unknown fields fail config loading, so typos such as `mdoe = "enforce"` cannot fall back to report mode.
 
 Use [`lpm policy`](/docs/infra/policy) to inspect and test active extensions:
 

@@ -6,14 +6,14 @@ description: "Rotate an LPM-compatible registry token and save the replacement i
 Use `lpm token-rotate` after token exposure or during planned credential maintenance.
 
 ```bash
-lpm token-rotate [--registry <URL>] [--json]
+lpm token-rotate [--otp <CODE>] [--registry <URL>] [--json]
 ```
 
 The command rotates the active token for the LPM.dev Registry or another LPM-compatible registry.
 
 ## Rotate a locally stored token
 
-Sign in, rotate the token, and confirm that the new token works:
+Sign in, rotate the token, and make sure that the new token works:
 
 ```bash
 lpm login
@@ -22,6 +22,32 @@ lpm whoami
 ```
 
 Use this workflow when LPM CLI manages the registry credential on your computer.
+
+## Complete an MFA-protected rotation
+
+The registry requires MFA for some write-capable tokens.
+
+For an interactive rotation, omit `--otp`:
+
+```bash
+lpm token-rotate
+```
+
+If the registry requires MFA, LPM CLI opens a masked prompt. Enter the six-digit authenticator code.
+
+LPM CLI retries the rotation once. It does not print the code in terminal or JSON output.
+
+If the command cannot use an interactive terminal, pass a fresh code with `--otp`:
+
+```bash
+lpm token-rotate --otp 123456 --json
+```
+
+LPM CLI rejects a code before the request unless the code contains exactly six ASCII digits.
+
+Use the masked prompt for manual rotations. A command-line code can appear in shell history or process information.
+
+If the registry rejects the code, the command stops after that retry. Run the command again with a fresh code.
 
 ## When to use it
 
@@ -61,20 +87,22 @@ lpm whoami --registry https://registry.example.com
 
 The registry must support the LPM-compatible token rotation endpoint.
 
-## Do not use an external token for rotation
+## External tokens are rejected
 
-Do not authenticate this command with `LPM_TOKEN` or `--token`. The command cannot update an environment variable or an external secret store.
+`lpm token-rotate` accepts only a token from local secure storage.
 
-It also does not print the replacement token. The external source will contain the invalid old value after rotation.
+The command rejects `LPM_TOKEN`, `--token`, and CI-issued tokens before it sends a registry request. It does not change local credentials.
 
-For CI, rotate the token in the LPM.dev Registry dashboard. Then update `LPM_TOKEN` in the CI secret store.
+LPM CLI cannot update an environment variable or an external secret store. It also does not print the replacement token.
 
-If you already rotated an active `LPM_TOKEN`, remove it before you verify the stored replacement:
+If `LPM_TOKEN` overrides a stored token, remove it before you run the command:
 
 ```bash
 unset LPM_TOKEN
-lpm whoami
+lpm token-rotate
 ```
+
+For CI, rotate the token in the LPM.dev Registry dashboard. Then update `LPM_TOKEN` in the CI secret store.
 
 ## Rotate other registry credentials
 
@@ -89,7 +117,7 @@ Use the token controls of each registry to revoke the old value and create a rep
 
 ## Recover from a failed rotation
 
-First, check whether the active credential still works:
+First, make sure that the active credential still works:
 
 ```bash
 lpm whoami
@@ -130,15 +158,49 @@ lpm token-rotate --json
 
 The LPM.dev Registry currently returns no expiry during rotation. It keeps the existing expiry, so `expires_at` is `null`.
 
+If an external token is active, the command returns `unsupported_auth_source`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "unsupported_auth_source",
+  "error": {
+    "code": "UNSUPPORTED_AUTH_SOURCE",
+    "message": "unsupported authentication source for `lpm token-rotate`: LPM_TOKEN",
+    "command": "lpm token-rotate",
+    "source": "LPM_TOKEN"
+  }
+}
+```
+
+If MFA is required without an interactive prompt, the command returns `otp_required`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "otp_required",
+  "error": {
+    "code": "OTP_REQUIRED",
+    "message": "one-time password required for `lpm token-rotate`",
+    "command": "lpm token-rotate"
+  }
+}
+```
+
+An invalid or expired code returns `otp_invalid`. Both errors leave the stored token unchanged.
+
 ## Flags
 
-`lpm token-rotate` has no command-specific flags. These [global flags](/docs/commands#global-flags) are relevant:
+The command supports one command-specific flag. The relevant [global flags](/docs/commands#global-flags) are also listed.
 
 | Flag | Purpose |
 | --- | --- |
+| `--otp <CODE>` | Send a six-digit authenticator code for an MFA-protected rotation |
 | `--registry <URL>` | Select the LPM-compatible registry |
 | `--json` | Print the result as JSON without printing the token |
-| `--token <TOKEN>` | Supply the active token. Do not use this flag for rotation because LPM CLI cannot return the replacement |
+| `--token <TOKEN>` | Rejected. Remove this flag and rotate a token from local secure storage. |
 
 ## See also
 

@@ -32,6 +32,8 @@ LPM CLI uses the first available source in each row.
 
 The `gh` and `glab` commands provide their tokens at request time. LPM CLI does not copy these tokens into its credential storage.
 
+GitHub and GitLab login commands also recognize environment and stored credentials. They do not save an environment token unless you pass `--save-env-token`.
+
 An install route from `.npmrc` uses the credential for the matching registry origin. This rule also applies to custom registries and package tarballs.
 
 ## Choose a credential method
@@ -44,7 +46,7 @@ An install route from `.npmrc` uses the credential for the matching registry ori
 | Stored third-party token | Regular local work without a host CLI | Stored token |
 | `.npmrc` credential | npm-compatible install routing and origin-scoped authentication | Project or home file |
 
-Use [`lpm login`](/docs/infra/login) to create a stored session or token. You do not need authentication to install public packages.
+Use [`lpm login`](/docs/infra/login) to check an available source or create a stored session or token. You do not need authentication to install public packages.
 
 ## Sessions and tokens
 
@@ -94,6 +96,20 @@ NPM_TOKEN=<TOKEN> lpm install
 ```
 
 Do not commit a literal token to `.npmrc`. Use an environment-variable reference or another protected credential source.
+
+On Unix, each `.npmrc` layer can supply credentials only if no group or other permission bits are set.
+Mode `0600` is recommended. Mode `0700` is also accepted because only the owner has access.
+
+If a layer has group or other permissions, LPM CLI refuses `_authToken`, `_auth`, `_username`, and `_password` from that layer.
+It still uses non-secret registry routes and TLS configuration from the same file.
+LPM CLI prints a security warning in terminal and JSON modes.
+A refused higher-priority credential does not replace a protected credential from a lower-priority layer.
+
+Use this command to protect the file:
+
+```bash
+chmod 600 .npmrc
+```
 
 ## Secure credential storage
 
@@ -214,13 +230,18 @@ LPM_DISABLE_HOST_CLI_AUTH=1 lpm publish --github
 
 If a stored fallback token is available, LPM CLI uses it. An environment token still has higher priority.
 
-### A default npm operation ignores the `.npmrc` token on Unix
+### LPM CLI refuses an `.npmrc` credential on Unix
 
-LPM CLI refuses the default npm-token fallback from an `.npmrc` file with permissions more open than `0600`. Restrict the file permissions:
+LPM CLI refuses `.npmrc` credential fields when group or other permission bits are set.
+Registry routes and TLS configuration from the same file remain active.
+
+Restrict the file permissions:
 
 ```bash
 chmod 600 .npmrc
 ```
+
+Mode `0700` is also accepted, but `0600` is the recommended mode for a credential file.
 
 ### The secure storage service is unavailable
 

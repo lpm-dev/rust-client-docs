@@ -7,6 +7,7 @@ Use these commands to manage registry credentials for LPM CLI.
 
 ```bash
 lpm login [--npm | --github | --gitlab | --login-registry <URL>] [--token <TOKEN>]
+lpm login (--github | --gitlab) --save-env-token
 lpm whoami
 lpm logout [--npm | --github | --gitlab | --logout-registry <URL> | --all] [--revoke]
 ```
@@ -28,8 +29,8 @@ You do not need to sign in to install public packages. Sign in for private packa
 | --- | --- | --- |
 | LPM.dev Registry | `lpm login` | You use private packages, publishing, organizations, or other protected LPM.dev Registry features |
 | npm | `lpm login --npm` | You need saved npm credentials for installs or publishing |
-| GitHub Packages | `lpm login --github` | You use GitHub CLI authentication or need a saved fallback token |
-| GitLab Packages | `lpm login --gitlab` | You use GitLab CLI authentication or need a saved fallback token |
+| GitHub Packages | `lpm login --github` | You use an environment token, GitHub CLI authentication, or a saved fallback token |
+| GitLab Packages | `lpm login --gitlab` | You use an environment token, GitLab CLI authentication, or a saved fallback token |
 | Custom npm-compatible registry | `lpm login --login-registry <URL>` | You need a token for one exact registry URL |
 
 Choose one registry target for each login command.
@@ -91,7 +92,24 @@ Use npm Trusted Publishing when your CI provider supports it. See [`lpm publish`
 
 ## Sign in to GitHub Packages or GitLab Packages
 
-LPM CLI can use an existing `gh` or `glab` session:
+The login commands report whether an effective credential is available. They do not send the credential to GitHub or GitLab for validation.
+
+LPM CLI uses GitHub credentials in this order:
+
+1. The `--token` value
+2. The `GITHUB_TOKEN` environment variable
+3. The current `gh` session
+4. A token in LPM secure storage
+
+LPM CLI uses GitLab credentials in this order:
+
+1. The `--token` value
+2. The `GITLAB_TOKEN` environment variable
+3. The `CI_JOB_TOKEN` environment variable
+4. The current `glab` session
+5. A token in LPM secure storage
+
+Use an existing `gh` or `glab` session:
 
 ```bash
 gh auth login --hostname github.com
@@ -101,16 +119,37 @@ glab auth login
 lpm login --gitlab
 ```
 
-These login commands check the host CLI session. LPM CLI does not save another token when the check succeeds.
+LPM CLI does not copy the host CLI token into its secure storage.
 
-Save a fallback token when `gh` or `glab` is not available:
+Environment tokens also satisfy the login commands:
+
+```bash
+GITHUB_TOKEN=<TOKEN> lpm login --github
+GITLAB_TOKEN=<TOKEN> lpm login --gitlab
+CI_JOB_TOKEN=<TOKEN> lpm login --gitlab
+```
+
+These commands use the environment token for the current process. They do not save it.
+
+Pass a token to save it as a fallback credential:
 
 ```bash
 lpm login --github --token <TOKEN>
 lpm login --gitlab --token <TOKEN>
 ```
 
-In CI, package commands can use environment tokens directly:
+You can also import a long-lived environment token into secure storage:
+
+```bash
+GITHUB_TOKEN=<TOKEN> lpm login --github --save-env-token
+GITLAB_TOKEN=<TOKEN> lpm login --gitlab --save-env-token
+```
+
+Use `--save-env-token` with one GitHub or GitLab target. Do not combine it with `--token`.
+
+LPM CLI does not save `CI_JOB_TOKEN`. This token is short-lived and limited to one GitLab CI job.
+
+Package commands can use the same environment tokens directly:
 
 ```bash
 GITHUB_TOKEN=<TOKEN> lpm install
@@ -118,7 +157,11 @@ GITLAB_TOKEN=<TOKEN> lpm install
 CI_JOB_TOKEN=<TOKEN> lpm install
 ```
 
-These variables authenticate package operations. They do not satisfy `lpm login --github` or `lpm login --gitlab`.
+In JSON mode, `source` identifies the selected credential source. Values include `explicit-token`, `env:GITHUB_TOKEN`, `env:GITLAB_TOKEN`, `env:CI_JOB_TOKEN`, `gh`, `glab`, and `stored`.
+
+The `stored` field reports whether LPM owns the credential. Stored credentials also include `storage_backend` and `storage_degraded` values.
+
+A missing import variable returns `credential_import_unavailable`. An attempt to save `CI_JOB_TOKEN` returns `credential_import_rejected`.
 
 ## Sign in to a custom registry
 
