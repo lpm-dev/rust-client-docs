@@ -28,9 +28,9 @@ lpm audit
 lpm audit --level high              # only show high-severity findings
 lpm audit --secrets                 # also scan for hardcoded credentials
 lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
-lpm audit --fail-on behavior        # CI: exit non-zero only on critical behaviors
+lpm audit --fail-on behavior        # CI: exit non-zero on critical or high behaviors
 lpm audit --secrets --fail-on secrets # CI: exit non-zero only on hardcoded secrets
-lpm audit --fail-on all             # CI: exit non-zero on either (default)
+lpm audit --fail-on all             # CI: strict union of all failure categories
 lpm audit signatures                # verify npm registry package signatures
 lpm audit signatures --json         # machine-readable signature report
 lpm audit fix                       # bump vulnerable direct deps and reinstall
@@ -46,7 +46,7 @@ An incomplete vulnerability scan always exits non-zero, regardless of `--fail-on
 
 | Policy                      | Exit code 1 when                                                                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, high-entropy strings). Excludes `high` behaviors so existing pipelines that tolerate `eval` don't break. |
+| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation and protestware). Excludes `high` behaviors so existing pipelines that tolerate `eval` do not break. |
 | `vuln`                      | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`)                                                                                                       |
 | `behavior`                  | Any critical **or** high behavioral flag                                                                                                                                             |
 | `secrets`                   | Any hardcoded-secret finding from `lpm audit --secrets`                                                                                                                              |
@@ -123,6 +123,8 @@ lpm audit --level high
 ```
 
 Suppresses anything below the threshold. Ladder from most-to-least severe: `critical` → `high` → `moderate` (alias `medium`) → `info` (alias `low`). Default is `info` (show everything). Any other value is rejected as a usage error before the audit starts.
+
+Info results include behavioral metadata such as environment-variable access, URL literals, and high-entropy strings. Human output puts these results under `Behavioral metadata`. The final summary does not count them as suspicious packages or security issues. These results do not make the command fail by themselves.
 
 ## Secret scanning
 

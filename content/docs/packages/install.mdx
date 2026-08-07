@@ -175,6 +175,20 @@ Disabling it skips new install-time scans and cache creation without deleting ex
 
 At the end of an install, LPM CLI reads those cached results for every installed package. It does not upload package source during this summary step. For installs larger than 50 packages, progress is reported as `Checking cached security results for N packages` / `Checked cached security results for N packages`, reflecting that this phase reads analysis already produced during extraction rather than rescanning source.
 
+A normal install shows Critical, High, and Medium results under `Security summary`. These results need attention because they include obfuscation, shell execution, native bindings, and unsafe dependency declarations.
+
+Info results describe common package capabilities or artifact traits. Examples include environment-variable access, URL literals, cryptography, and minified source. LPM CLI still detects and caches these signals, but a normal install does not show them as security findings.
+
+Use one of these commands to inspect Info signals:
+
+```bash
+lpm --verbose install  # show Behavioral metadata after the install
+lpm audit              # include Info signals in the complete audit
+lpm query :info        # select packages with any Info tag
+```
+
+Verbose install output uses the heading `Behavioral metadata`. Its query hint contains the tags that were found. For example, environment access plus URL literals produces `lpm query ":env,:url-strings"`, not a generic `:critical` hint.
+
 If the same `name@version` has findings from multiple sources, the summary distinguishes registry packages by credential-free origin and uses an opaque source ID for tarball, directory, link, and git packages. Registry credentials, paths, queries, and fragments are never included in these labels.
 
 For `@lpm.dev/*` packages only, LPM CLI makes one batch metadata request to the configured LPM.dev Registry and merges registry behavioral tags, vulnerabilities, lifecycle-script metadata, and AI security findings into the local result. The request contains package names, not source bytes, local findings, versions, or filesystem paths.
@@ -186,7 +200,7 @@ lpm config lpm-insights --set false  # keep local findings; skip enrichment
 lpm config lpm-insights --set true
 ```
 
-The combined `lpm config lpm-dev` editor manages this setting alongside automatic LPM.dev package skills. npm-only installs still receive the local security summary; they do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages.
+The combined `lpm config lpm-dev` editor manages this setting alongside automatic LPM.dev package skills. npm-only installs still receive local analysis and actionable summaries. They do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages.
 
 `--no-security-summary` skips the post-install cache aggregation and human report. It does not change the install-time source-analysis setting or remove existing `.lpm-security.json` cache files.
 
