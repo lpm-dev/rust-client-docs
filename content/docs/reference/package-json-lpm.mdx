@@ -212,7 +212,15 @@ Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`]
 { "lpm": { "minimumReleaseAge": 86400 } }
 ```
 
-Cooldown in **seconds** before a newly published dependency version is installable. Default `86400` (24h). By default, project installs apply this to packages declared by the project or passed to `lpm install <pkg>`; transitive dependencies of an allowed direct package are not separately halted. Set [`minimumReleaseAgePolicy: "strict"`](#minimumreleaseagepolicy) to apply the same cooldown to transitive dependencies and lockfile replays. For ranges on checked packages, the resolver skips too-new candidates and can pick an older satisfying version; `latest` fallbacks never exceed the registry's current `dist-tags.latest` target in SemVer order, and exact pins to too-new versions fail. Bypass per-invocation with `lpm install --allow-new`, override with `lpm install --min-release-age=<DUR>`, or exempt exact package names with [`minimumReleaseAgeExclude`](#minimumreleaseageexclude).
+Cooldown in **seconds** before a new dependency version is installable. The default is `86400` (24 hours).
+
+By default, project installs apply this value to direct dependencies. Strict mode also checks transitive dependencies and lockfile replays.
+
+For ranges, LPM CLI skips new candidates and can select an older candidate that satisfies the range. An exact pin fails during its cooldown.
+
+The selected version does not exceed the current `dist-tags.latest` target in semantic-version order.
+
+Use `lpm install --allow-new` to bypass the cooldown. Use [`minimumReleaseAgeExclude`](#minimumreleaseageexclude) to exempt selected packages.
 
 Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > 24h default.
 
@@ -238,12 +246,26 @@ If the repo sets a looser policy than the current approved machine posture, inst
 ### `minimumReleaseAgeExclude`
 
 ```json
-{ "lpm": { "minimumReleaseAgeExclude": ["react", "@scope/pkg"] } }
+{
+  "lpm": {
+    "minimumReleaseAgeExclude": ["react", "@company/*", "react@19.1.0"]
+  }
+}
 ```
 
-Exact package names exempted from the minimum-release-age resolver and install halt. Alias dependencies match by their canonical target name, not the local alias key. CLI, package, and global exclude lists merge in that order, with duplicates removed. On project installs, the exclude is evaluated inside the direct/root dependency scope.
+Package selectors exempted from the minimum-release-age resolver and install halt. Alias dependencies match by their canonical target name, not the local alias key.
 
-Unsupported in v1: globs such as `@scope/*`, version selectors such as `react@19.0.0`, and protocol specifiers such as `npm:react`.
+The field accepts these selector types:
+
+- A package name, such as `react`
+- A scope wildcard, such as `@company/*`
+- An exact package version, such as `react@19.1.0`
+
+Version ranges and protocol specifiers are invalid. For example, `react@^19` and `npm:react` are invalid.
+
+CLI, project, and user exclude lists merge in that order. LPM CLI removes duplicate selectors.
+
+Use [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age-exclude) to manage the project list.
 
 ### `engineStrict`
 

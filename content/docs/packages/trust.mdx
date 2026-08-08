@@ -1,17 +1,25 @@
 ---
 title: lpm trust
-description: "Inspect and clean the trustedDependencies allowlist."
+description: "Manage project package trust and release-age exclusions."
 ---
 
 ```bash
-lpm trust <subcommand>
+lpm trust diff [--assert-none] [--json]
+lpm trust prune [--dry-run] [--yes] [--json]
+lpm trust release-age-exclude add <SELECTOR> [--json]
+lpm trust release-age-exclude remove <SELECTOR> [--json]
+lpm trust release-age-exclude list [--json]
 ```
 
-`trustedDependencies` (in `package.json > lpm`) is the allowlist that decides which dependency packages may run lifecycle scripts under the default `script-policy: deny`. `lpm trust` is the inspection-and-cleanup tool for that list.
+`lpm trust` manages security decisions that belong to the current project. These decisions stay in `package.json` so that the project can share them.
 
-To **add** entries, use [`lpm approve-scripts`](/docs/packages/approve-scripts) (the interactive review flow). `lpm trust` is for everything that comes after — auditing the list and pruning stale entries.
+For lifecycle scripts, `lpm trust` inspects and cleans `trustedDependencies`. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) to add lifecycle-script approvals.
 
-**Project trust only.** `lpm trust` operates on `package.json > lpm > trustedDependencies` exclusively. Global trust lives in a separate file (`~/.lpm/global/trusted-dependencies.json`) and is managed through [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) — there is no `lpm trust --global` today. Under the hood the storage is independent: a global approval doesn't show up in `lpm trust diff`, and pruning the project list doesn't touch the global file.
+For the release-age gate, `lpm trust` manages `minimumReleaseAgeExclude`. These selectors exempt selected packages from the project cooldown.
+
+**Project trust only.** Global lifecycle trust uses `~/.lpm/global/trusted-dependencies.json`. Manage it with [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project).
+
+User release-age exclusions use `~/.lpm/config.toml`. Manage them with [`lpm config release-age-exclude`](#user-release-age-exclusions).
 
 ## Subcommands
 
@@ -19,6 +27,7 @@ To **add** entries, use [`lpm approve-scripts`](/docs/packages/approve-scripts) 
 | --------------------------- | ----------------------------------------------------------------------------------- |
 | [`diff`](#lpm-trust-diff)   | Show how the current `trustedDependencies` differs from the last install's snapshot |
 | [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree                      |
+| [`release-age-exclude`](#lpm-trust-release-age-exclude) | Add, remove, or list project release-age exclusions |
 
 ## Flag Reference
 
@@ -29,6 +38,49 @@ To **add** entries, use [`lpm approve-scripts`](/docs/packages/approve-scripts) 
 | `lpm trust prune` | `-y`, `--yes` | Skip the confirmation prompt. Required on non-TTY / CI when pruning would write. |
 | `lpm trust prune` | `--dry-run` | Preview stale entries without writing `package.json`. |
 | `lpm trust prune` | `--json` | Emit the prune envelope instead of human output. Same as global `--json` for this command. |
+| `lpm trust release-age-exclude` | `--json` | Emit the release-age exclusion envelope instead of human output. |
+
+## `lpm trust release-age-exclude`
+
+```bash
+lpm trust release-age-exclude add react
+lpm trust release-age-exclude add @company/*
+lpm trust release-age-exclude add react@19.1.0
+lpm trust release-age-exclude remove react@19.1.0
+lpm trust release-age-exclude list
+```
+
+The command writes `package.json > lpm > minimumReleaseAgeExclude`. It preserves the other fields in `package.json`.
+
+The command accepts these selector types:
+
+| Selector | Effect |
+| --- | --- |
+| `react` | Exclude all versions of `react`. |
+| `@company/*` | Exclude all packages in the `@company` scope. |
+| `react@19.1.0` | Exclude only version `19.1.0` of `react`. |
+
+Version selectors must contain one exact semantic version. Ranges such as `react@^19` are invalid.
+
+`add` is idempotent. If the selector exists, the command does not rewrite `package.json`.
+
+`remove` matches the complete selector. For example, removal of `react@19.1.0` does not remove the `react` selector.
+
+`list` shows only the project list. It does not include the user list or one-run CLI exclusions.
+
+The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, and `exclusions`. The `add` and `remove` actions also contain `selector`.
+
+### User release-age exclusions
+
+Use `lpm config` to apply an exclusion to all installs for the current user:
+
+```bash
+lpm config release-age-exclude add @company/*
+lpm config release-age-exclude remove @company/*
+lpm config release-age-exclude list
+```
+
+The user command writes `~/.lpm/config.toml > minimum-release-age-exclude`. Project and user lists merge during an install.
 
 ## `lpm trust diff`
 
@@ -120,3 +172,5 @@ lpm trust prune --dry-run --json | jq -e '.stale_count == 0'
 - [`lpm approve-scripts`](/docs/packages/approve-scripts) — add entries to the trust list
 - [`lpm rebuild`](/docs/packages/rebuild) — runs dependency scripts for trusted packages
 - [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the file format
+- [`package.json` "lpm.minimumReleaseAgeExclude"](/docs/reference/package-json-lpm#minimumreleaseageexclude) — project release-age exclusions
+- [`config.toml`](/docs/reference/config-toml) — user release-age exclusions
