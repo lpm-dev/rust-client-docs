@@ -26,6 +26,37 @@ For the release-age gate, `lpm trust` manages `minimumReleaseAgeExclude`. These 
 
 User release-age exclusions use `~/.lpm/config.toml`. Manage them with [`lpm config release-age-exclude`](#user-release-age-exclusions).
 
+## Storage contract
+
+LPM stores each exception or approval in one policy layer. A command does not copy a policy entry into another file.
+
+| Decision | Command | Persistent location |
+| --- | --- | --- |
+| Project release-age exclusion | `lpm trust release-age-exclude` | `package.json > lpm > minimumReleaseAgeExclude` |
+| Project lifecycle scope | `lpm trust lifecycle-scope` | `package.json > lpm > scripts > trustedScopes` |
+| Project package approval | `lpm approve-scripts` | `package.json > lpm > trustedDependencies` |
+| User release-age exclusion | `lpm config release-age-exclude` | `~/.lpm/config.toml > minimum-release-age-exclude` |
+| Global-install package approval | `lpm approve-scripts --global` | `~/.lpm/global/trusted-dependencies.json` |
+| One-run release-age exclusion | `lpm install --min-release-age-exclude` | None |
+
+`lpm.lock` never stores release-age exclusions, lifecycle scopes, or lifecycle approvals. `lpm trust prune` reads the lockfile only to find stale project approvals.
+
+Each command writes one declared policy layer. It does not cascade through `package.json`, user configuration, global trust, or the lockfile.
+
+Project commands use the `package.json` in the current directory. In a workspace member, the member manifest receives the policy entry.
+
+The workspace root and sibling manifests stay unchanged. User and global commands continue to use their fixed locations under `~/.lpm`.
+
+List commands read only their declared layer. They do not show the effective merged release-age list.
+
+During an install, release-age exclusions merge in this order: CLI entries, project entries, then user entries. Duplicate selectors collapse.
+
+An exact-version selector matches only that version. A scope wildcard matches every package in that scope.
+
+A lifecycle scope addition also requires local signed authorization under `~/.lpm/security`. This authorization approves the write and is not another trust list.
+
+Mutating policy commands use atomic file replacement. A duplicate addition does not rewrite the destination file.
+
 ## Subcommands
 
 | Subcommand                  | What it does                                                                        |
