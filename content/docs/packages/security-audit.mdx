@@ -56,15 +56,16 @@ Three groups of tags — source behavior (what the code does), supply-chain sign
 
 **Supply-chain tags** — what the artifact looks like:
 
-| Tag             | Detects                                                           |
-| --------------- | ----------------------------------------------------------------- |
-| `:obfuscated`   | Show signs of code obfuscation                                    |
-| `:high-entropy` | Contain high-entropy string blobs                                 |
-| `:minified`     | Ship minified-only source                                         |
-| `:telemetry`    | Make telemetry / analytics calls                                  |
-| `:url-strings`  | Contain URL string literals                                       |
-| `:trivial`      | Tiny — measured by AST node count                                 |
-| `:protestware`  | Match a curated list of known protest-license / sabotage packages |
+| Tag                     | Detects                                                           |
+| ----------------------- | ----------------------------------------------------------------- |
+| `:obfuscated`           | Show signs of code obfuscation                                    |
+| `:possible-obfuscation` | Show possible code obfuscation at moderate confidence             |
+| `:high-entropy`         | Contain high-entropy string blobs                                 |
+| `:minified`             | Ship minified-only source                                         |
+| `:telemetry`            | Make telemetry / analytics calls                                  |
+| `:url-strings`          | Contain URL string literals                                       |
+| `:trivial`              | Tiny — measured by AST node count                                 |
+| `:protestware`          | Match a curated list of known protest-license / sabotage packages |
 
 **Manifest tags** — what the `package.json` declares:
 
@@ -85,11 +86,33 @@ Install, audit, and query use one severity policy for these tags:
 | Critical | `:obfuscated`, `:protestware` |
 | High | `:eval`, `:child-process`, `:shell`, `:dynamic-require` |
 | Medium | `:network`, `:native`, `:git-dep`, `:http-dep`, `:wildcard-dep`, `:no-license` |
-| Info | `:fs`, `:crypto`, `:env`, `:ws`, `:high-entropy`, `:telemetry`, `:trivial`, `:copyleft`, `:minified`, `:url-strings` |
+| Info | `:fs`, `:crypto`, `:env`, `:ws`, `:possible-obfuscation`, `:high-entropy`, `:telemetry`, `:trivial`, `:copyleft`, `:minified`, `:url-strings` |
 
 Info tags are behavioral metadata. They describe common capabilities or artifact traits, not confirmed vulnerabilities. LPM CLI detects and caches them during installation.
 
 Normal install output hides Info tags. Use `lpm --verbose install`, `lpm audit`, or `lpm query :info` to inspect them. Verbose install hints contain the selectors for the signals that were found.
+
+### What Critical means
+
+The local behavioral scanner assigns Critical to two signals: high-confidence obfuscation and protestware. Obfuscation uses these confidence bands:
+
+| Confidence | Result |
+| --- | --- |
+| `≤ 0.3` | No obfuscation tag |
+| `> 0.3` and `≤ 0.7` | `:possible-obfuscation` (Info) |
+| `> 0.7` | `:obfuscated` (Critical) |
+
+The protestware detector targets sabotage patterns. Examples include deliberate infinite loops and locale or network-interface checks near process exits.
+
+Behavioral tags report code patterns and package capabilities. They do not prove data flow, user intent, or malicious execution.
+
+For example, `:env` and `:network` are independent signals. Their presence does not prove that a package sends environment variables to a remote host.
+
+A shell command such as `rm -rf` matches `:shell` and `:child-process`. These High signals do not become Critical from the command text alone.
+
+Known vulnerabilities and LPM.dev Registry security findings use their published severity. A Critical advisory or registry finding remains Critical in `lpm audit` and audit-after-install.
+
+The secret scanner is separate. Critical hardcoded-secret findings appear only when you run `lpm audit --secrets`.
 
 ### Performance design
 
