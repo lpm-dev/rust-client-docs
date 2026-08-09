@@ -1,11 +1,14 @@
 ---
 title: lpm trust
-description: "Manage project package trust and release-age exclusions."
+description: "Manage project lifecycle trust and release-age exclusions."
 ---
 
 ```bash
 lpm trust diff [--assert-none] [--json]
 lpm trust prune [--dry-run] [--yes] [--json]
+lpm trust lifecycle-scope add <SCOPE> [--json]
+lpm trust lifecycle-scope remove <SCOPE> [--json]
+lpm trust lifecycle-scope list [--json]
 lpm trust release-age-exclude add <SELECTOR> [--json]
 lpm trust release-age-exclude remove <SELECTOR> [--json]
 lpm trust release-age-exclude list [--json]
@@ -13,7 +16,9 @@ lpm trust release-age-exclude list [--json]
 
 `lpm trust` manages security decisions that belong to the current project. These decisions stay in `package.json` so that the project can share them.
 
-For lifecycle scripts, `lpm trust` inspects and cleans `trustedDependencies`. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) to add lifecycle-script approvals.
+For lifecycle scripts, `lpm trust` manages project scope trust. It also inspects and cleans `trustedDependencies`.
+
+Use [`lpm approve-scripts`](/docs/packages/approve-scripts) for strict package approvals. These approvals include the version, integrity, script hash, and requested capabilities.
 
 For the release-age gate, `lpm trust` manages `minimumReleaseAgeExclude`. These selectors exempt selected packages from the project cooldown.
 
@@ -27,6 +32,7 @@ User release-age exclusions use `~/.lpm/config.toml`. Manage them with [`lpm con
 | --------------------------- | ----------------------------------------------------------------------------------- |
 | [`diff`](#lpm-trust-diff)   | Show how the current `trustedDependencies` differs from the last install's snapshot |
 | [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree                      |
+| [`lifecycle-scope`](#lpm-trust-lifecycle-scope) | Add, remove, or list project lifecycle scope trust |
 | [`release-age-exclude`](#lpm-trust-release-age-exclude) | Add, remove, or list project release-age exclusions |
 
 ## Flag Reference
@@ -38,7 +44,45 @@ User release-age exclusions use `~/.lpm/config.toml`. Manage them with [`lpm con
 | `lpm trust prune` | `-y`, `--yes` | Skip the confirmation prompt. Required on non-TTY / CI when pruning would write. |
 | `lpm trust prune` | `--dry-run` | Preview stale entries without writing `package.json`. |
 | `lpm trust prune` | `--json` | Emit the prune envelope instead of human output. Same as global `--json` for this command. |
+| `lpm trust lifecycle-scope` | `--json` | Emit the lifecycle scope envelope instead of human output. |
 | `lpm trust release-age-exclude` | `--json` | Emit the release-age exclusion envelope instead of human output. |
+
+## `lpm trust lifecycle-scope`
+
+```bash
+lpm trust lifecycle-scope add @company/*
+lpm trust lifecycle-scope remove @company/*
+lpm trust lifecycle-scope list
+```
+
+A lifecycle scope trusts every package in one npm scope. The trust applies to all package versions and script contents.
+
+Use this command only when your organization controls the complete scope. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) for one package.
+
+The command accepts lowercase npm scope wildcards such as `@company/*`. It rejects package names, package versions, uppercase scopes, and nested patterns.
+
+`add` writes `package.json > lpm > scripts > trustedScopes`. It preserves all other fields in `package.json`.
+
+An addition widens the project security policy. In an interactive terminal, LPM CLI requests native user approval before it writes the scope.
+
+For an agent or JSON command, create a signed project unlock before you add the scope:
+
+```bash
+lpm security unlock trust-scope-widen --project . --ttl 10m
+lpm trust lifecycle-scope add @company/* --json
+```
+
+The unlock is local to the project and user. The project scope list remains in `package.json` for the team.
+
+The signed authorization remains under `~/.lpm/security`. LPM CLI does not write lifecycle scope trust to `lpm.lock`.
+
+`remove` narrows the security policy and does not need an unlock. It also removes the signed authorization for that scope.
+
+As a result, a later `add` requires new authorization. Removal matches the complete scope selector.
+
+`list` shows the configured project scopes. It does not show strict package approvals or global lifecycle trust.
+
+The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, and `scopes`. The `add` and `remove` actions also contain `selector`.
 
 ## `lpm trust release-age-exclude`
 
@@ -171,6 +215,7 @@ lpm trust prune --dry-run --json | jq -e '.stale_count == 0'
 
 - [`lpm approve-scripts`](/docs/packages/approve-scripts) — add entries to the trust list
 - [`lpm rebuild`](/docs/packages/rebuild) — runs dependency scripts for trusted packages
+- [`package.json` "lpm.scripts"](/docs/reference/package-json-lpm#the-lpmscripts-block) — project lifecycle settings
 - [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the file format
 - [`package.json` "lpm.minimumReleaseAgeExclude"](/docs/reference/package-json-lpm#minimumreleaseageexclude) — project release-age exclusions
 - [`config.toml`](/docs/reference/config-toml) — user release-age exclusions
