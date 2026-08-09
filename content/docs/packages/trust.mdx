@@ -55,7 +55,7 @@ An exact-version selector matches only that version. A scope wildcard matches ev
 
 A lifecycle scope addition also requires local signed authorization under `~/.lpm/security`. This authorization approves the write and is not another trust list.
 
-Mutating policy commands use atomic file replacement. A duplicate addition does not rewrite the destination file.
+Mutating policy commands use atomic file replacement. A duplicate addition does not rewrite a normalized destination file.
 
 ## Subcommands
 
@@ -81,8 +81,8 @@ Mutating policy commands use atomic file replacement. A duplicate addition does 
 ## `lpm trust lifecycle-scope`
 
 ```bash
-lpm trust lifecycle-scope add @company/*
-lpm trust lifecycle-scope remove @company/*
+lpm trust lifecycle-scope add '@company/*'
+lpm trust lifecycle-scope remove '@company/*'
 lpm trust lifecycle-scope list
 ```
 
@@ -100,26 +100,30 @@ For an agent or JSON command, create a signed project unlock before you add the 
 
 ```bash
 lpm security unlock trust-scope-widen --project . --ttl 10m
-lpm trust lifecycle-scope add @company/* --json
+lpm trust lifecycle-scope add '@company/*' --json
 ```
 
 The unlock is local to the project and user. The project scope list remains in `package.json` for the team.
 
 The signed authorization remains under `~/.lpm/security`. LPM CLI does not write lifecycle scope trust to `lpm.lock`.
 
-`remove` narrows the security policy and does not need an unlock. It also removes the signed authorization for that scope.
+`remove` narrows the security policy and does not need an unlock. It removes the signed authorization for that scope.
+
+It also revokes `trust-scope-widen` from each active temporary unlock for the project. Other scopes in the same unlock remain active.
 
 As a result, a later `add` requires new authorization. Removal matches the complete scope selector.
 
 `list` shows the configured project scopes. It does not show strict package approvals or global lifecycle trust.
 
-The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, and `scopes`. The `add` and `remove` actions also contain `selector`.
+The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, `normalized`, `count`, and `scopes`. The `add` and `remove` actions also contain `selector`.
+
+`changed` reports whether the requested scope changed. `normalized` reports whether the command repaired existing stored entries. `count` is the number of scopes.
 
 ## `lpm trust release-age-exclude`
 
 ```bash
 lpm trust release-age-exclude add react
-lpm trust release-age-exclude add @company/*
+lpm trust release-age-exclude add '@company/*'
 lpm trust release-age-exclude add react@19.1.0
 lpm trust release-age-exclude remove react@19.1.0
 lpm trust release-age-exclude list
@@ -137,21 +141,25 @@ The command accepts these selector types:
 
 Version selectors must contain one exact semantic version. Ranges such as `react@^19` are invalid.
 
-`add` is idempotent. If the selector exists, the command does not rewrite `package.json`.
+`add` is idempotent. If the selector exists in a normalized list, the command does not rewrite `package.json`.
+
+If stored entries need normalization, the command repairs the list. It returns `changed: false` and `normalized: true` when the selector stays unchanged.
 
 `remove` matches the complete selector. For example, removal of `react@19.1.0` does not remove the `react` selector.
 
 `list` shows only the project list. It does not include the user list or one-run CLI exclusions.
 
-The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, and `exclusions`. The `add` and `remove` actions also contain `selector`.
+The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, `normalized`, `count`, and `exclusions`. The `add` and `remove` actions also contain `selector`.
+
+`changed` reports whether the requested selector changed. `normalized` reports whether the command repaired existing stored entries. `count` is the number of exclusions.
 
 ### User release-age exclusions
 
 Use `lpm config` to apply an exclusion to all installs for the current user:
 
 ```bash
-lpm config release-age-exclude add @company/*
-lpm config release-age-exclude remove @company/*
+lpm config release-age-exclude add '@company/*'
+lpm config release-age-exclude remove '@company/*'
 lpm config release-age-exclude list
 ```
 
