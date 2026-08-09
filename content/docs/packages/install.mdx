@@ -193,7 +193,9 @@ If the same `name@version` has findings from multiple sources, the summary disti
 
 For `@lpm.dev/*` packages only, LPM CLI makes one batch metadata request to the configured LPM.dev Registry. The normal summary uses registry behavioral tags and lifecycle-script metadata.
 
-The normal summary does not use registry vulnerabilities or AI security findings. [`lpm audit`](/docs/packages/audit) and audit-after-install add those findings.
+The normal summary does not use registry vulnerabilities or AI security findings. For JavaScript packages, [`lpm audit`](/docs/packages/audit) and audit-after-install add those findings.
+
+For a Swift package named in `lpm install`, audit-after-install adds findings from the Registry metadata that LPM CLI already fetched. `lpm audit` does not currently discover Swift dependencies from `Package.resolved`.
 
 The request contains package names. It does not contain source bytes, local findings, versions, or filesystem paths.
 
@@ -738,7 +740,7 @@ lpm config sigstore --set availability=strict
 
 ## Audit after install
 
-After a successful install, LPM CLI can run [`lpm audit`](/docs/packages/audit) and print a compact summary. This feature is optional.
+After a successful install, LPM CLI can add a compact audit summary. This feature is optional.
 
 ```text
 ✓ Done · installed 247 packages in 1.31s
@@ -747,15 +749,19 @@ After a successful install, LPM CLI can run [`lpm audit`](/docs/packages/audit) 
     @lpm.dev/acme.tool@2.0.0 LPM-ADV-101 — remote code execution [registry/vulnerability]
 ```
 
-The audit is **informational only**. Its findings never fail the install. Run [`lpm audit --fail-on=<level>`](/docs/packages/audit) for a gating audit. The feature is **disabled by default**.
+The audit is **informational only**. Its findings never fail the install. Run [`lpm audit --fail-on=all`](/docs/packages/audit) for a gating audit. The feature is **disabled by default**.
 
 Without this option, a normal install does not query OSV. It also does not report LPM.dev Registry advisories or AI security findings.
 
-Audit-after-install uses the same scan and severity policy as `lpm audit`. It counts each advisory separately and preserves Critical registry security findings.
+For JavaScript packages, audit-after-install uses the same discovery, scan, and severity policy as `lpm audit`. It counts each advisory separately and preserves Critical Registry security findings.
 
-The summary prints every Critical finding below the first line. Findings with lower severity remain available through `lpm audit`.
+For a Swift package named in `lpm install`, audit-after-install uses the same Registry issue collection and severity policy. It uses the metadata fetched for that package. It does not query OSV, scan Swift source, or discover transitive Swift dependencies.
 
-The vulnerability count includes both OSV.dev findings for npm packages and exact-version LPM.dev Registry advisories. If either advisory lookup cannot complete, LPM CLI suppresses the `! Audited` line (and the JSON `audit_summary`) instead of reporting zero vulnerabilities; the install still succeeds and the audit failure remains visible in logs.
+The summary prints every Critical finding below the first line. For JavaScript packages, findings with lower severity remain available through `lpm audit`. `lpm audit` does not currently discover Swift dependencies.
+
+For JavaScript packages, the vulnerability count includes OSV.dev findings and exact-version LPM.dev Registry advisories. If either lookup cannot complete, LPM CLI suppresses the `! Audited` line and the JSON `audit_summary`. The install still succeeds, and logs contain the audit failure.
+
+For an explicit Swift package, the vulnerability count includes its exact-version LPM.dev Registry advisories. The Swift summary does not include OSV findings.
 
 Enable per-invocation:
 
