@@ -121,7 +121,7 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `triage-advisor` | `"none"` \| `"claude-cli"` \| `"codex"` \| `"ollama"` | `"none"` | Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor). Only active when `script-policy = "triage"`. Approvals are ephemeral — never written to disk. |
 | `minimum-release-age-secs` | u64 | `86400` (24h) | Cooldown in seconds before a freshly published version becomes installable. On project installs, applies to direct/root dependencies; on direct package-selection commands (`lpm install -g`, `lpm dlx`, `lpm upgrade`, `lpm outdated`), applies to selected or reported package versions. |
 | `release-age-policy` | `"direct"` \| `"strict"` | `"direct"` | Cooldown scope. `"direct"` checks direct/root dependencies only; `"strict"` also checks transitive dependencies and lockfile replays using persisted publish timestamps. Set with [`lpm config release-age-policy`](/docs/infra/config#setup-wizards). |
-| `minimum-release-age-exclude` | string array | `[]` | Exact canonical package names exempted from the cooldown. Merged with CLI and package.json excludes. Globs, version selectors, and protocol specifiers are rejected. |
+| `minimum-release-age-exclude` | string array | `[]` | Package names, exact package versions, or `@scope/*` selectors exempted from the cooldown. Merged with CLI and package.json excludes. Protocol specifiers and version ranges are rejected. Manage with [`lpm config release-age-exclude`](/docs/infra/config#exclude-selected-packages-from-the-release-cooldown). |
 | `sandbox.mode` | `"default"` \| `"strict"` \| `"none"` | `"default"` | Default lifecycle-script sandbox posture for this machine. Set with [`lpm config sandbox`](/docs/infra/config#setup-wizards). |
 | `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this machine when full containment is unavailable. |
 | `sigstore.verify` | `"deny"` \| `"warn"` \| `"off"` | `"deny"` | Provenance verification posture used by installs and related flows. Set with [`lpm config sigstore`](/docs/infra/config#setup-wizards). |
@@ -183,6 +183,10 @@ integrity = "tree"                    # canonical string
 [firewall]
 mode = "monitor"                      # canonical string
 ```
+
+`minimum-release-age-exclude` is an array setting. Generic `lpm config set` rejects this key.
+
+The typed `add` and `remove` commands validate selectors, remove duplicates, and atomically write the array.
 
 Both forms parse to the same value. For `typosquat-guard`, the `default` value is accepted when hand-edited, but the CLI removes the key instead of persisting `typosquat-guard = "default"`. For `firewall.mode`, boolean-like aliases are accepted when hand-edited or provided through `LPM_NPM_FIREWALL`, and `report` is accepted as a legacy alias for `monitor`; `lpm config firewall` persists the canonical `off`, `monitor`, or `enforce` value. For `integrity`, config accepts only `source` or `tree`; the wizard persists those canonical strings. Invalid values (non-numeric strings, negative numbers, zero for positive-only keys, etc.) error at load time with the file path baked in.
 

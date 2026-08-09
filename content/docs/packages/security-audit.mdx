@@ -128,7 +128,19 @@ The vulnerability check is **online** — it hits OSV/registry. Cache hits keep 
 
 Install-time and audit-time gates that catch attacks against the publisher identity and registry metadata itself. They apply to both `lpm install` and `lpm install -g` unless noted.
 
-**Minimum release age** — newly-published dependency versions are avoided for 24 hours by default. On project installs, the default policy checks direct/root dependencies only. For ranges on checked packages, the resolver skips too-new matching versions and picks the newest older candidate that still satisfies the range. Exact pins to a too-new version fail. Transitive dependencies of an allowed direct package are not separately halted by the default install cooldown. Opt into strict scope with `package.json > lpm > minimumReleaseAgePolicy: "strict"` or `~/.lpm/config.toml > release-age-policy = "strict"` to check direct and transitive dependencies and revalidate lockfile replays from persisted publish timestamps. Commands that select one package version directly, such as `lpm install -g`, `lpm dlx`, `lpm upgrade`, and `lpm outdated`, apply the same policy to the package version being selected or reported. Configurable per-invocation (`--min-release-age=<DUR>`), per-project (`package.json > lpm > minimumReleaseAge`), or per-user (`~/.lpm/config.toml > minimum-release-age-secs`). Bypass for one install with `--allow-new`, or exempt exact canonical package names with `--min-release-age-exclude <pkg>`, `package.json > lpm > minimumReleaseAgeExclude`, or `~/.lpm/config.toml > minimum-release-age-exclude`; exclude lists merge instead of replacing each other. On `-g` the project-level tier is N/A (the synthesized package.json doesn't carry `lpm.minimumReleaseAge`, `lpm.minimumReleaseAgePolicy`, or `lpm.minimumReleaseAgeExclude`); the cooldown window chain collapses to CLI flag > `~/.lpm/config.toml` > 24h default.
+**Minimum release age** — LPM CLI avoids new dependency versions for 24 hours by default. Project installs check direct dependencies by default. Strict mode also checks transitive dependencies and lockfile replays.
+
+For ranges, the resolver skips new candidates and selects the newest mature candidate that satisfies the range. An exact pin fails during its cooldown.
+
+`lpm install -g`, `lpm dlx`, `lpm upgrade`, and `lpm outdated` apply the policy to the selected package version.
+
+Configure the duration with `--min-release-age`, `minimumReleaseAge`, or `minimum-release-age-secs`. Configure strict mode with `minimumReleaseAgePolicy` or `release-age-policy`.
+
+Use `--allow-new` to bypass the cooldown for one install. Use `--min-release-age-exclude <SELECTOR>` to exempt a package name, exact version, or `@scope/*`.
+
+Use [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age-exclude) for project selectors. Use [`lpm config release-age-exclude`](/docs/infra/config#exclude-selected-packages-from-the-release-cooldown) for user selectors.
+
+CLI, project, and user lists merge. Global installs do not use the project list. They use the CLI, user, and default layers.
 
 **Registry signatures** — npm packages can carry detached registry signatures in `dist.signatures`. Run [`lpm audit signatures`](/docs/packages/audit#registry-signatures) to verify the installed tree on demand. Install-time verification is disabled by default; enable it with:
 
