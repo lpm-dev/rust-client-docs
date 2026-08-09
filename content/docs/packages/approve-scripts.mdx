@@ -11,7 +11,9 @@ Pairs with [`lpm install`](/docs/packages/install)'s default-deny dependency scr
 
 The blocked set is broader than what actually runs. The detection layer queues every recognized dependency lifecycle name so you can review the surface area; the execution layer only runs dependency `preinstall`, `install`, and `postinstall`. A dependency package whose only declared script is `prepare` will appear in your review queue but won't execute anything when approved — see [What `lpm rebuild` runs](/docs/packages/rebuild#what-runs).
 
-Approvals are bound to **`{name, version, integrity, scriptHash}`** — any change to the package tarball or its scripts re-opens the package for review on the next install. The strict binding is what makes the deny-by-default model usable: you grant trust to a specific build, not to a name.
+Approvals bind the package version, integrity, script hash, verified provenance, and requested capabilities. If a bound input changes, LPM requests approval again.
+
+Use `lpm approve-scripts` for individual packages. `lpm trust lifecycle-scope` only manages scope-wide trust and does not create package bindings.
 
 ## Examples
 
@@ -43,16 +45,25 @@ Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map f
     "trustedDependencies": {
       "esbuild@0.25.1": {
         "integrity": "sha512-...",
-        "scriptHash": "sha256-..."
+        "scriptHash": "sha256-...",
+        "provenanceAtApproval": {
+          "present": true,
+          "publisher": "github:evanw/esbuild",
+          "workflowPath": ".github/workflows/release.yml",
+          "workflowRef": "refs/tags/v0.25.1"
+        },
+        "capabilityHash": "sha256-..."
       }
     }
   }
 }
 ```
 
+`provenanceAtApproval` is present when verification supplies a provenance snapshot. `capabilityHash` is present when the project requests capabilities beyond the approved baseline.
+
 ### Global scope (`--global`)
 
-Approvals land in `~/.lpm/global/trusted-dependencies.json` — a separate per-machine trust file. The bound fields are the same plus a `provenanceAtApproval` snapshot used by the install-time drift gate:
+Approvals land in `~/.lpm/global/trusted-dependencies.json`, which is a separate per-machine trust file. Global approvals use the same integrity, script hash, and provenance fields:
 
 ```json title="~/.lpm/global/trusted-dependencies.json"
 {
