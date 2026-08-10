@@ -45,7 +45,7 @@ auto-install-lpm-skills = true
 # Analyze package source while extracted bytes enter the store
 install-time-source-analysis = true
 
-# Fetch server-side findings for installed @lpm.dev/* packages
+# Use registry behavior and lifecycle data for installed @lpm.dev/* packages
 fetch-lpm-security-insights = true
 
 # npm registry package signatures
@@ -64,7 +64,7 @@ integrity = "source"
 # Workspace task fan-out for run/test/bench
 workspace-concurrency = 4
 
-# Run `lpm audit` after every successful install and print a one-line advisory
+# Add an audit summary after every successful install
 audit-after-install = false
 
 # node_modules layout (overrides package.json > lpm > linker)
@@ -148,9 +148,9 @@ relay-url = "wss://relay.lpm.fyi/connect"
 | `auto-install-peers` | bool | `true` | Auto-install missing non-optional `peerDependencies` at the project root after the main resolve pass. Project override: `package.json > lpm.autoInstallPeers`. Set to `false` for npm-classic / pnpm-classic peer-warning-only behavior. |
 | `auto-install-lpm-skills` | bool | `true` | Reconcile package-published skills from installed `@lpm.dev/*` packages. Set with [`lpm config lpm-skills`](/docs/infra/config#setup-wizards). Per-invocation overrides: `--skills` / `--no-skills` on `lpm install`, `lpm add`, and `lpm ci`. Disabling automatic installs does not delete existing `.lpm/skills/` content or affect explicit `lpm skills add`. |
 | `install-time-source-analysis` | bool | `true` | Analyze npm, custom-registry, and LPM.dev package source while extracted bytes enter the store. Disabling this security control is approval-gated. Re-enabling it backfills missing, malformed, or outdated store caches from existing package bytes on the next install. Set with [`lpm config source-analysis`](/docs/infra/config#install-time-source-analysis). |
-| `fetch-lpm-security-insights` | bool | `true` | Fetch server-side AI findings, vulnerabilities, lifecycle-script data, and registry behavioral tags for installed `@lpm.dev/*` packages. This setting is independent of local source analysis. Set with `lpm config lpm-insights` or manage it alongside package skills with [`lpm config lpm-dev`](/docs/infra/config#lpmdev-settings). |
+| `fetch-lpm-security-insights` | bool | `true` | Use Registry behavioral tags and lifecycle-script data in the normal install summary for `@lpm.dev/*` packages. For JavaScript packages, `lpm audit` and audit-after-install add Registry security findings and vulnerabilities. For explicit Swift packages, audit-after-install adds them. This setting is independent of local source analysis. Set with `lpm config lpm-insights` or manage it alongside package skills with [`lpm config lpm-dev`](/docs/infra/config#lpmdev-settings). |
 | `workspace-concurrency` | positive integer | available parallelism | User default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. Per-invocation override: `--workspace-concurrency <N>`. Project override: `lpm.toml > [workspace].concurrency`. |
-| `audit-after-install` | bool | `false` | Run [`lpm audit`](/docs/packages/audit) silently after every successful `lpm install` and emit a one-line advisory (`! Audited N packages, V vulnerabilities, S suspicious in Tms — run \`lpm audit\``). Informational only — findings never fail the install. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Per-process env: `LPM_AUDIT_AFTER_INSTALL`. See [Audit after install](/docs/packages/install#audit-after-install). |
+| `audit-after-install` | bool | `false` | Add an audit summary after every successful `lpm install`. JavaScript installs use the [`lpm audit`](/docs/packages/audit) scan. Explicit Swift installs use fetched Registry metadata. The summary includes severity counts and each Critical finding. Findings never fail the install. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Per-process environment variable: `LPM_AUDIT_AFTER_INSTALL`. See [Audit after install](/docs/packages/install#audit-after-install). |
 | `linker` | `"isolated"` \| `"hoisted"` | `"hoisted"` (workspaces and default peer-conflict installs use `"isolated"`) | `node_modules` layout for installs run by this user. **Overrides `package.json > lpm > linker`** so a user can pick their preferred layout regardless of what each project declares. Per-process override: `LPM_LINKER`. Per-invocation override: `lpm install --linker <isolated\|hoisted>`. Unknown values fail loudly at install time — there is no silent fallback. |
 | `script-read-allow` | array of strings | `[]` | Explicitly authorize lifecycle-script reads of project-relative paths that match the [secret-file deny list](/docs/packages/rebuild#project-secret-files). Each entry is joined to the current `project_dir` at install time; traversal escapes (`..`) and absolute paths outside the project are rejected. Unioned with the per-project [`package.json > lpm > scripts > sandboxReadAllow`](/docs/reference/package-json-lpm#scripts) — duplicates are deduplicated. Allowlisted secrets remain readable; if every matching secret is allowlisted, Linux skips the namespace overlay. |
 | `max-sandbox-write-roots` | array of absolute paths | `[]` | User-authorized roots that may cover absolute [`package.json > lpm > scripts > sandboxWriteDirs`](/docs/reference/package-json-lpm#the-lpmscripts-block) entries outside the project. LPM CLI resolves the root and candidate before granting access. A candidate cannot traverse a symlink, Windows junction, or reparse point below the authorized root, and dangerous system or credential roots remain denied even when listed here. Relative roots are ignored. |
