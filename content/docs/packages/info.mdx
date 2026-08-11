@@ -7,7 +7,11 @@ description: "Show metadata for a package — versions, dependencies, integrity,
 lpm info <package[@version]> [--version <V>]
 ```
 
-Fetches a package's metadata and prints it in a human-readable card: name, description, the chosen version's ecosystem, integrity hash, and full dependency list. With `--json`, returns the raw metadata for tooling.
+Fetches a package's metadata and prints it in a human-readable card: name, description, the chosen version's ecosystem, integrity hash, and full dependency list. With `--json`, it returns metadata from the selected registry, plus `success` and `_cache` diagnostics.
+
+`lpm info` checks the registry for current metadata on every run. If the cached response has an ETag, the registry can return HTTP 304.
+
+For HTTP 304, LPM CLI reuses the cached body. Install and resolution commands keep their five-minute metadata cache for speed.
 
 Routing matches [`lpm install`](/docs/packages/install):
 
@@ -27,6 +31,7 @@ lpm info react@0.14.3                                # npm-style inline version
 lpm info @my-co/internal                             # project .npmrc scoped registry
 lpm info @lpm.dev/owner.pkg                          # force LPM.dev Registry
 lpm info @lpm.dev/owner.pkg --version 2.1.0          # specific version
+lpm --verbose info @lpm.dev/owner.pkg                # show cache and revalidation details
 lpm info @lpm.dev/owner.pkg --json | jq '.versions' # structured output for tooling
 ```
 
@@ -39,7 +44,22 @@ For the chosen version:
 - `integrity` — SRI hash (truncated for display, full in `--json`)
 - `dependencies` — declared runtime deps with their ranges
 
-The full registry payload (every version, dist-tags, maintainers, README, etc.) is available via `--json`.
+JSON includes the version metadata that the selected registry returns. npm and custom registries can omit fields such as the README and maintainers.
+
+JSON output also includes `_cache` diagnostics:
+
+```json
+{
+  "_cache": {
+    "status": "revalidated",
+    "age_seconds": 143,
+    "network_request": true,
+    "not_modified": true
+  }
+}
+```
+
+Use the global `--verbose` flag to show the same cache and revalidation information in human output.
 
 ## Flags
 
@@ -47,7 +67,7 @@ The full registry payload (every version, dist-tags, maintainers, README, etc.) 
 | --------------- | ----------------------------------------- |
 | `--version <V>` | Show a specific version instead of latest. Alternative to inline `package@version`; do not pass both. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` returns the full registry record.
+Plus the [global flags](/docs/commands#global-flags) — `--json` returns registry metadata plus LPM diagnostics.
 
 ## See also
 
