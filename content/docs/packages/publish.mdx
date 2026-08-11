@@ -4,7 +4,7 @@ description: "Publish a package to LPM.dev Registry, npm, GitHub Packages, or a 
 ---
 
 ```bash
-lpm publish   # alias: lpm p
+lpm publish [--wait [--wait-timeout <SECONDS>]]   # alias: lpm p
 ```
 
 Packs the current directory and uploads it to a registry. By default, the target is **LPM.dev Registry** (where every package is private until you flip distribution to Pool or Marketplace). Publish elsewhere with `--npm`, `--github`, `--gitlab`, or `--publish-registry`.
@@ -25,6 +25,8 @@ lpm publish --npm --provenance               # npm-compatible publish provenance
 lpm publish --npm --provenance-file bundle.sigstore
 lpm publish --no-provenance                  # override provenance config
 lpm publish --min-score 80                   # gate an LPM.dev publish on local quality
+lpm publish --wait                           # wait for public LPM.dev availability
+lpm publish --wait --wait-timeout 900        # wait for up to 15 minutes
 lpm stage publish --tag next                 # stage a version on npm
 lpm stage list @scope/pkg                    # list staged npm versions
 lpm stage approve <stage-id> --otp 123456    # promote the staged version
@@ -56,6 +58,40 @@ Successful human output is a compact status stream:
 ```
 
 If quality checks fail or are missing, only those rows are shown beneath the score. The full per-category breakdown lives in [`lpm quality`](/docs/packages/quality).
+
+## Publication review and `--wait`
+
+Private LPM.dev Registry versions are active after upload. Pool and Marketplace versions can require publication review before they become public.
+
+For a pending version, LPM CLI shows these separate values:
+
+- The uploaded version.
+- The publication state.
+- The current latest public version, if one exists.
+
+Use `--wait` when CI must wait for public availability:
+
+```bash
+lpm publish --wait
+lpm publish --wait --wait-timeout 900
+```
+
+LPM CLI polls every three seconds. The default timeout is 600 seconds. You can set a timeout from 10 through 3600 seconds.
+
+For multiple targets, LPM CLI completes all uploads before it starts the wait. An LPM.dev Registry target is required.
+
+The command stops successfully when the version becomes active. It stops with a nonzero exit code for these results:
+
+- The wait times out.
+- The version requires manual review.
+- The review rejects the version.
+- The version becomes quarantined or unpublished.
+
+These results do not undo the upload. Do not publish the same version again after a wait failure.
+
+JSON keeps the upload result in each target's `success` field. It reports the separate wait result in `publication_wait`.
+
+`--wait` is not valid with `--dry-run` or `--check`. The `--wait-timeout` flag requires `--wait`.
 
 In `--json` output, the `quality` object keeps `score`, `max_score`, and `checks`, and also reports the raw local denominator as `earned_points` and `applicable_points`. Every check has an `evaluation` value of `"passed"`, `"failed"`, or `"not_evaluated"`; the last value identifies server-only checks while preserving their existing `passed: false` representation.
 
@@ -205,6 +241,8 @@ LPM CLI advertises npm web auth on npm-compatible publish requests (`npm-auth-ty
 | --- | --- |
 | `--dry-run` | Prepare and show the plan; for LPM.dev, perform non-mutating remote auth/permission/version preflight without uploading |
 | `--check` | Run network-free local publish preparation and stop before upload |
+| `--wait` | Wait until an LPM.dev Registry upload becomes publicly available |
+| `--wait-timeout <SECONDS>` | Set the wait limit from 10 through 3600 seconds. The default is 600 seconds |
 | `-y`, `--yes` | Skip interactive confirmation |
 | `--provenance` | Require Sigstore provenance (CI with OIDC only) |
 | `--no-provenance` | Disable provenance even when npm config enables it |
