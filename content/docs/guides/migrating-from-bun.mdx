@@ -3,7 +3,9 @@ title: Migrating from Bun
 description: "Convert a Bun bun.lock or bun.lockb project to LPM CLI with rollback safety."
 ---
 
-`lpm migrate` converts a Bun project to LPM CLI in one command. It detects `bun.lock` or `bun.lockb`, parses the lockfile, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and verifies `build` + `test` when those scripts exist.
+`lpm migrate` converts a Bun project to LPM CLI. It writes a version 12 staging lockfile.
+
+By default, an online install then writes version 13 with exact package-instance identities.
 
 This guide covers the Bun-specific parts. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
 
@@ -35,15 +37,17 @@ What runs:
 
 1. Confirm `package.json` exists and refuse to overwrite an existing `lpm.lock` unless `--force` is set.
 2. Parse Bun package entries, exact versions, tarball URLs, integrity strings, dependency edges, and dev/optional metadata.
-3. Write `lpm.lock` and, when supported, `lpm.lockb`.
+3. Write a version 12 staging `lpm.lock`. If the graph fits the binary format, write `lpm.lockb`.
 4. Back up the Bun lockfile, `.npmrc` when touched, `.gitattributes`, and any pre-existing LPM CLI lockfiles.
 5. Add LPM CLI registry routing to `.npmrc` unless `--no-npmrc` is set.
-6. Run `lpm install` against the converted lockfile unless `--no-install` is set.
+6. If `--no-install` is not set, run an online `lpm install`. This step writes version 13 and removes the staging binary file.
 7. Run `build` + `test` scripts unless `--skip-verify` is set.
 
 The flow is non-interactive. `-y` is accepted but reserved for a future interactive mode; it does not imply `--force`.
 
 ## 3. Verify
+
+If you used `--no-install`, run `lpm install` before the offline command.
 
 ```bash
 lpm install --offline

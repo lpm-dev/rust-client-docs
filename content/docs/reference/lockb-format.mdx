@@ -3,11 +3,13 @@ title: lpm.lockb format
 description: "Generated binary lockfile companion to lpm.lock."
 ---
 
-`lpm.lockb` is a generated binary companion to [`lpm.lock`](/docs/reference/lockfile-format). It stores the subset of lockfile metadata that fits the current fixed-width wire format, so tools can validate or inspect that subset without parsing TOML.
+`lpm.lockb` is a legacy generated companion to [`lpm.lock`](/docs/reference/lockfile-format). It stores a subset of metadata from lockfile versions before 13.
 
 `lpm.lock` is always the authoritative install input. When a lockfile carries TOML-only metadata that `lpm.lockb` cannot represent, LPM CLI skips the binary write and removes any stale `lpm.lockb` from a previous install.
 
-Commit `lpm.lockb` when LPM CLI writes it. Mark it as binary in `.gitattributes` — `lpm init` does this automatically:
+Lockfile version 13 does not write `lpm.lockb`. LPM CLI removes a stale binary file when it writes the current lockfile.
+
+For a repository that still has a legacy binary file, mark it as binary in `.gitattributes`:
 
 ```text title=".gitattributes"
 lpm.lockb binary
@@ -69,7 +71,7 @@ All numeric fields are little-endian. Packages are sorted by their package ident
 
 ## Wire-format version
 
-Current: `v3` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). The `1 → 2` bump appended `(tarball_off, tarball_len)` to every `PackageEntry`. The `2 → 3` bump added the sparse provenance section and its `PRV3` footer without changing the 36-byte package entry. A v3 file with no provenance therefore costs only the 8-byte footer over v2; each evidence record costs 68 bytes plus its unique strings. This binary wire version is independent from the TOML `lockfile-version`, which is currently `10`.
+Current reader format: `v3` ([`BINARY_VERSION`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)). This binary version is independent from TOML lockfile version 13.
 
 The binary reader rejects any file whose header `version` is not exactly `BINARY_VERSION` — strict by design. Layout differs across versions, so interpreting one version as another could produce garbage or drop security evidence. `lpm.lock` remains the authoritative input; the next compatible `write_all` rewrites `lpm.lockb` as the current version.
 
@@ -94,8 +96,11 @@ The binary format is intentionally smaller than the TOML format. These fields ar
 - **`auto-isolated-peer-conflicts`** — linker orchestration state
 - **`os` / `cpu` / `libc` / `optional` / `node-engine`** — platform, optional-reachability, and dependency engine state
 - **`registry-signatures` / `registry-published-at`** — npm registry signature evidence
+- **`instance-id`** — exact package-instance identity
+- **`dependency-targets` / `peer-targets`** — exact edge targets
+- **root selection `instance-id`** — exact root target
 
-Lockfiles that use any unsupported field are written as TOML-only — the binary file is skipped entirely, and any stale binary file is removed. A schema-v10 workspace union always takes this path. This is an explicit safety check ([`binary_format_supports`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs)) — silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile.
+Lockfile version 13 always takes the TOML-only path. LPM CLI skips the binary write and removes any stale binary file.
 
 Verified provenance itself is supported by v3. If the same project also uses frozen-install importer snapshots, npm aliases, peer pinning, dependency engine constraints, platform-specific optional packages, catalogs, or registry signatures, seeing only `lpm.lock` is still correct.
 
@@ -103,7 +108,7 @@ Verified provenance itself is supported by v3. If the same project also uses fro
 
 The reader [`BinaryLockfileReader`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-lockfile/src/binary.rs) `mmap`s the file once, parses the header, validates the magic + version, and exposes by-name lookup via binary search over the entry table. No allocation per entry; string slices borrow directly from the mmap.
 
-For projects whose lockfile fits the binary subset, this keeps generated-cache validation cheap. Projects outside that subset read the authoritative TOML lockfile instead.
+LPM CLI can read a valid legacy binary file. Current installs read the authoritative TOML lockfile for the exact graph.
 
 ## See also
 

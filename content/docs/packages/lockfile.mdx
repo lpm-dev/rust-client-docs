@@ -3,7 +3,9 @@ title: Lockfile
 description: "How LPM CLI pins standalone and workspace graphs, importer projections, and warm-install state."
 ---
 
-LPM CLI's authoritative lockfile is **`lpm.lock`**: TOML, deterministic, and git-diffable. A standalone graph may also receive **`lpm.lockb`**, a generated binary companion, when every field fits the binary subset. A workspace uses one TOML `lpm.lock` at its root with importer projections and does not write `lpm.lockb`.
+LPM CLI's authoritative lockfile is **`lpm.lock`**: TOML, deterministic, and git-diffable. Current installs use this file for exact graph replay.
+
+Older lockfile schemas can also have **`lpm.lockb`**, a generated binary companion. Lockfile version 13 does not write this file.
 
 This page is the conceptual overview — when each file gets read, what the dual format buys you, and how the warm-install fast paths work. For the on-disk schema, see [`lpm.lock` format](/docs/reference/lockfile-format) and [`lpm.lockb` format](/docs/reference/lockb-format).
 
@@ -14,9 +16,9 @@ This page is the conceptual overview — when each file gets read, what the dual
 | `lpm.lock` | Humans, git diffs, authoritative install input | Read by install, audit, graph, and review workflows |
 | `lpm.lockb` | Generated binary companion for the representable subset | Used for binary validation/writeback and cheap generated-cache inspection when present |
 
-The TOML lockfile is the canonical source — sorted, deterministic, git-friendly. The binary companion is intentionally smaller: its v3 wire format represents fixed-width package records plus sparse verified-provenance records. If the TOML lockfile contains importer snapshots, workspace projections, patch records, aliases, peer pinning, dependency engine constraints, platform metadata, optional-reachability state, catalogs, or registry signatures, LPM CLI skips `lpm.lockb` and removes any stale binary file.
+The TOML lockfile is the canonical source. The binary companion does not contain exact package-instance identities.
 
-You don't choose the mode manually. Edit `lpm.lock` by hand if you ever need to (humans do that sometimes); the next install either regenerates a compatible `lpm.lockb` or leaves the project TOML-only.
+Current installs skip `lpm.lockb` and remove stale binary files. You do not select this behavior manually.
 
 ## What's pinned
 
@@ -33,18 +35,19 @@ Each entry in the lockfile records:
 - **Tarball URL hint** — cached resolved URL that lets warm installs skip the per-package metadata round-trip
 - **Importer snapshot** — the package.json dependency sections and resolver-affecting settings that frozen installs compare before replaying the lockfile
 - **Workspace importer projection** — content-addressed package IDs plus importer-local root selections, peers, aliases, patches, catalogs, provenance, and automatic linker state
+- **Exact package-instance graph** — each package row, dependency, peer, and root selection identifies one graph instance
 - **(if any)** npm-alias edges — `local_name → target_canonical_name` pairs
 
 After a standalone `lpm install`:
 
 - `lpm.lock` — commit it
-- `lpm.lockb` — commit it when present (mark it as binary in `.gitattributes` — `lpm init` does this automatically)
+- `lpm.lockb` — remove a stale copy after LPM CLI upgrades the lockfile to version 13
 
 After a recursive workspace install, commit the single root `lpm.lock`. LPM CLI migrates legacy member lockfiles into that root union after a successful install, then removes the obsolete member `lpm.lock` / `lpm.lockb` files.
 
 ## Workspace lockfiles
 
-A schema-v10 workspace lockfile separates storage from importer views:
+A workspace lockfile separates storage from importer views:
 
 - `workspace-packages` stores each distinct locked package row under a SHA-256 content address.
 - `importers` maps `"."` and member-relative paths such as `"packages/web"` to the package IDs and root state visible to that project.
@@ -76,7 +79,33 @@ No metadata fetches. No tarball downloads. Project `node_modules/<pkg>` is creat
 
 ### Tier 3: Lockfile-only install (offline-able)
 
-`lpm install --offline` forces this path. The resolver is skipped entirely; every dep is resolved from `lpm.lock`'s pinned versions, fetched from the global store (or errored if missing). No network. No re-resolution.
+`lpm install --offline` forces this path. The resolver does not run. LPM CLI reads each exact package instance from `lpm.lock`.
+
+Replay also checks the source against the current manifest. A registry range cannot replay a Git, tarball, or local-path package.
+
+Local `file:` and `link:` entries must resolve to a declared path or a reachable transitive source. Offline mode keeps this rule.
+
+Lockfile versions 1–12 do not contain an exact package-instance graph. Offline and frozen installs reject these lockfiles because replay can select the wrong peer context.
+
+`lpm migrate --no-install` intentionally writes a version 12 staging lockfile. Run an online `lpm install` to create version 13 before offline use.
+
+For a standalone project, run an online mutable install once:
+
+```bash
+lpm install
+git add lpm.lock
+git commit
+```
+
+For a workspace, run a recursive install from the workspace root:
+
+```bash
+lpm install --recursive
+git add lpm.lock
+git commit
+```
+
+The online install resolves the graph again and writes lockfile version 13. Then retry the offline or frozen install.
 
 This is the CI-recommended path:
 
@@ -88,7 +117,7 @@ lpm install --offline --strict-integrity
 
 ### Unavailable pinned artifacts
 
-An online lockfile replay keeps the exact package version, source, and integrity pinned in `lpm.lock`. If a cached tarball URL returns 404, LPM CLI may refresh registry metadata once and retry a moved URL only when the package, version, source, and integrity contract stays unchanged. It never uses that recovery to select a newer version or another registry.
+An online lockfile replay keeps the exact package version, source, and integrity pinned in `lpm.lock`. If a cached tarball URL returns 404, LPM CLI can refresh registry metadata once. It retries a moved URL only when the package contract stays unchanged. It never uses that recovery to select a newer version or another registry.
 
 If the pinned artifact remains unavailable, install fails and preserves the existing bytes of both `lpm.lock` and `lpm.lockb`. This applies to ordinary mutable replay, explicit `--frozen-lockfile`, plain `lpm install` automatically frozen by CI, and `lpm ci`. A mutable replay does not silently replace the pin.
 
@@ -102,9 +131,11 @@ git commit
 
 Aliases use their local manifest key. For example, `"local": "npm:canonical@1.0.0"` is upgraded with `lpm upgrade local`. An unavailable transitive package has no machine-actionable upgrade command because its canonical name is not a direct `package.json` entry. Restore the artifact, or update the owning direct dependency or an override in a mutable development environment.
 
-Also stage `lpm.lockb` when LPM CLI writes the binary companion.
+If the upgrade removes `lpm.lockb`, stage that removal with `lpm.lock`.
 
-The failure reports the pinned package and version with a sanitized registry/source identity. Credentials and secret-bearing URL components are omitted. Authentication, rate-limit, timeout, transport, and registry 5xx failures remain distinct errors rather than being collapsed into an artifact-unavailable error.
+The failure reports the pinned package and version with a sanitized source identity. Registry and remote-tarball diagnostics omit credentials and secret URL components.
+
+Authentication, rate-limit, timeout, transport, and registry 5xx failures remain distinct errors. LPM CLI does not report them as unavailable artifacts.
 
 ### Tier 4: Resolve-and-install (cold)
 
@@ -114,17 +145,25 @@ This is the slow path, but "slow" is relative — cold install on the 535-packag
 
 ## Lockfile-version
 
-The TOML lockfile is **schema-versioned** (current: `10`), not tool-versioned. A version bump only happens when the on-disk shape changes. Older clients reading a lockfile with a higher version refuse to install rather than silently misinterpreting fields — fail-fast over silent breakage. Version `5` added importer snapshots and patch checksum records, version `6` added per-package `engines.node` constraints, version `7` added artifact-bound Sigstore provenance evidence, version `8` exact root selections, version `9` exact-commit Git sources, and version `10` root workspace unions with importer projections.
+The TOML lockfile is **schema-versioned** (current: `13`), not tool-versioned. A version changes only when the file structure changes.
 
-The binary lockfile has its own wire-format version (current: `3`). Version `2` added the per-entry `tarball_off`/`tarball_len` pair; version `3` added a sparse provenance section and an 8-byte footer while preserving the 36-byte package entries. On version mismatch, the reader rejects the binary file and falls back to parsing the TOML; the next write rebuilds the binary lockfile in the current version, completing the migration transparently.
+Version 11 added local manifest fingerprints. Version 12 added structured peer edges. Version 13 added exact package-instance identities for rows, edges, and roots.
+
+An older LPM CLI rejects a newer schema. A current LPM CLI rejects unsafe replay of lockfile versions 1–12 in offline and frozen modes.
+
+The binary lockfile has its own wire-format version (current: `3`). Version `3` added a sparse provenance section and an 8-byte footer.
+
+If the binary version does not match, the reader rejects it and reads TOML. Lockfile version 13 does not rebuild the binary file.
 
 LPM CLI reports a binary writeback only when it actually writes a representable `lpm.lockb`. TOML-only maintenance such as reconciling an importer snapshot, patch record, or lockfile schema does not produce a misleading binary-format upgrade message.
 
 ## When the binary lockfile is skipped
 
-`lpm.lockb` is intentionally smaller than `lpm.lock`. It doesn't carry every field — importer snapshots, workspace package projections, patch records, npm-alias metadata, ambient peer installs, per-package peers, dependency engine constraints, platform metadata, optional reachability, catalogs, and registry signatures live only in TOML. Projects with any of those fields write **only `lpm.lock`**. Verified provenance is representable in v3, but importer snapshots normally keep install-produced lockfiles TOML-only. Workspace unions always skip the companion.
+`lpm.lockb` is intentionally smaller than `lpm.lock`. It does not contain the exact package-instance graph from lockfile version 13.
 
-Why: silently dropping metadata would produce a binary lockfile that disagrees with the reviewer-visible TOML lockfile. Skipping the write and removing stale binary state is the safe behavior.
+As a result, current installs write **only `lpm.lock`**. LPM CLI also removes a stale binary companion during a lockfile version 13 write.
+
+An incomplete binary file can disagree with the reviewer-visible TOML lockfile. Therefore, LPM CLI skips the write and removes stale binary state.
 
 If your project only has `lpm.lock`, that's expected when the graph needs TOML-only metadata.
 
@@ -151,7 +190,9 @@ This guarantee covers LPM-managed atomic rewrites and their temporary leaf entri
 
 ## Should I commit `lpm.lockb`?
 
-Commit `lpm.lock` always. In a workspace, commit only the root `lpm.lock`; member lockfiles are obsolete after migration. Commit `lpm.lockb` when LPM CLI wrote it for a representable standalone project. If the project is TOML-only because the graph carries metadata outside the binary subset, do not synthesize a binary file by hand.
+Commit `lpm.lock` always. In a workspace, commit only the root `lpm.lock`. Member lockfiles are obsolete after migration.
+
+Lockfile version 13 is TOML-only. If an upgrade removes `lpm.lockb`, commit the removal. Do not create a binary file manually.
 
 The only special handling: mark `lpm.lockb` as binary in `.gitattributes`:
 
