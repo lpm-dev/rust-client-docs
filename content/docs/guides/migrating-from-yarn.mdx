@@ -3,7 +3,9 @@ title: Migrating from Yarn
 description: "Convert a Yarn Classic or Berry yarn.lock project to LPM CLI with rollback safety."
 ---
 
-`lpm migrate` converts a Yarn Classic or Yarn Berry project to LPM CLI in one command. It detects `yarn.lock`, parses the lockfile, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and verifies `build` + `test` when those scripts exist.
+`lpm migrate` converts a Yarn Classic or Yarn Berry project to LPM CLI. It writes a version 12 staging lockfile.
+
+By default, an online install then writes version 13 with exact package-instance identities.
 
 This guide covers the Yarn-specific parts. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
 
@@ -37,15 +39,17 @@ What runs:
 2. Parse Yarn lockfile entries: Classic specifier blocks or Berry descriptor entries, exact versions, and dependency edges.
 3. Preserve Classic resolved tarball URLs and SRI integrity strings. Berry cache checksums are not npm SRI strings, so they are not written as `integrity`.
 4. Mark direct dev and optional dependencies from root `package.json`, because Yarn does not encode those flags in a way LPM CLI can carry over per lockfile entry.
-5. Write `lpm.lock` and, when supported, `lpm.lockb`.
+5. Write a version 12 staging `lpm.lock`. If the graph fits the binary format, write `lpm.lockb`.
 6. Back up `yarn.lock`, `.npmrc` when touched, `.gitattributes`, and any pre-existing LPM CLI lockfiles.
 7. Add LPM CLI registry routing to `.npmrc` unless `--no-npmrc` is set.
-8. Run `lpm install` against the converted lockfile unless `--no-install` is set.
+8. If `--no-install` is not set, run an online `lpm install`. This step writes version 13 and removes the staging binary file.
 9. Run `build` + `test` scripts unless `--skip-verify` is set.
 
 The flow is non-interactive. `-y` is accepted but reserved for a future interactive mode; it does not imply `--force`.
 
 ## 3. Verify
+
+If you used `--no-install`, run `lpm install` before the offline command.
 
 ```bash
 lpm install --offline

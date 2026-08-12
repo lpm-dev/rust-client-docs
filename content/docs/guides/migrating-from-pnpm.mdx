@@ -3,7 +3,9 @@ title: Migrating from pnpm
 description: "Convert a pnpm-lock.yaml project to LPM CLI, isolated layout preserved."
 ---
 
-`lpm migrate` converts a pnpm project to LPM CLI in one command. It detects pnpm, parses `pnpm-lock.yaml`, writes `lpm.lock` plus `lpm.lockb` when the graph fits the binary format, optionally configures `.npmrc`, runs `lpm install`, and (optionally) verifies that `build` + `test` still pass. Backups are taken first, so `--rollback` restores the original state.
+`lpm migrate` converts a pnpm project to LPM CLI. It writes a version 12 staging lockfile, then runs an online install by default.
+
+The install writes version 13 with exact package-instance identities. The command creates backups before it changes files.
 
 The migration shape is the same as [migrating from npm](/docs/guides/migrating-from-npm). This page covers the pnpm-specific differences.
 
@@ -24,9 +26,9 @@ lpm migrate             # do it
 Same flow as the npm path:
 
 1. Detect pnpm, parse `pnpm-lock.yaml`, convert.
-2. Write `lpm.lock` and, when supported, `lpm.lockb`. Back up `pnpm-lock.yaml` to `pnpm-lock.yaml.backup`.
+2. Write a version 12 staging `lpm.lock`. If the graph fits the binary format, write `lpm.lockb`.
 3. Touch `.npmrc` (with `--no-npmrc` to skip), backing up the original.
-4. Run `lpm install` against the new lockfile.
+4. Run an online `lpm install`. This step writes version 13 and removes the staging `lpm.lockb`.
 5. Run `build` + `test` to verify (skip with `--skip-verify`).
 6. Print summary + CI hint.
 
@@ -45,6 +47,8 @@ Same flow as the npm path:
 | `--rollback` | Restore from `.backup` files |
 
 ## Verify and commit
+
+If you used `--no-install`, run `lpm install` before the offline command.
 
 ```bash
 lpm install --offline       # confirm reproducibility
