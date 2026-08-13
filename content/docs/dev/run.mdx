@@ -9,6 +9,10 @@ lpm run <scripts...> [-- script-args...]
 
 Runs one or more `scripts` entries from `package.json`. With multiple scripts, runs them sequentially by default; pass `-p` to run in parallel.
 
+`lpm.json` is optional. Without it, the command uses `package.json` scripts and standard environment files.
+
+It also uses a Node selector in `.nvmrc` or `.node-version`. Task dependencies and task caching require `lpm.json`.
+
 ## Shorthand: `lpm <script-or-bin>` without `run`
 
 `lpm` falls through to the same task runner as `lpm run <name>` when the first argument isn't a known subcommand. That means plain shorthand script invocations pick up `lpm.json` meta-tasks, `dependsOn` expansion, caching, and the normal script/task resolution rules.
@@ -75,12 +79,16 @@ lpm run --env=staging start       # load .env.staging before running
 
 ## Forwarding arguments
 
-Anything after `--` is passed verbatim to the script:
+Anything after `--` is passed to the script as argument data:
 
 ```bash
 lpm run dev -- --port 4000 --host 0.0.0.0
 # runs: <whatever "dev" expands to> --port 4000 --host 0.0.0.0
 ```
+
+Shell metacharacters in an argument do not become another shell command. On Windows, LPM CLI rejects arguments that contain line breaks.
+
+`cmd.exe` cannot receive these arguments safely.
 
 ## Parallel execution
 
@@ -127,7 +135,11 @@ Full grammar also includes path exact (`{./apps/web}`), git ref (`[origin/main]`
 
 ## Caching
 
-Task results are cached only when the task opts in via `lpm.json` (`cache: true` plus non-empty `outputs`). A cached task with unchanged inputs replays instantly without re-executing. Bypass the cache with `--no-cache`.
+Task results are cached only when the task opts in through `lpm.json`. The task needs `cache: true` and non-empty `outputs`.
+
+The key includes script arguments, the child environment, runtime identities, and selected Node and Bun executable fingerprints.
+
+A cached task with unchanged inputs replays without execution. Bypass the cache with `--no-cache`.
 
 Single-script human output prints a compact stderr header before the script's own output:
 
@@ -166,11 +178,17 @@ lpm run start --env=staging
 
 With `--env=staging`, LPM CLI loads `.env`, `.env.local`, `.env.staging`, then `.env.staging.local`. Without `--env`, it loads `.env`, then `.env.local`.
 
-If the script name resolves to an env mode through `lpm.json`, LPM CLI uses that mode automatically unless you override it with `--env`.
+The environment order is `--env`, `tasks.<name>.env`, `env.<name>`, then the default files. Thus, the command-line mode overrides all `lpm.json` mappings.
 
 Vault-backed env secrets override file values after dotenv loading.
 
+An environment file must resolve inside the project directory. LPM CLI rejects a configured path or symlink that resolves outside the project.
+
 Runtime-hook env names such as `NODE_OPTIONS`, `LD_PRELOAD`, `LD_AUDIT`, `BASH_ENV`, and `DYLD_INSERT_LIBRARIES` are ignored when they come from env files, env secrets, or env-schema defaults. LPM CLI also strips inherited values for these names before spawning the script.
+
+LPM CLI also strips inherited credential names such as `LPM_TOKEN` and `NPM_TOKEN`.
+
+It strips names that end in `_TOKEN`, `_SECRET`, or `_PASSWORD`. Project-resolved values still use the environment policy.
 
 `--no-env-check` skips environment-variable schema validation if you've declared a schema.
 

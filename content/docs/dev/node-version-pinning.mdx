@@ -65,6 +65,10 @@ Bun releases come from the GitHub releases API for `oven-sh/bun`, cached for 1 h
 
 Each version is installed once and reused by every project on the machine. `LPM_HOME=<path>` moves the entire LPM CLI root, including `runtimes/`, which is useful for hermetic CI.
 
+Concurrent projects can request the same missing runtime. LPM CLI serializes that version's installation. It publishes only a complete runtime directory.
+
+Other projects then reuse that installation.
+
 ## Script PATH Order
 
 When a script runs, LPM CLI builds `PATH` from:
@@ -78,11 +82,19 @@ This means locally-installed CLIs win over managed runtime tools, and managed No
 
 `runtime.bun` only exposes `bun` to scripts. It does **not** switch LPM CLI script execution to `bun run`.
 
+For workspace runs and multi-service dev sessions, each member or service resolves selectors from its directory. A local selector replaces the same root runtime.
+
+The member or service inherits each unselected root runtime. For example, a service can inherit root Node and select its own Bun version.
+
 ## Node Engine Enforcement
 
 The workspace root's `engines.node` is a compatibility constraint, never a runtime selector. LPM CLI first applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`. It then constructs the same `PATH` scripts receive—project and workspace `node_modules/.bin` directories, the selected managed runtime, then inherited `PATH`—and validates the first Node resolved from it against `engines.node`.
 
-For workspace runs, LPM CLI resolves every runnable selected member's local Node selector and validates the first Node on that member's script `PATH` against the root constraint before scheduling any member scripts. Members without the requested script or task are skipped without runtime preparation. A runnable member cannot pass the root check under one Node version and then execute under an incompatible runtime.
+For workspace runs, LPM CLI resolves the local Node selector for each runnable member. It validates the first Node on that member's script `PATH`.
+
+The validation uses the root and member constraints. Members without the requested task are skipped without runtime preparation.
+
+For multi-service dev sessions, LPM CLI applies the same rule to each service `cwd`. Runtime validation finishes before LPM CLI starts the service set.
 
 An engine range never selects another installed managed runtime, downloads Node, or prepends a different Node to `PATH`. This preserves externally selected runtimes in CI matrices. If no Node is available, the engine check fails with the declared constraint and an explicit `lpm use node@<version>` hint. `package.json > lpm > engineStrict: false` and `~/.lpm/config.toml > engine-strict = false` retain warning-only behavior.
 

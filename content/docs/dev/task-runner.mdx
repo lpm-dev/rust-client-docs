@@ -87,8 +87,10 @@ Caching is opt-in per task:
 The cache key is a SHA-256 hash of:
 
 - The `command` string
+- Each forwarded script argument, with length boundaries
 - The per-file SHA-256 of every file matching `inputs` globs (default `inputs` covers `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`)
-- The resolved env vars (sorted by key) for the task's `env` mode, if any
+- The complete child environment after inherited credential and runtime-hook removal
+- Managed Node and Bun versions, plus fingerprints of the selected executables
 - `package.json > dependencies` serialized as JSON (so a declared-dep version bump invalidates the cache)
 
 Any change to any of those flips the key. Same key = cache hit.
@@ -150,7 +152,9 @@ Successful scripts always write the local cache first. If remote cache is enable
 
 Use `LPM_REMOTE_CACHE_TOKEN` in CI, or rely on the token from `lpm login` when the cache endpoint is on the configured LPM.dev Registry origin. Third-party cache hosts never receive the registry login token; they require both `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`. When `signature: true`, set `LPM_REMOTE_CACHE_SIGNATURE_KEY` on every machine that reads or writes the cache. A missing or invalid signature is a cache miss.
 
-Loaded env vars with secret-looking names block remote uploads by default. Use `remoteCache.env.include` only for values that are safe to fold into a shared build cache.
+Loaded or inherited env vars with secret-looking names block remote uploads by default.
+
+Use `remoteCache.env.include` only for values that are safe to store in a shared build cache.
 
 ### Manage
 
@@ -250,12 +254,14 @@ Every script runs with `node_modules/.bin/` prepended to `PATH`, so locally-inst
 
 Before each task starts, the runner:
 
-1. Looks up the env file for this task: `lpm.json > tasks.<name>.env` first, then `lpm.json > env.<name>` script-mode mapping, then `.env` / `.env.local` defaults.
+1. Selects the environment: `--env` first, then `tasks.<name>.env`, then `env.<name>`, then the default files.
 2. Loads the resolved file(s).
 3. Validates against `lpm.json > envSchema` (skip with `--no-env-check`).
 4. Injects into the script's environment.
 
 CLI override: `--env=<mode>` forces a specific mode for one invocation, regardless of the `lpm.json` mappings.
+
+Existing environment files must resolve inside the project directory. The runner rejects configured paths and symlinks that resolve outside the project.
 
 ## Multi-service orchestration
 
@@ -267,6 +273,10 @@ When `lpm.json > services` is non-empty, [`lpm dev`](/docs/dev/dev) starts each 
 - `readyTimeout` seconds before failure
 
 Services with `dependsOn` start in topological order. A readiness failure stops the initial startup. Dependent services do not start.
+
+Each service receives the root managed runtimes, except for runtimes that it selects in its own `cwd`.
+
+Shutdown stops the complete tracked service process trees.
 
 The resolved primary endpoint receives LPM CLI-owned HTTPS, tunnel, and LAN frontends plus the browser-open.
 

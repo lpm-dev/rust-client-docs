@@ -9,7 +9,7 @@ import { Card, Cards } from "fumadocs-ui/components/card";
 lpm dev
 ```
 
-`lpm dev` is the marquee command of the Dev section. One command, optional config: it picks up managed runtimes, syncs dependencies if stale, bootstraps `.env` from `.env.example` when needed, layers env files, optionally serves over HTTPS, optionally exposes a public tunnel, and orchestrates multi-service projects from `lpm.json`.
+`lpm dev` runs a development server with optional configuration. Without `lpm.json`, it runs the `dev` script from `package.json`. With `lpm.json`, it can also manage runtimes, environments, HTTPS, tunnels, and multiple services.
 
 ```text
 $ lpm dev
@@ -28,9 +28,9 @@ $ lpm dev
 
 ## What it does, in order
 
-1. **Managed runtimes** — uses versions pinned in `lpm.json`; Node can also fall back to `.nvmrc` / `.node-version`. Auto-installs if missing (see [`lpm use`](/docs/dev/use)).
+1. **Managed runtimes** — uses versions pinned in `lpm.json`. Node can also use `.nvmrc` or `.node-version`. A service can override one root runtime and inherit the other. LPM CLI installs missing runtimes before service startup (see [`lpm use`](/docs/dev/use)).
 2. **Dependencies** — re-runs the install pipeline if `package.json` / lockfile / install hash drift. Skip with `--no-install`.
-3. **Env** — if `.env` is missing but `.env.example` exists, copies it once, then loads `.env`, `.env.local`, and, when `--env=<MODE>` is set, `.env.<MODE>` plus `.env.<MODE>.local`.
+3. **Env** — if `.env` is missing but `.env.example` exists, copies it once. The order is `--env`, `tasks.dev.env`, `env.dev`, then the default files. Mode files load after `.env` and `.env.local`.
 4. **Endpoint discovery** — runs the child server, reads local URLs from its output, and verifies that the launched process tree owns the listener before publishing a URL. Vite can use `5173`, `5174`, or another free port; LPM CLI does not assume `3000`.
 5. **HTTPS** — if `lpm.json` has `https: true` (top-level) or you pass `--https`, starts an LPM CLI-owned TLS frontend over the verified child endpoint. The framework can stay on plain HTTP. When `lpm.json` declares local-domain proxy hosts, `lpm dev` also prepares constrained project certificate-chain coverage and writes managed hosts-file entries for non-`.localhost` hosts when needed. See [`lpm cert`](/docs/infra/cert) for the trust store install.
 6. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the same verified child endpoint through an LPM CLI tunnel.
@@ -92,9 +92,23 @@ A browser inspector auto-starts alongside `--tunnel` on a free ephemeral port; t
 
 If `lpm.json` declares services (`db`, `api`, `web`, …), `lpm dev` starts each one, waits for ready-check, and prefixes logs with the service name. Failed services exit the run.
 
+Each service resolves runtimes from its `cwd`. A local Node or Bun selector replaces the same root runtime. The service inherits each unselected runtime.
+
+Before startup, LPM CLI validates the selected Node against applicable root and service `engines.node` constraints.
+
+An explicit `--env=<MODE>` applies to all services. Without this flag, `tasks.dev.env` takes precedence over `env.dev`. Service-specific `services.<name>.env` values apply after the shared project environment.
+
+LPM CLI removes inherited credential and runtime-hook variables before service startup. Explicit project environment values still use the normal environment policy.
+
 For every other service with a resolved port, LPM CLI also injects `{SERVICE}_URL` and `{SERVICE}_PORT` into the child environment. A resolved port can come from `port`, conflict reassignment, or host-only auto-assignment. For example, an `api` service can read `DB_URL=http://localhost:5432` and `DB_PORT=5432`, while `web` can read `API_URL` and `API_PORT`.
 
 The primary service always receives a managed port, even when its `port` field is omitted. LPM CLI passes framework-native flags where needed: Vite receives `--port <N> --strictPort`; Next.js, Nuxt, SvelteKit, Remix, and Astro receive `--port <N>`; generic servers continue to receive `PORT=<N>`. A service that ignores its assigned port fails with an explicit diagnostic instead of allowing browser, proxy, certificate, or tunnel setup to target the wrong listener.
+
+When the dev session stops, LPM CLI stops the tracked process trees. This cleanup also applies after a readiness failure.
+
+A targeted termination signal also starts this cleanup.
+
+Service log processing has byte limits. A newline-free service line is limited to 64 KiB. Dashboard logs retain at most 16 MiB per service.
 
 `--dashboard` swaps the prefixed-log output for a TUI dashboard with per-service log panels, local-domain host URLs, and webhook inspection. `--no-dashboard` forces the prefixed-log output even if the dashboard is configured.
 
