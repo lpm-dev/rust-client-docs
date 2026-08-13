@@ -2,9 +2,37 @@
   "$id": "https://cli.lpm.dev/schemas/lpm.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "lpm.json",
-  "description": "Project-level LPM configuration. Sits alongside package.json and provides runtime pinning, env file mapping, task runner config, hosted task cache settings, dev services, local-domain proxy settings, publish targets, and tunnel/HTTPS settings.",
+  "description": "Project-level LPM configuration. Sits alongside package.json and provides runtime pinning, env file mapping, task runner config, hosted task cache settings, dev services, local-domain proxy settings, env vault metadata, publish targets, and tunnel/HTTPS settings.",
   "type": "object",
   "properties": {
+    "$schema": {
+      "description": "Optional JSON Schema URI used by editors.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri",
+      "default": null
+    },
+    "vault": {
+      "description": "Stable project identifier for encrypted environment storage.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "vaultSync": {
+      "description": "Project-local cloud sync metadata maintained by `lpm env`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VaultSyncConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "runtime": {
       "description": "Pinned runtime versions.\ne.g., `{\"node\": \">=22.0.0\", \"deno\": \">=2.0.0\"}`",
       "type": "object",
@@ -131,7 +159,45 @@
       ]
     }
   },
+  "additionalProperties": false,
   "$defs": {
+    "VaultSyncConfig": {
+      "description": "Cloud sync metadata maintained by `lpm env`.",
+      "type": "object",
+      "properties": {
+        "personalVersion": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        },
+        "personalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "orgVersions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "default": {}
+        },
+        "orgSyncedAt": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
     "TaskConfig": {
       "description": "Configuration for a single task in `lpm.json`.",
       "type": "object",
@@ -181,7 +247,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RemoteCacheConfig": {
       "description": "Hosted cache configuration in `lpm.json`.",
@@ -222,7 +289,8 @@
           "description": "Controls which loaded environment variables may be used with remote uploads.",
           "$ref": "#/$defs/RemoteCacheEnvConfig"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "RemoteCacheEnvConfig": {
       "description": "Env safety controls for hosted task cache uploads.",
@@ -249,7 +317,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "ServiceConfig": {
       "description": "Configuration for a dev service in `lpm.json`.",
@@ -339,6 +408,7 @@
           "default": null
         }
       },
+      "additionalProperties": false,
       "required": [
         "command"
       ]
@@ -374,7 +444,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "TunnelConfig": {
       "description": "Tunnel configuration in `lpm.json`.",
@@ -388,7 +459,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "PublishConfig": {
       "description": "Publish configuration in `lpm.json`.\n\nControls which registries `lpm publish` targets and per-registry settings.\nCLI flags (`--npm`, `--lpm`) override these values.",
@@ -400,7 +472,9 @@
           "items": {
             "type": "string"
           },
-          "default": []
+          "default": [
+            "lpm"
+          ]
         },
         "lpm": {
           "description": "LPM registry publish settings.",
@@ -446,7 +520,8 @@
             }
           ]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "LpmPublishConfig": {
       "description": "LPM registry publish configuration in `lpm.json`.",
@@ -460,7 +535,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "NpmPublishConfig": {
       "description": "npm-specific publish configuration in `lpm.json`.",
@@ -506,7 +582,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "GithubPublishConfig": {
       "description": "GitHub Packages publish configuration in `lpm.json`.",
@@ -528,7 +605,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "GitlabPublishConfig": {
       "description": "GitLab Packages publish configuration in `lpm.json`.",
@@ -565,7 +643,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "EnvSchema": {
       "description": "The full env schema: a map of variable names to their rules.\n\nDeserialized from `lpm.json`:\n```json\n{ \"env\": { \"schema\": { \"DATABASE_URL\": { \"required\": true, \"format\": \"url\" } } } }\n```",
@@ -578,7 +657,8 @@
           },
           "default": {}
         }
-      }
+      },
+      "additionalProperties": false
     },
     "EnvVarRule": {
       "description": "Validation rules for a single environment variable.",
@@ -646,7 +726,8 @@
           ],
           "default": null
         }
-      }
+      },
+      "additionalProperties": false
     },
     "VarFormat": {
       "description": "Built-in format validators for common value types.",
@@ -677,27 +758,31 @@
         },
         {
           "description": "Structured: with optional extends and file",
-          "type": "object",
-          "properties": {
-            "extends": {
-              "description": "Parent environment to inherit from.",
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            },
-            "file": {
-              "description": "The .env file for this environment (optional — may inherit everything).",
-              "type": [
-                "string",
-                "null"
-              ],
-              "default": null
-            }
-          }
+          "$ref": "#/$defs/StructuredEnvDefinition"
         }
       ]
+    },
+    "StructuredEnvDefinition": {
+      "type": "object",
+      "properties": {
+        "extends": {
+          "description": "Parent environment to inherit from.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "file": {
+          "description": "The .env file for this environment (optional — may inherit everything).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
     },
     "CertBlock": {
       "description": "`cert` configuration block in `lpm.json`.",
@@ -716,7 +801,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     }
   }
 }
