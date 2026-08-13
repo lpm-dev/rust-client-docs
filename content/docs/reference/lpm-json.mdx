@@ -73,6 +73,10 @@ Every top-level field is optional and defaults to empty / `null`.
 
 When both runtimes are selected, script `PATH` is prepended as `node_modules/.bin`, managed Node `bin`, managed Bun `bin`, inherited `PATH`. `runtime.bun` exposes `bun` to scripts; it does not make `lpm run` invoke `bun run`.
 
+Workspace members and dev services resolve selectors from their directories. A local selector replaces the same root runtime.
+
+Each unselected runtime inherits from the root.
+
 ## `tools`
 
 ```json
@@ -182,7 +186,11 @@ Written by `lpm env push` / `lpm env pull` for conflict-detection (CAS) against 
 }
 ```
 
-Map of script name → env file. `lpm run dev` loads `.env.development`; `lpm run staging` loads `.env.staging`. CLI `--env=<MODE>` overrides per-invocation (and applies to [`lpm dev`](/docs/dev/dev) too).
+Map of script name to environment file. `lpm run dev` loads `.env.development`. `lpm run staging` loads `.env.staging`.
+
+CLI `--env=<MODE>` overrides `tasks.<name>.env` and this mapping. The flag also applies to [`lpm dev`](/docs/dev/dev).
+
+Existing environment files must resolve inside the project directory. LPM CLI rejects configured paths and symlinks that resolve outside the project.
 
 ## `envSchema`
 
@@ -283,7 +291,7 @@ Hosted cache settings for tasks that already opt in with `tasks.<name>.cache: tr
 | `env.exclude` | string[] | `[]` | Variable-name patterns that block remote uploads |
 | `env.allowSecrets` | bool | `false` | Permit secret-looking env var names after project opt-in |
 
-Secret-looking loaded env vars (`TOKEN`, `SECRET`, `PASSWORD`, `DATABASE_URL`, `*_KEY`, etc.) block remote uploads by default. If a blocked value appears in captured stdout/stderr, the upload is also skipped. Local task caching still works.
+Secret-looking loaded or inherited env vars (`TOKEN`, `SECRET`, `PASSWORD`, `DATABASE_URL`, `*_KEY`, and similar names) block remote uploads by default. Local task caching still works.
 
 ## `services.<name>`
 
