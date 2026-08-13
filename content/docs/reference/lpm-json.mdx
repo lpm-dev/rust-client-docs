@@ -41,6 +41,7 @@ When stdout is an interactive terminal, schema output may use syntax color. Redi
 {
   "$schema":      "https://cli.lpm.dev/schemas/lpm.json",
   "vault":        "<uuid-v4>",
+  "vaultSync":    { /* LPM-managed sync metadata */ },
   "runtime":      { "<runtime>": "<semver>" },
   "tools":        { "<tool>": "<version>" },
   "https":        true,
@@ -150,9 +151,11 @@ When local-domain config is present and no daemon is running, `lpm dev` starts `
 
 | Type | Notes |
 | --- | --- |
-| string | UUID v4. Stable opaque identifier that links this project to a vault row on lpm.dev. Generated and written back by the CLI on first `lpm env` use if missing. Commit it to git — it's a pointer, not a secret. |
+| string | This stable identifier links the project to a vault row on LPM.dev Registry. New values use UUID v4. Safe legacy slug IDs remain supported. The CLI creates the value during the first `lpm env` command if the field is missing. Commit this value to git. The value is a pointer, not a secret. |
 
-The value is path-traversal-validated: empty strings, `/`, `\`, `..` substrings, leading `~`, control characters, and absolute-drive prefixes are rejected (the value is joined into `~/.lpm/vaults/<id>.enc` on machines using the file fallback). Removing the field regenerates a fresh UUID on next use, which decouples the working directory from the previous vault without deleting server-side data.
+The CLI rejects empty values, path separators, `..`, leading `~`, control characters, colons, and absolute drive prefixes. This validation prevents path traversal in the file fallback at `~/.lpm/vaults/<id>.enc`.
+
+If you remove the field, the next `lpm env` command creates a new UUID. The previous server data remains available under the old identifier.
 
 [`LPM_VAULT_ID`](/docs/reference/env-vars#auth-and-routing) is read only by `lpm env pull --oidc`. A non-empty, trimmed value takes precedence over this local `vault` field and can bootstrap a checkout without one. If the variable is unset, empty, or whitespace-only, LPM CLI falls back to this field; the pull fails if neither source exists. Other `lpm env` operations ignore it. See [Secrets vault — Per-project identity](/docs/infra/secrets-vault#per-project-identity).
 
@@ -162,7 +165,9 @@ The value is path-traversal-validated: empty strings, `/`, `\`, `..` substrings,
 {
   "vaultSync": {
     "personalVersion": 7,
-    "orgVersions": { "acme": 12 }
+    "personalSyncedAt": "2026-08-13T09:00:00Z",
+    "orgVersions": { "acme": 12 },
+    "orgSyncedAt": { "acme": "2026-08-13T09:01:00Z" }
   }
 }
 ```
@@ -170,9 +175,21 @@ The value is path-traversal-validated: empty strings, `/`, `\`, `..` substrings,
 | Field | Type | Notes |
 | --- | --- | --- |
 | `personalVersion` | int | Last known personal cloud-vault version this checkout has seen. |
+| `personalSyncedAt` | string | RFC 3339 timestamp for the last successful personal sync observed by this checkout. |
 | `orgVersions.<slug>` | int | Last known org-shared cloud-vault version per org slug. |
+| `orgSyncedAt.<slug>` | string | RFC 3339 timestamp for the last successful sync observed for each organization. |
 
-Written by `lpm env push` / `lpm env pull` for conflict-detection (CAS) against the server. Don't edit by hand; mismatches surface as `409 VaultConflictError` and the CLI tells you to pull, reconcile, and re-push.
+The `lpm env push` and `lpm env pull` commands use this metadata for server conflict detection. Do not edit these fields.
+
+If a version does not match, the server returns `409 VaultConflictError`. Then pull the remote values, resolve the conflict, and push again.
+
+Commands use a project-local lock when they update `lpm.json`. Each command preserves unrelated fields and atomically replaces the file.
+
+The CLI rejects a symbolic-link or junction `lpm.json` during an update. This rule prevents a cloned project from redirecting the write.
+
+The parser accepts unknown fields for forward compatibility. The `lpm doctor` command reports unknown nested fields with their complete paths.
+
+For example, `lpm doctor` reports the ignored typo `proxy.httpRediect`. An older CLI can still open configuration from a newer project.
 
 ## `env`
 
