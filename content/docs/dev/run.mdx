@@ -7,7 +7,9 @@ description: "Run package.json scripts — parallel, cached, watchable, workspac
 lpm run <scripts...> [-- script-args...]
 ```
 
-Runs one or more `scripts` entries from `package.json`. With multiple scripts, runs them sequentially by default; pass `-p` to run in parallel.
+Runs one or more `scripts` entries from `package.json`. With multiple independent
+scripts, sequential mode preserves the command-line order. Dependencies always
+run before their dependents. Pass `-p` to run independent tasks in parallel.
 
 `lpm.json` is optional. Without it, the command uses `package.json` scripts and standard environment files.
 
@@ -125,7 +127,14 @@ Full grammar also includes path exact (`{./apps/web}`), git ref (`[origin/main]`
 
 `--fail-if-no-match` makes a typo'd filter exit non-zero — recommended in CI.
 
-`--no-bail` keeps running the remaining selected workspace members after a member fails. The command still exits non-zero after the batch if any selected member failed.
+`--no-bail` continues independent selected members after a member fails. A
+member does not run if its explicit `^task` dependency fails. The command exits
+non-zero if a selected member fails.
+
+If a selected task uses `^task`, LPM CLI also runs that task in the selected
+member's upstream workspace dependencies. This expansion covers the complete
+dependency chain. It can include packages outside the original filter. The
+command checks the expanded graph before it starts a task process.
 
 `--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level. The command reads persistent defaults from `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then falls back to the host's available parallelism.
 
@@ -168,7 +177,13 @@ lpm run build --filter web --json
 
 `lpm run --json` emits an LPM CLI metadata envelope, even for a single script in a single package. Single-package task output is captured into the task result instead of being passed through as raw stdout. The envelope includes `success`, task counts (`total`, `passed`, `failed`), and `tasks[]` entries with each task name, status, exit code, duration, cache-hit state, and skip reason.
 
-Workspace selections emit the workspace envelope with package counts and per-member task status. If a workspace filter matches nothing and `--fail-if-no-match` is not set, JSON mode still emits a successful zero-package envelope instead of falling back to a human warning.
+Workspace selections emit `success`, `packages`, `succeeded`, and `duration_ms`.
+`packages` counts each scheduled member after `^task` expansion. This count
+excludes selected members that do not define the task. `succeeded` counts the
+members that completed successfully.
+
+If a workspace filter matches nothing and `--fail-if-no-match` is not set, JSON
+mode emits a successful zero-package envelope.
 
 ## Environment files
 
