@@ -283,7 +283,33 @@ Named environment definitions with inheritance. Useful when you have many `.env.
 | `inputs` | string[] | sensible defaults\* | Globs that invalidate the cache. |
 | `env` | string | — | Env mode for this task (`"production"` loads `.env.production`). |
 
-\*Default `inputs`: `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`.
+\*Default `inputs`: `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`,
+`scripts/**`, `bin/**`, root `*.{js,cjs,mjs,ts,tsx,jsx}` files, `package.json`,
+`lpm.json`, `tsconfig.json`, `tsconfig.*.json`, and `*.config.{js,ts,mjs}`.
+
+A cached task also includes the cache identities of its transitive
+same-project dependencies. LPM hashes direct dependency outputs as task
+inputs. It validates each declared dependency output before a cache hit or
+cache publication.
+
+For workspace task runs, each task includes the identity of every reachable
+`^task` dependency. An upstream input or execution-contract change invalidates
+the cache of each reachable downstream task.
+
+Each cache key for a workspace member also includes the root `package.json`,
+`lpm.json`, and `pnpm-workspace.yaml` files. Root lockfiles use the same rules
+as member lockfiles.
+
+The cache key includes the complete canonical `package.json`, including helper
+scripts and module settings. It also includes `lpm.lock` and supported npm,
+Yarn, pnpm, Bun, and Deno lockfiles.
+
+Each `inputs` and `outputs` item must be a valid, project-relative glob. LPM
+rejects absolute paths, parent traversal, and invalid glob syntax before it
+starts a task.
+
+On a cache hit, LPM restores the exact set of declared output files. It removes
+declared files that are absent from the cached result.
 
 ## `remoteCache`
 

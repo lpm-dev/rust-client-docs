@@ -88,7 +88,12 @@ Caching is opt-in per task:
 }
 ```
 
-`cache: true` requires `outputs` to know what to cache. Without `outputs`, caching is silently disabled (the runner has nothing to record).
+`cache: true` requires `outputs` to know what to cache. Without `outputs`, the
+runner disables caching because it has nothing to record.
+
+All `inputs` and `outputs` values must be valid, project-relative globs. LPM
+rejects invalid syntax, absolute paths, and parent traversal before it starts
+the task.
 
 ### Cache key
 
@@ -96,21 +101,56 @@ The cache key is a SHA-256 hash of:
 
 - The `command` string
 - Each forwarded script argument, with length boundaries
-- The per-file SHA-256 of every file matching `inputs` globs (default `inputs` covers `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`, `package.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.{js,ts,mjs}`)
+- The per-file SHA-256 of every file matching `inputs` globs
+- The cache identities of transitive same-project task dependencies
+- The declared outputs of direct same-project task dependencies
+- The complete `lpm.json` file, including dependency edges and output globs
 - The complete child environment after inherited credential and runtime-hook removal
 - Managed Node and Bun versions, plus fingerprints of the selected executables
-- `package.json > dependencies` serialized as JSON (so a declared-dep version bump invalidates the cache)
+- The complete `package.json` contract, including scripts and resolution fields
+- Supported lockfiles in the project root
+- The workspace-root configuration and lockfiles during workspace task runs
+- The task identity of each reachable `^task` dependency
 
 Any change to any of those flips the key. Same key = cache hit.
 
-Worth being precise about the dep input: it's the **manifest** dep set, not `lpm.lock`. A transitive-only lockfile change (e.g., a sub-dep float that the lockfile picked up) won't invalidate the task cache unless one of the input files actually changed. If you need to gate the cache on lockfile state, list `lpm.lock` in the task's `inputs` globs explicitly.
+A local dependency identity includes its cache key and each reachable
+dependency identity. LPM also validates each declared dependency output before
+a cache hit or cache publication. If an output changes, LPM does not use or
+publish the downstream cache entry.
+
+LPM canonicalizes `package.json` before it hashes the manifest. Changes to
+scripts, module settings, dependencies, peer metadata, overrides, resolutions,
+catalogs, engine and platform selectors, and LPM controls invalidate the cache.
+
+LPM always hashes `lpm.lock`. If the text lockfile is absent, LPM hashes
+`lpm.lockb` instead. When these ecosystem lockfiles exist, LPM also hashes
+them:
+
+- `package-lock.json`
+- `npm-shrinkwrap.json`
+- `yarn.lock`
+- `pnpm-lock.yaml`
+- `bun.lock`
+- `bun.lockb`
+- `deno.lock`
+
+For workspace task runs, LPM also hashes the root `package.json`, `lpm.json`,
+and `pnpm-workspace.yaml` files. The root lockfiles use the same rules as the
+member lockfiles.
+
+Each `^task` identity includes its command, arguments, environment, runtime,
+inputs, configuration, manifest, lockfiles, and upstream task identities. An
+upstream identity change invalidates the cache of each reachable downstream
+task. If LPM cannot calculate an upstream identity safely, it disables caching
+for the dependent workspace member.
 
 ### Cache layout
 
 ```text
 ~/.lpm/cache/tasks/
   {sha256-hex-key}/
-    meta.json       ← timing, command, key info, output globs
+    meta.json       ← timing, command, key, output count
     stdout.log      ← captured stdout for replay
     stderr.log      ← captured stderr for replay
     outputs.tar.gz  ← archived output files
@@ -118,11 +158,30 @@ Worth being precise about the dep input: it's the **manifest** dep set, not `lpm
 
 On hit:
 
-1. Restore `outputs.tar.gz` into the project tree.
-2. Replay `stdout.log` and `stderr.log` to the current invocation's stdout / stderr.
-3. Exit success.
+1. Validate the metadata, logs, archive paths, file types, sizes, and output count.
+2. Stage all outputs without changing the project.
+3. Remove declared output files that are absent from the cached result.
+4. Replace project outputs in one rollback-protected transaction.
+5. Preserve each archived file's mode and modification time.
+6. Replay `stdout.log` and `stderr.log` to the current process.
+7. Exit successfully.
 
-The replay matters — a cached `lpm run build` shows the same logs the real run would have, so you don't end up wondering whether the tool actually ran. The "(cached)" annotation in the runner's progress line tells you why it was instant.
+LPM treats an incomplete or corrupt local entry as a cache miss. It runs the
+task and replaces the bad entry. Concurrent writers for one key publish one
+complete entry.
+
+LPM writes a recovery journal before it replaces an output. If a process stops
+during restore, the next restore rolls back the incomplete operation first. If
+an immediate rollback fails, LPM keeps the recovery files and reports their
+path.
+
+The restore rejects output paths that use an existing symlink or junction.
+The cache cannot write through that link to a location outside the project.
+When LPM creates an archive, it also rejects symlink and junction outputs.
+This rule prevents a restored output from changing its file type.
+
+The replay shows the same logs as a real `lpm run build`. The runner's
+`(cached)` status tells you why the result was immediate.
 
 ### Bypass
 
@@ -156,7 +215,12 @@ Remote cache is opt-in on top of the local task cache. A run checks:
 2. Hosted cache at `remoteCache.url` (default: configured registry + `/v8`)
 3. The actual script
 
-Successful scripts always write the local cache first. If remote cache is enabled and not `readOnly`, LPM CLI uploads a portable artifact containing task metadata, stdout, stderr, and `outputs/`. Downloads restore outputs with the same archive hardening as the local cache and replay the captured logs.
+Successful scripts always write the local cache first. If remote cache is
+enabled and not `readOnly`, LPM CLI uploads a portable artifact. The artifact
+contains task metadata, stdout, stderr, and `outputs/`. LPM validates the
+complete download before it changes project files. A rejected download leaves
+the project unchanged. The restore uses the current project's `outputs` globs.
+It does not trust output declarations from the remote artifact.
 
 Use `LPM_REMOTE_CACHE_TOKEN` in CI, or rely on the token from `lpm login` when the cache endpoint is on the configured LPM.dev Registry origin. Third-party cache hosts never receive the registry login token; they require both `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`. When `signature: true`, set `LPM_REMOTE_CACHE_SIGNATURE_KEY` on every machine that reads or writes the cache. A missing or invalid signature is a cache miss.
 
