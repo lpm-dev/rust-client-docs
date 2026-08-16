@@ -62,7 +62,15 @@ Two flavors of dependency:
 | `"build"`  | Same-package dependency. Wait for _this_ package's `build` task to finish first.                                  |
 | `"^build"` | Upstream-workspace dependency. Wait for `build` to finish in **every workspace member that this one depends on**. |
 
-The `^` prefix is read by [`task_graph::has_upstream_deps`](https://github.com/lpm-dev/rust-client/blob/main/crates/lpm-runner/src/lpm_json.rs). Combined with `workspace:*`, this gives you: "build me only after every internal dep has built."
+With `workspace:*`, `^build` means: "build this package after each internal dependency finishes its `build` task."
+
+LPM CLI expands `^task` recursively. If you filter one application, its
+required upstream tasks still run through the complete workspace dependency
+chain. Each upstream workspace member must define the requested task.
+
+Before LPM CLI starts a task process, it checks the complete expanded graph.
+The command stops for a missing task, a cycle, `^`, or `^^task`. No task process
+starts after one of these graph errors.
 
 ## Caching
 
@@ -174,7 +182,9 @@ lpm run -p lint test typecheck
 
 `-p` / `--parallel` runs scripts concurrently — the runner enforces `dependsOn` edges but otherwise lets independent tasks proceed in parallel. Output is buffered per-task by default; `--stream` prefixes live output instead.
 
-`--no-bail` keeps the runner going past failed tasks and reports the failures at the end. Without it, the first failure stops the run.
+`--no-bail` continues independent tasks after a failure. It does not run a
+workspace member if that member's explicit `^task` dependency fails. Without
+this flag, the first failure stops the run.
 
 Workspace fan-out is separate from per-package task parallelism. `lpm run`, `lpm test`, and `lpm bench` accept `--workspace-concurrency <N>` in workspace mode to cap how many selected members run at once within a topological level. The persistent chain is CLI flag, then `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then available host parallelism.
 
