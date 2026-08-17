@@ -135,6 +135,29 @@ The `--locked` flag makes Cargo use the dependency versions in the release lockf
 
 `lpm self-update --json` applies the same verification. It returns the verified `--rev` command without running Cargo.
 
+## Update source trust
+
+LPM CLI uses a different trust model for each installation method.
+
+| Installation method | Trust source |
+| --- | --- |
+| Standalone | The signed release manifest, release identity, source commit, and asset checksum |
+| Cargo | The signed release source commit and the locked dependency versions |
+| npm, pnpm, Bun, Yarn, and Volta | The configured registry or mirror and package manager verification |
+| Homebrew | The configured Homebrew repository and formula |
+
+LPM CLI resolves each external manager from a filtered `PATH`. The manager must use an absolute, non-project path with trusted ownership.
+
+LPM CLI verifies the manager file before it runs the update. It also verifies the installed LPM CLI version after the update.
+
+These checks do not add independent artifact attestation to registry managers or Homebrew. Their configured repositories remain part of the trust boundary.
+
+Cargo ownership detection reads the local Cargo install metadata. Stale metadata does not prove the build provenance of the current executable.
+
+LPM CLI rejects intermediate manager and configuration symlinks. It accepts a leaf manager symlink only for a target that passes the same checks.
+
+For manager ownership detection, `XDG_CONFIG_HOME` must resolve inside the account home. LPM CLI ignores an external configuration root.
+
 ## Version lookup and cache
 
 LPM CLI reads the npm `latest` or `nightly` tag first. If that lookup fails, it uses the corresponding GitHub Releases data.
@@ -195,6 +218,26 @@ If the new binary cannot start, look for `<binary>.previous` beside it. Restore 
 The standalone updater does not provide an automatic rollback command. See [Installation](/docs/installation) for exact-version and source installations.
 
 Do not replace the binary with a raw `curl` or `Invoke-WebRequest` download. Those commands do not apply the verification steps on this page.
+
+## Filesystem and process limits
+
+The update lock prevents concurrent LPM CLI updates on local filesystems. Advisory lock behavior on NFS and SMB depends on the filesystem.
+
+On Unix, the update lock is account-specific. The package manager must coordinate updates across accounts that share one installation.
+
+> **CAUTION:** If the LPM CLI installation is on a shared filesystem, run updates from one host at a time.
+
+A process with the same account permissions can replace parent directories, manager paths, or staged files after the final check.
+
+The updater does not protect against a compromised user account or an administrator. Operating-system access controls provide this protection.
+
+On Windows, trusted write access includes the current account, Administrators, SYSTEM, and TrustedInstaller. LPM CLI rejects reparse points in checked paths.
+
+The Windows installation lock uses a global operating-system name. Another local account can block updates by reserving that name.
+
+Homebrew can use user-owned, group-writable directories. LPM CLI accepts this layout only for directories owned by the current account.
+
+LPM CLI terminates the manager process group after errors and timeouts. On Unix, a child that creates a new session can survive cleanup.
 
 ## JSON output
 
