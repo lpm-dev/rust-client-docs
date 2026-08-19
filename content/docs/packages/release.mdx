@@ -100,6 +100,12 @@ lpm release apply --filter core --bump major
 lpm release apply --affected --bump patch --dry-run --json
 ```
 
+LPM CLI records the original manifests before it replaces any file. It also coordinates these writes with installs, version changes, and publishing.
+
+If the process stops during the write, run a mutating `release apply`, `release publish`, or `version` command. The command restores an incomplete update before it continues. If the original operation completed, an identical retry reports the completed operation without another version bump.
+
+Read-only commands do not change recovery state. `release plan`, `release apply --dry-run`, and `release publish --dry-run` stop when an incomplete update exists. A concurrent install also stops instead of using a partially updated workspace.
+
 ### `lpm release publish`
 
 Publishes selected members in topological order, dependencies before dependents. Before the first upload it validates current workspace-internal ranges so a stale manifest fails before a partial publish.
@@ -128,6 +134,20 @@ For LPM.dev Registry and npm targets, LPM CLI checks metadata before upload. If 
 
 Custom, GitHub, and GitLab targets are still validated for local target-name/config correctness, but remote version existence is left to the target publish response.
 
+Workspace publishing is not transactional across packages. If a later package fails, LPM CLI does not remove earlier successful uploads.
+
+Human output names the failed package and shows its preparation or upload error. JSON output reports each selected package with one of these states:
+
+| Status | Meaning |
+| --- | --- |
+| `published` | Every selected target for the package succeeded. |
+| `failed` | Preparation or at least one selected target failed. |
+| `not_attempted` | An earlier package failed, so this package did not start. |
+| `skipped` | The checked targets already contain this version. |
+| `planned` | A dry run prepared this package without an upload. |
+
+If a publish fails, keep the successful uploads. Then retry only the failed and `not_attempted` packages with a narrower selection.
+
 ## JSON
 
 `--json` is available on every subcommand. `plan` and `apply` emit the same envelope shape:
@@ -152,6 +172,8 @@ Custom, GitHub, and GitLab targets are still validated for local target-name/con
   "results": []
 }
 ```
+
+On failure, `success` is `false`. The `results` array keeps completed, failed, and unattempted packages, and `warning` explains the retry boundary.
 
 ## See also
 
