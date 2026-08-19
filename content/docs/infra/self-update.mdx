@@ -54,7 +54,7 @@ LPM CLI identifies the installation method from the current executable. Normal o
 | --- | --- | --- |
 | npm | Runs a version-pinned npm install | Returns the command and does not run it |
 | Homebrew | Runs `brew upgrade lpm` | Returns the command and does not run it |
-| Cargo | Runs a version-pinned Cargo install | Returns the command and does not run it |
+| Cargo | Verifies the release, then installs its source commit | Verifies the release and returns the commit-pinned command |
 | Standalone | Verifies and replaces the binary | Verifies and replaces the binary |
 
 > **CAUTION:** `--json` is not a universal preview. It applies the update for a standalone installation.
@@ -115,7 +115,7 @@ There is no universal dry-run flag for `lpm self-update`.
 | --- | --- |
 | Homebrew | `brew upgrade lpm` |
 | npm | `npm install -g @lpm-registry/cli@<version>` |
-| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --tag v<version> lpm-cli --force --locked` |
+| Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --rev <verified-source-commit> lpm-cli --force --locked` |
 | Standalone | `lpm self-update` |
 
 For npm, you can also follow a channel tag:
@@ -124,6 +124,16 @@ For npm, you can also follow a channel tag:
 npm install -g @lpm-registry/cli@latest   # newest stable
 npm install -g @lpm-registry/cli@nightly  # newest nightly
 ```
+
+## Cargo source verification
+
+For a Cargo installation, LPM CLI verifies the signed release manifest before it starts Cargo.
+
+The signature identifies the exact release workflow, Git reference, and source commit. LPM CLI then uses that commit with `cargo install --rev`.
+
+The `--locked` flag makes Cargo use the dependency versions in the release lockfile. A moved Git tag cannot change the selected source commit.
+
+`lpm self-update --json` applies the same verification. It returns the verified `--rev` command without running Cargo.
 
 ## Version lookup and cache
 
@@ -156,9 +166,10 @@ LPM_NO_UPDATE_CHECK=1 lpm install
 For a standalone installation, LPM CLI downloads the release files and completes these steps before it replaces the binary:
 
 1. It verifies that the signed manifest comes from the expected LPM CLI release workflow.
-2. It verifies that the signature time matches the GitHub release time.
-3. It verifies the checksum of the manifest.
-4. It verifies the downloaded binary against the manifest.
+2. It verifies that the signed Git reference and source commit match the requested version.
+3. It verifies that the signature time matches the GitHub release time.
+4. It verifies the checksum of the manifest.
+5. It verifies the downloaded binary against the manifest.
 
 If any verification step fails, LPM CLI refuses the update and retains the current binary.
 
@@ -251,7 +262,8 @@ For a standalone installation, JSON output applies the update and includes its v
     "leaf_cert_sha256": "<certificate SHA-256>",
     "manifest_sha256": "<manifest SHA-256>",
     "asset_sha256": "<binary SHA-256>",
-    "asset_name": "lpm-darwin-arm64"
+    "asset_name": "lpm-darwin-arm64",
+    "source_commit": "<verified source commit>"
   }
 }
 ```
@@ -292,6 +304,7 @@ For a standalone installation, JSON output applies the update and includes its v
 | `manifest_sha256` | String | SHA-256 digest of the signed manifest |
 | `asset_sha256` | String | SHA-256 digest of the installed binary |
 | `asset_name` | String | Release asset selected for the current platform |
+| `source_commit` | String | Source commit from the verified release statement |
 
 ## GitHub fallback limits
 
