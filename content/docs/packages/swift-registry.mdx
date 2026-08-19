@@ -19,18 +19,24 @@ lpm login
 lpm install @lpm.dev/owner.swift-pkg
 ```
 
-On the first install in an unconfigured Swift project, LPM CLI sets the `lpmdev` Registry scope, passes the current Registry session to SPM, installs the signing certificate, configures signing trust, updates `Package.swift`, and resolves the dependency.
+On the first install, LPM CLI sets the `lpmdev` Registry scope and installs the signing certificate. It also configures signing trust, updates `Package.swift`, and resolves the dependency.
+
+During each HTTPS setup pass, LPM CLI signs in to SPM with the current Registry session. It does this even when the Registry scope already matches.
+
+LPM CLI accepts the global `--token <TOKEN>` flag for explicit setup and automatic setup during install. It can also refresh an expired browser session before it calls SPM.
 
 ## What it does
 
-Four setup steps. Scope, certificate, and signing-trust failures abort the run. Authentication setup warns instead when no token is available or SPM rejects the login:
+Four setup steps. Scope, SPM login, certificate, and signing-trust failures abort an explicit run. A failed session refresh also aborts the command:
 
 1. **Set the registry for the `lpmdev` scope.** Runs `swift package-registry set --scope lpmdev <registry-url>/api/swift-registry`. Adds `--allow-insecure-http` only for `http://` registry URLs (local dev); the hosted LPM.dev Registry endpoint is HTTPS-only.
-2. **Log in.** Resolves the LPM.dev Registry bearer token through the standard LPM CLI session manager (env var → keychain → OIDC) and calls `swift package-registry login --token <token> --no-confirm`. HTTPS only — SPM refuses to send auth over HTTP. If no token is found, this step warns and is skipped; setup can finish, but every Swift package request returns `401` until you run `lpm login`.
+2. **Log in.** Resolves the LPM.dev Registry bearer token through the standard LPM CLI session. It writes the token to a temporary file and calls `swift package-registry login --token-file <path> --no-confirm`. On Unix, the file mode is `0600`. LPM CLI removes the file after SPM exits, so the bearer does not appear in process arguments. This step runs only for HTTPS because SPM refuses to send authentication over HTTP. If no token is found, this step warns and is skipped. Setup can finish, but every Swift package request returns `401` until you run `lpm login`.
 3. **Install and verify the signing certificate.** Downloads the CMS signing cert from `<registry-url>/api/swift-registry/certificate` with a bounded response reader, parses exactly one complete DER X.509 object, and compares its bytes with `~/.swiftpm/security/trusted-root-certs/lpm.der`. Missing, malformed, trailing-data, stale, or mismatched local bytes are atomically repaired; malformed or oversized Registry responses abort.
 4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with a default `signing.onUnsigned = "warn"` + `signing.onUntrustedCertificate = "warn"` policy and a scope-specific override pinning `lpmdev` to `signing.onUntrustedCertificate = "silentAllow"`. See [Trust model](/docs/packages/swift-package-registry#trust-model) for the rationale.
 
-The operation is idempotent. A matching scope URL alone is not enough to short-circuit automatic setup: LPM CLI also verifies the Registry certificate bytes and the complete default plus `lpmdev` trust policy. Fully matching state is retained without rewriting; stale or partial state is repaired. Certificate and `registries.json` writes are atomic.
+The configuration operation is idempotent. LPM CLI retains matching scope, certificate, and trust configuration without a rewrite. It repairs stale or partial configuration with atomic file writes.
+
+Automatic setup skips SPM login when no credential exists. If a credential exists, a refresh or login failure stops the install. A rejected refresh-backed bearer causes one session refresh and one login retry.
 
 The existing `~/.swiftpm/configuration/registries.json` file has a 16 MiB limit enforced before JSON parsing. Missing retains the setup command's normal create behavior; an oversized file fails with its path and byte limit instead of being treated as absent or overwritten. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
 
