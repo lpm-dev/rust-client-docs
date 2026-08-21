@@ -92,8 +92,14 @@ Info tags are behavioral metadata, not confirmed vulnerabilities. They identify 
 
 | Tag | Matches |
 | --- | --- |
-| `:root` | The invocation root — the `package.json` closest to where the command ran |
-| `:workspace-root` | The workspace container in a monorepo (same as `:root` outside monorepos, distinct when invoked from a workspace member) |
+| `:root` | The invocation project. Use `:root > <selector>` to match its direct dependency instances. |
+| `:workspace-root` | The owning workspace container. Use `:workspace-root > <selector>` to match its direct dependency instances. |
+
+When you run the command in a workspace member, `:workspace-root` still uses the owning container projection. It does not use a same-name instance from the member.
+
+The behavior is the same from a nested directory inside that member. Outside a workspace, `:workspace-root` and `:root` use the same project.
+
+If the workspace lockfile has no root projection, `:workspace-root` matches no direct dependencies. It does not fall back to the current member.
 
 ### Combinators
 
@@ -147,9 +153,25 @@ lpm query :eval --format mermaid   # Mermaid subgraph diagram
 | Format | Output |
 | --- | --- |
 | `list` (default) | Package names plus an indented `tags:` detail line when tags are present |
-| `mermaid` | Mermaid graph block showing the matched packages as a dependency subgraph |
+| `mermaid` | Mermaid graph block showing exact package instances and dependency edges |
 
 For broader graph rendering (full tree, DOT, JSON, HTML), use [`lpm graph`](/docs/packages/graph).
+
+## Exact instances and paths
+
+```bash
+lpm --json query :eval
+```
+
+Each JSON result includes `name` and `version`. An exact LPM CLI-managed result also includes `instanceId`.
+
+The optional `path` value identifies the directory that the query analyzed. It points to the exact installed package materialization when that path is available.
+
+For a `file:` or `link:` dependency, `path` identifies the original live source directory. Foreign lockfile formats can omit `instanceId`.
+
+Results with the same `name` and `version` remain separate when their instance or path differs. Use `instanceId` as the row key when it exists.
+
+Mermaid output also keeps these instances separate. A node label includes the first 12 characters of its instance ID when exact identity is available.
 
 ## Flags
 
@@ -161,7 +183,9 @@ For broader graph rendering (full tree, DOT, JSON, HTML), use [`lpm graph`](/doc
 | `--assert-none` | Exit non-zero if any package matches (CI gate) |
 | `--format <list\|mermaid>` | Output format (default `list`) |
 
-Plus the [global flags](/docs/commands#global-flags). `--json` emits an array of matched packages with `name`, `version`, optional `path`, and (under `--query-verbose`) `analysis`, `hasScripts`, `isBuilt`, `isVulnerable`.
+Plus the [global flags](/docs/commands#global-flags). `--json` emits `name`, `version`, optional `instanceId`, and optional `path` for each match.
+
+With `--query-verbose`, each match also includes `analysis`, `hasScripts`, `isBuilt`, and `isVulnerable`.
 
 ## See also
 
