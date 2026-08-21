@@ -21,6 +21,28 @@ The vulnerability scan fails closed. If OSV.dev is unavailable, returns an incom
 
 The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
 
+## Foreign lockfiles
+
+`lpm audit` reads one fixed snapshot of each selected foreign lockfile. It rejects malformed files and unsupported versions instead of using a degraded inventory.
+
+The audit supports npm lockfile versions 1, 2, and 3. It supports pnpm lockfile major versions 5, 6, and 9.
+
+Each foreign lockfile has these limits:
+
+- The file size limit is 64 MiB.
+- The package-entry limit is 200,000.
+- The nesting-depth limit for npm version 1 is 256.
+
+If a lockfile exceeds a limit, the audit exits non-zero. It does not use an ancestor lockfile or the `node_modules/` fallback.
+
+For `bun.lockb`, LPM CLI copies the selected file before conversion. The Bun converter has these limits:
+
+- The time limit is 30 seconds.
+- The converted output limit is 64 MiB.
+- The diagnostic-output limit is 64 KiB.
+
+If Bun exceeds a limit, the audit stops the converter and exits non-zero.
+
 ## Examples
 
 ```bash
@@ -66,7 +88,19 @@ lpm audit fix --dry-run
 
 For npm packages, the fixer evaluates every relevant OSV affected range against available registry versions and chooses the lowest newer version proven unaffected. This preserves maintained release lines when a patch exists instead of jumping to the highest fixed version from another major line. On apply, the manifest entry is pinned to that exact planned version (npm aliases retain their `npm:` identity), and verification rejects any different installed version; dry-run and apply therefore report the same target. Complex or non-registry source protocols such as `catalog:`, `workspace:`, `file:`, git, and JSR are reported as skipped rather than rewritten into semver dependencies. Transitive-only findings are not changed.
 
-The fix pass currently operates only in LPM CLI-managed projects; it does not rewrite npm / pnpm / yarn / bun lockfiles. Fix and dry-run planning hold the project's install transaction lock against other LPM operations. Immediately before the first write, a real fix also compares the exact `package.json` bytes read for planning and aborts without overwriting if an editor or another process changed them. It then snapshots `package.json`, `lpm.lock`, and `lpm.lockb`, invalidates the install cache, reinstalls silently, and rechecks the exact version installed against OSV.dev or exact LPM.dev Registry metadata. `--json` therefore emits one audit-fix document without nested install output. A failed install or verification restores the snapshotted files; because `node_modules/` is not copied as part of the transaction, run `lpm install` after a failed fix if the installed tree needs to converge with the restored lockfile.
+The fix pass currently operates only in LPM CLI-managed projects. It does not rewrite npm, pnpm, Yarn, or Bun lockfiles.
+
+Fix and dry-run planning hold the project's install transaction lock against other LPM CLI operations. Before the first write, a real fix compares the exact `package.json` and `lpm.lock` bytes used for planning.
+
+If either file changed, the fix exits without an overwrite. It also exits if a different `lpm.lock` became active.
+
+The fix then snapshots `package.json`, `lpm.lock`, and `lpm.lockb`. It invalidates the install cache, runs a silent install, and checks the exact installed version.
+
+The version check uses OSV.dev or exact LPM.dev Registry metadata. Thus, `--json` emits one audit-fix document without nested install output.
+
+A failed install or version check restores the snapshotted files. The transaction does not copy `node_modules/`.
+
+If the installed tree differs after a failed fix, run `lpm install` to make it match the restored lockfile.
 
 `--dry-run` reports the same plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
 
@@ -76,7 +110,15 @@ The fix pass currently operates only in LPM CLI-managed projects; it does not re
 lpm audit signatures
 ```
 
-Verifies npm registry package signatures for the installed tree. LPM CLI reads `lpm.lock` when present; for lockfiles from other package managers it uses the discovered installed package list and hydrates npm metadata as needed.
+The command verifies npm registry package signatures for the installed tree. LPM CLI reads stored signatures and publication times from `lpm.lock` when available.
+
+If stored evidence is incomplete, LPM CLI gets exact metadata from the authorized registry. A signature with an expiring key requires a publication time.
+
+For foreign lockfiles, the recorded tarball URL must match an authorized registry path. This path can match npm or LPM.dev Registry.
+
+The path can also match a registry that is configured in `.npmrc`.
+
+LPM CLI keeps the configured registry path and its authentication. It never trusts an unconfigured origin from a foreign lockfile.
 
 Human output is intentionally compact:
 
