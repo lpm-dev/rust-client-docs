@@ -60,12 +60,14 @@ Lists every globally-installed package with its active version and exposed bin c
 
 | Flag | Effect |
 | --- | --- |
-| `--outdated` | Resolve each install's saved spec against its registry and active cooldown policy; flag packages with newer installable matching versions. `@lpm.dev/*` globals use LPM.dev Registry batch metadata, while npm globals use the same npm metadata path as global install/update. |
+| `--outdated` | Resolve each install's saved spec against its registry and active cooldown policy. Flag packages only when the installable version is newer. `@lpm.dev/*` globals use LPM.dev Registry batch metadata. Public npm globals query npm directly. |
 | `--verbose` | Add install date, on-disk size, and the absolute install root for each row |
 
 With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest installable version that still satisfies the global install's saved spec; `Latest` is the registry's newest installable version regardless of the saved range, so mature major-version jumps are visible even when the saved range would not select them. Local links are skipped because their source of truth is your checkout, not the registry.
 
 If registry metadata is missing or the saved spec no longer resolves, `lpm global list --outdated` exits non-zero instead of reporting a clean result. In `--json` mode, inspect `success`, `unresolved`, and `count_unresolved` to distinguish "everything checked" from "some globals could not be compared."
+
+If the installed version is newer than the registry result, the command reports it as current. A registry rollback does not create an outdated row.
 
 ### `bin`
 
@@ -138,6 +140,10 @@ Three behaviors based on the argument:
 | `--dry-run` | Print the upgrade plan without changing any state |
 
 If registry metadata is missing, the selected version is no longer present, or the saved spec cannot resolve, `lpm global update` exits non-zero instead of reporting a clean skip. In `--json` mode, `success` is `false` and the affected row appears as `failed` in `results` or `plan_error` in `plans` for `--dry-run`. Bulk updates remain best-effort: successful package rows may still be applied before the final non-zero exit.
+
+Global update revalidates registry metadata before it changes an installation. The install uses the same package metadata that produced the plan.
+
+An update only selects a version that is newer than the installed version. If a registry rollback removes a newer release, the command keeps the installed version.
 
 Global update uses the global minimum release age chain: `~/.lpm/config.toml`, then the 24h default. Candidate versions for the globally installed package are skipped during planning while they are still inside the cooldown window, including `--dry-run`, so the plan only shows versions the nested install would accept.
 

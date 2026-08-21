@@ -18,7 +18,11 @@ dependencies       zod                                4.3.5        4.3.6        
 devDependencies    typescript                         5.4.0        5.6.2        5.7.0
 ```
 
-A row appears when the installed direct dependency version (from `lpm.lock`) differs from the newest version currently installable under the active minimum release age policy. `wanted` is the newest installable version that still satisfies the declared range; `latest` is the newest installable version overall. Fresh direct dependency versions inside the cooldown window are ignored until they mature, matching [`lpm upgrade`](/docs/packages/upgrade) and [`lpm install`](/docs/packages/install).
+A row appears when the newest installable version is greater than the installed direct dependency version from `lpm.lock`. `wanted` is the newest installable version that still satisfies the declared range. `latest` is the newest installable version overall.
+
+If your installed version is newer than the registry version, the command does not report an available update. This behavior prevents a registry rollback from appearing as an upgrade.
+
+Fresh direct dependency versions inside the cooldown window are ignored until they mature. This behavior matches [`lpm upgrade`](/docs/packages/upgrade) and [`lpm install`](/docs/packages/install).
 
 ## Ecosystem scope
 
@@ -66,11 +70,15 @@ Emits a schema-versioned envelope with `schema_version`, `success`, `count`, `ou
 | `wanted_range`   | The raw declared spec from `package.json` (for example `"^4.3.0"`)                                            |
 | `latest`         | The newest installable version on the registry, regardless of range                                           |
 | `section`        | Which dependency map produced the row: `dependencies` or `devDependencies`                                    |
-| `outdated`       | `true` when `current` differs from `latest`                                                                   |
+| `outdated`       | `true` when `latest` is greater than `current`                                                               |
 
 When `lpm outdated` skips non-`@lpm.dev/*` packages because they do not have recorded public npm or LPM.dev Registry-proxy source attribution in `lpm.lock`, the envelope also includes `skipped_private` and `skipped_private_reason`.
 
-Registry lookup failures are not silently skipped. In human mode, LPM CLI lists the packages it could not check and exits non-zero. In `--json` mode, the envelope keeps any successfully checked rows, sets `success: false`, adds `unresolved_count` and `unresolved[]` (`name`, `section`, `reason`), then exits with code 1.
+LPM CLI reports registry lookup failures and malformed metadata. In human mode, LPM CLI lists the unresolved packages and exits non-zero.
+
+In `--json` mode, the envelope keeps successfully checked rows and sets `success: false`. It also adds `unresolved_count` and `unresolved[]`. Then `lpm outdated` exits with code 1.
+
+If `lpm.lock` exists but is malformed or unsupported, the command stops and reports the lockfile error. It does not treat the file as missing.
 
 ## Flags
 
