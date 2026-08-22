@@ -38,13 +38,31 @@ lpm stage approve <stage-id> --otp 123456    # promote the staged version
 In order:
 
 1. **Skills validation** (LPM.dev Registry target only) — when the project ships authored files under `.lpm/skills/`, validate their format and run the skill security-pattern check.
-2. **Pack** — assemble an in-memory tarball from the package manifest. Without `package.json > files`, the implicit set excludes project-local `.lpm` state except direct publisher-authored `.lpm/skills/*.md` candidates. LPM.dev Registry publishes validate those candidates first; npm, GitHub Packages, GitLab Packages, and custom-registry-only publishes include them by path shape without skill-schema validation. Installed dependency skill sets remain excluded. An explicit `files` list controls deliberate inclusion, but cannot re-include installed dependency skills. Declared `bundledDependencies` (and the legacy `bundleDependencies` alias) are copied from verified hoisted or isolated install layouts, including required transitives. Bundled bytes are part of the same size, secret-scan, digest, and provenance boundaries. LPM CLI rejects compressed tarballs over **500 MiB** during local preparation. LPM.dev Registry currently enforces a smaller **100 MiB** upload cap; other targets can impose their own limits.
+2. **Pack** — assemble an in-memory tarball from the package manifest. Without `package.json > files`, the implicit set excludes project-local `.lpm` state except direct publisher-authored `.lpm/skills/*.md` candidates. LPM.dev Registry publishes validate those candidates first; npm, GitHub Packages, GitLab Packages, and custom-registry-only publishes include them by path shape without skill-schema validation. Installed dependency skill sets remain excluded. An explicit `files` list controls deliberate inclusion, but cannot re-include installed dependency skills. Declared `bundledDependencies` (and the legacy `bundleDependencies` alias) are copied from verified hoisted or isolated install layouts, including required transitives. Bundled bytes are part of the same size, secret-scan, digest, and provenance boundaries. The [archive limits](#archive-limits) apply before any upload.
 3. **Workspace protocol rewrite** — in monorepos, replace publishable `workspace:` and `catalog:` dependency specifiers inside the in-memory tarball. The source manifest stays unchanged.
 4. **Provenance-file validation** — when `--provenance-file` is used for an npm-compatible target, verify the bundle and confirm its subject and SHA-512 digest match the final target artifact.
 5. **Secret scan** — scan supported text files in the actual final artifact for every target, including target-specific rewrites and bundled dependency bytes. A file is not exempt because Git ignores it: if it is explicitly included in an artifact, it is scanned. Skip with `--allow-secrets` only when you have reviewed every target artifact carefully.
 6. **Quality score** (LPM.dev Registry target only) — compute the local readme/license/types/tests/maintenance signals. The local preflight score is normalized to 0–100 over checks the CLI can actually evaluate; server-only checks remain `not_evaluated` and do not depress the local denominator. With `--min-score N`, abort if the normalized local score is below the threshold.
 7. **Confirm** — ask before a real interactive publish. Skip with `-y`.
 8. **Authenticate, generate requested provenance, and upload** — resolve auth for each target, generate Sigstore provenance when requested, then upload sequentially.
+
+## Archive limits
+
+LPM CLI applies these limits when it creates or rewrites a publish artifact:
+
+- 100,000 archive entries.
+- 100,000 GNU or PAX metadata entries.
+- 256 path components, including the top-level `package/` component.
+- 32 KiB for each encoded archive path.
+- 1 MiB for each GNU or PAX metadata record.
+- 500 MiB for the uncompressed tar archive, including headers, padding, and end markers.
+- 500 MiB for the compressed tarball.
+
+The `package/` prefix uses one component. Thus, a project-relative source path can use at most 255 components.
+
+If an artifact exceeds a limit, LPM CLI stops during local preparation and does not upload it. Target-specific name and workspace rewrites use the same limits.
+
+LPM.dev Registry accepts uploads of at most 100 MiB. Other registries can use smaller limits.
 
 Successful human output is a compact status stream:
 
