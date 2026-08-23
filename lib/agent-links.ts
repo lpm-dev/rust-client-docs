@@ -1,8 +1,10 @@
 import {
   apiCatalogRoute,
+  developerResourcesRoute,
   docsRoute,
   homeContentRoute,
   llmsIndexRoute,
+  openApiRoute,
 } from "./shared";
 
 const markdownType = 'type="text/markdown"';
@@ -10,7 +12,8 @@ const markdownType = 'type="text/markdown"';
 const homeLinkHeader = [
   `<${homeContentRoute}>; rel="alternate"; ${markdownType}`,
   `<${apiCatalogRoute}>; rel="api-catalog"`,
-  `<${docsRoute}>; rel="service-doc"`,
+  `<${openApiRoute}>; rel="service-desc"; type="application/json"`,
+  `<${developerResourcesRoute}>; rel="service-doc"`,
   `<${llmsIndexRoute}>; rel="describedby"; ${markdownType}`,
 ].join(", ");
 
@@ -33,5 +36,6 @@ export function agentLinkHeader(pathname: string): string | undefined {
   return [
     `<${path}.mdx>; rel="alternate"; ${markdownType}`,
     `<${apiCatalogRoute}>; rel="api-catalog"`,
+    `<${openApiRoute}>; rel="service-desc"; type="application/json"`,
   ].join(", ");
 }

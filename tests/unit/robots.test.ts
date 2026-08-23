@@ -17,7 +17,9 @@ describe("robots.txt", () => {
 
     expect(body).toContain("User-agent: *");
     expect(body).toContain("Allow: /");
-    expect(body).toContain("Disallow: /api/");
+    expect(body).toContain("Allow: /api/search");
+    expect(body).toContain("Disallow: /api/cron/");
+    expect(body).not.toContain("Disallow: /api/\n");
     expect(body).toContain("Disallow: /a/");
     expect(body).toContain(`Host: ${siteUrl}`);
     expect(body).toContain(`Sitemap: ${siteUrl}/sitemap.xml`);

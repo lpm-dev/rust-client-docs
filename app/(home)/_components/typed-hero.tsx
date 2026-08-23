@@ -43,12 +43,20 @@ export function TypedHero() {
   let remaining = count;
 
   return (
-    // `white-space: pre-wrap` (in home.css) turns the literal "\n" in the
-    // first segment into the line break, so the typed text needs no <br> nodes.
-    // data-text feeds the invisible ::before sizer that holds the finished
-    // height while the absolutely-positioned .hero-typed layer types, so the
-    // page below never reflows during the animation.
-    <h1 className="hero" aria-label={ARIA_LABEL} data-text={FULL_TEXT}>
+    // The transparent static layer gives the raw HTML and accessibility tree
+    // a complete heading. The aria-hidden overlay keeps the visual typing
+    // animation without changing the heading that agents and readers receive.
+    <h1 className="hero" aria-label={ARIA_LABEL}>
+      <span className="hero-static">
+        {SEGMENTS.map((segment) => (
+          <span
+            key={segment.text}
+            className={segment.muted ? "light" : undefined}
+          >
+            {segment.text}
+          </span>
+        ))}
+      </span>
       <span className="hero-typed" aria-hidden="true">
         {SEGMENTS.map((segment) => {
           const take = Math.max(0, Math.min(segment.text.length, remaining));

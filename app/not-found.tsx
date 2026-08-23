@@ -64,6 +64,13 @@ export default function NotFound() {
                 Go home
               </Link>
             </div>
+
+            <nav className={styles.agentRecovery} aria-label="Agent recovery">
+              <span>For agents</span>
+              <a href="/sitemap.xml">sitemap.xml</a>
+              <a href="/llms.txt">llms.txt</a>
+              <a href="/openapi.json">openapi.json</a>
+            </nav>
           </div>
 
           <div className={styles.visual} aria-hidden="true">

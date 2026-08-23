@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import sitemap from "@/app/sitemap";
+import { apiProblem, methodNotAllowed } from "@/lib/api-problem";
 import { notifyIndexNow } from "@/lib/indexnow";
 import { siteUrl } from "@/lib/shared";
 
@@ -21,11 +21,15 @@ import { siteUrl } from "@/lib/shared";
 const MAX_URLS_PER_BATCH = 10000;
 const MAX_URLS_PER_RUN = 5000;
 
-function unauthorized(): Response {
-  return NextResponse.json(
-    { success: false, error: "Unauthorized" },
-    { status: 401 },
-  );
+function unauthorized(request: Request): Response {
+  return apiProblem(request, {
+    status: 401,
+    code: "AUTH_REQUIRED",
+    title: "Authentication required",
+    message: "The cron endpoint requires a valid bearer token.",
+    resolution: "Send the deployment CRON_SECRET as a bearer token.",
+    headers: { "WWW-Authenticate": "Bearer" },
+  });
 }
 
 function verifyCronAuth(request: Request): boolean {
@@ -47,14 +51,17 @@ function verifyCronAuth(request: Request): boolean {
 
 export async function GET(request: Request) {
   if (!verifyCronAuth(request)) {
-    return unauthorized();
+    return unauthorized(request);
   }
 
   if (!process.env.INDEXNOW_KEY) {
-    return NextResponse.json(
-      { success: false, error: "IndexNow not configured" },
-      { status: 503 },
-    );
+    return apiProblem(request, {
+      status: 503,
+      code: "INDEXNOW_NOT_CONFIGURED",
+      title: "IndexNow is not configured",
+      message: "The deployment has no IndexNow key.",
+      resolution: "Set INDEXNOW_KEY in the deployment environment.",
+    });
   }
 
   const { searchParams } = new URL(request.url);
@@ -81,7 +88,7 @@ export async function GET(request: Request) {
       .map((e) => e.url);
 
     if (filtered.length === 0) {
-      return NextResponse.json({
+      return Response.json({
         success: true,
         sent: 0,
         total: entries.length,
@@ -104,7 +111,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({
+    return Response.json({
       success: true,
       sent,
       total: entries.length,
@@ -117,9 +124,18 @@ export async function GET(request: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[indexnow-sync]", message);
-    return NextResponse.json(
-      { success: false, error: "IndexNow sync failed", detail: message },
-      { status: 500 },
-    );
+    return apiProblem(request, {
+      status: 500,
+      code: "INDEXNOW_SYNC_FAILED",
+      title: "IndexNow sync failed",
+      message: "The IndexNow sync did not complete.",
+      resolution: "Read the server log, correct the error, and retry the sync.",
+    });
   }
 }
+
+const rejectUnsupportedMethod = methodNotAllowed(["GET"]);
+export const POST = rejectUnsupportedMethod;
+export const PUT = rejectUnsupportedMethod;
+export const PATCH = rejectUnsupportedMethod;
+export const DELETE = rejectUnsupportedMethod;

@@ -12,6 +12,19 @@ const { rewrite: rewriteSuffix } = rewritePath(
   `${docsContentRoute}{/*path}/content.md`,
 );
 
+const MARKDOWN_404_ROUTE = "/404.md";
+
+function canNegotiateMissingHtml(pathname: string): boolean {
+  const finalSegment = pathname.split("/").at(-1) || "";
+  if (finalSegment.includes(".")) return false;
+  if (pathname === "/install") return false;
+  if (pathname === "/api") return false;
+
+  return !["/api/", "/a/", "/og/", "/.well-known/", "/llms.mdx/"].some(
+    (prefix) => pathname.startsWith(prefix),
+  );
+}
+
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -32,6 +45,14 @@ export default function proxy(request: NextRequest) {
 
     if (target) {
       const response = NextResponse.rewrite(new URL(target, request.nextUrl));
+      response.headers.append("Vary", "Accept");
+      return response;
+    }
+
+    if (canNegotiateMissingHtml(pathname)) {
+      const targetUrl = new URL(MARKDOWN_404_ROUTE, request.nextUrl);
+      targetUrl.searchParams.set("path", pathname);
+      const response = NextResponse.rewrite(targetUrl);
       response.headers.append("Vary", "Accept");
       return response;
     }
