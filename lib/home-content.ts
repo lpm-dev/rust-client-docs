@@ -131,6 +131,7 @@ export const FOOTER: { heading: string; links: FootLink[] }[] = [
   {
     heading: "Development",
     links: [
+      { label: "Developer resources", href: "/docs/developer-resources" },
       { label: "lpm dev", href: "/docs/dev/dev" },
       { label: "Managed runtimes", href: "/docs/dev/node-version-pinning" },
       { label: "Built-in tools", href: "/docs/dev/builtin-tools" },

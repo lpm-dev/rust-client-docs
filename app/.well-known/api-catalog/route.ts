@@ -1,76 +1,99 @@
 import {
   agentSkillsRoute,
   apiCatalogRoute,
-  docsRoute,
+  developerResourcesRoute,
+  docsSearchApiRoute,
   homeContentRoute,
   llmsFullRoute,
   llmsIndexRoute,
+  openApiRoute,
   siteUrl,
 } from "@/lib/shared";
 
 export const revalidate = false;
 
-// RFC 9727 API catalog: an RFC 9264 linkset enumerating the machine-readable
-// surfaces of this site. Advertised via `Link: <...>; rel="api-catalog"`
-// response headers (see lib/agent-links.ts).
+const absolute = (path: string) => `${siteUrl}${path}`;
+const apiEndpoint = absolute(docsSearchApiRoute);
+const catalogUrl = absolute(apiCatalogRoute);
+const openApiUrl = absolute(openApiRoute);
+const developerResourcesUrl = absolute(developerResourcesRoute);
+
+// RFC 9727 API catalog represented as an RFC 9264 JSON linkset.
 const catalog = {
   linkset: [
     {
-      anchor: `${siteUrl}${apiCatalogRoute}`,
+      anchor: catalogUrl,
       item: [
         {
-          href: `${siteUrl}${llmsIndexRoute}`,
-          type: "text/markdown",
-          title: "llms.txt — index of the documentation for agents",
-        },
-        {
-          href: `${siteUrl}${llmsFullRoute}`,
-          type: "text/markdown",
-          title: "Full documentation corpus as a single markdown file",
-        },
-        {
-          href: `${siteUrl}${docsRoute}.mdx`,
-          type: "text/markdown",
-          title: "Markdown mirror — append .mdx to any /docs page URL",
-        },
-        {
-          href: `${siteUrl}${homeContentRoute}`,
-          type: "text/markdown",
-          title: "Homepage as markdown",
-        },
-        {
-          href: `${siteUrl}${agentSkillsRoute}/index.json`,
+          href: apiEndpoint,
           type: "application/json",
-          title: "Agent Skills discovery index",
+          title: "LPM CLI documentation search API",
+        },
+      ],
+    },
+    {
+      anchor: apiEndpoint,
+      "service-desc": [
+        {
+          href: openApiUrl,
+          type: "application/json",
+          title: "LPM CLI Documentation API OpenAPI specification",
+        },
+      ],
+      "service-doc": [
+        {
+          href: developerResourcesUrl,
+          type: "text/html",
+          title: "LPM CLI developer resources",
         },
       ],
     },
     {
       anchor: `${siteUrl}/`,
-      "service-doc": [
-        {
-          href: `${siteUrl}${docsRoute}`,
-          type: "text/html",
-          title: "LPM CLI documentation",
-        },
-      ],
       describedby: [
         {
-          href: `${siteUrl}${llmsIndexRoute}`,
+          href: absolute(llmsIndexRoute),
           type: "text/markdown",
-          title: "llms.txt",
+          title: "LPM CLI documentation index for agents",
+        },
+        {
+          href: absolute(llmsFullRoute),
+          type: "text/markdown",
+          title: "Complete LPM CLI documentation corpus",
+        },
+        {
+          href: absolute(homeContentRoute),
+          type: "text/markdown",
+          title: "LPM CLI homepage as markdown",
+        },
+        {
+          href: `${absolute(agentSkillsRoute)}/index.json`,
+          type: "application/json",
+          title: "LPM CLI Agent Skills index",
         },
       ],
     },
   ],
 };
 
+const linkHeader = [
+  `<${apiEndpoint}>; rel="item"; type="application/json"`,
+  `<${openApiUrl}>; rel="service-desc"; type="application/json"`,
+  `<${developerResourcesUrl}>; rel="service-doc"; type="text/html"`,
+].join(", ");
+
+const responseHeaders = {
+  "Content-Type":
+    'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
+  Link: linkHeader,
+};
+
 export function GET() {
   return new Response(JSON.stringify(catalog, null, 2), {
-    headers: {
-      "Content-Type":
-        'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"',
-      "X-Robots-Tag": "noindex",
-    },
+    headers: responseHeaders,
   });
+}
+
+export function HEAD() {
+  return new Response(null, { headers: responseHeaders });
 }

@@ -14,4 +14,17 @@ describe("markdownResponse", () => {
     );
     expect(await response.text()).toBe("# Hello agents");
   });
+
+  it("preserves status and custom headers", async () => {
+    const response = markdownResponse("# Missing", {
+      status: 404,
+      headers: { "Cache-Control": "no-store" },
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Content-Type")).toBe(
+      "text/markdown; charset=utf-8",
+    );
+  });
 });
