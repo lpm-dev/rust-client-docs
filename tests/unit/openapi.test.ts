@@ -24,12 +24,32 @@ describe("OpenAPI specification", () => {
     expect(body.info.title).toContain("LPM CLI");
     expect(body.info.license.identifier).toBe("MIT");
     expect(body.security).toEqual([]);
-    expect(body.paths["/api/search"].get.operationId).toBe(
+    expect(body.paths["/api/v1/search"].get.operationId).toBe(
       "searchLpmCliDocumentation",
     );
-    expect(body.paths["/api/search"].get.responses["500"].$ref).toBe(
+    expect(body.paths["/api/v1/search"].get["x-api-version"]).toBe("1");
+    expect(body.paths["/api/v1/search"].get.responses["429"].$ref).toBe(
+      "#/components/responses/RateLimited",
+    );
+    expect(body.paths["/api/v1/search"].get.responses["500"].$ref).toBe(
       "#/components/responses/InternalError",
     );
+    expect(body.paths["/api/search"].get.deprecated).toBe(true);
+    expect(body.paths["/api/search"].get.operationId).not.toBe(
+      body.paths["/api/v1/search"].get.operationId,
+    );
+    expect(body.components.responses.SearchSuccess.headers).toHaveProperty(
+      "RateLimit",
+    );
+    expect(body.components.responses.SearchSuccess.headers).toHaveProperty(
+      "RateLimit-Policy",
+    );
+    expect(body.components.responses.RateLimited.headers).toHaveProperty(
+      "Retry-After",
+    );
+    expect(
+      body.components.responses.DeprecatedSearchSuccess.headers.Deprecation,
+    ).toBeDefined();
   });
 
   it("resolves every local reference", () => {
