@@ -40,6 +40,7 @@ describe("agentLinkHeader", () => {
 
   it("returns nothing for non-advertised routes", () => {
     expect(agentLinkHeader("/llms.txt")).toBeUndefined();
+    expect(agentLinkHeader("/api/v1/search")).toBeUndefined();
     expect(agentLinkHeader("/api/search")).toBeUndefined();
     expect(agentLinkHeader("/docsfoo")).toBeUndefined();
   });

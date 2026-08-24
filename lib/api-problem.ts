@@ -6,6 +6,8 @@ type ApiProblemOptions = {
   title: string;
   message: string;
   resolution: string;
+  type?: string;
+  extensions?: Record<string, unknown>;
   headers?: HeadersInit;
 };
 
@@ -19,7 +21,8 @@ export function apiProblem(
 
   return new Response(
     JSON.stringify({
-      type: "about:blank",
+      ...options.extensions,
+      type: options.type ?? "about:blank",
       title: options.title,
       status: options.status,
       detail: options.message,

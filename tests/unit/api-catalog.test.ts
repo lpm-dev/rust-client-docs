@@ -16,9 +16,9 @@ describe("api catalog", () => {
 
     expect(catalog.anchor).toBe(`${siteUrl}/.well-known/api-catalog`);
     const hrefs = catalog.item.map((entry: { href: string }) => entry.href);
-    expect(hrefs).toEqual([`${siteUrl}/api/search`]);
+    expect(hrefs).toEqual([`${siteUrl}/api/v1/search`]);
 
-    expect(searchApi.anchor).toBe(`${siteUrl}/api/search`);
+    expect(searchApi.anchor).toBe(`${siteUrl}/api/v1/search`);
     expect(searchApi["service-desc"][0].href).toBe(`${siteUrl}/openapi.json`);
     expect(searchApi["service-doc"][0].href).toBe(
       `${siteUrl}/docs/developer-resources`,

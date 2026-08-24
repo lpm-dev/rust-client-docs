@@ -51,4 +51,26 @@ describe("API Problem Details", () => {
     expect(body.detail).toBe("The search did not complete.");
     expect(body.message).toBe(body.detail);
   });
+
+  it("supports registered problem types and extension fields", async () => {
+    const response = apiProblem(
+      new Request("https://cli.lpm.dev/api/v1/search"),
+      {
+        status: 429,
+        code: "RATE_LIMIT_EXCEEDED",
+        title: "Too many requests",
+        message: "The quota is exhausted.",
+        resolution: "Wait, then retry the request.",
+        type: "https://iana.org/assignments/http-problem-types#quota-exceeded",
+        extensions: { "violated-policies": ["docs-search"] },
+      },
+    );
+
+    expect(await response.json()).toMatchObject({
+      type: "https://iana.org/assignments/http-problem-types#quota-exceeded",
+      "violated-policies": ["docs-search"],
+      status: 429,
+      code: "RATE_LIMIT_EXCEEDED",
+    });
+  });
 });

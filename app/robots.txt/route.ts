@@ -14,6 +14,7 @@ const robots = `# Content signals declare permissions for automated content use:
 User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
+Allow: /api/v1/search
 Allow: /api/search
 Disallow: /api/cron/
 Disallow: /a/

@@ -21,10 +21,14 @@ function readableText(html) {
 const home = await request("/");
 assert.equal(home.status, 200);
 const homeHtml = await home.text();
-assert.match(
-  homeHtml,
-  /<h1\b[\s\S]*?hero-static[\s\S]*?The fast,[\s\S]*?<\/h1>/,
+const homeH1 = homeHtml.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/)?.[0];
+assert.ok(homeH1, "Homepage has an H1");
+assert.ok(readableText(homeH1).includes("The fast, all-in-one toolkit"));
+assert.ok(
+  !homeH1.includes("hero-typed"),
+  "Server H1 is not an animation layer",
 );
+assert.ok(!homeH1.includes("aria-hidden"), "Server H1 is visible to agents");
 assert.ok(
   readableText(homeHtml).length > 500,
   "Homepage has 500+ text characters",
@@ -60,7 +64,12 @@ assert.equal(openApi.status, 200);
 const openApiBody = await openApi.json();
 assert.equal(openApiBody.openapi, "3.1.1");
 assert.ok(openApiBody.info.title.includes("LPM CLI"));
-assert.ok(openApiBody.paths["/api/search"]);
+assert.ok(openApiBody.paths["/api/v1/search"]);
+assert.equal(openApiBody.paths["/api/search"].get.deprecated, true);
+assert.ok(
+  openApiBody.components.responses.SearchSuccess.headers["RateLimit-Policy"],
+);
+assert.ok(openApiBody.components.responses.RateLimited.headers["Retry-After"]);
 
 const api404 = await request("/api/agent-readiness-route-that-does-not-exist");
 assert.equal(api404.status, 404);
@@ -80,13 +89,67 @@ assert.match(
   /application\/problem\+json/,
 );
 
-const search = await request("/api/search?query=install&limit=1");
+const search = await request("/api/v1/search?query=install&limit=1");
 assert.equal(search.status, 200);
+assert.equal(search.headers.get("ratelimit-policy"), '"docs-search";q=60;w=60');
+assert.match(
+  search.headers.get("ratelimit") || "",
+  /^"docs-search";r=\d+;t=\d+$/,
+);
+assert.equal(search.headers.get("cache-control"), "private, no-store");
 assert.ok(Array.isArray(await search.json()));
 
-const searchMethod = await request("/api/search", { method: "POST" });
+const searchMethod = await request("/api/v1/search", { method: "POST" });
 assert.equal(searchMethod.status, 405);
 assert.equal((await searchMethod.json()).code, "METHOD_NOT_ALLOWED");
+
+const legacySearch = await request("/api/search?query=install&limit=1");
+assert.equal(legacySearch.status, 200);
+assert.equal(legacySearch.headers.get("deprecation"), "@1787529600");
+assert.match(legacySearch.headers.get("link") || "", /rel="deprecation"/);
+assert.ok(Array.isArray(await legacySearch.json()));
+
+const rateLimitClient = { "x-forwarded-for": "198.51.100.77" };
+const firstLimitedSearch = await request("/api/v1/search", {
+  headers: rateLimitClient,
+});
+assert.equal(firstLimitedSearch.status, 200);
+const firstRateLimit = firstLimitedSearch.headers
+  .get("ratelimit")
+  ?.match(/^"docs-search";r=(\d+);t=(\d+)$/);
+assert.ok(firstRateLimit, "Search returns a parseable RateLimit field");
+await firstLimitedSearch.arrayBuffer();
+
+const remainingQuota = Number(firstRateLimit[1]);
+for (let requestIndex = 0; requestIndex < remainingQuota; requestIndex += 1) {
+  const accepted = await request("/api/v1/search", {
+    headers: rateLimitClient,
+  });
+  assert.equal(accepted.status, 200);
+  await accepted.arrayBuffer();
+}
+
+const throttledSearch = await request("/api/v1/search", {
+  headers: rateLimitClient,
+});
+assert.equal(throttledSearch.status, 429);
+assert.match(
+  throttledSearch.headers.get("content-type") || "",
+  /application\/problem\+json/,
+);
+const retryAfter = Number(throttledSearch.headers.get("retry-after"));
+assert.ok(Number.isInteger(retryAfter) && retryAfter > 0);
+assert.equal(
+  throttledSearch.headers.get("ratelimit"),
+  `"docs-search";r=0;t=${retryAfter}`,
+);
+const throttledBody = await throttledSearch.json();
+assert.equal(throttledBody.code, "RATE_LIMIT_EXCEEDED");
+assert.equal(
+  throttledBody.type,
+  "https://iana.org/assignments/http-problem-types#quota-exceeded",
+);
+assert.deepEqual(throttledBody["violated-policies"], ["docs-search"]);
 
 const cron = await request("/api/cron/indexnow-sync");
 assert.equal(cron.status, 401);
@@ -109,7 +172,7 @@ assert.match(catalog.headers.get("link") || "", /rel="service-desc"/);
 const catalogBody = await catalog.json();
 assert.equal(
   catalogBody.linkset[0].item[0].href,
-  "https://cli.lpm.dev/api/search",
+  "https://cli.lpm.dev/api/v1/search",
 );
 
 const catalogHead = await request("/.well-known/api-catalog", {
@@ -120,8 +183,10 @@ assert.match(catalogHead.headers.get("link") || "", /rel="item"/);
 
 const developerResources = await request("/docs/developer-resources");
 assert.equal(developerResources.status, 200);
-assert.ok(
-  (await developerResources.text()).includes("LPM CLI developer resources"),
-);
+const developerResourcesBody = await developerResources.text();
+assert.ok(developerResourcesBody.includes("LPM CLI developer resources"));
+assert.ok(developerResourcesBody.includes("/api/v1/search"));
+assert.ok(developerResourcesBody.includes("Versioning and deprecation"));
+assert.ok(developerResourcesBody.includes("RateLimit-Policy"));
 
 console.log(`Agent-readiness integration checks passed for ${origin}`);

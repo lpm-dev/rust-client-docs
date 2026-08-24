@@ -36,7 +36,7 @@ curl -sS -H 'Accept: text/markdown' https://cli.lpm.dev/docs/packages/install
 The search endpoint returns public documentation pages, headings, and text fragments. It does not require authentication.
 
 ```bash
-curl -sS --get https://cli.lpm.dev/api/search \
+curl -sS --get https://cli.lpm.dev/api/v1/search \
   --data-urlencode 'query=install' \
   --data-urlencode 'limit=10'
 ```
@@ -44,6 +44,61 @@ curl -sS --get https://cli.lpm.dev/api/search \
 Each result contains an `id`, `url`, `type`, and `content` value. A result can also contain `breadcrumbs`. The `type` value is `page`, `heading`, or `text`.
 
 Use [`/openapi.json`](/openapi.json) as the authoritative HTTP contract for this endpoint.
+
+## Versioning and deprecation
+
+The API version is part of each stable URL. The current stable version is `v1`.
+
+Compatible changes can add response fields or optional parameters to `v1`. An incompatible change uses a new `/api/vN` path.
+
+The unversioned `/api/search` alias was deprecated on August 24, 2026. Use `/api/v1/search` for new integrations.
+
+The alias returns the [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745) deprecation date and a link to this policy.
+
+```http
+Deprecation: @1787529600
+Link: <https://cli.lpm.dev/docs/developer-resources#versioning-and-deprecation>; rel="deprecation"; type="text/html"
+```
+
+A deprecated version remains available for at least 12 months after its `Deprecation` date.
+
+If removal is scheduled, responses include an [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594) `Sunset` header at least six months before removal. This page will include migration steps.
+
+## Rate limits
+
+The search API uses a fixed quota of 60 `GET` requests per 60 seconds. The quota applies to each client network source.
+
+The versioned route and the deprecated alias share the same quota. Each accepted `GET` request consumes one quota unit.
+
+Each running site process tracks its own quota. Use the fields on each response as the current throttling guidance.
+
+Responses include the current `RateLimit` and `RateLimit-Policy` fields from `draft-ietf-httpapi-ratelimit-headers-11`. The IETF document is an active Internet-Draft.
+
+```http
+RateLimit-Policy: "docs-search";q=60;w=60
+RateLimit: "docs-search";r=42;t=30
+```
+
+The `r` parameter is the available quota. The `t` parameter is the effective window in seconds.
+
+Responses also include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` for clients that use the legacy fields.
+
+If the quota is exhausted, the API returns HTTP `429` with an RFC 9457 response. The response includes `Retry-After` and recovery details.
+
+```json
+{
+  "type": "https://iana.org/assignments/http-problem-types#quota-exceeded",
+  "title": "Too many requests",
+  "status": 429,
+  "detail": "The documentation search quota is exhausted.",
+  "instance": "/api/v1/search",
+  "code": "RATE_LIMIT_EXCEEDED",
+  "message": "The documentation search quota is exhausted.",
+  "resolution": "Wait 30 seconds, then retry the request.",
+  "documentation_url": "https://cli.lpm.dev/docs/developer-resources",
+  "violated-policies": ["docs-search"]
+}
+```
 
 ## JSON errors
 

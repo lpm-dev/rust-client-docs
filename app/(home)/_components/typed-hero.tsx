@@ -13,9 +13,10 @@ const ARIA_LABEL = FULL_TEXT.replace(/\n/g, " ");
 const STEP_MS = 34;
 
 export function TypedHero() {
-  // Server-render the full text so crawlers and the first paint get the
-  // complete headline; the typing animation only starts after hydration.
+  // The server and first client render contain one visible, complete heading.
+  // The typing layer is added only after hydration.
   const [count, setCount] = useState(TOTAL);
+  const [isTyping, setIsTyping] = useState(false);
   const [showCursor, setShowCursor] = useState(true);
 
   useEffect(() => {
@@ -29,6 +30,7 @@ export function TypedHero() {
     }
 
     setCount(0);
+    setIsTyping(true);
 
     let typed = 0;
     const id = window.setInterval(() => {
@@ -43,10 +45,10 @@ export function TypedHero() {
   let remaining = count;
 
   return (
-    // The transparent static layer gives the raw HTML and accessibility tree
-    // a complete heading. The aria-hidden overlay keeps the visual typing
-    // animation without changing the heading that agents and readers receive.
-    <h1 className="hero" aria-label={ARIA_LABEL}>
+    <h1
+      className={`hero${isTyping ? " hero-is-typing" : ""}`}
+      aria-label={ARIA_LABEL}
+    >
       <span className="hero-static">
         {SEGMENTS.map((segment) => (
           <span
@@ -57,21 +59,23 @@ export function TypedHero() {
           </span>
         ))}
       </span>
-      <span className="hero-typed" aria-hidden="true">
-        {SEGMENTS.map((segment) => {
-          const take = Math.max(0, Math.min(segment.text.length, remaining));
-          remaining -= take;
-          return (
-            <span
-              key={segment.text}
-              className={segment.muted ? "light" : undefined}
-            >
-              {segment.text.slice(0, take)}
-            </span>
-          );
-        })}
-        {showCursor ? <span className="cursor hero-cursor" /> : null}
-      </span>
+      {isTyping ? (
+        <span className="hero-typed" aria-hidden="true">
+          {SEGMENTS.map((segment) => {
+            const take = Math.max(0, Math.min(segment.text.length, remaining));
+            remaining -= take;
+            return (
+              <span
+                key={segment.text}
+                className={segment.muted ? "light" : undefined}
+              >
+                {segment.text.slice(0, take)}
+              </span>
+            );
+          })}
+          {showCursor ? <span className="cursor hero-cursor" /> : null}
+        </span>
+      ) : null}
     </h1>
   );
 }
