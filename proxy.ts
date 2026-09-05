@@ -1,7 +1,10 @@
 import { isMarkdownPreferred, rewritePath } from "fumadocs-core/negotiation";
 import { type NextRequest, NextResponse } from "next/server";
 import { agentLinkHeader } from "@/lib/agent-links";
+import { apiProblem } from "@/lib/api-problem";
+import { canNegotiateMissingHtml } from "@/lib/content-negotiation.mjs";
 import { docsContentRoute, docsRoute, homeContentRoute } from "@/lib/shared";
+import { appendVary } from "@/lib/vary.mjs";
 
 const { rewrite: rewriteDocs } = rewritePath(
   `${docsRoute}{/*path}`,
@@ -14,19 +17,27 @@ const { rewrite: rewriteSuffix } = rewritePath(
 
 const MARKDOWN_404_ROUTE = "/404.md";
 
-function canNegotiateMissingHtml(pathname: string): boolean {
-  const finalSegment = pathname.split("/").at(-1) || "";
-  if (finalSegment.includes(".")) return false;
-  if (pathname === "/install") return false;
-  if (pathname === "/api") return false;
-
-  return !["/api/", "/a/", "/og/", "/.well-known/", "/llms.mdx/"].some(
-    (prefix) => pathname.startsWith(prefix),
-  );
-}
-
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (
+    pathname.startsWith("/schemas/") &&
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  ) {
+    return apiProblem(request, {
+      status: 405,
+      code: "METHOD_NOT_ALLOWED",
+      title: "Method not allowed",
+      message: `${request.method} is not supported for this schema resource.`,
+      resolution: "Use GET or HEAD to retrieve the schema.",
+      headers: {
+        Allow: "GET, HEAD",
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex",
+      },
+    });
+  }
 
   const suffixResult = rewriteSuffix(pathname);
   if (suffixResult) {
@@ -45,7 +56,7 @@ export default function proxy(request: NextRequest) {
 
     if (target) {
       const response = NextResponse.rewrite(new URL(target, request.nextUrl));
-      response.headers.append("Vary", "Accept");
+      appendVary(response.headers, "Accept");
       return response;
     }
 
@@ -53,7 +64,7 @@ export default function proxy(request: NextRequest) {
       const targetUrl = new URL(MARKDOWN_404_ROUTE, request.nextUrl);
       targetUrl.searchParams.set("path", pathname);
       const response = NextResponse.rewrite(targetUrl);
-      response.headers.append("Vary", "Accept");
+      appendVary(response.headers, "Accept");
       return response;
     }
   }
@@ -64,7 +75,7 @@ export default function proxy(request: NextRequest) {
   if (linkHeader) {
     const response = NextResponse.next();
     response.headers.set("Link", linkHeader);
-    response.headers.append("Vary", "Accept");
+    appendVary(response.headers, "Accept");
     return response;
   }
 

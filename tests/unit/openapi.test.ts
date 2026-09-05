@@ -20,6 +20,7 @@ describe("OpenAPI specification", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("X-Robots-Tag")).toBe("noindex");
     expect(body.openapi).toBe("3.1.1");
     expect(body.info.title).toContain("LPM CLI");
     expect(body.info.license.identifier).toBe("MIT");

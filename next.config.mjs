@@ -67,6 +67,11 @@ const HTML_RESPONSE_HEADERS = [
     value: HTML_CACHE_CONTROL,
   },
 ];
+const NON_INDEXABLE_API_PATHS = [
+  "/api/v1/search",
+  "/api/search",
+  "/openapi.json",
+];
 const INSTALLER_URL =
   "https://raw.githubusercontent.com/lpm-dev/rust-client/main/install.sh";
 const INSTALLER_REDIRECTS = ["/install", "/install.sh"].map((source) => ({
@@ -125,6 +130,10 @@ const config = {
         source: "/docs/:path*",
         headers: HTML_RESPONSE_HEADERS,
       },
+      ...NON_INDEXABLE_API_PATHS.map((source) => ({
+        source,
+        headers: [{ key: "X-Robots-Tag", value: "noindex" }],
+      })),
       {
         source: "/schemas/:path*",
         headers: [
@@ -136,6 +145,7 @@ const config = {
             key: "Content-Type",
             value: "application/schema+json; charset=utf-8",
           },
+          { key: "X-Robots-Tag", value: "noindex" },
           { key: "Access-Control-Allow-Origin", value: "*" },
         ],
       },

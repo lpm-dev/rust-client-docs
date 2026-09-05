@@ -50,10 +50,6 @@ export const metadata: Metadata = {
     description: homeSeoDescription,
     images: ["/og/home"],
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
   verification: {
     other: {
       "msvalidate.01": "15A27CC3490BC984B8BE766FE51A4E02",

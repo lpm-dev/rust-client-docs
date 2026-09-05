@@ -37,4 +37,31 @@ describe("browser security headers", () => {
   it("does not expose the Next.js powered-by header", () => {
     expect(config.poweredByHeader).toBe(false);
   });
+
+  it("leaves final Accept variance to the server and keeps machine endpoints out of search", async () => {
+    if (!config.headers) throw new Error("Next config headers are missing");
+    const rules = await config.headers();
+
+    for (const source of ["/", "/docs", "/docs/:path*"]) {
+      const rule = rules.find((candidate) => candidate.source === source);
+      expect(rule?.headers).not.toContainEqual({
+        key: "Vary",
+        value: "Accept",
+      });
+    }
+
+    const schemaRule = rules.find((rule) => rule.source === "/schemas/:path*");
+    expect(schemaRule?.headers).toContainEqual({
+      key: "X-Robots-Tag",
+      value: "noindex",
+    });
+
+    for (const source of ["/api/v1/search", "/api/search", "/openapi.json"]) {
+      const rule = rules.find((candidate) => candidate.source === source);
+      expect(rule?.headers).toContainEqual({
+        key: "X-Robots-Tag",
+        value: "noindex",
+      });
+    }
+  });
 });
