@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +21,7 @@ const OUTPUT_FILE = path.join(
   "content-dates.json",
 );
 const COMMIT_MARKER = ">>";
+const CHECK_MODE = process.argv.includes("--check");
 
 /**
  * Parse `git log --format=>>%cI --name-status -M` output (newest commit
@@ -100,10 +107,19 @@ function existingDocPaths() {
   );
 }
 
-// The output file is committed: builds without usable git history (e.g. a
-// shallow or .git-less deploy container) fall back to the committed snapshot
-// instead of an empty map. Only a full clone regenerates it.
+// The output file is committed: normal builds without usable git history (e.g.
+// a shallow or .git-less deploy container) fall back to the committed snapshot
+// instead of an empty map. Check mode fails closed because it cannot prove that
+// snapshot is current without the full history.
 function keepSnapshot(reason) {
+  if (CHECK_MODE) {
+    console.error(
+      `content-dates: cannot verify committed snapshot (${reason}); full git history is required.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   if (existsSync(OUTPUT_FILE)) {
     console.warn(`content-dates: ${reason}; keeping the committed snapshot.`);
     return;
@@ -165,7 +181,26 @@ function main() {
     };
   }
 
-  writeFileSync(OUTPUT_FILE, `${JSON.stringify(output, null, 2)}\n`);
+  const serialized = `${JSON.stringify(output, null, 2)}\n`;
+  if (CHECK_MODE) {
+    const current = existsSync(OUTPUT_FILE)
+      ? readFileSync(OUTPUT_FILE, "utf8")
+      : "";
+    if (current !== serialized) {
+      console.error(
+        "content-dates: committed snapshot is stale; run node scripts/generate-content-dates.mjs and commit the result.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(
+      `content-dates: committed snapshot matches ${Object.keys(output).length} entries.`,
+    );
+    return;
+  }
+
+  writeFileSync(OUTPUT_FILE, serialized);
   console.log(`content-dates: wrote ${Object.keys(output).length} entries.`);
 }
 

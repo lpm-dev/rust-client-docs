@@ -47,6 +47,7 @@ export async function handleDocsSearch(request: Request): Promise<Response> {
     clientRateLimitPartition(request),
   );
   const headers = rateLimitHeaders(docsSearchRateLimitPolicy, rateLimit);
+  headers.set("X-Robots-Tag", "noindex");
 
   if (!rateLimit.allowed) {
     headers.set("Retry-After", String(rateLimit.resetAfterSeconds));
@@ -77,9 +78,21 @@ export async function handleDocsSearch(request: Request): Promise<Response> {
   }
 }
 
-const rejectUnsupportedMethod = methodNotAllowed(["GET"]);
+const SEARCH_ALLOWED_METHODS = ["GET", "HEAD", "OPTIONS"];
+const rejectUnsupportedMethod = methodNotAllowed(SEARCH_ALLOWED_METHODS);
 
 export const rejectDocsSearchMethod = rejectUnsupportedMethod;
+
+export function handleDocsSearchOptions(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      Allow: SEARCH_ALLOWED_METHODS.join(", "),
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex",
+    },
+  });
+}
 
 export function markLegacyDocsSearch(response: Response): Response {
   return appendHeaders(response, deprecationHeaders);
@@ -87,4 +100,8 @@ export function markLegacyDocsSearch(response: Response): Response {
 
 export function rejectLegacyDocsSearchMethod(request: Request): Response {
   return markLegacyDocsSearch(rejectUnsupportedMethod(request));
+}
+
+export function handleLegacyDocsSearchOptions(): Response {
+  return markLegacyDocsSearch(handleDocsSearchOptions());
 }

@@ -7,6 +7,7 @@ export function GET() {
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
+      "X-Robots-Tag": "noindex",
     },
   });
 }

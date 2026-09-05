@@ -61,6 +61,7 @@ for (const path of [
 
 const openApi = await request("/openapi.json");
 assert.equal(openApi.status, 200);
+assert.equal(openApi.headers.get("x-robots-tag"), "noindex");
 const openApiBody = await openApi.json();
 assert.equal(openApiBody.openapi, "3.1.1");
 assert.ok(openApiBody.info.title.includes("LPM CLI"));
@@ -70,6 +71,27 @@ assert.ok(
   openApiBody.components.responses.SearchSuccess.headers["RateLimit-Policy"],
 );
 assert.ok(openApiBody.components.responses.RateLimited.headers["Retry-After"]);
+
+const schema = await request("/schemas/lpm.json");
+assert.equal(schema.status, 200);
+assert.equal(schema.headers.get("x-robots-tag"), "noindex");
+assert.match(
+  schema.headers.get("content-type") || "",
+  /application\/schema\+json/,
+);
+
+for (const method of ["POST", "OPTIONS"]) {
+  const schemaMethod = await request("/schemas/lpm.json", { method });
+  assert.equal(schemaMethod.status, 405);
+  assert.equal(schemaMethod.headers.get("allow"), "GET, HEAD");
+  assert.equal(schemaMethod.headers.get("cache-control"), "no-store");
+  assert.equal(schemaMethod.headers.get("x-robots-tag"), "noindex");
+  assert.match(
+    schemaMethod.headers.get("content-type") || "",
+    /application\/problem\+json/,
+  );
+  assert.equal((await schemaMethod.json()).code, "METHOD_NOT_ALLOWED");
+}
 
 const api404 = await request("/api/agent-readiness-route-that-does-not-exist");
 assert.equal(api404.status, 404);
@@ -91,6 +113,7 @@ assert.match(
 
 const search = await request("/api/v1/search?query=install&limit=1");
 assert.equal(search.status, 200);
+assert.equal(search.headers.get("x-robots-tag"), "noindex");
 assert.equal(search.headers.get("ratelimit-policy"), '"docs-search";q=60;w=60');
 assert.match(
   search.headers.get("ratelimit") || "",
@@ -101,13 +124,42 @@ assert.ok(Array.isArray(await search.json()));
 
 const searchMethod = await request("/api/v1/search", { method: "POST" });
 assert.equal(searchMethod.status, 405);
+assert.equal(searchMethod.headers.get("x-robots-tag"), "noindex");
+assert.equal(searchMethod.headers.get("allow"), "GET, HEAD, OPTIONS");
 assert.equal((await searchMethod.json()).code, "METHOD_NOT_ALLOWED");
 
 const legacySearch = await request("/api/search?query=install&limit=1");
 assert.equal(legacySearch.status, 200);
+assert.equal(legacySearch.headers.get("x-robots-tag"), "noindex");
 assert.equal(legacySearch.headers.get("deprecation"), "@1787529600");
 assert.match(legacySearch.headers.get("link") || "", /rel="deprecation"/);
 assert.ok(Array.isArray(await legacySearch.json()));
+
+for (const path of ["/api/search", "/openapi.json"]) {
+  const unsupportedMethod = await request(path, { method: "POST" });
+  assert.equal(unsupportedMethod.status, 405);
+  assert.equal(unsupportedMethod.headers.get("x-robots-tag"), "noindex");
+  assert.equal(
+    unsupportedMethod.headers.get("allow"),
+    path === "/openapi.json" ? "GET, HEAD" : "GET, HEAD, OPTIONS",
+  );
+  await unsupportedMethod.arrayBuffer();
+}
+
+for (const [path, expectedStatus] of [
+  ["/api/v1/search", 204],
+  ["/api/search", 204],
+  ["/openapi.json", 405],
+]) {
+  const options = await request(path, { method: "OPTIONS" });
+  assert.equal(options.status, expectedStatus);
+  assert.equal(options.headers.get("x-robots-tag"), "noindex");
+  assert.equal(
+    options.headers.get("allow"),
+    path === "/openapi.json" ? "GET, HEAD" : "GET, HEAD, OPTIONS",
+  );
+  await options.arrayBuffer();
+}
 
 const rateLimitClient = { "x-forwarded-for": "198.51.100.77" };
 const firstLimitedSearch = await request("/api/v1/search", {
