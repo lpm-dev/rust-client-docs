@@ -167,19 +167,44 @@ If you remove the field, the next `lpm env` command creates a new UUID. The prev
     "personalVersion": 7,
     "personalSyncedAt": "2026-08-13T09:00:00Z",
     "orgVersions": { "acme": 12 },
-    "orgSyncedAt": { "acme": "2026-08-13T09:01:00Z" }
+    "orgSyncedAt": { "acme": "2026-08-13T09:01:00Z" },
+    "personalPlatformBindings": {
+      "https://registry.lpm.dev": {
+        "registryUrl": "https://registry.lpm.dev",
+        "principalId": "user_123"
+      }
+    },
+    "authorityCheckpoints": {
+      "personal": {
+        "https://registry.lpm.dev": {
+          "user_123": { "version": 7, "syncedAt": "2026-08-13T09:00:00Z" }
+        }
+      },
+      "organizations": {
+        "acme": {
+          "https://registry.lpm.dev": {
+            "org_123": { "version": 12, "syncedAt": "2026-08-13T09:01:00Z" }
+          }
+        }
+      }
+    }
   }
 }
 ```
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `personalVersion` | int | Last known personal cloud-vault version this checkout has seen. |
-| `personalSyncedAt` | string | RFC 3339 timestamp for the last successful personal sync observed by this checkout. |
-| `orgVersions.<slug>` | int | Last known org-shared cloud-vault version per org slug. |
-| `orgSyncedAt.<slug>` | string | RFC 3339 timestamp for the last successful sync observed for each organization. |
+| `personalVersion` | int | Non-authoritative summary of the last known personal cloud-vault version. |
+| `personalSyncedAt` | string | Non-authoritative summary of the last successful personal sync time in RFC 3339 format. |
+| `orgVersions.<slug>` | int | Non-authoritative summary of the last known org-shared cloud-vault version per organization slug. |
+| `orgSyncedAt.<slug>` | string | Non-authoritative summary of the last successful sync time per organization in RFC 3339 format. |
+| `personalPlatformBindings.<registry>` | object | Pins platform credentials to the canonical Registry URL and authenticated user ID that created them. |
+| `authorityCheckpoints.personal.<registry>.<principal>` | object | Authoritative personal-vault revision floor and optional last-sync time for one Registry and immutable user ID. |
+| `authorityCheckpoints.organizations.<slug>.<registry>.<principal>` | object | Authoritative organization-vault revision floor and optional last-sync time for one Registry, organization slug, and immutable organization ID. |
 
-The `lpm env push` and `lpm env pull` commands use this metadata for server conflict detection. Do not edit these fields.
+The CLI owns every `vaultSync` field. `authorityCheckpoints` provides the durable account binding and rollback floor used by personal and organization cloud operations. `personalPlatformBindings` prevents platform credentials created by one account from being reused by another account at the same Registry. The version and timestamp fields are non-authoritative summaries for status display and compatibility.
+
+Do not edit or remove `vaultSync`. Removing its authority checkpoints resets local rollback and account-binding protection. A later operation can then establish a new principal and revision checkpoint for that checkout.
 
 If a version does not match, the server returns `409 VaultConflictError`. Then pull the remote values, resolve the conflict, and push again.
 
