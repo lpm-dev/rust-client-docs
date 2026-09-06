@@ -12,7 +12,7 @@ The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm q
 | Layer                     | What it catches                                         | Where it runs                                          |
 | ------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
 | **Lifecycle script gate** | Postinstall script supply-chain attacks                 | At install time, blocks until approval                 |
-| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time by default, with schema-versioned local caching |
+| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | At extract time when enabled, or during an explicit audit |
 | **Vulnerability data**    | Known CVEs from OSV.dev + registry advisories           | At `lpm audit` time                                    |
 | **Publisher trust + cooldown** | Recently-published direct versions, registry-signature failures, trust downgrades, or publisher-identity drift | At install time and via `lpm audit signatures` |
 | **Triage**                | Tiered automation for the script gate                   | At install time, per-package                           |
@@ -33,9 +33,9 @@ The dependency lifecycle phases that actually run during `lpm install`'s build p
 
 ## Layer 2: Behavioral analysis
 
-The `lpm-security` crate's `behavioral` module performs static analysis while package bytes are extracted into the store by default. Results are cached in a schema-versioned `.lpm-security.json` next to the package files. Cache identity includes package source and integrity, so the same `name@version` from different registries does not share findings.
+Install-time source analysis is off by default. When enabled, LPM CLI analyzes package source as extracted bytes enter the store. Results are cached in a schema-versioned `.lpm-security.json` next to the package files. Cache identity includes package source and integrity, so the same `name@version` from different registries does not share findings.
 
-Use `lpm config source-analysis` to manage install-time analysis. Disabling it is an approval-gated security weakening; it skips new install-time scans and cache writes without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed source when it cannot use a cache. After analysis is re-enabled, the next install backfills any missing, malformed, or outdated store cache from the already-extracted bytes without downloading the tarball again.
+Use `lpm config source-analysis` to manage install-time analysis. The disabled setting skips new install-time scans and cache writes without deleting existing caches. Disabling a previously approved source-analysis setting requires security approval. [`lpm audit`](/docs/packages/audit) still scans installed source when it cannot use a cache. After analysis is re-enabled, the next install backfills any missing, malformed, or outdated store cache from the already-extracted bytes without downloading the tarball again.
 
 Three groups of tags — source behavior (what the code does), supply-chain signals (what the artifact looks like), and manifest declarations (what `package.json` declares):
 
@@ -151,7 +151,7 @@ The vulnerability check is **online** — it hits OSV/registry. Cache hits keep 
 
 Install-time and audit-time gates that catch attacks against the publisher identity and registry metadata itself. They apply to both `lpm install` and `lpm install -g` unless noted.
 
-**Minimum release age** — LPM CLI avoids new dependency versions for 24 hours by default. Project installs check direct dependencies by default. Strict mode also checks transitive dependencies and lockfile replays.
+**Minimum release age** — The release cooldown is off by default. Enable it with `lpm config release-age --set 1d`. When enabled, project installs check direct dependencies by default. Strict mode also checks transitive dependencies and lockfile replays.
 
 For ranges, the resolver skips new candidates and selects the newest mature candidate that satisfies the range. An exact pin fails during its cooldown.
 
@@ -327,7 +327,7 @@ Both wizards accept `--set <value>` for non-interactive use.
 
 ## Typosquatting
 
-Independent of the other layers, `lpm install` and `lpm add` run typosquatting detection against a curated list of popular npm packages. The detector covers edit-distance typos, adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`), and flag-shaped package names after `--`.
+The typosquat guard is off by default. Enable it with `lpm config typosquat --set on`. Then `lpm install` and `lpm add` check new direct dependency names against popular npm packages. The detector covers edit-distance typos, adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`). Flag-shaped package names after `--` remain invalid even when the guard is off.
 
 The check fires only when a suspicious direct package name is newly entering the project. Existing lockfile replays, including `CI=true` frozen installs, do not fail because the name was already reviewed into `lpm.lock`. Interactive terminals can switch to the suggested package or write a committed `lpm.toml` allow-list entry; `--json`, CI, non-TTY, and `--yes` runs fail closed with `error_code: "typosquat_suspected"`.
 

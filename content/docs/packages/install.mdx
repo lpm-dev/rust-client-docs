@@ -9,7 +9,7 @@ lpm install [packages...]   # alias: lpm i
 
 With no arguments, installs every dependency declared in `package.json` against the lockfile. At a workspace root, the same no-argument command installs every member and then the root. With one or more package names, resolves and adds them to `package.json` and installs them.
 
-Before a new direct dependency enters the project, LPM CLI checks the package name for common typosquatting patterns against popular packages. A likely typo such as `axois` fails in `--json`, CI, non-TTY, and `--yes` runs before `package.json` is changed; in an interactive terminal LPM CLI defaults to cancel and only switches to the suggested package or writes a committed allow-list entry to [`lpm.toml`](/docs/reference/lpm-toml#typosquat-policy) when you choose that action. Existing lockfile replays are not blocked by this check.
+The typosquat guard is off by default. Enable it with `lpm config typosquat --set on` to check new direct dependency names before resolution. See [Typosquat guard](#typosquat-guard) for interactive choices and project exceptions.
 
 ## Project discovery
 
@@ -162,16 +162,16 @@ Direct GitHub dependencies work at a project root and in recursive workspace mem
 
 ## Post-install security summary
 
-Package source is analyzed locally while its extracted bytes enter the store. The scanner records behavioral, supply-chain, and manifest signals in `.lpm-security.json` next to the stored package bytes. This applies to npm, custom-registry, and `@lpm.dev/*` packages; it does not depend on an LPM.dev Registry package being present.
+When install-time source analysis is enabled, LPM CLI analyzes package source locally as extracted bytes enter the store. The scanner records behavioral, supply-chain, and manifest signals in `.lpm-security.json` next to the stored package bytes. This applies to npm, custom-registry, and `@lpm.dev/*` packages; it does not depend on an LPM.dev Registry package being present.
 
-Install-time source analysis is enabled by default. Manage it with [`lpm config source-analysis`](/docs/infra/config#install-time-source-analysis):
+Install-time source analysis is disabled by default. Manage it with [`lpm config source-analysis`](/docs/infra/config#install-time-source-analysis):
 
 ```bash
-lpm config source-analysis --set true   # default
-lpm config source-analysis --set false  # requires security approval
+lpm config source-analysis --set true   # enable analysis
+lpm config source-analysis --set false  # default; approval required after an approved opt-in
 ```
 
-Disabling it skips new install-time scans and cache creation without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed package source when no usable cache exists and stores its fallback result in the project audit cache. Re-enabling source analysis makes the next install backfill any missing, malformed, or outdated store cache from the already-extracted package bytes; it does not need to download the tarball again.
+The disabled setting skips new install-time scans and cache creation without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed package source when no usable cache exists and stores its fallback result in the project audit cache. Re-enabling source analysis makes the next install backfill any missing, malformed, or outdated store cache from the already-extracted package bytes; it does not need to download the tarball again.
 
 At the end of an install, LPM CLI reads those cached results for every installed package. It does not upload package source during this summary step. For installs larger than 50 packages, progress is reported as `Checking cached security results for N packages` / `Checked cached security results for N packages`, reflecting that this phase reads analysis already produced during extraction rather than rescanning source.
 
@@ -333,7 +333,13 @@ Re-installing an existing dep without a version or override flag refreshes the l
 
 ## Typosquat guard
 
-`lpm install <pkg>` and bare `lpm install` both guard **new direct dependency names** before resolution. The detector covers low-noise cases such as adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`), and flag-shaped package names after `--` (`--legacy-peer-deps`). Transitive dependencies are not blocked by this guard.
+The guard is off by default. Enable it for this machine:
+
+```bash
+lpm config typosquat --set on
+```
+
+When enabled, `lpm install <pkg>` and bare `lpm install` guard **new direct dependency names** before resolution. The detector covers low-noise cases such as adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`). Flag-shaped package names after `--` (`--legacy-peer-deps`) remain invalid even when the guard is off. Transitive dependencies are not blocked by this guard.
 
 In interactive terminals, a single suspicious CLI package can be replaced with the suggested package or committed to the project allow-list. In CI, `--json`, non-TTY, and `--yes` runs, LPM CLI exits `1` with `error_code: "typosquat_suspected"` and leaves the manifest untouched.
 
@@ -348,7 +354,7 @@ reason = "Intentional internal compatibility package"
 
 The guard only fires when a name is newly entering the project. If `lpm.lock` already records the direct dependency, `CI=true lpm install` and `lpm install --frozen-lockfile` replay the lockfile normally.
 
-Machine-wide guard mode lives in `~/.lpm/config.toml > typosquat-guard` and is managed by `lpm config typosquat --set default|on|off`. `default` removes the explicit override and keeps the current product default (enabled); `on` keeps the guard enabled even if the diagnostic env toggle is set; `off` is a security-approval-gated machine-wide weakening. The diagnostic env toggle is also ignored when managed policy owns the typosquat floor. Use project allow-list entries for legitimate false positives instead of turning the guard off globally.
+Machine-wide guard mode lives in `~/.lpm/config.toml > typosquat-guard` and is managed by `lpm config typosquat --set default|on|off`. `default` removes the explicit override and keeps the current product default (disabled); `on` keeps the guard enabled even if the diagnostic env toggle is set; `off` always disables the guard. Switching an approved guard from `on` to `off` or `default` requires security approval. The diagnostic env toggle is also ignored when managed policy owns the typosquat floor. Use project allow-list entries for legitimate false positives instead of turning the guard off globally.
 
 ## npm firewall
 
@@ -664,7 +670,13 @@ For full image patterns, see [Docker deploys](/docs/guides/docker-deploys).
 
 ## Recently published packages
 
-LPM CLI applies a **24-hour** minimum release age by default. On project installs, the default policy checks direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on checked packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. When the request is `latest`, fallback candidates are also capped at the registry's authoritative `dist-tags.latest` target. A maintainer rollback to a lower SemVer therefore cannot select an older-by-date but SemVer-greater release. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
+The minimum release age is **off by default** (`0` seconds). Enable a one-day cooldown for this machine:
+
+```bash
+lpm config release-age --set 1d
+```
+
+When enabled, the default scope checks direct/root dependencies: the package specs declared by the project, plus packages you pass to `lpm install <pkg>`. For ranges on checked packages, the resolver skips candidates that are still inside the cooldown window and picks the newest older candidate that still satisfies the range. When the request is `latest`, fallback candidates are also capped at the registry's authoritative `dist-tags.latest` target. A maintainer rollback to a lower SemVer therefore cannot select an older-by-date but SemVer-greater release. Exact pins to a too-new version still fail, because there is no older version that can satisfy the exact request.
 
 Transitive dependencies of an allowed direct package are not separately halted by the default policy. That keeps a mature direct package on its normal dependency graph instead of downgrading it only because one of its children was published recently.
 
