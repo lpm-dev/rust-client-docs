@@ -36,4 +36,13 @@ describe("final response variance", () => {
       "NODE_ENV=production node server.mjs",
     );
   });
+
+  it("uses Cloudflare as the only compression layer", () => {
+    const nextConfig = readFileSync(
+      new URL("../../next.config.mjs", import.meta.url),
+      "utf8",
+    );
+
+    expect(nextConfig).toMatch(/compress:\s*false/);
+  });
 });

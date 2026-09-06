@@ -93,6 +93,7 @@ const LEGACY_DOCS_REDIRECTS = [
 
 /** @type {import('next').NextConfig} */
 const config = {
+  compress: false,
   poweredByHeader: false,
   reactStrictMode: true,
   env: {
