@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import next from "next";
 import { negotiatesOnAccept } from "./lib/content-negotiation.mjs";
-import { mergeVary } from "./lib/vary.mjs";
+import { normalizeOriginVary } from "./lib/vary.mjs";
 
 const DEFAULT_PORT = 3000;
 
@@ -22,63 +22,91 @@ function portFrom(args) {
   return port;
 }
 
-/** @param {import("node:http").OutgoingHttpHeaders | import("node:http").OutgoingHttpHeader[]} headers */
-function mergeWriteHeadVary(headers) {
+/**
+ * @param {import("node:http").OutgoingHttpHeaders | import("node:http").OutgoingHttpHeader[]} headers
+ * @param {string | number | readonly string[] | undefined} existing
+ * @param {boolean} accept
+ */
+function normalizeWriteHeadVary(headers, existing, accept) {
   if (Array.isArray(headers)) {
-    const merged = [...headers];
-    const index = merged.findIndex(
-      (value, itemIndex) =>
-        itemIndex % 2 === 0 && String(value).toLowerCase() === "vary",
-    );
-    if (index >= 0) {
-      merged[index + 1] = mergeVary(merged[index + 1], "Accept");
-    } else {
-      merged.push("Vary", "Accept");
+    const merged = [];
+    const varyValues = [existing];
+    let varyIndex = -1;
+
+    for (let index = 0; index < headers.length; index += 2) {
+      if (String(headers[index]).toLowerCase() === "vary") {
+        if (varyIndex < 0) varyIndex = merged.length;
+        varyValues.push(headers[index + 1]);
+      } else {
+        merged.push(headers[index], headers[index + 1]);
+      }
+    }
+
+    const vary = normalizeOriginVary(varyValues, { accept });
+    if (vary) {
+      merged.splice(varyIndex < 0 ? merged.length : varyIndex, 0, "Vary", vary);
     }
     return merged;
   }
 
   const merged = { ...headers };
-  const key = Object.keys(merged).find((name) => name.toLowerCase() === "vary");
-  const varyKey = key ?? "Vary";
-  merged[varyKey] = mergeVary(merged[varyKey], "Accept");
+  const keys = Object.keys(merged).filter(
+    (name) => name.toLowerCase() === "vary",
+  );
+  const vary = normalizeOriginVary(
+    [existing, ...keys.map((key) => merged[key])],
+    { accept },
+  );
+  for (const key of keys) delete merged[key];
+  if (vary) merged.Vary = vary;
   return merged;
 }
 
 /**
- * Next's HTML renderer replaces earlier Vary values. Merge Accept at the final
- * Node response boundary so content-negotiated HTML and markdown cannot share
- * a cache entry, while preserving RSC and compression variance.
+ * Next's renderer can replace earlier Vary values. Normalize the header at the
+ * final Node response boundary. Cloudflare owns compression, so the origin
+ * must not emit Accept-Encoding variance.
  *
  * @param {import("node:http").IncomingMessage} request
  * @param {import("node:http").ServerResponse} response
  */
-export function installAcceptVariance(request, response) {
-  if (!negotiatesOnAccept(request.url)) return;
-
+export function installFinalVariance(request, response) {
+  const accept = negotiatesOnAccept(request.url);
   const setHeader = response.setHeader;
-  response.setHeader = function setHeaderWithAccept(name, value) {
-    const finalValue =
-      String(name).toLowerCase() === "vary"
-        ? mergeVary(value, "Accept")
-        : value;
-    return setHeader.call(this, name, finalValue);
+
+  response.setHeader = function setNormalizedHeader(name, value) {
+    if (String(name).toLowerCase() !== "vary") {
+      return setHeader.call(this, name, value);
+    }
+
+    const vary = normalizeOriginVary(value, { accept });
+    if (!vary) {
+      this.removeHeader(name);
+      return this;
+    }
+    return setHeader.call(this, name, vary);
   };
 
   const writeHead = response.writeHead;
-  response.writeHead = function writeHeadWithAccept(
+  response.writeHead = function writeNormalizedHead(
     statusCode,
     statusMessageOrHeaders,
     headers,
   ) {
-    setHeader.call(this, "Vary", mergeVary(this.getHeader("Vary"), "Accept"));
+    const currentVary = normalizeOriginVary(this.getHeader("Vary"), {
+      accept,
+    });
+    if (currentVary) setHeader.call(this, "Vary", currentVary);
+    else this.removeHeader("Vary");
 
     if (typeof statusMessageOrHeaders === "string") {
       return writeHead.call(
         this,
         statusCode,
         statusMessageOrHeaders,
-        headers ? mergeWriteHeadVary(headers) : undefined,
+        headers
+          ? normalizeWriteHeadVary(headers, currentVary, accept)
+          : undefined,
       );
     }
 
@@ -86,12 +114,12 @@ export function installAcceptVariance(request, response) {
       this,
       statusCode,
       statusMessageOrHeaders
-        ? mergeWriteHeadVary(statusMessageOrHeaders)
+        ? normalizeWriteHeadVary(statusMessageOrHeaders, currentVary, accept)
         : undefined,
     );
   };
 
-  response.setHeader("Vary", "Accept");
+  if (accept) response.setHeader("Vary", "Accept");
 }
 
 async function start() {
@@ -102,7 +130,7 @@ async function start() {
 
   await app.prepare();
   createServer((request, response) => {
-    installAcceptVariance(request, response);
+    installFinalVariance(request, response);
     handle(request, response);
   }).listen(port, hostname, () => {
     console.log(`> Ready on http://${hostname}:${port}`);

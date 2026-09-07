@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendVary, mergeVary } from "../../lib/vary.mjs";
+import { appendVary, mergeVary, normalizeOriginVary } from "../../lib/vary.mjs";
 
 describe("appendVary", () => {
   it("adds a field without dropping existing Vary tokens", () => {
@@ -30,5 +30,19 @@ describe("appendVary", () => {
     expect(mergeVary(["RSC", "Accept-Encoding"], "Accept")).toBe(
       "RSC, Accept-Encoding, Accept",
     );
+  });
+
+  it("removes origin compression variance and keeps one Accept token", () => {
+    expect(
+      normalizeOriginVary(
+        "Accept-Encoding, rsc, Next-Router-State-Tree, Accept, ACCEPT-ENCODING",
+        { accept: true },
+      ),
+    ).toBe("rsc, Next-Router-State-Tree, Accept");
+    expect(
+      normalizeOriginVary(["RSC", "Accept-Encoding"], { accept: true }),
+    ).toBe("RSC, Accept");
+    expect(normalizeOriginVary("Accept-Encoding")).toBe("");
+    expect(normalizeOriginVary("*", { accept: true })).toBe("*");
   });
 });
