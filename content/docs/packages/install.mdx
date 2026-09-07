@@ -331,6 +331,24 @@ save-exact = false  # bool; true forces exact regardless of prefix
 
 Re-installing an existing dep without a version or override flag refreshes the lockfile and store but **does not** rewrite the existing range — `"zod": "~4.3.6"` stays put.
 
+## Interrupted installs
+
+If a JavaScript package install fails or receives Ctrl+C, LPM CLI restores its staged manifest changes and invalidates the install cache.
+
+After a forced stop, the next install restores staged `package.json` changes before it proceeds. This also covers selected workspace members. An intentional `"*"` range remains unchanged.
+
+Repeat the original command to complete the interrupted operation:
+
+```bash
+lpm install zod
+```
+
+A bare `lpm install` instead installs the dependencies from the restored manifest. The retry also repairs incomplete `node_modules` state.
+
+If you edit a staged manifest after interruption, automatic recovery stops and preserves your edits. The error identifies the backup directory under `.lpm/install-recovery`.
+
+Save your current edits separately. Restore the matching backup record's `original` text to its `package.json` path. Repeat the install, then reapply your edits. Keep the backup until recovery succeeds.
+
 ## Typosquat guard
 
 `lpm install <pkg>` and bare `lpm install` both guard **new direct dependency names** before resolution. The detector covers low-noise cases such as adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`), and flag-shaped package names after `--` (`--legacy-peer-deps`). Transitive dependencies are not blocked by this guard.
