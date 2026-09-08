@@ -212,6 +212,14 @@ If no active endpoint exists, pass a port. If multiple endpoints exist, pass the
 
 Do not give a standalone tunnel a framework HTTPS port. Use a plain HTTP child service for tunnel forwarding.
 
+## Server-sent events
+
+Responses with `Content-Type: text/event-stream` reach visitors as the local service sends data.
+The tunnel waits up to 30 seconds for response headers. An open event stream can continue beyond 30 seconds.
+Slow readers limit forwarding, and a visitor disconnect closes the local request.
+Tunnel revocation and the Free-session deadline still close active streams.
+This behavior requires a relay that supports streamed responses.
+
 ## Request capture and privacy
 
 LPM CLI captures each forwarded request and local response in the current project:
@@ -229,6 +237,9 @@ Live capture memory has fixed limits. The request buffer retains up to 1,000 req
 The WebSocket buffer retains up to 5,000 events or 32 MiB.
 
 Each captured WebSocket frame keeps a 64 KiB preview and records the original frame size. The inspector marks a partial preview as truncated.
+
+For a completed event stream, the inspector retains up to 64 KiB of response data and marks a partial capture.
+An interrupted stream may have no completed capture.
 
 The database writer queues up to 256 captures and 64 MiB. If either limit is full, LPM CLI drops new captures.
 
@@ -270,6 +281,10 @@ LPM CLI returns `200 OK` and saves the request for later replay.
 > CAUTION: The provider records the request as successful, but your local service did not process it.
 
 ## Reliability and recovery
+
+A missed relay heartbeat triggers reconnection. LPM CLI reports the retry instead of exiting successfully.
+Credential renewal keeps a healthy tunnel connected without resetting the Free one-hour limit.
+At that limit, the tunnel stops and asks you to start a new session.
 
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
