@@ -105,7 +105,8 @@ The cache key is a SHA-256 hash of:
 - The cache identities of transitive same-project task dependencies
 - The declared outputs of direct same-project task dependencies
 - The complete `lpm.json` file, including dependency edges and output globs
-- The complete child environment after inherited credential and runtime-hook removal
+- The inherited environment after credential and runtime-hook removal, or the variables selected by `cacheEnv`
+- All environment values loaded from project files, secrets, and schema defaults
 - Managed Node and Bun versions, plus fingerprints of the selected executables
 - The complete `package.json` contract, including scripts and resolution fields
 - Supported lockfiles in the project root
@@ -113,6 +114,28 @@ The cache key is a SHA-256 hash of:
 - The task identity of each reachable `^task` dependency
 
 Any change to any of those flips the key. Same key = cache hit.
+
+To reuse output across machines or CI jobs, declare the inherited variables that affect a task:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": ["NODE_ENV", "BUILD_TARGET"],
+      "outputs": ["dist/**"]
+    }
+  },
+  "remoteCache": { "enabled": true }
+}
+```
+
+With this configuration, changes to `LPM_HOME`, `CI`, or `GITHUB_RUN_ID` do not change the cache key.
+If your build uses `CI` to change behavior, include `CI`. Include every inherited variable that can affect the result.
+Names are exact and case-sensitive. Wildcards are not supported.
+
+If you omit `cacheEnv`, all inherited values remain cache inputs. An empty list excludes all inherited values from the key.
+Project-loaded environment values always remain cache inputs. `cacheEnv` does not change the task's environment or bypass remote-upload secret checks.
 
 A local dependency identity includes its cache key and each reachable
 dependency identity. LPM also validates each declared dependency output before
