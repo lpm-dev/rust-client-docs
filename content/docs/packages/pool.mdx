@@ -26,18 +26,58 @@ $ lpm pool
     @lpm.dev/acme.icons         (7,617  downloads)
 ```
 
-The numbers shown are the **current period's accruing estimate** — they're recomputed from raw download events at payout time. Earnings settle when the period closes.
+The current period shows an estimate. Final revenue uses completed installs and the recorded payments for that billing period.
 
 ## How weighting works
 
-`lpm pool` reports the server's current revenue estimate; LPM CLI does not calculate the weights locally. The current model works from these inputs:
+The LPM.dev Registry calculates Pool revenue. Each subscriber's paid author share goes to the eligible packages that subscriber installed during the billing period.
 
-- **Per-subscriber allocation** — each active subscriber's author share is allocated among the Pool packages that subscriber installed during the billing period.
-- **Dependency depth** — direct installs carry full weight; dependencies receive progressively smaller weights as their depth increases.
-- **Anti-gaming adjustments** — repeated installs, same-owner dependency relationships, and minimum unique-installer rules can reduce or suppress weight.
-- **Current Pool membership** — a package participates when its LPM.dev Registry package settings are set to Pool. Private and Marketplace packages use different access and revenue paths.
+After a successful install, LPM CLI reports the resolved dependency graph. This includes installed versions, overrides, optional dependencies, peer dependencies, and canonical alias targets. A failed download or extraction does not create Pool credit.
 
-The exact multipliers and anti-gaming thresholds live server-side and can change. The `weightedDownloads` and earnings values returned by LPM.dev Registry are authoritative for the active rules.
+Each `@lpm.dev/*` dependency adds one level. npm packages do not add levels:
+
+```text
+project → @lpm.dev/owner.a → @lpm.dev/owner.b → @lpm.dev/owner.c
+          depth 0          depth 1          depth 2
+
+project → npm-wrapper → @lpm.dev/owner.a → npm-helper → @lpm.dev/owner.b
+                        depth 0                        depth 1
+```
+
+| Depth | Base weight |
+| --- | --- |
+| 0 | 1.00 |
+| 1 | 0.70 |
+| 2 | 0.49 |
+| 3 | 0.34 |
+| 4 or deeper | No credit |
+
+The LPM.dev Registry applies these rules:
+
+- Each subscriber contributes at most one observation per package per month. Repeated installs and retries do not add observations.
+- The shallowest observed path wins. At equal depth, a path without the same-owner penalty wins before a stable tie-break.
+- A dependency with the same owner as its immediate `@lpm.dev/*` parent receives 30% of its base weight.
+- A transitive dependency needs at least two unique installers before its weight counts.
+- Publisher access does not create credit, including personal packages and packages owned by the subscriber's organizations.
+- Optional packages omitted on the current platform and dependencies absent from the installed graph receive no credit.
+
+For example, `a` from Alice depends on `b` from Bob, which depends on `c` from Bob. The base weights are `1`, `0.7`, and `0.49`. The same-owner rule reduces `c` to `0.147`, before other eligibility rules and rounding.
+
+Unmanaged clients do not report a completed dependency graph. Their authenticated Pool downloads count as direct observations for the fetched packages only.
+
+## Payments and refunds
+
+The author share is 80% of the paid Pool amount, excluding tax. Discounts reduce that amount. A $6 discounted payment contributes $4.80 to author revenue.
+
+Refunds reduce the recorded contribution. Pending refund adjustments hold new payouts, retries, and payout setup recovery until revenue calculation handles those adjustments.
+
+## Recover an unconfirmed install report
+
+If LPM CLI reports `pool_attribution_unconfirmed`, retry the same install command. LPM CLI can reuse cached packages and retry the report without duplicate credit.
+
+If the error requests a CLI update, update LPM CLI before retrying. Older clients that report only package roots cannot confirm complete graph attribution.
+
+The report has limits of 10,000 graph nodes, 50,000 edges, and 1,000 `@lpm.dev/*` package instances. LPM CLI includes only paths relevant to `@lpm.dev/*` packages. An oversized or incomplete graph returns an error instead of partial credit.
 
 ## `--json` output
 
@@ -66,7 +106,7 @@ The exact multipliers and anti-gaming thresholds live server-side and can change
 | `billingPeriod` | ISO month (`YYYY-MM`) the stats cover |
 | `totalWeightedDownloads` | Sum across all your pool packages |
 | `estimatedEarningsCents` | Accruing total in cents (`/100` for dollars) |
-| `packages[].installCount` | Raw install events before weighting |
+| `packages[].installCount` | Unique subscriber observations before weighting |
 | `packages[].weightedDownloads` | Post-weighting count that determines share |
 | `packages[].sharePercentage` | Your share of this package within the pool, in percent |
 | `packages[].estimatedEarningsCents` | Per-package accrual in cents |
