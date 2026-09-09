@@ -130,19 +130,30 @@ The full schema reference — every field, every value type, every default — l
 Prompts can be pre-answered from the CLI by appending `?key=value&key=value` to the package spec:
 
 ```bash
-lpm add @lpm.dev/owner.ui-kit?component=dialog&styling=panda
+lpm add '@lpm.dev/owner.ui-kit?component=dialog&styling=panda'
 ```
 
-Inline values bypass the prompt entirely. With `--yes`, prompts are skipped and `defaultConfig` / `configSchema.<field>.default` fill in any `required` fields the user didn't supply.
+Quote the full package argument so the shell preserves `&`. Encode punctuation inside values: `%26` for `&`, `%2B` for `+`, and `%27` for an apostrophe. A `+` means a space. LPM CLI decodes each key and value once, then rejects malformed escapes or duplicate keys.
+
+```bash
+lpm add '@lpm.dev/owner.ui-kit?name=Team%27s+UI&components=dialog%2Cpopover'
+lpm add '@lpm.dev/owner.ui-kit?components=&withTests=false' --yes
+```
+
+Inline values bypass prompts. An empty optional multi-select, such as `components=`, selects nothing and overrides its default. A required selection cannot be empty.
+
+For fields without inline values, `defaultConfig` takes precedence over the field's `default`. Non-interactive commands apply these defaults and reject required fields that have no usable value.
+
+On the package detail page, **Configure** supports strings, booleans, and selections. Complete every required field before copying the command. The generated command preserves both boolean values and empty or full multi-selections.
 
 ### Behavior matrix
 
 | State | What `lpm add` does |
 | --- | --- |
-| No `lpm.config.json` | Plain copy of the package's source. No prompts. No auto-install. Surfaces bare imports for you to install yourself. |
+| No `lpm.config.json` | Plain source copy. Prompts for a destination interactively; otherwise requires `--path`. Does not install dependencies. Reports bare imports. |
 | `lpm.config.json` present, TTY | Prompts for every `configSchema` key not already inlined; copies per `files[]` rules; installs `dependencies` matching the chosen values. |
-| `lpm.config.json` present, `--yes` | Skips prompts and fills missing `required` fields from `defaultConfig` or the field's `default`. |
-| `lpm.config.json` present, `--json` or non-TTY without `--yes` | Skips prompts but does not fill required defaults. Only query-string values are populated; missing file conditions use include-by-default behavior and unmatched conditional dependencies are not installed. |
+| `lpm.config.json` present, `--yes` | Applies defaults to omitted fields and rejects missing required values. |
+| `lpm.config.json` present, `--json` or non-TTY without `--yes` | Uses the same configuration defaults and required-field validation as `--yes`. |
 
 ### Prerequisites
 
@@ -159,6 +170,22 @@ error: this source package declares dependencies, but the project has no
 ```
 
 If you only want the source files (and you'll handle the imports yourself), pass `--no-install-deps` to skip the preflight and let the copy proceed without touching `package.json`.
+
+## Updates and interruption recovery
+
+To update copied source, run `lpm add` with the new version. If cached metadata lacks that version, LPM CLI refreshes metadata once before reporting it unavailable.
+
+```bash
+lpm add @lpm.dev/owner.ui-kit@1.2.1 --path src/vendor
+```
+
+Mapped JavaScript imports retain runtime extensions such as `.js` and `.mjs`. Source delivery preserves executable permissions on Unix systems.
+
+After an interrupted add, run `lpm add` again or run [`lpm remove`](/docs/packages/remove). Before either command proceeds, LPM CLI recovers copied files, overwrite backups, source tracking, and staged manifests. Recovery removes newly created directories only when they are empty.
+
+If you edited a copied file after the interruption, recovery stops and preserves your edits. Save those edits separately. The matching JSON record in `.lpm/install-recovery/sources/` identifies the path; its `.original` file contains the original bytes. Restore those bytes and permissions, or remove a new file that had no original, then retry. Keep the recovery directory until recovery succeeds.
+
+A hard stop can leave dependency lockfiles or `node_modules` changed. Run [`lpm install`](/docs/packages/install) after source recovery to reconcile dependency state.
 
 ## Flags
 

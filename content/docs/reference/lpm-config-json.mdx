@@ -9,7 +9,7 @@ The file is **optional**. Without it, `lpm add` is a plain source copy of every 
 
 LPM CLI reads `lpm.config.json` with a 16 MiB limit enforced before JSON parsing. A missing file retains the plain-copy path; an oversized file fails instead of being treated as absent, so it cannot silently change file selection or dependency injection. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
 
-When publishing to the LPM.dev Registry, the submitted canonical JSON representation has a separate 128 KiB ceiling. The smaller Registry limit protects the hosted publish and downstream metadata surfaces; the 16 MiB local ceiling protects local file reads. Other registries remain server-authoritative and may apply different limits.
+LPM.dev Registry reads the physical root `lpm.config.json` from the uploaded tarball. Both the file and its canonical JSON representation have a 128 KiB limit. Invalid JSON, invalid configuration, and non-regular config files cause publication to fail. Metadata supplied separately cannot replace or create the tarball configuration. Other registries can apply different limits.
 
 This page is the schema-by-field reference. For the `lpm add` consumer flow, see [`lpm add`](/docs/packages/add).
 
@@ -106,6 +106,8 @@ Drives the default install-dir resolution. Override via `lpm add --path <dir>`.
 
 The author's import alias prefix used in the source files. `lpm add` needs this field to recognize alias-qualified internal imports and rewrite them to the consumer project's detected `tsconfig.json > paths` alias or explicit `--alias` value.
 
+Mapped `.js`, `.mjs`, `.cjs`, and `.json` imports retain their runtime extensions, including explicit `index` paths. TypeScript import paths retain the existing extension-free behavior.
+
 Relative internal imports do not require `importAlias`. LPM CLI resolves them through the `files` source-to-destination map and can rewrite them when files move or the consumer uses an alias. Bare package imports remain unchanged.
 
 ## `configSchema`
@@ -136,9 +138,13 @@ Map of configurable field name → field specification. Each entry drives an int
 | `type` | `"string" \| "boolean" \| "select"` | Default `"string"`. `boolean` produces a confirm prompt; `select` produces a single- or multi-choice list. |
 | `label` | string | Prompt label. Defaults to the field name. |
 | `default` | string \| boolean \| number | Initial value. Native JSON types are accepted; legacy stringified values (`"true"`, `"false"`) are still honored for back-compat. |
-| `required` | boolean | When `true`, `lpm add --yes` fills the field with its `default` instead of skipping it. |
+| `required` | boolean | Requires a nonempty value. Non-interactive commands apply defaults, then reject any required field that remains unset. |
 | `multiSelect` | boolean | Only meaningful when `type` is `select`. When `true`, the prompt accepts multiple values; the resolved inline-config value is comma-joined. |
 | `options` | array | Selectable options. Plain strings (`["dialog", "menu"]`) are shorthand for `{value, label}` pairs where both equal the string. Object form: `[{"value": "dialog", "label": "Dialog component"}]`. |
+
+Every `select` field must declare at least one option. Empty or missing `options` is invalid. For an option object, omit `label` to display its `value`.
+
+Interactive prompts and **Configure** initially select the configured default, or all options when no default exists. Non-interactive commands apply declared defaults. Without a default, an omitted field keeps conditional files but does not match conditional dependencies. An explicit empty optional selection (`?components=`) selects nothing. See [pre-answering prompts](/docs/packages/add#pre-answering-prompts) for encoding rules.
 
 ## `defaultConfig`
 
@@ -170,9 +176,9 @@ Ordered list of file copy rules. When `files` is omitted, `lpm add` copies every
 | Field | Type | Notes |
 | --- | --- | --- |
 | `src` | string (required) | Source path or glob (relative to the tarball root). Trailing `/**` and `/*` are supported. |
-| `dest` | string | Destination path (relative to the consumer project's resolved install dir). Trailing `/` treats the value as a directory; the source filename is preserved. Omit to keep the source-relative path. |
+| `dest` | string | Destination path (relative to the consumer project's resolved install dir). For a glob, `dest` is always a directory, even with one match. Paths after the fixed glob prefix remain relative to that directory. For a single file, trailing `/` preserves its filename; otherwise `dest` renames it. Omit to keep the source-relative path. |
 | `include` | `"always" \| "when" \| "never"` | Default `"always"`. `"when"` requires every entry in `condition` to match. `"never"` skips. |
-| `condition` | object | Required when `include` is `"when"`. Map of config field name → expected value. Native booleans and numbers are accepted alongside strings. Comma-separated multi-select values match if any element equals the expected value. Missing keys default to "include" (all-by-default). |
+| `condition` | object | Required when `include` is `"when"`. Map of config field name → expected value. Native booleans and numbers are accepted alongside strings. Comma-separated multi-select values match if any element equals the expected value. Missing keys default to "include" (all-by-default). An explicitly empty selection excludes conditional files. |
 
 ## `dependencies`
 
@@ -236,13 +242,11 @@ If resolution succeeds but a later step fails — file copy, manifest mutation, 
 | Every source file `lpm add` copied into the project | Pre-existing files restored to original bytes; newly-created files deleted |
 | `.lpm/install-hash` | Always invalidated so the next `lpm install` re-derives clean state |
 
-What's outside the rollback surface, by design:
+Source tracking and overwrite backups recover with the copied files. Newly created directories are removed only when empty. User edits made after an interruption prevent automatic restoration of that path.
 
-- **The install directory itself**, plus any parent directories materialized to host the copied source files. `lpm add` resolves `target_dir` and creates it (and any canonical parents on the resolution chain) before the transaction opens — that mkdir is what lets the transaction snapshot canonical-pinned dest paths in the first place. A rolled-back failure leaves these directories on disk; the files inside them were rolled back, so the directories may end up empty.
-- **Recursive Swift `lpm add`** for SE-0292 source-package dependencies. Each recursive call owns its own transaction; the outer `lpm add` commits before triggering recursion so a Swift-dep failure doesn't roll back the root package's already-applied mutations.
-- **Package-published agent skills** reconciled under `.lpm/skills/<package>/`. Fetch, validation, and write errors fail the install instead of leaving a partial or stale package-owned skill set.
+The table describes rollback after an ordinary command failure. After a hard stop, source files, source tracking, backups, and staged manifests recover on the next add or remove. Dependency lockfiles and `node_modules` can still need reconciliation with `lpm install`. See [interruption recovery](/docs/packages/add#updates-and-interruption-recovery).
 
-If `lpm add` fails inside the rollback boundary, every file and lockfile under the transaction snaps back to its pre-`lpm add` state. The remaining residue is empty directories under the install target (cheap to clean up; `rm -rf` the directory if you don't want it). Re-run `lpm add` after fixing the underlying error to converge.
+Recursive Swift source copies share source and manifest recovery with the root add. Package-manager lockfiles from earlier completed steps are outside that durable recovery. Package skills use separate reconciliation; a skills failure produces a warning after source delivery.
 
 ### Author opt-out of legacy fallback
 
