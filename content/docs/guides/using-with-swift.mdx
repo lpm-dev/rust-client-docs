@@ -24,16 +24,20 @@ On the first Swift install in an unconfigured project, LPM CLI:
 1. Sets the `lpmdev` scope to the LPM.dev Registry SE-0292 endpoint.
 2. Passes the current LPM.dev Registry session to SPM.
 3. Installs the Registry CMS signing certificate.
-4. Configures the `lpmdev` signing-trust policy.
-5. Updates `Package.swift` and runs `swift package resolve`.
+4. Configures the signing policy for the Registry hostname.
+5. Checks access, updates `Package.swift`, resolves dependencies, and checks required products with the native dependency graph.
 
 Setup failures abort the install instead of leaving a partially configured trust path. One eligible target is selected automatically. With multiple eligible targets, a normal install asks which target should receive the dependency; `-y` / `--yes` skips that selector and chooses its default, the first eligible target.
+
+Every reinstall resolves dependencies, even when the declaration already exists. Missing dependency files are restored. LPM CLI checks access to every resolved LPM.dev Registry dependency, including cached transitive dependencies. Revoked access stops installation.
+
+A `Package.swift` in the current directory takes precedence over an unrelated parent `package.json`.
 
 During later HTTPS installs, LPM CLI signs in to SPM again even when the Registry scope matches. A rejected stored bearer causes one session refresh and one login retry.
 
 The same routing applies in workspaces. Use `-w` for a root `Package.swift`, run from a member directory for that member, or use `--filter` to select Swift members. LPM CLI mutates, configures, reports, and runs `swift package resolve` from the same selected directory. In mixed JavaScript/Swift workspaces, Swift versions go only through SE-0292 while JavaScript versions retain normal `package.json` installation.
 
-Use [`lpm install`](/docs/packages/install) for Swift dependencies. `lpm add` is the legacy source-delivery path and is not the normal SPM dependency workflow.
+Use [`lpm install`](/docs/packages/install) for native Swift dependencies. Use [`lpm add`](/docs/packages/add) when you want to copy source files into your project.
 
 You do not need to run `lpm swift-registry` before installing. That command remains available for explicit repair and certificate refresh:
 
@@ -45,7 +49,11 @@ See the [trust model](/docs/packages/swift-package-registry#trust-model) for wha
 
 ## Publishing a Swift package
 
-LPM CLI detects a Swift package from `Package.swift` at the repository root.
+LPM CLI detects Swift from `Package.swift` in the published archive. Install a compatible Swift toolchain before publishing. On macOS, LPM CLI uses the developer directory selected by `xcode-select`.
+
+Run `lpm publish --check` to inspect the archive without uploading it. Malformed manifests, unsupported tools versions, and inspection failures stop publication. LPM.dev Registry also inspects the uploaded source before storing its metadata.
+
+Literal directories in `package.json` `files`, such as `Sources` and `Tests`, are relative to the package root. They do not include matching directories under `.build`. Use explicit glob patterns when you need nested matches.
 
 ```bash
 lpm publish
@@ -78,16 +86,16 @@ LPM.dev Registry serves the CMS signing certificate at `https://lpm.dev/api/swif
 Signatures are surfaced in three places per release:
 
 - The release metadata JSON (base64 CMS).
-- The `Digest` HTTP response header on tarball download.
+- The `X-Swift-Package-Signature` HTTP header on ZIP download.
 - A comment block in the `Package.swift` manifest response.
 
 If the cert rotates, re-run `lpm swift-registry --force`. Failed `--force` re-downloads are fatal — the CLI will not silently fall back to the stale cert.
 
-For the trust-model rationale (why the cert is self-signed, why SPM uses a `silentAllow` scope override rather than a trust-store entry, what the signature actually attests to), see [Trust model](/docs/packages/swift-package-registry#trust-model).
+For the trust-model rationale (why the cert is self-signed, why SPM uses a `silentAllow` registry override rather than a trust-store entry, what the signature actually attests to), see [Trust model](/docs/packages/swift-package-registry#trust-model).
 
 ## Common pitfalls
 
-- **`lpm add` for Swift is the legacy path.** Use `lpm install` — `add` is source-delivery, not what you want for a runtime SPM dep.
+- **Choose the delivery method.** `lpm install` manages a native Swift dependency. `lpm add` copies source files into your project.
 - **`Package.swift` must use the SE-0292 identity** (`lpmdev.owner_pkg-name`), not the LPM.dev Registry-native form. `lpm install` writes it correctly; if you hand-edit, mind the format — the `_` separates owner from package name.
 - **Refresh after a documented certificate rotation.** Run `lpm swift-registry --force`. A failed forced refresh is fatal; LPM CLI does not silently keep the stale certificate.
 
