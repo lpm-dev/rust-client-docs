@@ -220,6 +220,9 @@ Slow readers limit forwarding, and a visitor disconnect closes the local request
 Tunnel revocation and the Free-session deadline still close active streams.
 This behavior requires a relay that supports streamed responses.
 
+LPM CLI forwards `Last-Event-ID` when an SSE client reconnects. Your local service must retain event history and resume after that ID.
+The tunnel does not retain application events or guarantee exactly-once delivery.
+
 ## Request capture and privacy
 
 LPM CLI captures each forwarded request and local response in the current project:
@@ -283,6 +286,15 @@ LPM CLI returns `200 OK` and saves the request for later replay.
 ## Reliability and recovery
 
 A missed relay heartbeat triggers reconnection. LPM CLI reports the retry instead of exiting successfully.
+The relay closes a tunnel after 90 seconds without a client heartbeat and releases its concurrent-tunnel slot.
+During that grace period, a suspected disconnect produces a temporary retry response.
+
+An established tunnel retries a capacity rejection while its previous connection expires. A new tunnel still stops at the active-tunnel limit.
+The CLI makes up to 10 retries with backoff. A connection that lasts at least 60 seconds resets the retry count.
+
+Sleep or a network change can close active HTTP, SSE, and WebSocket connections. Applications must reconnect their streams after tunnel recovery.
+A recovered Free tunnel can receive a new random URL. Use the URL from the latest successful connection.
+
 Credential renewal keeps a healthy tunnel connected without resetting the Free one-hour limit.
 At that limit, the tunnel stops and asks you to start a new session.
 
