@@ -55,13 +55,34 @@ Run the install from the directory that contains your `.xcodeproj` or `.xcworksp
 lpm install @lpm.dev/owner.swift-pkg --yes
 ```
 
-LPM CLI creates `Packages/LPMDependencies`, links its library to the app target, and adds a Frameworks phase if necessary. The wrapper exports the package modules. Its deployment targets include the app configuration and the minimum versions declared by installed dependencies. An existing wrapper keeps higher minimum versions from earlier installs.
+LPM CLI creates `Packages/LPMDependencies`, links its library to the app target, and adds a Frameworks phase if necessary. The wrapper exports the package modules. Its deployment targets include the app configuration and the minimum versions declared by installed dependencies. For `.xcconfig` files and deployment variables, LPM reads the effective settings from Xcode. It uses the lowest app minimum across build configurations for each supported platform. An existing wrapper keeps higher minimum versions from earlier installs.
 
 Workspace discovery follows nested project references. A single project is selected automatically. With multiple projects, a project that matches the workspace name takes precedence. If selection is ambiguous, run the command from the intended project directory. References outside the workspace directory and symbolic links require installation from the actual project directory.
 
 Xcode needs the registry scope outside the wrapper. LPM CLI therefore sets `lpmdev` in `~/.swiftpm/configuration/registries.json` as well as the wrapper configuration. Other registry scopes and signing settings remain intact.
 
-If an older CLI created package references that Xcode ignored, repeat the install with the updated CLI. It repairs those misplaced references. If Xcode is open, close and reopen the project after installation.
+If an older CLI created package references that Xcode ignored, repeat the install with the updated CLI. It repairs those misplaced references and restores missing app product links or Frameworks entries. Complete links to other targets remain intact. If Xcode is open, close and reopen the project after installation.
+
+### Lockfiles and CI builds
+
+LPM resolves the selected Xcode project and its containing workspaces before it reports a successful install. Workspace resolution uses the available schemes. Commit the updated shared `Package.resolved` files with the wrapper changes.
+
+If Xcode resolution fails, LPM restores the previous project, wrapper files, and shared lockfiles. The command returns an error.
+
+Xcode also stores generated resolution state in its package cache. If CI restores an older cache, resolve dependencies with the same cache paths before the frozen build:
+
+```bash
+xcodebuild -resolvePackageDependencies \
+  -workspace MyApp.xcworkspace -scheme MyApp \
+  -clonedSourcePackagesDirPath .ci/SourcePackages
+
+xcodebuild -workspace MyApp.xcworkspace -scheme MyApp \
+  -clonedSourcePackagesDirPath .ci/SourcePackages \
+  -disableAutomaticPackageResolution \
+  -onlyUsePackageVersionsFromResolvedFile build
+```
+
+The CLI requires `xcodebuild` for Xcode project installation. Native SwiftPM projects continue to use `swift package resolve`.
 
 ## Publishing a Swift package
 
