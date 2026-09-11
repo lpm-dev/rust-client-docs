@@ -81,8 +81,8 @@ Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on
 
 | Mode | Filesystem | Env | Outbound network | Project secret files | How to engage |
 | --- | --- | --- | --- | --- | --- |
-| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Credential vars stripped (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`, etc.) | Allowed | **Denied** — `.env*`, `.npmrc`, `.aws/`, `*.pem`, … (see [below](#project-secret-files)) | Nothing — this is the default |
-| **Strict** | Same as default | Same as default | **Denied** | **Denied** | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
+| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Minimal environment plus approved `passEnv` names | Allowed | Denied unless explicitly approved (see [below](#project-secret-files)) | Nothing — this is the default |
+| **Strict** | Same as default | Same as default | **Denied** | Same as default | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
 | **Disabled** | No containment | **Not scrubbed** — `LPM_TOKEN`, `NPM_TOKEN`, etc. all pass through | Allowed | **Readable** — every file in `project_dir` reachable | `--no-sandbox` (per-command, loud banner), or `lpm config sandbox --set none` (persistent) |
 
 ```bash
@@ -152,9 +152,9 @@ The build key includes:
 - OS, architecture, libc, and CPU-feature compatibility
 - Node version, modules ABI, N-API, V8 version, and runtime executable identity
 - strict sandbox posture and allowed-input policy
-- the complete environment exposed to the lifecycle script, including custom
-  variables plus LPM CLI's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`, and
-  `TEMP` values
+- the complete environment exposed to the lifecycle script, including the
+  baseline variables and LPM CLI's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`,
+  and `TEMP` values
 - compiler, linker, SDK, CMake, Ninja, invoked build-executable, operating
   system, dynamic-linker cache, and Node-header fingerprints when discoverable
 - compiler sysroot/search configuration, pkg-config databases, and
@@ -175,10 +175,11 @@ Because absolute lifecycle paths are observable inputs, reuse across separate
 checkouts requires those paths to match. This is normally true for repeated CI
 runs that restore the LPM CLI store into the same workspace path; a differently
 located checkout receives a different key rather than reusing an artifact that
-could contain the previous path. The complete environment is also exact: CI
-values such as `GITHUB_RUN_ID`, `GITHUB_RUN_NUMBER`, and
-`GITHUB_RUN_ATTEMPT` intentionally invalidate reuse unless the workflow
-normalizes them before invoking LPM CLI.
+could contain the previous path. Changes to exposed baseline variables also
+change the build key. Undeclared variables, including `CFLAGS` and
+`GITHUB_RUN_ID`, do not reach dependency scripts and do not change the key.
+Adding a `passEnv` grant requires approval and disables native artifact reuse
+for that project, because the project has widened its lifecycle capabilities.
 
 The host fingerprint is conservative, not a claim that native builds are
 fully hermetic. It detects normal compiler, SDK, package-manager, header-cache,
@@ -213,31 +214,60 @@ The benchmark and raw methodology live in the rust-client repository under
 `bench/scripts/native-build-cache-benchmark.mjs` and
 `bench/perf-results/native-build-cache-20260712-macos-arm64-native-toolchain.*`.
 
+### Project reads and environment variables
+
+The default `readProject: "narrow"` allows dependency directories, `package.json`,
+package-manager lockfiles, and root `tsconfig*.json` files. Other project source
+files require an explicit read grant. The package can read its own files,
+standard toolchains, caches, `.lpm`, `.husky`, and approved writable directories.
+
+An approved `readProject: "full"` grants reads of the complete project tree,
+including secret files. It does not grant access to credentials outside the project.
+
+The baseline environment contains `PATH`, `HOME`, user names, locale and terminal
+settings, `CI`, and required Windows system variables. Other values require an
+explicit `passEnv` entry and script approval. For example:
+
+```json title="package.json"
+{
+  "lpm": {
+    "scripts": {
+      "readProject": "narrow",
+      "passEnv": ["BUILD_SERVICE_TOKEN"]
+    }
+  }
+}
+```
+
+```bash
+lpm approve-scripts my-dependency
+lpm rebuild my-dependency
+```
+
+Only the approved names reach the script. A similar name does not inherit approval.
+Reserved runtime variables such as `NODE_OPTIONS`, `LD_PRELOAD`, and
+`DYLD_INSERT_LIBRARIES` cannot use `passEnv`. LPM CLI also controls `INIT_CWD`,
+temporary-directory variables, and Git/npm configuration paths.
+
 ### Project secret files
 
-**On macOS and Linux, the sandbox blocks lifecycle script reads of project secrets by default; opt in via `script-read-allow` if your build needs a specific secret file.**
+Narrow reads deny ordinary source directories and their secret files, including
+nested `.env` files and custom names such as `.env.preview`.
+Explicit read grants can allow individual files. Full project access also allows
+all project secrets.
 
-Lifecycle scripts have read access to most of `project_dir` so they can locate sources, configs, generated files, etc. But certain conventional secret-file locations are denied even though they sit inside the project tree — a malicious or compromised script has no legitimate reason to read your `.env`, `.aws/credentials`, or a `*.pem` private key.
+Additional protection covers conventional secrets inside readable project paths.
+On Linux, files already denied by the read policy need no mount namespace.
+Other protected files require a namespace overlay. If the host cannot create this
+overlay, LPM CLI refuses to run the script. Windows uses file access rules.
 
-The deny list covers:
-
-- **dotenv conventions** — `.env`, `.env.local`, `.env.production(.local)`, `.env.development(.local)`, `.env.staging(.local)`, `.env.test(.local)`, `.envrc`
-- **package-manager auth files** — `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pypirc`
-- **shell / HTTP auth files** — `.netrc`, `_netrc`, `.git-credentials`, `.htpasswd`
-- **git credential URLs** — `.git/config`, `.git/credentials`
-- **SSH keys at project root** — `id_rsa`, `id_ecdsa`, `id_ed25519`, `id_dsa` (and `.pub` variants)
-- **cloud / credential dirs** — `.ssh/`, `.aws/`, `.kube/`, `.gcp/`, `.config/gcloud/`, `.terraform/`, `secrets/`, `secret/`
-- **filetype patterns in the bounded project scan** — `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.tfstate`, `*.tfvars`, `*.tfvars.json`
-
-On macOS the denial fires as a Seatbelt `(deny file-read* ...)` rule layered after the project-dir allow (SBPL last-match-wins). On Linux the sandbox enters a fresh user and mount namespace, makes mount propagation private, and bind-mounts `/dev/null` over each enumerated secret file before the command executes. Reads then return zero bytes.
-
-Linux treats that overlay as required whenever at least one protected file needs masking. Namespace creation, ID mapping, propagation setup, and every bind mount must all succeed. If a hardened host blocks any step — for example through `user.max_user_namespaces=0`, AppArmor or SELinux policy, or container restrictions — LPM CLI refuses to execute the lifecycle script. It does not fall back to the broad Landlock project-read access. Projects with no matching secret files, or whose matches are all explicitly allowlisted, skip the namespace setup and continue normally.
-
-The protection is a bounded pre-spawn snapshot, not a dynamic filesystem monitor. Files created after enumeration are not added to the overlay. The extension scan stops below four nested project levels and prunes generated or dependency-heavy directories such as `node_modules`, `.git`, `target`, `dist`, and `build`; explicit literal paths such as `.git/config` are still checked separately. Linux does not follow symlink entries while enumerating protected files. Windows AppContainer has no equivalent project-secret overlay today.
+The Linux and Windows secret scan captures existing files before the script starts.
+It has depth limits and excludes generated directories. It cannot protect a new
+secret placed inside an already readable directory after the scan.
 
 #### Opting specific files back in
 
-Some builds genuinely need access — `prisma generate` reads `DATABASE_URL` from `.env`, a custom build script may read a project-rooted CA bundle, etc. Two surfaces let you exempt named files:
+Some builds need a project secret, such as a database URL or CA bundle. These fields grant access to specific files:
 
 ```json title="package.json (per-project)"
 {
@@ -253,7 +283,36 @@ Some builds genuinely need access — `prisma generate` reads `DATABASE_URL` fro
 script-read-allow = [".env", ".npmrc"]
 ```
 
-Per-project (`package.json > lpm > scripts > sandboxReadAllow`) and per-user (`~/.lpm/config.toml > script-read-allow`) lists are **unioned** at install time. Every entry must resolve to a path **inside** `project_dir` — traversal escapes (`..`) and absolute paths pointing outside the project are rejected with an actionable error naming the config source and key. Duplicate entries across the two lists are deduplicated. These entries are the explicit read opt-in: an allowlisted secret remains readable, and a project whose matching secrets are all allowlisted does not need the Linux namespace overlay.
+The CLI combines `sandboxReadAllow` with the user-level `script-read-allow` list.
+Each entry must name a file inside the project. Directories, symlinks, and paths
+outside the project are rejected. Missing files grant no current access.
+
+Both read grants and `sandboxWriteDirs` require script approval. Adding or changing
+a path requires another approval, including paths from user configuration.
+The approval prompt shows the resolved paths. Writable directories also permit reads.
+Built-in writable directories cannot be symlinks or Windows reparse points.
+
+An approved secret file remains readable. Linux needs no namespace overlay when
+all otherwise-readable secret files have explicit approval.
+
+### Timeouts, cancellation, and child processes
+
+Ctrl+C and SIGTERM cancel active dependency scripts. LPM CLI waits for cleanup
+before it returns an error. An interrupted script does not receive a successful
+build marker. The `--timeout` limit applies to each lifecycle phase.
+
+Linux scripts cannot create a separate process group or session. LPM CLI terminates
+the group after success, failure, timeout, or cancellation. Windows uses a Job
+Object to contain and terminate descendants.
+
+**macOS limitation:** native scripts can detach or reparent child processes.
+Those descendants can survive completion, timeout, or cancellation. Their filesystem
+and network restrictions remain active, but cleanup cannot guarantee termination.
+LPM CLI preserves native build compatibility instead of blocking all child processes.
+For complete process-lifetime isolation, use a disposable virtual machine or container.
+
+`--no-sandbox` removes the Linux process-group restriction along with filesystem,
+network, and environment protection.
 
 ### Disabling the sandbox
 
