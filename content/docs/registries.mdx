@@ -25,7 +25,7 @@ The `@lpm.dev/*` scope is the **only** scope that always goes to LPM.dev Registr
 
 LPM CLI chooses a package's registry route before resolving it. A dependency does not fall through from a configured private index to npm, or from npm to LPM.dev Registry, when lookup fails. Missing, unauthorized, or invalid metadata from the selected registry is a hard error. This prevents dependency-confusion behavior where the same name silently resolves from a lower-priority index.
 
-The selected logical source is recorded on the resolved package in `lpm.lock`, for example `registry+https://npm.my-company.com`. Scoped `.npmrc` mappings, the configured npm registry, and the active LPM.dev Registry origin are preserved exactly. The package identity used by lockfile evidence includes this source, so evidence from one registry cannot be replayed for a same-name package from another.
+The selected logical source is recorded on the resolved package in `lpm.lock`, for example `registry+https://npm.my-company.com`. This source identifies the configured registry without authentication credentials. The package identity used by lockfile evidence includes this source, so evidence from one registry cannot be replayed for a same-name package from another.
 
 LPM CLI may use the LPM.dev Registry Worker as a transport proxy for public npm metadata and fall back to a direct npm request when that transport is unavailable. Both paths represent the same configured logical npm origin, so this is transport failover—not index fallback—and the lockfile records the npm origin rather than the Worker URL.
 
@@ -71,6 +71,21 @@ registry=https://my-mirror.example.com
 
 For per-environment tokens, prefer `${VAR}` expansion in trusted config over hardcoded secrets. LPM CLI refuses `${VAR}` expansion for registry URLs, auth values, proxy URLs, and TLS paths in project-local `.npmrc` because those files can be controlled by the repo you cloned. Move those entries to `~/.npmrc`, have CI generate literal-token config at runtime, or use the matching login command.
 
+### Keep credentials outside registry URLs
+
+LPM CLI rejects registry URLs that contain a username or password. The error appears before registry requests, manifest changes, or lockfile writes. Use a registry-scoped token as shown above, or scoped Basic authentication:
+
+```ini title="~/.npmrc"
+//npm.my-company.com/team/:username=${REGISTRY_USER}
+//npm.my-company.com/team/:_password=${REGISTRY_PASSWORD_BASE64}
+```
+
+`REGISTRY_PASSWORD_BASE64` contains the Base64-encoded password. Base64 is encoding, not encryption. Keep the corresponding route, `registry=https://npm.my-company.com/team/`, in the project configuration.
+
+On Unix, protect credential files with `chmod 600 ~/.npmrc`. Files readable by other users cannot supply authentication fields. See [authentication permissions](/docs/infra/authentication).
+
+If an older CLI wrote a password into `lpm.lock`, move the credential to scoped configuration. Run `lpm install --force` to regenerate the lockfile, then run `lpm install --frozen-lockfile`. The forced install also resolves versions again and downloads packages. If you committed or shared the old password, rotate it at the registry.
+
 ## Registry configuration size limits
 
 Each `.npmrc` layer has a 1 MiB limit, and each file referenced by `cafile`, `certfile`, or `keyfile` has a 1 MiB limit. LPM CLI enforces these limits before parsing or building an HTTP client. Missing optional layers are still skipped, but an oversized or invalid UTF-8 `.npmrc` is a fatal configuration error: it is not ignored in favor of a lower-precedence registry. An oversized TLS file likewise fails with its path and byte limit, without logging tokens, certificates, keys, or file contents.
@@ -82,6 +97,12 @@ For installs, these errors surface before dependency resolution or any registry 
 LPM CLI checks every automatically followed redirect before sending the next request. Once a request chain has used HTTPS, a redirect to HTTP is refused — including redirects to `localhost`, `127.0.0.1`, or `[::1]`. The command fails with a network or registry error containing `refused HTTPS-to-HTTP redirect`.
 
 HTTPS-to-HTTPS redirects and HTTP-to-HTTPS upgrades remain allowed. HTTP-to-HTTP development flows can still begin from a directly configured loopback URL. For registry operations, `--insecure` can admit an explicitly configured HTTP endpoint outside loopback, but it never permits an HTTPS request to downgrade through a redirect.
+
+Registry credentials apply only to their configured host, port, and path. Read redirects outside that scope continue without the credential. A later redirect back does not restore it. Registry redirects with a username or password in the destination URL are refused.
+
+For publishing, a redirect cannot replay the package body outside the original registry directory, even on the same host. A body-dropping `303` redirect can continue as an anonymous GET outside that directory. Redirects within the registry directory retain the applicable credentials and body.
+
+Registry read errors remove known request credentials from reflected response text in terminal and JSON output. This includes Bearer tokens, Basic authentication values, and decoded Basic passwords.
 
 `strict-ssl=false` changes certificate verification only; it does not weaken the redirect rule. This policy covers outbound HTTP clients used by LPM CLI itself. It does not make claims about arbitrary application URLs opened by project code or installed packages.
 
