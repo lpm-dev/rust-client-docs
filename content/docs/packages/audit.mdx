@@ -21,6 +21,41 @@ The vulnerability scan fails closed. If OSV.dev is unavailable, returns an incom
 
 The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
 
+## Source coverage
+
+An audit can find no threats and still have incomplete coverage. Missing package sources, unreadable files, unsupported syntax, and scan limits prevent a clean result.
+
+An incomplete source audit prints `Audit incomplete` and exits with code `1`, regardless of `--fail-on` or `--level`.
+
+The source scan covers JavaScript and TypeScript files. It keeps these resource limits:
+
+- Full analysis stops at 2 MiB for one file. Larger files receive a sample from each end.
+- One package has a 50 MiB scan budget and a 5,000-file limit.
+- A sampled file does not count as a fully scanned file.
+
+If sources are missing, install the dependencies with the project's package manager, then rerun `lpm audit`.
+For Yarn PnP, provide a `node_modules` installation to enable local source analysis.
+If a file exceeds a limit or uses unsupported syntax, review that file separately. Increasing `--level` does not complete the scan.
+
+With `--json`, incomplete source coverage sets `success: false`. The `behavioral_coverage` object includes:
+
+| Field | Meaning |
+| --- | --- |
+| `complete` | Every selected package source scan completed within its supported scope. |
+| `scanned_packages` | Packages with a local analysis, including partial analyses. |
+| `partial_packages` | Packages with analysis limits, input failures, or unsupported source syntax. |
+| `unavailable_packages` | Packages without accessible source files. |
+| `packages` | Coverage gaps with package identity, path, reason, file count, and byte count. |
+
+Gap reasons are `source_unavailable`, `source_missing_or_unreadable`, `scan_limit_reached`, `source_read_failed`, or `unsupported_source_syntax`.
+Oversized-file evidence includes the file path, full size, sampled byte count, and detected signals.
+The top-level `scanned` field counts discovered packages. It does not mean that every package received complete source analysis.
+
+Behavioral flags describe capabilities, not proof of malicious intent. Quoted examples and comments do not establish executable capabilities.
+Executable template expressions remain part of the scan. Bounded parser loops and ordinary locale argument validation do not establish protestware.
+Static checks cannot prove that a package is safe. LPM CLI refreshes local cached analyses when scanner rules change.
+Previously stored LPM.dev Registry tags require a publication rescan before they change.
+
 ## Foreign lockfiles
 
 `lpm audit` reads one fixed snapshot of each selected foreign lockfile. It rejects malformed files and unsupported versions instead of using a degraded inventory.
@@ -88,7 +123,7 @@ Use `instance_id` as the row key when it is not `null`. Otherwise, use `path`. D
 
 `lpm audit` exits non-zero when its findings trip the active `--fail-on` policy. The implicit default is conservative — high-severity behavioral signals like `eval` don't fail CI unless you ask for them explicitly with `--fail-on all`.
 
-An incomplete vulnerability scan always exits non-zero, regardless of `--fail-on`. A network or advisory-data failure is not evidence that the installed tree is clean.
+An incomplete vulnerability or source scan always exits non-zero, regardless of `--fail-on`. A network or advisory-data failure is not evidence that the installed tree is clean.
 
 | Policy                      | Exit code 1 when                                                                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
