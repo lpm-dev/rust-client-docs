@@ -162,9 +162,16 @@ In `--json` output, the `quality` object keeps `score`, `max_score`, and `checks
 
 `--check` is the network-free preparation mode. It resolves the target configuration and names, validates authored LPM.dev skills, assembles the tarball, validates any supplied provenance file, runs the secret scan, and computes the local quality score when LPM.dev Registry is a target. It stops before OIDC exchange, target authentication, generated provenance, confirmation, and upload.
 
-`--dry-run` runs the same local preparation. For an LPM.dev Registry target, it resolves the real available authentication (including Trusted Publisher/OIDC), requires any authored-skills staleness lookup to succeed, and calls a non-mutating Registry preflight that validates the resolved `publish.lpm.name`, publish permission, token restrictions, owner authorization, account limits, and version availability. Any failure exits non-zero; JSON mode emits one `success: false` document. The preflight never uploads, reserves a version, creates package state, or claims publication succeeded. npm/GitHub/GitLab dry runs retain their existing local-only behavior. A supplied `--provenance-file` is still validated locally.
+`--dry-run` runs local preparation and checks the selected registry before an upload.
+For LPM.dev Registry, it resolves authentication, checks authored-skills staleness, and validates publish permissions, account limits, and version availability.
+For npm, GitHub Packages, and GitLab Packages, it resolves registry-specific credentials and checks version availability remotely.
+These checks do not upload or reserve a version.
+Any failure exits non-zero. JSON output reports the failure.
+A supplied `--provenance-file` is validated locally.
 
-Both preview modes leave the working tree untouched. When authored skills exist and `package.json > files` does not include `.lpm/skills`, preparation adds that entry only to the effective manifest used in memory. A real publish may persist the entry.
+Both preview modes leave LPM CLI's manifest edits in memory. Lifecycle scripts can change project files during a dry run.
+When authored skills exist and `package.json > files` excludes `.lpm/skills`, preparation adds that entry to the in-memory manifest.
+A real publish can persist the entry.
 
 For LPM.dev Registry targets, `lpm.config.json > type` controls Registry classification and accepts only `package` or `source`. Omitting it leaves classification to Registry inference. The file itself remains an LPM CLI `lpm add` contract: any valid `lpm.config.json` activates the configured add path, including when `type` is `package`.
 
@@ -312,7 +319,7 @@ LPM CLI advertises npm web auth on npm-compatible publish requests (`npm-auth-ty
 
 | Flag | Effect |
 | --- | --- |
-| `--dry-run` | Prepare and show the plan; for LPM.dev, perform non-mutating remote auth/permission/version preflight without uploading |
+| `--dry-run` | Prepare the package, run consented hooks, and check registry authentication and version availability without uploading |
 | `--check` | Run network-free local publish preparation and stop before upload |
 | `--wait` | Wait until an LPM.dev Registry upload becomes active under its distribution rules |
 | `--wait-timeout <SECONDS>` | Set the wait limit from 10 through 3600 seconds. The default is 1200 seconds |
