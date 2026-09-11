@@ -8,6 +8,7 @@ Use `lpm doctor` to find project and environment problems. Use `lpm health` to e
 ```bash
 lpm doctor [--all] [--fix] [-y|--yes] [--json]
 lpm doctor list [--code <CODE>] [--category <SUBSTRING>] [--json]
+lpm doctor sandbox-setup [--project <PATH>] [--metadata-dir <PATH>]... [--tool-dir <PATH>]... [--user-sid <SID>] [--apply | --remove] [-y|--yes] [--json]
 lpm health [--registry <URL>] [--json]
 ```
 
@@ -28,7 +29,96 @@ The command examines the current directory. It reports failures and warnings, th
 | `lpm doctor` | Run fast local checks for the current project | An install, runtime, lockfile, or project state does not look correct |
 | `lpm doctor --all` | Add network, tooling, global-install, and security checks | You need a complete environment report or a CI gate |
 | `lpm doctor list` | Show every check that doctor can report | You need a check code, description, or remediation |
+| `lpm doctor sandbox-setup` | Preview or explicitly apply Windows sandbox permissions | Protected directories prevent sandboxed scripts from running |
 | `lpm health` | Send one health request to the selected registry | You need to know whether the registry responds |
+
+## Windows sandbox permission setup
+
+Windows may block Node.js scripts from reading metadata for protected parent directories.
+System-installed tools can also need explicit read and execute permissions.
+This affects publishing hooks and sandboxed dependency scripts.
+
+Preview the required permissions from your normal PowerShell terminal:
+
+```powershell
+lpm doctor sandbox-setup --project 'C:\work\my-package' --tool-dir 'C:\Program Files\nodejs'
+```
+
+The preview changes nothing and runs no package scripts.
+It shows your Windows user SID, each directory, and the requested access.
+It includes the ancestors of your project and temporary directory.
+Use `--metadata-dir <path>` for an additional temporary, cache, or build directory.
+
+The two permission types have different scope:
+
+| Permission | Access |
+| --- | --- |
+| `metadata` | Read directory metadata and traverse that directory. No directory listing, file contents, or inherited access. |
+| `tool_read_execute` | Read and execute files in the selected tool directory and its descendants. No writes. |
+
+Select only the tool directories that your scripts need.
+The command does not approve every directory on `PATH` automatically.
+Tool setup skips links and junctions, and refuses files with multiple hard links.
+Use a separate tool copy if its installation contains hard-linked files.
+A drive root cannot be selected as a tool directory.
+
+### Apply the preview
+
+1. Review the permissions in the preview.
+2. Open PowerShell with **Run as administrator**.
+3. Run the administrator command printed by the preview.
+4. Confirm the changes.
+5. Return to your normal terminal and retry publishing.
+
+The printed command includes `--user-sid` and the original directory paths.
+Keep those arguments when another administrator performs setup for you.
+On a managed machine, give the preview to your IT administrator.
+
+Setup does not elevate later installs or publishes.
+Package scripts continue to run in the sandbox as your normal user.
+Project-secret restrictions remain active.
+Explicitly approved tool directories avoid repeated permission walks when scripts run.
+
+For automation, review a JSON preview first:
+
+```powershell
+lpm doctor sandbox-setup --project 'C:\work\my-package' --tool-dir 'C:\Program Files\nodejs' --json
+```
+
+Run the printed `apply_args` with `lpm` in an administrator terminal.
+Add `--yes --json` for a non-interactive apply.
+The JSON output includes `success`, `operation`, `user_sid`, `grants`, `count`, and `apply_args`.
+
+### Repeat or remove setup
+
+Grants belong to a Windows user and the selected directory identities.
+Repeat setup after moving or replacing a tool directory, or when a new protected path is reported.
+A new project may reuse existing ancestor grants.
+Adding another protected tool requires selecting its directory explicitly.
+
+To remove selected grants, repeat the administrator command with `--remove` instead of `--apply`.
+Use the same project, additional directories, tool directories, and user SID.
+Removal preserves unrelated permissions.
+Shared ancestor grants can affect other projects for that user.
+Stop active installs and publishes before removal.
+
+If setup fails partway through, some permissions may have changed.
+Preview the same selection again, then retry the same operation.
+A tool grant becomes active only after its permission walk completes.
+Neither `--apply` nor `--remove` runs on non-Windows platforms.
+
+### Setup flags
+
+| Flag | Purpose |
+| --- | --- |
+| `--project <PATH>` | Select the project; defaults to the current directory. |
+| `--metadata-dir <PATH>` | Add a directory whose ancestors need metadata access. Repeat for additional directories. |
+| `--tool-dir <PATH>` | Approve one tool directory for read and execute access. Repeat for additional tools. |
+| `--user-sid <SID>` | Configure the normal user's permissions from a different administrator account. |
+| `--apply` | Apply the previewed permissions from an administrator terminal. |
+| `--remove` | Remove the selected grants from an administrator terminal. Conflicts with `--apply`. |
+| `--yes`, `-y` | Confirm changes without an interactive prompt. Required for non-interactive changes. |
+| `--json` | Return structured output. Does not grant permission to apply changes. |
 
 ## Fast and full checks
 
@@ -394,6 +484,7 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | Code                           | Severity | Description                                                                                                                                                                                                                                                                           |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sandbox_available`            | pass     | The OS sandbox backend used by lifecycle scripts is available.                                                                                                                                                                                                                        |
+| `sandbox_setup_required` | warn | Protected project or temporary-directory ancestors need sandbox metadata access. **Fix:** Use [Windows sandbox permission setup](#windows-sandbox-permission-setup). |
 | `sandbox_helper_missing`       | warn     | On Windows, `lpm-sandbox-helper.exe` is not next to `lpm.exe`. Strict mode cannot deny network access. **Fix:** Reinstall `@lpm-registry/cli`. If the helper is elsewhere, set `LPM_SANDBOX_HELPER=<path>`. |
 | `sandbox_degraded`             | warn     | Strict mode is engaged but the host kernel forced the V1 fallback (filesystem containment only — no outbound network denial). **Fix:** Upgrade to kernel 6.7+ and unset `[sandbox] allow-degraded`, or drop back to default via `lpm config sandbox --set default`.                   |
 | `sandbox_disabled_by_user`     | warn     | Sandbox is persistently disabled via `[sandbox] mode = "none"`. Lifecycle scripts run with no containment, including credential env vars. **Fix:** Restore via `lpm config sandbox --set default` (or `--set strict`).                                                                |
