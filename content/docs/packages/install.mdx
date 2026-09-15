@@ -241,13 +241,15 @@ lpm config source-analysis --set true   # enable analysis
 lpm config source-analysis --set false  # default; approval required after an approved opt-in
 ```
 
-The disabled setting skips new install-time scans and cache creation without deleting existing caches. [`lpm audit`](/docs/packages/audit) still scans installed package source when no usable cache exists and stores its fallback result in the project audit cache. Re-enabling source analysis makes the next install backfill any missing, malformed, or outdated store cache from the already-extracted package bytes; it does not need to download the tarball again.
+The disabled setting skips source scans during extraction and during the post-install summary. It also skips analysis-cache creation and updates. Existing caches remain on disk, but the summary does not use them to report local findings. The `--verbose` flag does not enable source analysis.
 
-At the end of an install, LPM CLI reads those cached results for every installed package. It does not upload package source during this summary step. For installs larger than 50 packages, progress is reported as `Checking cached security results for N packages` / `Checked cached security results for N packages`, reflecting that this phase reads analysis already produced during extraction rather than rescanning source.
+[`lpm audit`](/docs/packages/audit) and separately enabled audit-after-install can still analyze installed source. After you enable source analysis again, the next install fills missing, malformed, or outdated store caches from existing package bytes. No additional tarball download is necessary.
 
-A normal install keeps `Security summary` compact. It shows the total number of Critical, High, and Medium findings, then shows package details only for Critical findings. Run `lpm audit` for the complete report, or use `lpm --verbose install` to include High and Medium details plus exact query selectors.
+When source analysis is enabled, the post-install summary scans the installed package files. It does not trust store analysis caches for this report or upload package source. For more than 50 packages, it shows `Scanning security behavior for N installed packages` and `Scanned security behavior for N installed packages`.
 
-Info results describe common package capabilities or artifact traits. Examples include environment-variable access, URL literals, cryptography, and minified source. LPM CLI still detects and caches these signals, but a normal install does not show them as security findings.
+When findings exist, a normal install keeps `Security summary` compact. It shows the total number of Critical, High, and Medium findings, then shows package details only for Critical findings. Run `lpm audit` for the complete report, or use `lpm --verbose install` to include High and Medium details plus exact query selectors.
+
+Info results describe common package capabilities or artifact traits. Examples include environment-variable access, URL literals, cryptography, and minified source. With source analysis enabled, LPM CLI detects and caches these signals. A normal install does not show them as security findings.
 
 Use one of these commands to inspect Info signals:
 
@@ -269,16 +271,16 @@ For a Swift package named in `lpm install`, audit-after-install adds findings fr
 
 The request contains package names. It does not contain source bytes, local findings, versions, or filesystem paths.
 
-This best-effort enrichment is enabled by default and is independent of the local scanner:
+This best-effort enrichment is enabled by default. It can report registry findings even with local source analysis disabled:
 
 ```bash
-lpm config lpm-insights --set false  # keep local findings; skip enrichment
+lpm config lpm-insights --set false  # skip registry enrichment
 lpm config lpm-insights --set true
 ```
 
-The combined `lpm config lpm-dev` editor manages this setting alongside automatic LPM.dev package skills. npm-only installs still receive local analysis and actionable summaries. They do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages.
+The combined `lpm config lpm-dev` editor manages this setting alongside automatic LPM.dev package skills. With source analysis enabled, npm-only installs also receive local findings. They do not trigger this LPM.dev Registry enrichment request. The separately configured [LPM Firewall](/docs/guides/firewall) can make its own verdict requests for npm packages. Firewall mode does not enable or disable local source analysis.
 
-`--no-security-summary` skips the post-install cache aggregation and human report. It does not change the install-time source-analysis setting or remove existing `.lpm-security.json` cache files.
+`--no-security-summary` skips the post-install source scan, registry enrichment, and human report. It does not change the install-time source-analysis setting or remove existing `.lpm-security.json` cache files.
 
 With `--json --timing`, source analysis from the authoritative fetch path appears under `timing.fetch_breakdown.source_scan` as `sum_ns` and `max_ns`. Fused overlap-prefetch tasks report the same counters under `timing.detail.fetch.overlap.breakdown.source_scan`, so use detail mode when measuring the complete cold-install scan attribution. Both paths scan while extraction is running: the work is already included in cold install wall time and `extract_ms`, and the counters must not be added to the total again.
 
@@ -1017,7 +1019,7 @@ The workspace-root preflight also runs for [`lpm rebuild`](/docs/packages/rebuil
 | `--skills` | Install package-published LPM.dev skills for this invocation, overriding user config |
 | `--no-skills` | Skip package-published LPM.dev skill auto-install for this invocation |
 | `--no-editor-setup` | Accepted with no effect. Package skills do not create editor integrations. |
-| `--no-security-summary` | Skip post-install security-cache aggregation and the human report; extraction-time local analysis still runs |
+| `--no-security-summary` | Skip the post-install source scan, registry enrichment, and human report. Extraction analysis still follows the source-analysis setting. |
 | `--timing` | Include install timing diagnostics in `--json` output |
 | `--ignore-provenance-drift <PKG>` | Skip provenance-drift check for one package (repeatable) |
 | `--ignore-provenance-drift-all` | Skip the check for every package |
