@@ -121,7 +121,7 @@ LPM CLI stores local credentials in the secure storage service for your operatin
 
 | Platform | Secure storage service |
 | --- | --- |
-| macOS | Keychain |
+| macOS | Data Protection Keychain, shared by official signed LPM CLI and LPM Vault |
 | Linux | Secret Service-compatible keyring |
 | Windows | Credential Manager |
 
@@ -135,9 +135,19 @@ The first recovery of an older file key uses its original derivation, which need
 
 The encrypted fallback is valid, but it has less protection than the operating-system service. [`lpm doctor`](/docs/infra/doctor) reports this fallback as degraded.
 
+## macOS shared credentials
+
+Official signed releases of LPM CLI and LPM Vault use one restricted Keychain access group. Public source code does not grant access to that group. Unsigned builds and third-party builds cannot read its credentials.
+
+An upgrade migrates each older credential when LPM CLI or LPM Vault first needs it. The migration checks the recorded credential identity before it copies the value. After the shared copy passes verification, the migration removes the old copy. Interrupted cleanup resumes on the next read.
+
+After migration, older LPM CLI versions cannot read the shared login. Keep LPM CLI and LPM Vault current. If a credential fails verification, update both products and sign in again with [`lpm login`](/docs/infra/login).
+
+LPM Vault cannot use the CLI encrypted-file fallback. A source build can use its own login or an environment token, but cannot share the official Keychain group.
+
 ## macOS Keychain permission
 
-LPM CLI first tries to read an authorized Keychain item without a prompt. If macOS requires permission, LPM CLI prints guidance and opens the permission sheet.
+LPM CLI first tries to read an authorized Keychain item without a prompt. During migration, macOS can request permission for the older item. LPM CLI prints guidance before the permission sheet.
 
 Select **Always Allow** to keep later authorized reads silent. If you deny access, LPM CLI cannot use the stored credential for that request.
 
