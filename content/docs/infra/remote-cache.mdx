@@ -1,0 +1,320 @@
+---
+title: Remote task cache
+description: "Reuse task outputs across developer machines and CI jobs with the LPM.dev Registry."
+---
+
+Remote caching shares completed task results across machines. Use it for repeatable builds whose inputs and output files are known.
+
+[`lpm run`](/docs/dev/run) restores matching outputs and replays the task's logs. The LPM.dev Registry stores the shared artifacts.
+
+## How it works
+
+For each task with caching enabled, LPM CLI follows this order:
+
+1. Check the local task cache at `~/.lpm/cache/tasks/`.
+2. On a local miss, check the remote cache for the same task key.
+3. If both caches miss, run the task command.
+
+A successful task writes the local cache first. With remote uploads enabled, LPM CLI then uploads the declared output files, stdout, stderr, and task metadata.
+
+A remote hit also populates the local cache. Failed tasks do not publish cache entries.
+
+Remote caching reuses task results. Package downloads and offline dependency installs use the separate [package store](/docs/infra/store).
+
+## Quickstart
+
+This example assumes a `build` script in `package.json` that writes to `dist/`. Hosted storage requires a Pro personal account or an eligible Organization account.
+
+### 1. Enable caching in `lpm.json`
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "remoteCache": {
+    "enabled": true
+  },
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": ["NODE_ENV"],
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+Merge these fields into your existing configuration. Adjust `outputs` to match the files that the build produces.
+
+`cache: true` requires a non-empty `outputs` list. Without both fields, the task runs without caching.
+
+The example hashes `NODE_ENV` from the inherited environment. Add every other inherited variable that can affect your build.
+
+### 2. Authenticate
+
+Create a personal token with the `cache:write` scope in [Registry token settings](https://lpm.dev/dashboard/settings/tokens).
+
+Set the token in your shell environment:
+
+```bash
+export LPM_REMOTE_CACHE_TOKEN="<cache-write-token>"
+export NODE_ENV=production
+```
+
+The token permits cache reads and writes. Supply it through the shell or CI environment, outside committed project configuration.
+
+For the configured Registry origin, LPM CLI can also use `LPM_TOKEN` or credentials from [`lpm login`](/docs/infra/login). Those credentials must permit cache access.
+
+### 3. Run the task
+
+```bash
+lpm cache status
+lpm run build
+```
+
+After a successful upload, another machine with the same cache key and namespace can restore the result.
+
+A second run on the same machine normally uses the local cache. [`lpm cache status`](/docs/packages/cache#status) reports service availability, usage, and quota.
+
+## Share with a team and CI
+
+### Organization access
+
+Create an organization token in the organization's **Settings → Tokens** page. Use `cache:write` for producers or `cache:read` for consumers.
+
+Add the organization slug to the existing `remoteCache` configuration:
+
+```json title="lpm.json"
+{
+  "remoteCache": {
+    "enabled": true,
+    "team": "acme"
+  }
+}
+```
+
+Set `LPM_REMOTE_CACHE_TOKEN` to a token scoped to `acme`. A personal token cannot access the organization cache merely by selecting its slug.
+
+If `team` is omitted, the token selects the namespace: personal tokens use personal storage, and organization tokens use organization storage.
+
+`LPM_REMOTE_CACHE_TEAM` overrides the configured team for one process. It selects a namespace without granting additional permissions.
+
+| Token scope | Download artifacts | Upload artifacts |
+| --- | --- | --- |
+| `cache:read` | Yes | No |
+| `cache:write` | Yes | Yes |
+| `admin` | Yes | Yes |
+| `read` or `publish` | No | No |
+
+### CI producer
+
+Store the cache token as a CI secret. After checkout, CLI installation, and dependency installation, run the build:
+
+```yaml title="GitHub Actions build step"
+- name: Build with remote cache
+  run: lpm run build
+  env:
+    NODE_ENV: production
+    LPM_REMOTE_CACHE_TOKEN: ${{ secrets.LPM_REMOTE_CACHE_TOKEN }}
+```
+
+The committed `lpm.json` enables remote caching and selects the task. For complete runner setup, see the [CI/CD guide](/docs/guides/ci-cd-setup).
+
+Cache scopes do not grant package-read permission. Private dependency installation can use a separate `LPM_TOKEN` on its own step.
+
+### Read-only consumers
+
+Use a `cache:read` token and disable uploads for jobs that only consume shared results:
+
+```yaml title="GitHub Actions read-only build step"
+- name: Build with read-only remote cache
+  run: lpm run build
+  env:
+    NODE_ENV: production
+    LPM_REMOTE_CACHE_TOKEN: ${{ secrets.LPM_REMOTE_CACHE_READ_TOKEN }}
+    LPM_REMOTE_CACHE_READ_ONLY: "1"
+```
+
+A cache miss still runs the task and stores its result locally. The read-only setting skips remote uploads.
+
+For a persistent setting, use `remoteCache.readOnly: true`. `LPM_REMOTE_CACHE_READ_ONLY=0` does not override that setting.
+
+## Make cache hits predictable
+
+The key includes source inputs, the command, arguments, project configuration, manifests, lockfiles, runtime identities, environment values, and task dependencies.
+
+See [Task runner — Cache key](/docs/dev/task-runner#cache-key) for the complete contract.
+
+### Declare the build contract
+
+- Set `inputs` to include every source and configuration file that affects the result.
+- Set `outputs` to include every generated file that another machine needs.
+- Pin runtime and dependency versions across producers and consumers.
+- Use the same task configuration on each machine.
+
+The complete `lpm.json` affects the key. For CI-only read-only behavior, an environment override preserves the shared configuration file.
+
+### Choose inherited variables with `cacheEnv`
+
+Without `cacheEnv`, all inherited variables visible to the task affect its key. Machine paths and CI run identifiers can therefore prevent reuse.
+
+`cacheEnv` selects exact, case-sensitive inherited variable names. It does not support wildcards.
+
+```json title="lpm.json task fragment"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": ["NODE_ENV", "BUILD_TARGET"],
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+An empty list excludes all inherited variables from the key. Use it only for a task whose output does not depend on those variables.
+
+Project-loaded variables, including dotenv and vault values, always affect the key. `cacheEnv` does not change the task's environment or its upload eligibility.
+
+### Bypass caching for one run
+
+Disable only remote caching:
+
+```bash
+LPM_REMOTE_CACHE=0 lpm run build
+```
+
+Bypass both local and remote task caching:
+
+```bash
+lpm run build --no-cache
+```
+
+Watch mode runs tasks without the task cache. See [`lpm run --watch`](/docs/dev/run#watch-mode).
+
+## Protect cached artifacts
+
+Cache artifacts include build files and captured logs. Anyone with read access to the namespace can download them.
+
+### Signed artifacts
+
+Set `remoteCache.signature` to `true` to require signatures. Give every producer and consumer the same private signing key:
+
+```bash
+export LPM_REMOTE_CACHE_SIGNATURE_KEY="<shared-signing-key>"
+```
+
+Store a randomly generated key in your secret manager and CI secrets. Add the variable to the CI steps that use the cache.
+
+Every download requires a matching content hash. With a signing key configured, it also requires a valid HMAC signature before restore.
+
+Signatures authenticate artifacts. They do not encrypt their contents.
+
+LPM CLI checks the archive before it changes project files. Restored files must match the current project's declared outputs.
+
+### Secrets and upload policy
+
+By default, secret-looking variables visible to a task block remote uploads. Examples include `DATABASE_URL`, names containing `TOKEN` or `SECRET`, and names ending in `_KEY`.
+
+This rule also applies to project secrets loaded from [LPM Vault](/docs/dev/lpm-vault). The task and local caching still work.
+
+The [`remoteCache.env` fields](/docs/reference/lpm-json#remotecache) control upload eligibility:
+
+| Field | Effect |
+| --- | --- |
+| `exclude` | Block uploads when a visible variable name matches a pattern. |
+| `include` | Allow matching names through the default secret-name check. |
+| `allowSecrets` | Allow secret-looking names unless an `exclude` pattern blocks them. |
+
+Patterns are case-insensitive and support `*`. Exclusions take precedence over inclusions.
+
+These fields do not redact logs, remove environment values, or sanitize output files. Allow a name only after you determine that its outputs are safe to share.
+
+Cache credentials belong in the parent shell or CI environment. Project dotenv and vault values configure the task, not the cache client's credentials.
+
+### Custom cache endpoints
+
+`remoteCache.url` or `LPM_REMOTE_CACHE_URL` can select another compatible cache service. The default is the configured Registry URL plus `/v8`.
+
+An endpoint outside the configured Registry origin requires both `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`. The Registry login token is never sent to that endpoint.
+
+Remote endpoints require HTTPS. Direct HTTP is accepted only for localhost.
+
+## Usage and retention
+
+The LPM.dev Registry applies these included storage limits:
+
+| Account | Included remote cache |
+| --- | --- |
+| Free personal | None |
+| Pro personal | 25 GiB |
+| Organization | 25 GiB per seat |
+| Enterprise | No fixed quota in the Enterprise plan |
+
+The maximum artifact size is 500 MiB. Default retention is 14 days, and a download refreshes the retention period.
+
+To fit new uploads within the storage limit, the Registry can evict the least recently accessed artifacts. Cache storage is temporary.
+
+### Inspect usage
+
+```bash
+lpm cache status
+lpm cache status --json
+```
+
+The dashboard's **Settings → Billing** page shows remote-cache usage, retention, and overage controls for the selected account.
+
+Overage is off by default. Enabling it permits uploads above the included quota, subject to any account overage cap.
+
+An organization owner or administrator controls its overage setting.
+
+| Remote status | Meaning |
+| --- | --- |
+| `enabled` | Remote caching is available within the account's limits. |
+| `disabled` | The plan or account configuration disables remote caching. |
+| `paused` | Remote access is paused, including after organization billing lapses. |
+| `over_limit` | Usage exceeds the allowed storage. Existing artifacts remain readable, and uploads first attempt eviction. |
+
+Organization access continues during the billing grace period. After billing lapses, reads and uploads stop until the subscription is restored.
+
+[`lpm cache clean tasks`](/docs/packages/cache) clears the local task cache. It does not delete hosted artifacts or reduce remote usage.
+
+## Troubleshooting
+
+### Every machine rebuilds
+
+Make sure that producers and consumers use the same namespace, inputs, runtime versions, and task configuration. Inspect `cacheEnv` for missing or machine-specific selections.
+
+Project-loaded environment values also affect the key. Different dotenv or vault values can produce different keys.
+
+### Uploads are skipped
+
+Make sure that the task declares `cache: true` and `outputs`. Inspect warnings for a read-only token, missing signing key, secret-looking variable, or artifact size limit.
+
+If read-only mode is enabled, uploads are skipped by design. A local hit also avoids task execution and does not upload an existing local result.
+
+### The server rejects access
+
+Make sure that the token has `cache:read`, `cache:write`, or `admin` permission. Uploads require `cache:write` or `admin`.
+
+For an organization, use a token scoped to the selected organization. Inspect the account's plan and billing state with [`lpm cache status`](/docs/packages/cache#status).
+
+### Signatures fail
+
+Make sure that producers and consumers use the same signing key. Unsigned artifacts cannot satisfy a signed read.
+
+A rejected artifact becomes a miss, and LPM CLI runs the task locally. A successful run can upload a replacement with the configured key.
+
+### The cache service is unavailable
+
+Remote timeouts, missing artifacts, and rejected downloads do not stop local task execution. Upload failures do not turn a successful task into a failure.
+
+The JSON output from [`lpm cache status`](/docs/packages/cache#status) includes `remote.error`. Even when the command exits successfully, inspect this field.
+
+## See also
+
+- [Task runner](/docs/dev/task-runner#caching) — task dependencies, cache keys, and local storage
+- [`lpm run`](/docs/dev/run) — run cached tasks and bypass caching
+- [`lpm cache`](/docs/packages/cache) — inspect cache status and manage local storage
+- [CI/CD setup](/docs/guides/ci-cd-setup) — install and authenticate LPM CLI in CI
+- [`lpm.json` remoteCache](/docs/reference/lpm-json#remotecache) — all configuration fields
+- [Remote-cache environment variables](/docs/reference/env-vars#remote-task-cache) — process overrides
