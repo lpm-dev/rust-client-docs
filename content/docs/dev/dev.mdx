@@ -30,7 +30,7 @@ $ lpm dev
 
 1. **Managed runtimes** — uses versions pinned in `lpm.json`. Node can also use `.nvmrc` or `.node-version`. A service can override one root runtime and inherit the other. LPM CLI installs missing runtimes before service startup (see [`lpm use`](/docs/dev/use)).
 2. **Dependencies** — re-runs the install pipeline if `package.json` / lockfile / install hash drift. Skip with `--no-install`.
-3. **Env** — if `.env` is missing but `.env.example` exists, copies it once. The order is `--env`, `tasks.dev.env`, `env.dev`, then the default files. Mode files load after `.env` and `.env.local`.
+3. **Env** — if `.env` is missing but `.env.example` exists, copies it once, including in projects that use a vault. The mode selection order is `--env`, `tasks.dev.env`, `env.dev`, then the default environment. Mode files load after `.env` and `.env.local`. Vault values load last and override matching file values.
 4. **Endpoint discovery** — runs the child server, reads local URLs from its output, and verifies that the launched process tree owns the listener before publishing a URL. Vite can use `5173`, `5174`, or another free port; LPM CLI does not assume `3000`.
 5. **HTTPS** — if `lpm.json` has `https: true` (top-level) or you pass `--https`, starts an LPM CLI-owned TLS frontend over the verified child endpoint. The framework can stay on plain HTTP. When `lpm.json` declares local-domain proxy hosts, `lpm dev` also prepares constrained project certificate-chain coverage and writes managed hosts-file entries for non-`.localhost` hosts when needed. See [`lpm cert`](/docs/infra/cert) for the trust store install.
 6. **Tunnel** — if `lpm.json` has `tunnel.domain` set or you pass `--tunnel`, exposes the same verified child endpoint through an LPM CLI tunnel.
@@ -49,6 +49,20 @@ lpm dev --env=staging                  # load .env.staging + .env.staging.local 
 lpm dev --dashboard                    # TUI dashboard for multi-service
 lpm dev -- --inspect                   # forward args to the dev script
 ```
+
+## Secrets from LPM Vault
+
+[LPM Vault](/docs/dev/lpm-vault) stores project variables in the macOS Keychain. The `vault` field in `lpm.json` connects the project to those values.
+
+```bash
+lpm dev --env=development
+```
+
+The selected vault values enter the application environment at startup. After a value changes, restart the development server.
+
+If `.env` is missing and `.env.example` exists, the CLI still creates `.env` from that example. This copy does not export vault values.
+
+Keep `.env.example` free of real secrets. See [Using LPM Vault](/docs/dev/lpm-vault) for setup, environment selection, and migration from dotenv files.
 
 ## HTTPS
 

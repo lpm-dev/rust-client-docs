@@ -1,0 +1,232 @@
+---
+title: Using LPM Vault
+description: "Store project secrets in LPM Vault and load them into your application with LPM CLI."
+---
+
+LPM Vault is a macOS app for project environment variables. It keeps secret values in the macOS Keychain, outside your project files.
+
+[`lpm dev`](/docs/dev/dev) and [`lpm run`](/docs/dev/run) read those values and pass them to your application at startup.
+
+## How it works
+
+The app and LPM CLI share the same local vault under your macOS user account:
+
+```text
+LPM Vault → macOS Keychain → LPM CLI → application environment
+                                  ↑
+                         lpm.json > vault
+```
+
+The `vault` field in `lpm.json` identifies the project's vault. It contains no secret values and grants no access by itself.
+
+Your application reads normal environment variables, such as `process.env.DATABASE_URL` in Node.js. No application SDK or dotenv export is required.
+
+Local use does not require cloud sync or a Registry account. The app can stay closed while LPM CLI reads saved values from the Keychain.
+
+## Quickstart
+
+This workflow requires macOS 14 or later, [LPM Vault](https://vault.lpm.dev), and an [official signed LPM CLI build](/docs/installation).
+
+### 1. Create an env project
+
+Open LPM Vault and unlock it with Touch ID or your Mac password.
+
+In your personal vault, select **New Project**. Enter a project name, then select **Create project**.
+
+If your project already has a `vault` field in `lpm.json`, use the matching env project in the app.
+
+### 2. Add variables
+
+Select the `.env` environment, then select **New key**. Add the variables that your application needs, such as `DATABASE_URL` and `API_KEY`.
+
+The app calls the default environment `.env`. This label represents vault storage, not a file in your project.
+
+### 3. Connect your project
+
+Select the vault ID beside the project name to open **Env project configuration**. Copy its ID into `lpm.json` beside `package.json`:
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b"
+}
+```
+
+Replace the example ID with your app's ID. If `lpm.json` already exists, add the field to its existing contents.
+
+Commit `lpm.json` with the project. The ID keeps the same vault association after a directory rename or move.
+
+### 4. Start your application
+
+From the project directory, run:
+
+```bash
+lpm dev
+```
+
+This command starts your configured development server with the vault variables. For another `package.json` script, use [`lpm run`](/docs/dev/run):
+
+```bash
+lpm run start
+```
+
+To inspect the default vault without showing values, use [`lpm env`](/docs/dev/env):
+
+```bash
+lpm env list
+```
+
+## Choose an environment
+
+Create separate environments in LPM Vault for development and staging. The app shows `development` as `.env.development` and `staging` as `.env.staging`.
+
+Use the environment name without the `.env.` prefix:
+
+```bash
+lpm dev --env=development
+lpm run start --env=staging
+```
+
+These commands can load vault values without matching dotenv files on disk.
+
+### Select an environment in `lpm.json`
+
+Set [`tasks.<name>.env`](/docs/reference/lpm-json#tasksname) to choose an environment automatically:
+
+```json title="lpm.json"
+{
+  "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b",
+  "tasks": {
+    "dev": { "env": "development" },
+    "start": { "env": "staging" }
+  }
+}
+```
+
+With this configuration, [`lpm dev`](/docs/dev/dev) selects `development`, and [`lpm run start`](/docs/dev/run) selects `staging`.
+
+The selection order is:
+
+1. The command's `--env` value.
+2. `tasks.<name>.env` in `lpm.json`.
+3. The [`env.<name>` mapping](/docs/reference/lpm-json#env) in `lpm.json`.
+4. The `default` vault environment.
+
+Override the configured selection for one run:
+
+```bash
+lpm dev --env=staging
+lpm dev --env=default
+```
+
+Changing the selected environment in the app does not change the CLI selection.
+
+## Move from `.env` files
+
+In LPM Vault, select the destination environment. Use **Import .env** to import the existing file.
+
+The app replaces matching keys in that environment and preserves its other keys. Import leaves the original file on disk.
+
+For a terminal workflow, use [`lpm env import`](/docs/dev/env#local-file-management):
+
+```bash
+lpm env import .env
+lpm env import .env.staging --env=staging
+lpm env list --env=staging
+```
+
+The CLI preserves existing vault values unless you pass `--overwrite`:
+
+```bash
+lpm env import .env.staging --env=staging --overwrite
+```
+
+After import, make sure that the vault contains the required keys. Remove the secret values from the original files, then restart the application.
+
+Keep only empty placeholders or non-secret examples in `.env.example`. Keep any plaintext exports outside Git.
+
+### Why `.env` can appear again
+
+If `.env` is absent and `.env.example` exists, [`lpm dev`](/docs/dev/dev) creates `.env` from that example.
+
+This behavior also applies to projects that use LPM Vault. The copy contains the example's contents, not an export of vault values.
+
+Vault storage keeps your secret values outside project files. It does not disable dotenv loading or the example-file copy.
+
+## Runtime behavior
+
+### Value precedence
+
+For a selected mode, LPM CLI normally loads `.env`, `.env.local`, `.env.<mode>`, then `.env.<mode>.local`. Later files override earlier files.
+
+Configured file paths and [environment inheritance](/docs/reference/lpm-json#environments) can change the file selection. Vault values load after those files and override matching keys.
+
+### Default-environment fallback
+
+Each vault environment contains an independent set of values.
+
+If the selected environment is missing or empty, runtime loading falls back to the `default` vault environment.
+
+If the selected environment contains any values, LPM CLI uses that set without merging keys from `default`.
+
+For example, a non-empty `staging` environment does not inherit a `DATABASE_URL` stored only in `default`.
+
+### Changes and app locking
+
+LPM CLI reads vault values before it starts the application. After a value changes, restart the application through LPM CLI.
+
+Locking or closing LPM Vault does not revoke variables already passed to a process. The app's lock protects its interface, while macOS controls Keychain access.
+
+Once injected, the values are normal process environment variables. Your application and its child processes can read them.
+
+### Environment checks
+
+An [`envSchema`](/docs/reference/lpm-json#envschema) can require variables before startup. LPM CLI checks the resolved values after it loads the files and vault.
+
+`--no-env-check` skips the schema check for one run. It does not disable vault loading.
+
+Runtime-hook variables such as `NODE_OPTIONS` and `LD_PRELOAD` are filtered from project secrets. See the [runtime environment policy](/docs/dev/run#environment-files).
+
+## Troubleshooting
+
+### The CLI cannot find my variables
+
+Make sure that `lpm.json > vault` matches the ID in LPM Vault. Run the command from the connected project directory.
+
+Inspect the intended environment with [`lpm env list`](/docs/dev/env):
+
+```bash
+lpm env list --env=development
+lpm env list --env=staging
+```
+
+Use the same environment name for application startup. A clone on another machine needs its own local secrets or an authorized cloud pull.
+
+### The CLI reports a Keychain access error
+
+Use an [official signed LPM CLI build](/docs/installation). An unsigned development build cannot access the shared macOS Keychain storage.
+
+If macOS reports a locked or unavailable Keychain, unlock it in your macOS login session. Then retry the command.
+
+### The application still uses an old value
+
+Make sure that the app and CLI select the same vault and environment. Restart the application through [`lpm dev`](/docs/dev/dev) or [`lpm run`](/docs/dev/run).
+
+The app's environment selector does not update an existing process.
+
+## Optional cloud sync
+
+The app and CLI use the same local values on the same Mac and macOS account. No push or pull is required between them.
+
+Cloud sync stores an encrypted copy on the LPM.dev Registry. See [Secrets vault](/docs/infra/secrets-vault) for plans, sharing, and access requirements.
+
+For command examples, see [`lpm env` cloud sync](/docs/dev/env#cloud-sync). Runtime startup reads local values and does not automatically pull cloud changes.
+
+## See also
+
+- [`lpm dev`](/docs/dev/dev) — start a development server
+- [`lpm run`](/docs/dev/run) — run project scripts
+- [`lpm env`](/docs/dev/env) — manage variables from the terminal
+- [Managing secrets](/docs/guides/managing-secrets) — schemas, imports, and environment workflows
+- [Secrets vault](/docs/infra/secrets-vault) — storage, encryption, and cloud sync
+- [`lpm.json` vault identity](/docs/reference/lpm-json#vault) — connect a project to its vault
