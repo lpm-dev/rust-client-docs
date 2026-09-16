@@ -68,6 +68,7 @@ Three groups of tags — source behavior (what the code does), supply-chain sign
 | `:url-strings`          | Contain URL string literals                                       |
 | `:trivial`              | Tiny — measured by AST node count                                 |
 | `:protestware`          | Match a curated list of known protest-license / sabotage packages |
+| `:credential-exfiltration` | Send private-key material or the complete process environment in a network payload |
 
 **Manifest tags** — what the `package.json` declares:
 
@@ -85,7 +86,7 @@ Install, audit, and query use one severity policy for these tags:
 
 | Severity | Behavioral tags |
 | --- | --- |
-| Critical | `:obfuscated`, `:protestware` |
+| Critical | `:obfuscated`, `:protestware`, `:credential-exfiltration` |
 | High | `:eval`, `:child-process`, `:shell`, `:dynamic-require` |
 | Medium | `:network`, `:native`, `:git-dep`, `:http-dep`, `:wildcard-dep`, `:no-license` |
 | Info | `:fs`, `:crypto`, `:env`, `:ws`, `:possible-obfuscation`, `:high-entropy`, `:telemetry`, `:trivial`, `:copyleft`, `:minified`, `:url-strings` |
@@ -96,7 +97,7 @@ Normal install output hides Info tags. Use `lpm --verbose install`, `lpm audit`,
 
 ### What Critical means
 
-The local behavioral scanner assigns Critical to two signals: high-confidence obfuscation and protestware. Obfuscation uses these confidence bands:
+The local source scanner assigns Critical to high-confidence obfuscation, protestware, and credential exfiltration. Obfuscation uses these confidence bands:
 
 | Confidence | Result |
 | --- | --- |
@@ -106,7 +107,9 @@ The local behavioral scanner assigns Critical to two signals: high-confidence ob
 
 The protestware detector targets sabotage patterns. Examples include deliberate infinite loops and locale or network-interface checks near process exits.
 
-Behavioral tags report code patterns and package capabilities. They do not prove data flow, user intent, or malicious execution.
+Behavioral tags report code patterns and package capabilities. They do not prove user intent or malicious execution.
+
+The `:credential-exfiltration` finding traces supported secret flows into upload calls. See [detection coverage](/docs/packages/audit#credential-exfiltration) for its limits.
 
 For example, `:env` and `:network` are independent signals. Their presence does not prove that a package sends environment variables to a remote host.
 
@@ -121,7 +124,7 @@ The secret scanner is separate. Critical hardcoded-secret findings appear only w
 - `RegexSet` + `OnceLock` for compile-once, single-pass matching across all behavioral patterns.
 - All regex uses Rust's `regex` crate (Thompson NFA, **linear-time guarantees**). The `fancy-regex` crate is **banned** for security analysis — backtracking against untrusted input is a ReDoS vector.
 - File extension filter before I/O (skip non-source files).
-- Per-file size cap: 2MB. Per-package total: 50MB scanned. Per-package file count: 5,000.
+- Per-file size cap: 4 MiB. Per-package total: 50 MiB scanned. Per-package file count: 5,000.
 - Shannon entropy pre-filter skips ~95% of files before the expensive extraction pass.
 
 Target: < 100ms per typical 100-file package.

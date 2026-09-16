@@ -10,7 +10,7 @@ lpm audit
 Walks every installed package and reports:
 
 1. **Confirmed vulnerabilities** — npm packages are cross-referenced against [OSV.dev](https://osv.dev); `@lpm.dev/*` packages get vulnerability data from the registry's per-version metadata.
-2. **Source capabilities and security findings** — source analysis lists API capabilities separately from suspicious patterns, such as obfuscation and protestware. Capabilities include runtime evaluation, child processes, network access, filesystem access, and native code. See the full tag list under [`lpm query`](/docs/packages/query).
+2. **Source capabilities and security findings** — source analysis lists API capabilities separately from suspicious patterns, such as obfuscation, protestware, and credential exfiltration. Capabilities include runtime evaluation, child processes, network access, filesystem access, and native code. See the full tag list under [`lpm query`](/docs/packages/query).
 3. **Quality score** — for `@lpm.dev/*` packages. Scores below 40 surface as moderate; below 20 surface as high.
 4. **Dependency-confusion warnings** — when an installed `@lpm.dev/*` package's bare name collides with a popular npm package (`react`, `lodash`, etc.), the audit warns about the registry-confusion risk.
 5. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
@@ -52,7 +52,7 @@ An incomplete source audit prints `Audit incomplete` and exits with code `1`, re
 
 The source scan covers JavaScript and TypeScript files. It keeps these resource limits:
 
-- Full analysis stops at 2 MiB for one file. Larger files receive a sample from each end.
+- Full analysis stops at 4 MiB for one file. Larger files receive a sample from each end.
 - One package has a 50 MiB scan budget and a 5,000-file limit.
 - A sampled file does not count as a fully scanned file.
 
@@ -82,6 +82,17 @@ Source analysis does not execute package code or fully track values between func
 Runtime mutation, custom wrappers, unsupported syntax, and sampled files can hide behavior.
 Static checks cannot prove that a package is safe. LPM CLI refreshes local cached analyses when scanner rules change.
 Previously stored LPM.dev Registry tags require a publication rescan before they change.
+
+### Credential exfiltration
+
+The Critical `:credential-exfiltration` finding identifies supported flows of private-key material or the complete process environment into network payloads.
+It checks `fetch` request headers and bodies with fixed HTTP URLs, plus supported repository-content uploads.
+It follows supported assignments, encodings, local helpers, and bundled classes within complete files. Evidence points to the upload call.
+Sampled file ranges cannot establish this finding.
+
+Normal token authentication, public addresses, signatures, and local secret scanning do not establish this finding.
+The detector recognizes selected secret names and wallet APIs. It does not prove that a value contains credentials or that an upload executes.
+Dynamic endpoints, arbitrary wrappers, runtime mutation, separate files, and files beyond the scan limits can hide these flows.
 
 ## Foreign lockfiles
 
@@ -155,7 +166,7 @@ An incomplete vulnerability or source scan always exits non-zero, regardless of 
 
 | Policy                      | Exit code 1 when                                                                                                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation and protestware). Excludes `high` behaviors so existing pipelines that tolerate `eval` do not break. |
+| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, and credential exfiltration). Excludes `high` behaviors so existing pipelines that tolerate `eval` do not break. |
 | `vuln`                      | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`)                                                                                                       |
 | `behavior`                  | Any critical **or** high behavioral flag                                                                                                                                             |
 | `secrets`                   | Any hardcoded-secret finding from `lpm audit --secrets`                                                                                                                              |
@@ -255,9 +266,9 @@ Suppresses anything below the threshold. Ladder from most-to-least severe: `crit
 
 Info results include behavioral metadata such as environment-variable access, URL literals, and high-entropy strings. Human output puts these results under `Behavioral metadata`. The final summary does not count them as suspicious packages or security issues. These results do not make the command fail by themselves.
 
-Critical behavioral results mean high-confidence obfuscation or protestware. Scores above `0.3` through `0.7` are Info-level possible obfuscation. Scores above `0.7` are Critical.
+Critical source results include high-confidence obfuscation, protestware, and credential exfiltration. Scores above `0.3` through `0.7` are Info-level possible obfuscation. Scores above `0.7` are Critical.
 
-The scanner detects capabilities, not data flow or command intent. Environment access plus network access does not prove exfiltration. A detected `rm -rf` shell command remains a High shell and child-process signal.
+Capability tags do not establish data flow or command intent. Environment access plus network access does not prove exfiltration. The separate credential-exfiltration finding requires a supported flow into an upload call. A detected `rm -rf` shell command remains a High shell and child-process signal.
 
 For `@lpm.dev/*` packages, the human report includes registry and local findings. Registry advisories and security findings keep their published severity, including Critical.
 
