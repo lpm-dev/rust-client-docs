@@ -10,7 +10,7 @@ lpm audit
 Walks every installed package and reports:
 
 1. **Confirmed vulnerabilities** — npm packages are cross-referenced against [OSV.dev](https://osv.dev); `@lpm.dev/*` packages get vulnerability data from the registry's per-version metadata.
-2. **Behavioral flags** — static analysis reports risky behaviors such as `eval`, child processes, network access, filesystem access, and native code. LPM.dev Registry metadata and local findings use the same severity policy. See the full tag list under [`lpm query`](/docs/packages/query).
+2. **Source capabilities and security findings** — source analysis lists API capabilities separately from suspicious patterns, such as obfuscation and protestware. Capabilities include runtime evaluation, child processes, network access, filesystem access, and native code. See the full tag list under [`lpm query`](/docs/packages/query).
 3. **Quality score** — for `@lpm.dev/*` packages. Scores below 40 surface as moderate; below 20 surface as high.
 4. **Dependency-confusion warnings** — when an installed `@lpm.dev/*` package's bare name collides with a popular npm package (`react`, `lodash`, etc.), the audit warns about the registry-confusion risk.
 5. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
@@ -20,6 +20,29 @@ Works in any project, not just LPM.dev Registry-published ones. Discovery walks 
 The vulnerability scan fails closed. If OSV.dev is unavailable, returns an incomplete batch, or omits advisory details that cannot be hydrated, `lpm audit` exits non-zero and never reports a clean audit. The same applies when the LPM.dev Registry cannot return exact metadata for an installed `@lpm.dev/*` version. Under `--json`, an incomplete OSV scan returns the audit envelope with `success: false`, `osv_degraded: true`, and `osv_degraded_reason`; other registry failures use the standard error envelope.
 
 The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
+
+## Source capabilities
+
+The `Capabilities` section describes API use. A capability does not prove execution or malicious intent, and it does not increase security finding counts.
+Explicit `--fail-on=behavior` and `--fail-on=all` policies still include high-severity capabilities.
+
+The `eval` capability covers runtime evaluation and compilation through these APIs:
+
+- Global `eval` and `Function`, including recognized aliases and indirect calls.
+- Node `vm.runInContext`, `vm.runInNewContext`, `vm.runInThisContext`, and `vm.compileFunction`.
+- Node `vm.Script` and `vm.SourceTextModule` constructors.
+
+A constant body, such as `Function('return this')`, still uses runtime code generation.
+A local class named `Function` or a method declaration named `eval` does not establish built-in evaluation.
+Calls named `eval` on unresolved objects retain conservative capability evidence. The evidence states that built-in evaluation is not established.
+
+Source evidence includes a package-relative path, a reason, and a file context.
+Precise matches also include a line, a byte column, and a short excerpt.
+Evidence contains a bounded set of examples. It does not list every call or prove that an API executes.
+
+With `--json`, each package stores capabilities in `capabilities`, and `total_capabilities` counts them.
+Each capability includes `rule_id`, `name`, `policy_severity`, `source`, and `evidence`.
+Capabilities do not contribute to `issues`, `total_issues`, `packages_with_issues`, or security severity counts.
 
 ## Source coverage
 
@@ -51,8 +74,12 @@ Gap reasons are `source_unavailable`, `source_missing_or_unreadable`, `scan_limi
 Oversized-file evidence includes the file path, full size, sampled byte count, and detected signals.
 The top-level `scanned` field counts discovered packages. It does not mean that every package received complete source analysis.
 
-Behavioral flags describe capabilities, not proof of malicious intent. Quoted examples and comments do not establish executable capabilities.
+Quoted examples and comments do not establish executable capabilities.
+Obfuscation checks distinguish executable identifiers and decoder calls from quoted examples.
+Encoded strings can still contribute to obfuscation evidence.
 Executable template expressions remain part of the scan. Bounded parser loops and ordinary locale argument validation do not establish protestware.
+Source analysis does not execute package code or fully track values between functions and modules.
+Runtime mutation, custom wrappers, unsupported syntax, and sampled files can hide behavior.
 Static checks cannot prove that a package is safe. LPM CLI refreshes local cached analyses when scanner rules change.
 Previously stored LPM.dev Registry tags require a publication rescan before they change.
 
@@ -121,7 +148,8 @@ Use `instance_id` as the row key when it is not `null`. Otherwise, use `path`. D
 
 ## CI gating
 
-`lpm audit` exits non-zero when its findings trip the active `--fail-on` policy. The implicit default is conservative — high-severity behavioral signals like `eval` don't fail CI unless you ask for them explicitly with `--fail-on all`.
+`lpm audit` exits non-zero when findings meet the active `--fail-on` policy.
+High-severity capabilities, such as `eval`, fail CI only with explicit `--fail-on=behavior` or `--fail-on=all`.
 
 An incomplete vulnerability or source scan always exits non-zero, regardless of `--fail-on`. A network or advisory-data failure is not evidence that the installed tree is clean.
 
