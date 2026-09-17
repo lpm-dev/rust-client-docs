@@ -1,156 +1,239 @@
 ---
 title: lpm release
-description: "Plan, apply, and publish workspace releases in dependency order."
+description: Plan version changes, update dependency ranges, and publish packages across a workspace.
 ---
 
+Use `lpm release` to coordinate version changes and publishing across a monorepo.
+
 ```bash
-lpm release plan --affected --base main --bump patch
+lpm release <COMMAND>
+lpm release plan [OPTIONS]
+lpm release apply [OPTIONS]
+lpm release publish [OPTIONS]
 ```
 
-Coordinates releases across a workspace. `lpm release plan` computes the package/version/dependency update plan, `lpm release apply` writes it to manifests, and `lpm release publish` publishes selected members in dependency order.
+Every command requires a workspace and an explicit package selection.
 
-`lpm release` is intentionally separate from [`lpm version`](/docs/packages/version): single-package version bumps stay simple, while workspace releases get explicit planning and publish orchestration.
+| Command | Purpose |
+| --- | --- |
+| `plan` | Preview versions and dependency changes. |
+| `apply` | Write versions and dependency changes to `package.json` files. |
+| `publish` | Publish current versions, with dependencies before dependents. |
+
+For one package, use [`lpm version`](/docs/packages/version) and [`lpm publish`](/docs/packages/publish).
+
+## Quickstart
+
+From the workspace root:
+
+```bash
+lpm release plan --all --bump patch
+lpm release apply --all --bump patch
+lpm install
+lpm release publish --all --npm --dry-run --ignore-scripts
+lpm release publish --all --npm --yes
+```
+
+`apply` updates manifests. It does not update lockfiles, create a Git commit, create tags, or publish packages. [`lpm install`](/docs/packages/install) refreshes the installed dependencies and lockfiles.
+
+`publish` uses each package's current version. It does not apply a version bump.
 
 ## Examples
 
 ```bash
-lpm release plan --all --bump patch
+# Preview packages affected by changes since origin/main
 lpm release plan --affected --base origin/main --bump minor --json
+
+# Update one package and any dependency ranges that need changes
 lpm release apply --filter core --bump major
-lpm release apply --affected --base main --dry-run --json
-lpm release publish --all --dry-run --json
-lpm release publish --affected --base origin/main --npm -y
-lpm release publish --all --lpm --otp 123456 --json
+
+# Preview the same operation without changing manifests
+lpm release apply --filter core --bump major --dry-run --json
+
+# Publish selected packages to their configured targets
+lpm release publish --filter '@acme/*' --yes
+
+# Prepare an LPM.dev Registry release without uploads or scripts
+lpm release publish --all --lpm --dry-run --ignore-scripts --json
 ```
 
-## Planning
+## Configure publishing with `lpm.json`
 
-A release plan reads every selected workspace member's `package.json`, computes the new versions, and then checks workspace-internal dependents.
+Each member can define its own `publish` configuration in [`lpm.json`](/docs/reference/lpm-json). The workspace root's publish configuration does not apply to its members.
 
-Dependency ranges are updated only when the new version no longer satisfies the existing range and the range is safely rewriteable:
+For example, `packages/core/lpm.json` can select npm and LPM.dev Registry:
 
-| Existing spec | Example update |
-| --- | --- |
-| exact old version | `1.2.3` -> `2.0.0` |
-| caret old version | `^1.2.3` -> `^2.0.0` |
-| tilde old version | `~1.2.3` -> `~2.0.0` |
-| explicit workspace range | `workspace:^1.2.3` -> `workspace:^2.0.0` |
-
-Dynamic workspace specs such as `workspace:*`, `workspace:^`, and `workspace:~` are left unchanged. `catalog:` specs are also left unchanged because the catalog owns the concrete version.
-
-If any dependent has a range that would stop accepting a bumped internal package and LPM CLI cannot rewrite it safely, planning fails before anything is written.
-
-## Bump sources
-
-Pass `--bump <level>` to use one bump for every selected package:
+```json
+{
+  "publish": {
+    "registries": ["npm", "lpm"],
+    "npm": {
+      "name": "@acme/core",
+      "access": "public",
+      "tag": "latest"
+    },
+    "lpm": {
+      "name": "@lpm.dev/acme.core"
+    }
+  }
+}
+```
 
 ```bash
-lpm release plan --affected --bump patch
+# Use each member's configured targets
+lpm release publish --filter '@acme/core' --yes
+
+# Replace the configured target list for this run
+lpm release publish --filter '@acme/core' --npm --yes
 ```
 
-Or add lightweight change files under `.lpm/changes/`. Each non-empty, non-comment line is:
+The target flags replace the configured target list. Per-target names and other configuration still apply. Without target flags, an absent or empty `publish.registries` list defaults to LPM.dev Registry.
 
-```text
-<package-name> <bump>
+There is no release-specific `lpm.json` block. Package selection, bump levels, and change files control the release plan. See [`lpm publish`](/docs/packages/publish) for all publish configuration fields.
+
+## Select packages
+
+`--all` selects every workspace member. It cannot combine with `--affected`, `--filter`, or `--filter-prod`.
+
+The other selectors can combine. Their results form a union:
+
+```bash
+lpm release plan --affected --base origin/main --filter core --bump patch
+lpm release publish --filter core --filter app --npm --yes
 ```
 
-Example:
+`--affected` selects changed packages and their transitive dependents. `--filter` uses the [workspace filter syntax](/docs/packages/workspaces#filter-grammar). `--filter-prod` excludes development dependencies from dependency closures.
+
+Patterns in the workspace root's [`lpm.toml`](/docs/reference/lpm-toml) also apply. Repeated `--changed-files-ignore-pattern` and `--test-pattern` flags add patterns for this run.
+
+```bash
+lpm release plan --affected --base origin/main --bump patch \
+  --changed-files-ignore-pattern '**/*.md' \
+  --test-pattern '**/*.test.ts'
+```
+
+Workspace scans allow at most 10,000 patterns, 100,000 directory entries, and a 16 MiB path budget. Keep workspace patterns narrow.
+
+An empty selection succeeds unless you pass `--fail-if-no-match`. Dependency cycles outside the selection do not block the release. Cycles among selected packages cause an error, including cycles through development dependencies.
+
+Selected packages need valid versions. Unselected private applications can omit a version and still receive dependency range updates. For publication, each internal dependency target also needs a version.
+
+`publish --all` includes private members. Selected private packages cause an error. Use a filter to select the packages that you want to publish.
+
+## Choose version bumps
+
+`plan` and `apply` accept `patch`, `minor`, `major`, `prepatch`, `preminor`, `premajor`, `prerelease`, or an exact version:
+
+```bash
+lpm release plan --all --bump minor
+lpm release plan --filter core --bump preminor
+lpm release apply --filter core --bump 2.0.0-rc.1
+```
+
+Each new version must be greater than the package's current version. An exact version can fail for a selection whose members have different current versions.
+
+For separate bumps, add files under the workspace root's `.lpm/changes/` directory. Each nonempty line contains a package name and a bump:
 
 ```text
-core minor
+# .lpm/changes/api-update
+core major
 app patch
 ```
 
-Change-file bumps override the command's `--bump` fallback for matching packages. If a selected package has no change-file entry and no `--bump`, the command fails instead of guessing. Use `--bump patch` when you want the conservative patch fallback.
-
-## Selection
-
-Every `lpm release` subcommand requires an explicit workspace selection:
-
-Selection modes are mutually exclusive: `--all` cannot be combined with `--affected`, `--filter`, or `--filter-prod`.
-
-| Flag | Description |
-| --- | --- |
-| `--all` | Select every workspace member. |
-| `--affected` | Select packages changed since `--base` plus their transitive dependents. |
-| `--base <REF>` | Git base ref for `--affected`. Defaults to `main`. |
-| `--filter <EXPR>` | Select workspace members with the same filter grammar as [`lpm run --filter`](/docs/dev/run#workspaces). |
-| `--filter-prod <EXPR>` | Like `--filter`, but dependency closures follow production edges only. |
-| `--changed-files-ignore-pattern <GLOB>` | Ignore matching changed files when evaluating affected packages. |
-| `--test-pattern <GLOB>` | Treat matching changed files as tests so affected fanout does not include dependents from them. |
-| `--fail-if-no-match` | Exit non-zero when the selection resolves to no members. |
-
-## Subcommands
-
-### `lpm release plan`
-
-Prints the release plan and never writes files.
-
 ```bash
 lpm release plan --all --bump patch
-lpm release plan --affected --base origin/main --bump minor --json
+lpm release apply --all --bump patch
 ```
 
-### `lpm release apply`
+Change-file entries override the `--bump` fallback for matching packages. A selected package without either bump source causes an error.
 
-Writes the plan to the selected package manifests and any workspace dependents that need range updates.
+Identical repeated entries are accepted. Conflicting entries cause an error, including conflicts between exact versions or prerelease bumps. File order does not choose the bump.
+
+Change files do not select packages. `apply` leaves them in place. Remove completed entries before the next release to prevent another bump from the same instructions.
+
+Change files must be regular files. The loader rejects symbolic links and excessive input: 10,000 files, 100,000 records, 16 MiB per file, or 64 MiB total.
+
+## Update dependency ranges
+
+Planning checks references to bumped packages in the root manifest and every member. It covers `dependencies`, `devDependencies`, `peerDependencies`, and `optionalDependencies`.
+
+If a range already accepts the new version, it stays unchanged. Otherwise, LPM CLI can update these forms when they refer to the old version:
+
+| Existing range | Example after `1.2.3` → `2.0.0` |
+| --- | --- |
+| `1.2.3` | `2.0.0` |
+| `^1.2.3` | `^2.0.0` |
+| `~1.2.3` | `~2.0.0` |
+| `workspace:^1.2.3` | `workspace:^2.0.0` |
+
+Dynamic ranges `workspace:*`, `workspace:^`, and `workspace:~` stay unchanged. Root dependency updates do not bump the root version.
+
+Catalog references also stay unchanged. Their resolved catalog ranges must accept the planned version. If a catalog range excludes it, update the root catalog and preview the release again.
+
+A range that cannot accept the new version or receive a supported update stops the plan before manifest changes.
+
+Both preview and apply enforce the same transaction limits: at most 128 changed manifests, including dependency updates. Original and updated manifests each have a 48 MiB aggregate limit. The recovery data also has a 64 MiB limit.
+
+## Publish current versions
+
+Before uploads, LPM CLI checks internal dependency ranges and selected registry destinations. It checks version availability on LPM.dev Registry, npm, GitHub Packages, GitLab, and custom npm-compatible registries.
+
+If every selected target already contains a package's version, the package is skipped. If only some targets contain it, preflight fails before uploads.
+
+A dry run performs local preparation and remote preflight. It can require registry credentials. It does not upload packages.
+
+```bash
+lpm release publish --all --npm --dry-run --ignore-scripts --json
+lpm release publish --all --lpm --otp 123456 --yes
+```
+
+For LPM.dev Registry, `--otp` supplies the same six-digit authenticator code to each package. Use a fresh code before it expires.
+
+### Lifecycle scripts
+
+Publishing can run these scripts from each selected member:
+
+1. `prepublishOnly`, `prepack`, and `prepare` before package preparation.
+2. `postpack` after package preparation.
+3. `publish` and `postpublish` after a successful upload or dry-run preparation.
+
+Before-pack scripts run before remote skip decisions. An already-published package can still run these scripts.
+
+Dry runs also run lifecycle scripts. Use `--ignore-scripts` to skip them. If scripts exist, non-interactive and JSON commands require `--yes` or `--ignore-scripts`.
+
+```bash
+# Run package lifecycle scripts in CI
+lpm release publish --affected --base origin/main --npm --yes --json
+
+# Skip package lifecycle scripts for this run
+lpm release publish --all --npm --ignore-scripts --yes --json
+```
+
+Scripts run in a sandbox with outbound network access denied. A package directory replacement during the operation stops the release.
+
+## Recover an interrupted release
+
+`apply` records the original manifests before replacement and coordinates its writes with installs, version changes, and publishing. Preview commands also take a project lock.
+
+If a write stops partway through, retry the same `apply` command. An incomplete operation restores its manifests before the new operation starts. If completion recovery data remains, an identical retry reports recovery without another bump. After successful cleanup, another `apply` command starts a new version bump.
 
 ```bash
 lpm release apply --filter core --bump major
-lpm release apply --affected --bump patch --dry-run --json
 ```
 
-LPM CLI records the original manifests before it replaces any file. It also coordinates these writes with installs, version changes, and publishing.
+Mutating [`lpm version`](/docs/packages/version) and `release publish` can also recover pending manifest updates. Preview commands stop when recovery is required. Concurrent installs stop instead of using partially updated manifests.
 
-If the process stops during the write, run a mutating `release apply`, `release publish`, or `version` command. The command restores an incomplete update before it continues. If the original operation completed, an identical retry reports the completed operation without another version bump.
+If files or directories changed outside the operation, recovery can refuse to overwrite them. Restore the original project directories and inspect the reported files before retrying.
 
-Read-only commands do not change recovery state. `release plan`, `release apply --dry-run`, and `release publish --dry-run` stop when an incomplete update exists. A concurrent install also stops instead of using a partially updated workspace.
+Publishing has no rollback across packages or registries. A later failure does not remove earlier uploads. Retry failed and unattempted packages with a narrower selection. For partial publication across registries, also select only the targets that still need the package:
 
-### `lpm release publish`
+```bash
+lpm release publish --filter app --npm --yes --json
+```
 
-Publishes selected members in topological order, dependencies before dependents. Before the first upload it validates current workspace-internal ranges so a stale manifest fails before a partial publish.
+## JSON output
 
-`release publish` reuses the single-package [`lpm publish`](/docs/packages/publish) implementation for each member. It supports the same target flags that make sense for a workspace publish:
-
-| Flag | Description |
-| --- | --- |
-| `--dry-run` | Print publish order and skip decisions without uploading. |
-| `-y, --yes` | Skip per-package confirmation prompts. |
-| `--otp <CODE>` | Send a six-digit authenticator code for MFA-protected LPM.dev publishes. |
-| `--min-score <N>` | Require a minimum quality score. |
-| `--allow-secrets` | Skip the pre-publish secret scan. |
-| `--npm` | Publish to npm. |
-| `--lpm` | Publish to LPM.dev Registry. |
-| `--github` | Publish to GitHub Packages. |
-| `--gitlab` | Publish to GitLab Packages. |
-| `--publish-registry <URL>` | Publish to a custom npm-compatible registry. |
-| `--provenance` | Require generated Sigstore provenance. |
-| `--no-provenance` | Disable provenance for this run. |
-| `--provenance-file <PATH>` | Attach a pre-generated Sigstore bundle for npm-compatible targets. |
-
-For an LPM.dev workspace release, `--otp` supplies the same code to each selected package. Use a fresh code before it expires.
-
-For LPM.dev Registry and npm targets, LPM CLI checks metadata before upload. If every checked target already has the selected version, the package is skipped. If only some checked targets already have it, the command fails before uploading so it does not partially publish.
-
-Custom, GitHub, and GitLab targets are still validated for local target-name/config correctness, but remote version existence is left to the target publish response.
-
-Workspace publishing is not transactional across packages. If a later package fails, LPM CLI does not remove earlier successful uploads.
-
-Human output names the failed package and shows its preparation or upload error. JSON output reports each selected package with one of these states:
-
-| Status | Meaning |
-| --- | --- |
-| `published` | Every selected target for the package succeeded. |
-| `failed` | Preparation or at least one selected target failed. |
-| `not_attempted` | An earlier package failed, so this package did not start. |
-| `skipped` | The checked targets already contain this version. |
-| `planned` | A dry run prepared this package without an upload. |
-
-If a publish fails, keep the successful uploads. Then retry only the failed and `not_attempted` packages with a narrower selection.
-
-## JSON
-
-`--json` is available on every subcommand. `plan` and `apply` emit the same envelope shape:
+`plan --json` and `apply --json` report versions, dependency updates, and changed files:
 
 ```json
 {
@@ -162,21 +245,77 @@ If a publish fails, keep the successful uploads. Then retry only the failed and 
 }
 ```
 
-`publish --json` emits:
+A retry with retained completion recovery data can instead return `{"success":true,"dry_run":false,"recovered":true}`.
+
+After publication execution starts, `publish --json` reports the selected count and per-package results:
 
 ```json
 {
   "success": true,
   "dry_run": true,
-  "packages": 2,
+  "packages": 0,
   "results": []
 }
 ```
 
-On failure, `success` is `false`. The `results` array keeps completed, failed, and unattempted packages, and `warning` explains the retry boundary.
+| Status | Meaning |
+| --- | --- |
+| `published` | Every selected target succeeded. |
+| `planned` | Dry-run preparation succeeded. |
+| `skipped` | Every selected target already contains this version. |
+| `failed` | Preparation, lifecycle execution, or a target failed. |
+| `not_attempted` | An earlier package failed. |
+
+Execution failures include `success: false` and a retry warning. Earlier failures, such as selection or remote preflight errors, use the standard [JSON error format](/docs/reference/exit-codes).
+
+## Flags
+
+### Selection flags
+
+Available on all three commands:
+
+| Flag | Description |
+| --- | --- |
+| `--all` | Select every member. Conflicts with the other selectors. |
+| `--affected` | Select changed packages and their dependents. |
+| `--base <REF>` | Git base for affected selection. Default: `main`. |
+| `--filter <EXPR>` | Add a workspace filter. Repeatable. |
+| `--filter-prod <EXPR>` | Add a filter with production dependency closures. Repeatable. |
+| `--changed-files-ignore-pattern <GLOB>` | Add a changed-file exclusion pattern. Repeatable. |
+| `--test-pattern <GLOB>` | Add a test-file pattern that limits affected fanout. Repeatable. |
+| `--fail-if-no-match` | Fail if no packages match. |
+
+### Plan and apply flags
+
+| Flag | Available on | Description |
+| --- | --- | --- |
+| `--bump <BUMP>` | `plan`, `apply` | Fallback bump or exact version. Change-file entries take precedence. |
+| `--dry-run` | `apply` | Preview without changing manifests. |
+
+### Publish flags
+
+| Flag | Description |
+| --- | --- |
+| `--dry-run` | Prepare packages and perform remote preflight without uploads. |
+| `-y, --yes` | Accept confirmations and authorize package lifecycle scripts. |
+| `--ignore-scripts` | Skip package lifecycle scripts. |
+| `--otp <CODE>` | Six-digit code for MFA-protected LPM.dev Registry uploads. |
+| `--min-score <N>` | Required quality score, from 0 to 100. Requires an LPM.dev Registry target. |
+| `--allow-secrets` | Skip the pre-publish secret scan. |
+| `--npm` | Select npm. |
+| `--lpm` | Select LPM.dev Registry. |
+| `--github` | Select GitHub Packages. |
+| `--gitlab` | Select GitLab Packages. |
+| `--publish-registry <URL>` | Select a custom npm-compatible registry. |
+| `--provenance` | Require generated Sigstore provenance. |
+| `--no-provenance` | Disable provenance for this run. |
+| `--provenance-file <PATH>` | Attach an existing Sigstore bundle. The selection must contain only npm-compatible targets. |
+
+The three provenance flags are mutually exclusive. All commands support `--json` and the other [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm version`](/docs/packages/version) — single-package version bumps
-- [`lpm publish`](/docs/packages/publish) — single-package publish behavior and provenance
-- [`lpm workspaces`](/docs/packages/workspaces) — workspace declarations, protocols, catalogs, and filters
+- [`lpm version`](/docs/packages/version) — change one package's version
+- [`lpm publish`](/docs/packages/publish) — targets, credentials, and publication configuration
+- [`lpm workspaces`](/docs/packages/workspaces) — members, filters, protocols, and catalogs
+- [`lpm install`](/docs/packages/install) — refresh dependencies and lockfiles

@@ -1,75 +1,151 @@
 ---
 title: lpm version
-description: "Bump package.json version with npm-compatible increments, JSON plans, and optional git commit/tag."
+description: "Change a package version, preview the change, and optionally create a Git commit and tag."
 ---
+
+Change the current package's version before a release.
+
+```bash
+lpm version [OPTIONS] <BUMP>
+```
+
+Choose a named increment or an exact version. By default, LPM CLI updates `package.json`, creates a Git commit, and adds a tag.
+
+## Quickstart
+
+From a package with version `1.2.3` and a clean Git worktree:
 
 ```bash
 lpm version patch
+# package.json: 1.2.4
+# Git commit: v1.2.4
+# Git tag: v1.2.4
 ```
 
-Bumps the current package's `package.json` version. By default, LPM CLI writes the manifest, commits it, and creates a git tag just like `npm version`, but with stricter release safety: the git tree must be clean before commit/tag, and exact versions must move forward.
+| Mode | Result |
+| --- | --- |
+| Default | Update the manifest, commit it, and create a tag |
+| `--no-git-tag-version` | Update the manifest without a Git commit or tag |
+| `--dry-run` | Show the planned version without changing the manifest or Git history |
 
-The built-in command wins over a package script named `version`. To run that script, use [`lpm run version`](/docs/dev/run).
+The command does not publish a package or push Git changes. Use [lpm publish](/docs/packages/publish) to publish the new version.
 
 ## Examples
 
 ```bash
-lpm version patch                         # 1.2.3 -> 1.2.4, commit, tag v1.2.4
-lpm version minor --message "release %s"  # commit message: release 1.3.0
-lpm version prepatch                      # 1.2.3 -> 1.2.4-0
-lpm version prerelease                    # 1.2.4-0 -> 1.2.4-1
-lpm version 2.0.0                         # exact forward version
-lpm version patch --no-git-tag-version    # edit package.json only
-lpm version patch --dry-run --json        # print the plan without writing
+# Preview a minor release
+lpm version minor --dry-run
+
+# Set an exact forward version
+lpm version 2.0.0
+
+# Start a prerelease, then increment it
+lpm version prepatch
+lpm version prerelease
+
+# Customize the commit message and tag prefix
+lpm version minor --message "release %s" --tag-prefix "widget-v"
+
+# Let another tool manage Git history
+lpm version patch --no-git-tag-version
+
+# Return a machine-readable preview
+lpm version patch --dry-run --json
 ```
 
-## Bump values
+There is no `version` block in [lpm.json](/docs/reference/lpm-json). The current `package.json` supplies the version. Command flags control the increment and Git behavior.
 
-| Value | Effect |
-| --- | --- |
-| `patch` | Stable patch bump. From a prerelease, releases the same version (`1.2.3-rc.1` -> `1.2.3`). |
-| `minor` | Next minor, patch reset to `0`. |
-| `major` | Next major, minor and patch reset to `0`. |
-| `prepatch` | Next patch prerelease (`1.2.3` -> `1.2.4-0`). |
-| `preminor` | Next minor prerelease (`1.2.3` -> `1.3.0-0`). |
-| `premajor` | Next major prerelease (`1.2.3` -> `2.0.0-0`). |
-| `prerelease` | Increment the prerelease number, or start the next patch prerelease from a stable version. |
-| `<exact>` | Set an exact semver version, if it is greater than the current version. |
+## Choose a version
+
+| Bump | Behavior | Example |
+| --- | --- | --- |
+| `patch` | Increment the patch, or remove the current prerelease suffix | `1.2.3` → `1.2.4`; `1.2.3-rc.1` → `1.2.3` |
+| `minor` | Increment the minor and reset the patch; promote a prerelease with patch `0` | `1.2.3` → `1.3.0`; `1.3.0-rc.1` → `1.3.0` |
+| `major` | Increment the major and reset minor and patch; promote a prerelease with minor and patch `0` | `1.2.3` → `2.0.0`; `2.0.0-rc.1` → `2.0.0` |
+| `prepatch` | Increment the patch and append `-0` | `1.2.3` → `1.2.4-0` |
+| `preminor` | Increment the minor, reset the patch, and append `-0` | `1.2.3` → `1.3.0-0` |
+| `premajor` | Increment the major, reset minor and patch, and append `-0` | `1.2.3` → `2.0.0-0` |
+| `prerelease` | Increment the rightmost numeric prerelease identifier; append `.0` if none exists | `1.2.3-alpha.1.beta` → `1.2.3-alpha.2.beta` |
+| An exact version | Set a version with higher SemVer precedence | `1.2.3` → `2.0.0` |
+
+From a stable version, `prerelease` starts the next patch prerelease: `1.2.3` becomes `1.2.4-0`.
+
+Named increments remove build metadata. Exact versions preserve build metadata, including leading zeros such as `1.3.0+001`. A build-metadata change alone does not increase version precedence.
+
+Existing versions can have an optional `v` prefix. New versions omit that prefix. Numeric overflow returns an error before a manifest change.
 
 ## Git behavior
 
-With the default git mode, `lpm version`:
+The default mode requires an existing Git commit and a clean worktree. This includes unrelated staged changes and untracked files.
 
-1. verifies the current directory is inside a git worktree
-2. verifies `git status --porcelain` is clean
-3. verifies the target tag name is valid and does not already exist
-4. writes `package.json`
-5. runs `git add package.json`
-6. commits with the message template
-7. creates a tag
+Before the manifest changes, LPM CLI checks the tag name and refuses an existing tag. The default tag prefix is `v`. The resulting tag cannot start with `-`.
 
-Use `--no-git-tag-version` when you want only the manifest edit. `--dry-run` prints the same version plan without writing, committing, or tagging.
+The default commit message is `v%s`. Every `%s` in `--message` becomes the new version. A message without `%s` stays literal.
 
-The manifest write, Git commit, and tag form one recoverable operation. If a commit or tag fails, LPM CLI restores its manifest, index, commit, and tag changes. Changes that a Git hook creates remain available and are not discarded.
+Git hooks run normally. Git signing configuration also applies: `commit.gpgSign` controls commit signing, and `tag.gpgSign` requests a signed tag. Otherwise, the tag is lightweight.
 
-If the process stops, run the same command again. An identical retry recognizes a completed commit or tag and does not bump the package twice. An incomplete operation rolls back before the command makes a new plan.
+The command does not run the `preversion`, `version`, or `postversion` package scripts. To run a script named `version`, use [lpm run version](/docs/dev/run).
 
-Workspace members use the workspace transaction lock. The command refuses a changed workspace boundary or unrelated staged workspace files instead of committing them.
+### Preview a change
+
+```bash
+lpm version major --dry-run --json
+```
+
+A preview reads the current manifest and takes the project lock. It can create internal lock files. It does not edit the manifest, run Git hooks, commit, or tag.
+
+A preview does not check Git cleanliness, signing, or tag availability. A successful preview does not guarantee that the Git step will succeed.
+
+## Workspaces
+
+Run the command from the package directory:
+
+```bash
+cd packages/widget
+lpm version patch --no-git-tag-version
+```
+
+Only that package's `package.json` changes. Sibling versions, dependency ranges, and lockfiles stay unchanged. For coordinated workspace releases, use [lpm release](/docs/packages/release).
+
+Workspace members share the workspace transaction lock. LPM CLI refuses a changed project directory, workspace boundary, or lock directory during the operation.
+
+## Automation
+
+The command needs no confirmation prompt. Use `--json` to read the result from a script:
+
+```bash
+lpm version patch --no-git-tag-version --json
+```
+
+Normal success includes `success`, `dry_run`, `git_tag_version`, `commit`, `tag`, and `plan`. The plan lists old and new versions and affected files. Without Git mode, `commit` and `tag` are `null`.
+
+A completed-operation retry returns a shorter result with `success`, `recovered`, `git_tag_version`, and `tag`.
+
+## Recover from a failure
+
+If Git cannot create the expected commit or tag, LPM CLI restores its verified changes. This includes the manifest and its staged entry.
+
+If a hook creates unexpected history or includes other files in the commit, LPM CLI preserves that history and the recovery record. Inspect `git status` and `git log` before retrying. Keep the recovery record until you resolve the reported mismatch.
+
+After an interrupted process, run the same command again. An identical retry recognizes a completed operation and does not increment twice. An incomplete operation rolls back before a new plan starts.
+
+A pending interrupted operation blocks previews. Run the original mutating command to recover it first.
 
 ## Flags
 
 | Flag | Description |
 | --- | --- |
-| `--dry-run` | Print the plan without writing files, committing, or tagging. |
-| `--json` | Emit a structured plan with `success`, `dry_run`, `git_tag_version`, `commit`, `tag`, and `plan`. |
-| `--no-git-tag-version` | Update `package.json` only. |
-| `--tag-prefix <PREFIX>` | Prefix for the git tag. Defaults to `v`; the resulting tag must be accepted by `git tag` and cannot start with `-`. |
-| `-m, --message <TEXT>` | Commit message. `%s` is replaced with the new version. Defaults to `v%s`. |
+| `--dry-run` | Show the version plan without changing the manifest, creating a commit, or adding a tag. |
+| `--no-git-tag-version` | Update `package.json` without a Git commit or tag. |
+| `--tag-prefix <TAG_PREFIX>` | Set the tag prefix. Default: `v`. |
+| `-m, --message <MESSAGE>` | Set the commit message. `%s` becomes the new version. Default: `v%s`. |
+| `--json` | Return a structured plan or recovery result. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm release`](/docs/packages/release) — workspace release planning and publish orchestration
-- [`lpm publish`](/docs/packages/publish) — publish the package after a version bump
-- [`lpm run`](/docs/dev/run) — run a package script named `version`
+- [lpm release](/docs/packages/release) — coordinate workspace versions and publishing
+- [lpm publish](/docs/packages/publish) — publish the new package version
+- [lpm init](/docs/packages/init) — create a package manifest
+- [lpm run](/docs/dev/run) — run package scripts
