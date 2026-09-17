@@ -47,7 +47,7 @@ Three groups of tags — source behavior (what the code does), supply-chain sign
 | ------------------ | -------------------------------------------------- |
 | `:eval`            | Use `eval`, `Function()`, or `vm.runInThisContext` |
 | `:network`         | Make outbound HTTP / WS connections                |
-| `:fs`              | Touch the filesystem outside their own directory   |
+| `:fs`              | Use filesystem APIs   |
 | `:shell`           | Spawn shells (`spawn`, `exec`, `execSync`)         |
 | `:child-process`   | Use `child_process` (any form)                     |
 | `:native`          | Ship native modules (`.node`, `.wasm`)             |
@@ -122,15 +122,15 @@ When `lpm audit` or audit-after-install reports a known vulnerability or LPM.dev
 
 The secret scanner is separate. Critical hardcoded-secret findings appear only when you run `lpm audit --secrets`.
 
-### Performance design
+### Coverage and limits
 
-- `RegexSet` + `OnceLock` for compile-once, single-pass matching across all behavioral patterns.
-- All regex uses Rust's `regex` crate (Thompson NFA, **linear-time guarantees**). The `fancy-regex` crate is **banned** for security analysis — backtracking against untrusted input is a ReDoS vector.
-- File extension filter before I/O (skip non-source files).
-- Per-file size cap: 4 MiB. Per-package total: 50 MiB scanned. Per-package file count: 5,000.
-- Shannon entropy pre-filter skips ~95% of files before the expensive extraction pass.
+Source analysis covers JavaScript and TypeScript without executing package code. An API capability does not prove malicious intent or execution.
 
-Target: < 100ms per typical 100-file package.
+Full file analysis stops at 4 MiB. Larger files receive samples. Each package has a 50 MiB scan budget and a 5,000-file limit.
+
+Missing files, unreadable inputs, unsupported syntax, and exceeded limits prevent a clean audit. See [source coverage](/docs/packages/audit#source-coverage) for recovery steps and JSON fields.
+
+Local analyses can be cached. Scanner rule changes invalidate older cached results.
 
 ### Querying the tags
 
@@ -149,11 +149,13 @@ lpm query :critical --assert-none # CI gate: fail if any critical-tagged package
 
 ```bash
 lpm audit                       # all findings
-lpm audit --level high          # only high-severity vulnerabilities
+lpm audit --level high          # filter findings and the failure decision
 lpm audit --fail-on vuln        # CI: fail on confirmed vulns only (not behavior)
 ```
 
-The vulnerability check is **online** — it hits OSV/registry. Cache hits keep the cost low on repeat runs.
+The vulnerability check requires network access. OSV requests run on each invocation. Local source analysis can use cached results.
+
+OSV receives names and versions outside `@lpm.dev/*`, including private-registry packages. See [inventory and network requests](/docs/packages/audit#inventory-and-network-requests).
 
 ## Layer 4: Provenance + cooldown
 

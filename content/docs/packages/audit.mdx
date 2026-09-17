@@ -1,25 +1,150 @@
 ---
 title: lpm audit
-description: "Scan installed packages for vulnerabilities, behavioral risks, and (optionally) hardcoded secrets."
+description: Scan dependencies for vulnerabilities and source risks, inspect secrets, and fix vulnerable direct dependencies.
 ---
+
+Scan your dependencies before a release, or use an audit policy as a CI gate.
+
+```bash
+lpm audit [OPTIONS] [COMMAND]
+lpm audit fix [OPTIONS]
+lpm audit signatures [OPTIONS]
+```
+
+## Quickstart
 
 ```bash
 lpm audit
+lpm audit --level high --fail-on vuln
+lpm audit fix --dry-run
 ```
 
-Walks every installed package and reports:
+LPM CLI works with npm, LPM.dev Registry, and private registries. Only `@lpm.dev/*` packages always use LPM.dev Registry.
 
-1. **Confirmed vulnerabilities** — npm packages are cross-referenced against [OSV.dev](https://osv.dev); `@lpm.dev/*` packages get vulnerability data from the registry's per-version metadata.
-2. **Source capabilities and security findings** — source analysis lists API capabilities separately from suspicious patterns, such as obfuscation, protestware, and credential exfiltration. Capabilities include runtime evaluation, child processes, network access, filesystem access, and native code. See the full tag list under [`lpm query`](/docs/packages/query).
-3. **Quality score** — for `@lpm.dev/*` packages. Scores below 40 surface as moderate; below 20 surface as high.
-4. **Dependency-confusion warnings** — when an installed `@lpm.dev/*` package's bare name collides with a popular npm package (`react`, `lodash`, etc.), the audit warns about the registry-confusion risk.
-5. **Optional secret scan** — with `--secrets`, scans the installed source for hardcoded API keys, tokens, and private keys.
+| Mode | Purpose |
+| --- | --- |
+| `lpm audit` | Report vulnerabilities, source capabilities, suspicious source patterns, and registry quality findings. |
+| `lpm audit --secrets` | Scan installed package files for hardcoded credentials. This is a separate scan. |
+| `lpm audit fix` | Update vulnerable direct dependencies in an LPM CLI project, then reinstall. |
+| `lpm audit signatures` | Verify npm-compatible registry signatures for the installed inventory. |
 
-Works in any project, not just LPM.dev Registry-published ones. Discovery walks `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (text form). Without a supported lockfile, it recursively walks nested `node_modules/` package directories without following symlinks and reports that inventory as degraded.
+The regular audit does not scan for secrets. Run both modes when you need both reports.
 
-The vulnerability scan fails closed. If OSV.dev is unavailable, returns an incomplete batch, or omits advisory details that cannot be hydrated, `lpm audit` exits non-zero and never reports a clean audit. The same applies when the LPM.dev Registry cannot return exact metadata for an installed `@lpm.dev/*` version. Under `--json`, an incomplete OSV scan returns the audit envelope with `success: false`, `osv_degraded: true`, and `osv_degraded_reason`; other registry failures use the standard error envelope.
+## Examples
 
-The `signatures` subcommand is a focused check for npm registry package signatures. It verifies the installed package set against npm-compatible `dist.signatures` metadata and exits non-zero when any registry package cannot be verified.
+```bash
+# Gate on High and Critical vulnerabilities
+lpm audit --level high --fail-on vuln
+
+# Include High source risks in the failure policy
+lpm audit --fail-on all
+
+# Scan installed packages for hardcoded credentials
+lpm audit --secrets --fail-on secrets
+
+# Save a report for a CI artifact
+lpm audit --json > audit.json
+
+# Preview, apply, then inspect remaining findings
+lpm audit fix --dry-run
+lpm audit fix
+lpm audit
+
+# Verify registry signatures
+lpm audit signatures --json
+```
+
+These commands do not prompt. A preview never approves or applies a fix.
+
+## Configuration
+
+There is no dedicated audit section in `lpm.json` or `package.json > lpm`. You can define an uncached task:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "security:audit": {
+      "command": "lpm audit --fail-on vuln",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run security:audit
+```
+
+`command` defines the invocation. `cache: false` keeps the security result fresh. An explicit `lpm.json` task command takes precedence over a same-name `package.json` script.
+
+For task dependencies and environment configuration, see [lpm.json](/docs/reference/lpm-json) and [lpm run](/docs/dev/run).
+
+### Audit after installation
+
+```bash
+lpm install --audit-after-install
+lpm install --no-audit-after-install
+```
+
+To enable the audit by default, set the user configuration:
+
+```toml title="~/.lpm/config.toml"
+audit-after-install = true
+```
+
+The precedence is the install flag, then `LPM_AUDIT_AFTER_INSTALL`, then the user configuration. The default is off.
+
+The environment variable accepts `1`, `true`, `yes`, or `on` to enable the audit. It accepts `0`, `false`, `no`, or `off` to disable it.
+
+The automatic audit is informational. Findings or incomplete coverage do not fail a successful install. An incomplete audit prints a warning instead of completed counts.
+
+For a CI gate, run the standalone audit after [lpm install](/docs/packages/install).
+
+## Inventory and network requests
+
+The regular audit reads `lpm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or Bun lockfiles. It also analyzes available local package source.
+
+Without a supported lockfile, it walks real package directories under `node_modules/`, including nested dependencies. This inventory has weaker identity and reports `degraded: true`.
+
+Malformed or unreadable package manifests stop fallback discovery. Linked package directories require a supported lockfile. A package manifest must be a regular file, not a link.
+
+LPM CLI sends names and versions outside `@lpm.dev/*` to [OSV.dev](https://osv.dev) for vulnerability data. This includes names from private registries and proxies.
+
+For `@lpm.dev/*`, it requests exact version metadata from LPM.dev Registry. Local source analysis does not upload source code.
+
+OSV requests run on each invocation. Local source analysis can use cached results. The automatic audit uses the same network scope.
+
+An unavailable service, incomplete response, inconsistent version identity, or unsupported advisory severity prevents a clean audit. Reconnect or correct the metadata, then rerun the command.
+
+## Severity and CI policies
+
+```bash
+lpm audit --level high --fail-on vuln
+```
+
+`--level` filters both the report and the findings that can fail the command. It does not suppress coverage errors.
+
+The severity order is `critical`, `high`, `moderate`, then `info`. `medium` aliases `moderate`, and `low` aliases `info`. The default reports every level.
+
+| `--fail-on` | Regular audit fails for | Secret scan fails for |
+| --- | --- | --- |
+| Omitted | Retained vulnerabilities or Critical findings. | Any secret finding. |
+| `vuln` | Retained vulnerabilities. | Findings are informational. |
+| `behavior` | High or Critical non-vulnerability findings and capabilities. | Findings are informational. |
+| `secrets` | Findings are informational. | Any secret finding. |
+| `all` | Retained vulnerabilities, plus High or Critical non-vulnerability findings and capabilities. | Any secret finding. |
+
+Non-vulnerability findings include registry security and quality findings. Quality scores below 40 are Moderate, and scores below 20 are High.
+
+`--fail-on all` applies to the selected mode. It does not add the secret scan to a regular audit.
+
+An incomplete scan exits with code `1`, regardless of the policy. Findings that meet the policy also exit with code `1`.
+
+Invalid flag combinations produce a usage error. `--level` cannot accompany `--secrets`. Scan options cannot accompany `fix` or `signatures`.
+
+With regular or secret JSON output, `success: true` means the scan completed. Findings can still produce a nonzero exit status. Use the process status for CI.
+
+For individual capability selectors, see [lpm query](/docs/packages/query).
 
 ## Source capabilities
 
@@ -145,23 +270,6 @@ For `bun.lockb`, LPM CLI copies the selected file before conversion. The Bun con
 
 If Bun exceeds a limit, the audit stops the converter and exits non-zero.
 
-## Examples
-
-```bash
-lpm audit
-lpm audit --level high              # only show high-severity findings
-lpm audit --secrets                 # also scan for hardcoded credentials
-lpm audit --fail-on vuln            # CI: exit non-zero only on confirmed vulns
-lpm audit --fail-on behavior        # CI: exit non-zero on critical or high behaviors
-lpm audit --secrets --fail-on secrets # CI: exit non-zero only on hardcoded secrets
-lpm audit --fail-on all             # CI: strict union of all failure categories
-lpm audit signatures                # verify npm registry package signatures
-lpm audit signatures --json         # machine-readable signature report
-lpm audit fix                       # bump vulnerable direct deps and reinstall
-lpm audit --fix --dry-run           # plan the same fixes without writing files
-lpm audit --json                    # structured output for tooling
-```
-
 ## JSON package identity
 
 ```bash
@@ -178,52 +286,54 @@ For a `file:` or `link:` dependency, `path` identifies the original live source 
 
 Two rows can have the same `name` and `version`. Their `instance_id`, `path`, and findings can differ.
 
-Use `instance_id` as the row key when it is not `null`. Otherwise, use `path`. Do not use only `name` and `version` as a unique key.
+Use a non-null `instance_id` as the row key. Otherwise, use a non-null `path`. If both are null, the report lacks a stable unique key.
 
-## CI gating
-
-`lpm audit` exits non-zero when findings meet the active `--fail-on` policy.
-High-severity capabilities, such as `eval`, fail CI only with explicit `--fail-on=behavior` or `--fail-on=all`.
-
-An incomplete vulnerability or source scan always exits non-zero, regardless of `--fail-on`. A network or advisory-data failure is not evidence that the installed tree is clean.
-
-| Policy                      | Exit code 1 when                                                                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| (no flag, implicit default) | Vulnerabilities **or** critical behavioral flags (obfuscation, protestware, and credential exfiltration). Excludes `high` behaviors so existing pipelines that tolerate `eval` do not break. |
-| `vuln`                      | Any confirmed vulnerability — OSV (npm) or registry-side advisory (`@lpm.dev`)                                                                                                       |
-| `behavior`                  | Any critical **or** high behavioral flag                                                                                                                                             |
-| `secrets`                   | Any hardcoded-secret finding from `lpm audit --secrets`                                                                                                                              |
-| `all` (explicit)            | Vulnerabilities + critical behaviors + high behaviors + secrets — the strict union                                                                                                   |
-
-For finer control, use [`lpm query`](/docs/packages/query) — its CSS-like selectors target individual flags or combinations.
+The combination of `name` and `version` is not necessarily unique.
 
 ## Fixing vulnerabilities
 
 ```bash
-lpm audit fix
-lpm audit --fix
 lpm audit fix --dry-run
+lpm audit fix
+
+# Equivalent compatibility form
+lpm audit --fix --dry-run
 ```
 
-`lpm audit fix` is the canonical form; `lpm audit --fix` is an alias for npm-compatible muscle memory. Both read the package exposed at each direct root `node_modules` path and match its exact name and version to the lockfile, so transitive copies cannot be selected merely because they have a higher matching version. If the lockfile contains multiple source identities for that same installed name and version, the dependency is reported as source-ambiguous and skipped rather than guessing or sending its name to a metadata endpoint. They support `dependencies`, `devDependencies`, `optionalDependencies`, npm aliases such as `npm:lodash@^4`, and registry advisories for `@lpm.dev/*` packages.
+The fixer supports `dependencies`, `devDependencies`, `optionalDependencies`, and npm aliases. It requires an LPM CLI lockfile and installed direct dependencies.
 
-For npm packages, the fixer evaluates every relevant OSV affected range against available registry versions and chooses the lowest newer version proven unaffected. This preserves maintained release lines when a patch exists instead of jumping to the highest fixed version from another major line. On apply, the manifest entry is pinned to that exact planned version (npm aliases retain their `npm:` identity), and verification rejects any different installed version; dry-run and apply therefore report the same target. Complex or non-registry source protocols such as `catalog:`, `workspace:`, `file:`, git, and JSR are reported as skipped rather than rewritten into semver dependencies. Transitive-only findings are not changed.
+Run the fixer from the directory that contains the package's `package.json`.
 
-The fix pass currently operates only in LPM CLI-managed projects. It does not rewrite npm, pnpm, Yarn, or Bun lockfiles.
+For each direct dependency, the fixer checks the installed name and version against the selected lockfile instance. Modern lockfiles preserve exact root identities.
 
-Fix and dry-run planning hold the project's install transaction lock against other LPM CLI operations. Before the first write, a real fix compares the exact `package.json` and `lpm.lock` bytes used for planning.
+If a legacy lockfile leaves the source ambiguous, the fixer skips that dependency. It does not guess a source or send the ambiguous name to a registry.
 
-If either file changed, the fix exits without an overwrite. It also exits if a different `lpm.lock` became active.
+The fixer chooses the lowest newer stable version that the available advisory data identifies as unaffected. The target can cross a major version boundary.
 
-The fix then snapshots `package.json`, `lpm.lock`, and `lpm.lockb`. It invalidates the install cache, runs a silent install, and checks the exact installed version.
+An applied fix pins the manifest to the exact planned version. An npm alias retains its `npm:` identity. Review the preview and run your project tests afterward.
 
-The version check uses OSV.dev or exact LPM.dev Registry metadata. Thus, `--json` emits one audit-fix document without nested install output.
+Transitive-only findings remain unchanged. Non-registry protocols, such as `workspace:`, `catalog:`, `file:`, git, and JSR, cannot be rewritten automatically.
 
-A failed install or version check restores the snapshotted files. The transaction does not copy `node_modules/`.
+The report lists skipped dependencies and their reasons. Any skipped dependency makes the command exit nonzero, even when other fixes succeed.
 
-If the installed tree differs after a failed fix, run `lpm install` to make it match the restored lockfile.
+### Recovery
 
-`--dry-run` reports the same plan without mutating `package.json`, `lpm.lock`, or `node_modules`.
+Application holds the project install lock. Before writing, the fixer checks that the manifest and selected lockfile still match the plan.
+
+A concurrent file change stops the fix. Rerun the preview with the current files.
+
+The fixer saves `package.json`, `lpm.lock`, and `lpm.lockb`, then installs the exact targets and checks their vulnerability status again.
+
+A failed install or verification restores those files. The transaction does not restore `node_modules/`.
+
+If the installed tree differs after failure, restore it from the restored lockfile:
+
+```bash
+lpm install
+lpm audit
+```
+
+`--dry-run` leaves the manifest, lockfiles, and installed tree unchanged. With `--json`, the fixer emits one report without nested install output.
 
 ## Registry signatures
 
@@ -277,60 +387,50 @@ Under `--json`, the envelope includes aggregate counts and one row per package:
 }
 ```
 
-Statuses are `verified`, `not_verified`, or `skipped`. Skipped rows cover packages outside this signature surface, such as non-registry sources and `@lpm.dev/*` packages. Any `not_verified` row makes the command exit with code `1`.
+Statuses are `verified`, `not_verified`, or `skipped`. Skipped rows include non-registry sources and `@lpm.dev/*` packages from LPM.dev Registry.
 
-## Severity levels
-
-```bash
-lpm audit --level high
-```
-
-Suppresses anything below the threshold. Ladder from most-to-least severe: `critical` → `high` → `moderate` (alias `medium`) → `info` (alias `low`). Default is `info` (show everything). Any other value is rejected as a usage error before the audit starts.
-
-Info results include behavioral metadata such as environment-variable access, URL literals, and high-entropy strings. Human output puts these results under `Behavioral metadata`. The final summary does not count them as suspicious packages or security issues. These results do not make the command fail by themselves.
-
-Critical source results include high-confidence obfuscation, protestware, and credential exfiltration. Scores above `0.3` through `0.7` are Info-level possible obfuscation. Scores above `0.7` are Critical.
-
-Capability tags do not establish data flow or command intent. Environment access plus network access does not prove exfiltration. The separate credential-exfiltration finding requires a supported flow into an upload call. A detected `rm -rf` shell command remains a High shell and child-process signal.
-
-For `@lpm.dev/*` packages, the human report includes registry and local findings. Registry advisories and security findings keep their published severity, including Critical.
+A foreign `@lpm.dev/*` name from another authorized registry still requires signature verification. Any `not_verified` row makes the command exit with code `1`.
 
 ## Secret scanning
 
 ```bash
 lpm audit --secrets
+lpm audit --secrets --fail-on secrets --json
 ```
 
-Scans the installed source tree under `node_modules/` for hardcoded API keys, access tokens, private keys, and similar credentials — the same scanner that runs as part of `lpm publish`. Useful as a final check before shipping a Docker image or deploying.
+This mode scans installed packages for API keys, tokens, private keys, and credential files. It does not scan your root project files.
 
-Requires `node_modules/` to exist (errors with a `run \`lpm install\` first` hint otherwise). `--secrets` still runs as its own scan mode, but it participates in `--fail-on`:
+A `node_modules/` installation is required. The scanner follows supported installed package links within allowed project and store locations. Dangling package links fail the scan.
 
-- `lpm audit --secrets` uses the command's default gate policy (`all`), so a detected secret exits non-zero.
-- `lpm audit --secrets --fail-on secrets` gates on secret findings only.
-- `lpm audit --secrets --fail-on vuln` or `--fail-on behavior` keeps the secret scan informational.
-- `--level` is still ignored in secrets mode.
+Selected text files have a 2 MiB read limit. The operation limits are 100,000 packages, 250,000 files, 512 MiB, and 10,000 findings.
+
+Unreadable inputs, directory errors, or exceeded limits stop the scan with an error. An informational finding policy does not suppress these errors.
+
+The JSON report contains `packagesScanned`, `packagesWithSecrets`, and `findings`. Each match includes a credential type, a description with its file path, line, and severity.
+
+Matched credential values are not included in the report. A detected pattern still needs review because example data can resemble a real credential.
+
+If a real credential is present, revoke it and replace the affected package. Removing the file does not revoke the credential.
+
+For your own package before upload, [lpm publish](/docs/packages/publish) also checks the prepared package files for secrets.
 
 ## Flags
 
-| Flag                                       | Effect                                                                                                          |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `--level <critical\|high\|moderate\|info>` | Minimum severity to report (default: `info`; aliases: `medium`, `low`)                                          |
-| `--fail-on <vuln\|behavior\|secrets\|all>` | CI exit-code policy (`secrets` applies to `--secrets`; `all` includes secret findings too)                      |
-| `--secrets`                                | Scan installed source for hardcoded secrets (separate scan mode; consults `--fail-on`, still ignores `--level`) |
-| `--fix`                                    | Alias for `lpm audit fix`                                                                                       |
-| `--dry-run`                                | With `--fix`, show the fix plan without changing files                                                          |
-
-Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for piping into CI gates.
-
-## Subcommands
-
-| Subcommand | Effect |
+| Flag | Effect |
 | --- | --- |
-| `fix` | Update vulnerable direct dependency instances to verified unaffected versions, then reinstall |
-| `signatures` | Verify npm registry package signatures for the installed tree |
+| `--level <LEVEL>` | Minimum severity for the regular report and failure decision. Values: `info`, `moderate`, `high`, `critical`. Aliases: `low`, `medium`. |
+| `--fail-on <POLICY>` | Finding policy for the selected scan. Values: `vuln`, `behavior`, `secrets`, `all`. |
+| `--secrets` | Select the separate installed-package secret scan. |
+| `--fix` | Alias for `lpm audit fix`. Conflicts with scan options. |
+| `--dry-run` | With `--fix`, preview without file changes. |
+| `fix --dry-run` | Preview fixes with the subcommand form. |
+| `--json` | Emit machine-readable output for the selected mode. |
+
+See [global flags](/docs/commands#global-flags) for other shared options.
 
 ## See also
 
-- [`lpm query`](/docs/packages/query) — inspect packages by behavioral tag
-- [Security audit](/docs/packages/security-audit) — concept overview and tag reference
-- [`lpm publish`](/docs/packages/publish) — runs the same secret scanner before upload
+- [Security audit](/docs/packages/security-audit) — security layers and source tags.
+- [lpm query](/docs/packages/query) — inspect dependencies with selectors.
+- [lpm install](/docs/packages/install) — restore the installed tree and enable automatic audits.
+- [lpm publish](/docs/packages/publish) — check package files before upload.
