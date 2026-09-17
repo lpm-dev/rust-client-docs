@@ -1,220 +1,298 @@
 ---
 title: lpm global
-description: "Manage globally-installed CLI packages under ~/.lpm/global/."
+description: "Inspect, update, and remove global command-line packages, or expose a local checkout on PATH."
 ---
 
+Use `lpm global` to manage command-line packages outside a project and expose local tools on `PATH`.
+
 ```bash
-lpm global <subcommand>
+lpm global [OPTIONS] <COMMAND>
 ```
 
-CLI surface for the global package store at `~/.lpm/global/`. Globally installed packages — `lpm install -g <pkg>` — get their bins shimmed into `~/.lpm/bin/` and tracked in a manifest LPM CLI owns.
+## Quickstart
 
-A package is committed as globally installed only after LPM CLI has created at least one safe, executable bin shim for it. Packages with no usable bins, unsafe bin names, or incomplete install roots fail closed and are rolled back before they reach the global manifest.
+Install a command-line package with [`lpm install`](/docs/packages/install), then inspect it:
 
-The same install / uninstall surface is reachable via the regular commands with `-g`:
+```bash
+lpm install -g eslint
+lpm global list
+lpm global list --outdated
+lpm global update eslint --dry-run
+lpm global update eslint
+```
 
-| Equivalent | |
+LPM CLI supports npm, LPM.dev Registry, and private registries.
+Only `@lpm.dev/*` packages always use LPM.dev Registry.
+See [registry configuration](/docs/registries).
+
+## Commands
+
+| Command | Purpose |
 | --- | --- |
-| `lpm install -g eslint` | `lpm install --global eslint` |
-| `lpm uninstall -g eslint` | `lpm global remove eslint` |
+| `lpm global list [OPTIONS]` | List installed versions and exposed commands. |
+| `lpm global bin [OPTIONS]` | Print the directory to add to `PATH`. |
+| `lpm global path [OPTIONS] <PACKAGE>` | Print an installation path or linked checkout path. |
+| `lpm global link [OPTIONS] [PATH]` | Expose a local package's commands. The path defaults to the current directory. |
+| `lpm global unlink [OPTIONS] <PACKAGE>` | Remove a local global link. |
+| `lpm global remove [OPTIONS] <PACKAGE>` | Remove a registry package. Equivalent to [`lpm uninstall -g`](/docs/packages/uninstall). |
+| `lpm global update [OPTIONS] [PACKAGE]` | Update one registry package or all registry packages. Accepts `name@spec`. |
 
-This page documents the `lpm global` subcommands directly. For installing a global package, prefer [`lpm install -g`](/docs/packages/install).
+Global installation uses [`lpm install -g`](/docs/packages/install#global-installs).
+A package needs at least one usable executable command before LPM CLI records the installation.
 
-## Examples
+## Configuration and PATH
+
+`lpm.json` has no global-package configuration block.
+Its `tools` field configures [managed development tools](/docs/dev/builtin-tools), which use a separate workflow.
+
+Global packages use the LPM CLI home directory, which defaults to `~/.lpm`.
+`LPM_HOME` changes this location. The default command directory is `~/.lpm/bin`.
+
+For Bash or Zsh, add the directory to `PATH` in your shell configuration:
 
 ```bash
-lpm global list                          # what's installed globally
-lpm global list --outdated               # which globals have updates available
-lpm global list --verbose                # add install date, size, root path
-lpm global bin                           # print ~/.lpm/bin/  (add this to PATH)
-lpm global path eslint                   # print eslint's install root
-lpm global link                          # expose the current package's bins globally
-lpm global link ../my-cli                # expose a local checkout globally
-lpm global unlink my-cli                 # remove a local global link
-lpm global remove eslint                 # uninstall a global package
-lpm global update                        # update every globally-installed package
-lpm global update eslint                 # update one
-lpm global update eslint@^9              # change the saved spec, then update
-lpm global update --dry-run              # show the upgrade plan, change nothing
+export PATH="$(lpm global bin):$PATH"
 ```
 
-## Subcommands
+For the current PowerShell session:
 
-| Command | Arguments | Flags | Effect |
-| --- | --- | --- | --- |
-| `lpm global list` | (none) | `--outdated`, `--verbose` | List globally-installed packages and their exposed commands. |
-| `lpm global bin` | (none) | (none) | Print the shim directory to add to `PATH`. |
-| `lpm global path` | `<package>` | (none) | Print one global package's install root. |
-| `lpm global link` | `[path]` | (none) | Link a local package's bins into the global PATH surface. |
-| `lpm global unlink` | `<package>` | (none) | Remove a local global link. |
-| `lpm global remove` | `<package>` | (none) | Remove a globally-installed package. Equivalent to `lpm uninstall -g <pkg>`. |
-| `lpm global update` | `[package[@spec]]` | `--dry-run` | Re-resolve one or all registry-backed globals against their saved specs. |
-
-### `list`
-
-```bash
-lpm global list [--outdated] [--verbose]
+```powershell
+$env:Path = "$(lpm global bin);$env:Path"
 ```
 
-Lists every globally-installed package with its active version and exposed bin commands.
+Windows installations provide launchers for Command Prompt, PowerShell, and Git Bash.
+They forward arguments and the exit code to the package command.
 
-| Flag | Effect |
-| --- | --- |
-| `--outdated` | Resolve each install's saved spec against its registry and active cooldown policy. Flag packages only when the installable version is newer. `@lpm.dev/*` globals use LPM.dev Registry batch metadata. Public npm globals query npm directly. |
-| `--verbose` | Add install date, on-disk size, and the absolute install root for each row |
+Global comparisons and updates read registry routing from the global environment, including the user `.npmrc`.
+A project-local `.npmrc` in your current directory does not configure these operations.
 
-With `--outdated`, the human table shows `Package`, `Current`, `Wanted`, `Latest`, and `Bins`. `Wanted` is the newest installable version that still satisfies the global install's saved spec; `Latest` is the registry's newest installable version regardless of the saved range, so mature major-version jumps are visible even when the saved range would not select them. Local links are skipped because their source of truth is your checkout, not the registry.
+Global packages do not inherit the current project's `package.json > lpm` configuration.
+The [user configuration](/docs/infra/config) supplies persistent release-age and security policy.
 
-If registry metadata is missing or the saved spec no longer resolves, `lpm global list --outdated` exits non-zero instead of reporting a clean result. In `--json` mode, inspect `success`, `unresolved`, and `count_unresolved` to distinguish "everything checked" from "some globals could not be compared."
-
-If the installed version is newer than the registry result, the command reports it as current. A registry rollback does not create an outdated row.
-
-### `bin`
+## Inspect packages
 
 ```bash
-lpm global bin
-```
-
-Prints `~/.lpm/bin/` — the directory where global-install shims live. Add this to your `PATH` so installed CLIs resolve.
-
-```bash
-export PATH="$(lpm global bin):$PATH"     # in your shell rc
-```
-
-On Windows, global installs create command shims for Command Prompt, PowerShell, and Git Bash.
-These shims forward arguments and the exit code to the installed package command.
-Updates and aliases use the same command forwarding.
-
-### `path <package>`
-
-```bash
+lpm global list
+lpm global list --verbose
 lpm global path eslint
+lpm global list --outdated --json
 ```
 
-Prints the install root for one specific globally-installed package. Useful for tooling that needs to find the package's `node_modules/`, `package.json`, or files.
+Ordinary `list --verbose` adds installation dates, disk usage, and installation paths.
+For a local link, `path` prints the source checkout.
 
-For local links, this prints the linked source checkout.
+With `--outdated`, the table contains these columns:
 
-### `link [path]`
+| Column | Meaning |
+| --- | --- |
+| `Current` | The recorded global version. |
+| `Wanted` | The selected version under the saved package specification and release-age policy. |
+| `Latest` | The eligible `latest` release, including a mature fallback when the policy excludes a recent release. |
+| `Bins` | The package's exposed commands, including aliases. |
+
+A newer `Wanted` or `Latest` produces an outdated row.
+A new major release remains visible even if the saved range excludes it.
+A registry rollback alone does not mark a package outdated.
+
+Local links are skipped because their files come from your checkout.
+With `--outdated --verbose`, output adds saved specifications and details about current packages and skipped links.
+It does not add the ordinary verbose date and size columns.
+
+If a package cannot be compared, the command returns a nonzero exit status.
+JSON retains successful comparisons and reports the unresolved packages.
+
+## Update packages
+
+Preview updates before applying them:
 
 ```bash
-lpm global link
+lpm global update --dry-run
+lpm global update
+```
+
+Update one package without changing its saved specification:
+
+```bash
+lpm global update eslint --dry-run
+lpm global update eslint
+```
+
+Without an explicit specification, updates select only newer matching versions.
+Bulk updates skip local links. An explicit local-link target returns an error.
+
+To change the saved specification, include it in the argument:
+
+```bash
+lpm global update 'eslint@^9' --dry-run
+lpm global update 'eslint@^9'
+```
+
+An explicit specification can select an older version.
+It can also change the saved specification without reinstalling an unchanged version.
+The [save policy](/docs/packages/save-policy) explains how specifications become saved values.
+
+Update preserves existing command aliases.
+If a new version removes an aliased command or introduces a command collision, that package's update fails.
+
+### Preview and automation
+
+```bash
+lpm global update --dry-run --json > global-update-plan.json
+lpm global update --json > global-update-result.json
+```
+
+These commands do not prompt for package selection.
+A preview leaves installations, command launchers, and global recovery state unchanged.
+It can contact registries and refresh metadata caches.
+
+Update revalidates registry metadata before installation and uses the metadata from its plan.
+Bulk updates can apply successful packages even if another package fails.
+A failed package produces a nonzero exit status for the command.
+
+### Release age and scripts
+
+Global updates use the minimum release age in the user configuration. The default is `0`, which disables the cooldown.
+The same policy applies to previews and outdated comparisons.
+
+```bash
+lpm config release-age --set 1d
+lpm global update --dry-run
+```
+
+The update command has no one-run release-age override.
+For an explicit installation with an override, see [`lpm install`](/docs/packages/install#script-and-security-policy).
+
+Global update does not reuse the global script-approval set or enable automatic rebuilds.
+If the tool needs approved dependency scripts, reinstall it through [`lpm install -g`](/docs/packages/install#global-installs) with the appropriate policy.
+
+```bash
+lpm approve-scripts -g
+lpm install -g my-cli --auto-build
+```
+
+See [`lpm approve-scripts`](/docs/packages/approve-scripts) for approval scope and [script policy](/docs/packages/install#lifecycle-scripts) for execution rules.
+
+## Link a local checkout
+
+Use a global link to run a command from a checkout while you develop it:
+
+```bash
 lpm global link ../my-cli
-```
-
-Links a local package into the global manifest and exposes its `bin` commands through `~/.lpm/bin/`. Omit `path` to link the current working directory.
-
-The linked package must have `name`, `version`, and at least one valid `bin` entry in `package.json`; each bin target must exist inside the package directory. LPM CLI refuses command-name collisions with existing global packages so a local checkout cannot silently take over a command you already installed.
-
-### `unlink <package>`
-
-```bash
+lpm global path my-cli
+my-cli --help
 lpm global unlink my-cli
 ```
 
-Removes a local global link, its shims, and its global manifest entry. Registry-backed global packages are removed with `lpm global remove` or `lpm uninstall -g`.
+The checkout's `package.json` needs `name`, `version`, and at least one valid `bin` entry:
 
-### `remove <package>`
-
-```bash
-lpm global remove eslint
+```json
+{
+  "name": "my-cli",
+  "version": "1.0.0",
+  "bin": {
+    "my-cli": "bin/cli.js"
+  }
+}
 ```
 
-Uninstalls a globally-installed package. Drops the entry from the global manifest, removes the install root, and unshims any bins it owned. **Equivalent to `lpm uninstall -g eslint`** — both invocations route through the same uninstall pipeline.
-
-### `update [package[@spec]] [--dry-run]`
+Each target must be a file inside the checkout.
+On Unix, targets must already be executable:
 
 ```bash
-lpm global update                        # update every global
-lpm global update eslint                 # update one, preserving its saved spec
-lpm global update eslint@^9              # rewrite the saved spec, then update
-lpm global update --dry-run              # plan only, no work
+chmod +x bin/cli.js
+lpm global link
 ```
 
-Three behaviors based on the argument:
+Link does not install dependencies or build the package.
+Prepare the checkout before linking it.
+Changes to the target's contents are immediately available through the global command.
+If you change the package's name or `bin` mapping, unlink the old package and link it again.
 
-| Argument | Behavior |
-| --- | --- |
-| (none) | Iterate every registry-backed global package. Re-resolve each one against its persisted `saved_spec`. Upgrade any that have a newer matching version. Local links are skipped. |
-| `<pkg>` | Same flow scoped to one registry-backed package. Local global links are not updated by this command; edit the linked checkout directly, or unlink and link it again after its metadata changes. |
-| `<pkg>@<spec>` | Rewrite the saved spec using the [save policy](/docs/packages/save-policy) decision logic, then upgrade. Same precedence as `lpm install <pkg>@<spec>` in a project context. |
+Link rejects occupied command paths, invalid names, overlapping Windows launcher names, and a pending registry installation for the same package.
+On macOS and Windows, command-name comparisons also reject case collisions.
 
-| Flag | Effect |
-| --- | --- |
-| `--dry-run` | Print the upgrade plan without changing any state |
+Unlink removes the recorded command files and global registration. It leaves the source checkout intact.
+It also works if the checkout or its global wrapper directory is gone.
 
-If registry metadata is missing, the selected version is no longer present, or the saved spec cannot resolve, `lpm global update` exits non-zero instead of reporting a clean skip. In `--json` mode, `success` is `false` and the affected row appears as `failed` in `results` or `plan_error` in `plans` for `--dry-run`. Bulk updates remain best-effort: successful package rows may still be applied before the final non-zero exit.
+If a command file differs from the recorded original, unlink stops and preserves it.
+Older links lack an original-file record, so unlink retains their wrapper directory and reports its path.
+Additional unrecorded files also remain in the wrapper directory.
 
-Global update revalidates registry metadata before it changes an installation. The install uses the same package metadata that produced the plan.
+## Command collisions
 
-An update only selects a version that is newer than the installed version. If a registry rollback removes a newer release, the command keeps the installed version.
+A local link cannot take over an existing command.
+Unlink the local owner or remove the registry owner before linking the replacement.
 
-Global update uses the global minimum release age chain: `~/.lpm/config.toml`, then the disabled default (`0`). Candidate versions for the globally installed package are skipped during planning while they are still inside the cooldown window, including `--dry-run`, so the plan only shows versions the nested install would accept.
-
-## Bin collisions
-
-When a global install would expose a bin name that another global package already owns, LPM CLI refuses to silently take it over. In an interactive terminal, LPM CLI prompts per colliding command: replace the existing shim, install the new command under an alias, or cancel. In JSON and non-TTY runs, it exits with a collision error and shows copy-pasteable `--replace-bin` / `--alias` examples.
-
-Use `--replace-bin` when the new package should deliberately take ownership:
+For registry installations, [`lpm install -g`](/docs/packages/install#global-installs) supports deliberate replacement and aliases:
 
 ```bash
 lpm install -g foo --replace-bin serve
-```
-
-The previous owner keeps its install but loses `serve` from PATH; the new shim points at `foo`'s `serve` binary.
-
-Use `--alias <ORIG=ALIAS>` when both packages should stay reachable:
-
-```bash
 lpm install -g foo --alias serve=foo-serve
 ```
 
-Only `foo-serve` is emitted as the new PATH command; the original `serve` shim stays with its current owner. See [`lpm install -g`](/docs/packages/install) for the full collision surface.
+Replacement transfers the command name. The previous package remains installed.
+An alias exposes the new package's command under a different name.
+The `global link` and `global update` commands do not accept these installation flags.
 
-An alias also works when no command name collides. Uninstalling the package removes its alias command.
-
-| Install flag | Effect |
-| --- | --- |
-| `--replace-bin <CMD>` | Transfer ownership of one colliding PATH command to the package being installed. Repeatable. |
-| `--alias <ORIG=ALIAS>` | Install the declared bin `<ORIG>` under a different PATH command `<ALIAS>`. The original name is not emitted for the new package. Repeatable, and comma-separated mappings are accepted. |
-
-## Security gates on `-g`
-
-`lpm install -g` runs through the same install pipeline as project installs, with the same install-time security gates applied to the synthesized global project. Machine-wide controls, including the npm firewall mode set by [`lpm config firewall`](/docs/infra/config#npm-firewall), apply to global installs too:
-
-| Flag | Behavior on `-g` |
-| --- | --- |
-| `--allow-new` | Bypasses the [minimum release age](/docs/packages/security-audit#layer-4-provenance--cooldown) cooldown |
-| `--min-release-age=<DUR>` | Overrides the cooldown window (`<N>h`, `<N>d`, or seconds; `0` disables) |
-| `--min-release-age-exclude <SELECTOR>` | Exempts a package name, exact version, or `@scope/*` from the cooldown. Repeatable. |
-| `--ignore-provenance-drift <PKG>` | Waives the [drift check](/docs/packages/security-audit#layer-4-provenance--cooldown) for one package (repeatable) |
-| `--ignore-provenance-drift-all` | Waives the drift check for every resolved package |
-| `--policy=deny\|allow\|triage` | [Script-policy](/docs/packages/install#lifecycle-scripts) for this invocation |
-| `--yolo` | Alias for `--policy=allow` |
-| `--triage` | Alias for `--policy=triage` |
-| `--advisor=none\|claude-cli\|codex\|ollama` | Triage advisor override (only consulted under `--policy=triage`) |
-| `--auto-build` | Auto-runs `lpm rebuild` for trusted packages immediately after install. On `-g` under `triage` with mixed-trust trees, this is the only way to trigger the rebuild — `package.json > lpm > scripts.autoBuild` is not consulted. Also useful under `deny` with an established global trust set. |
-| `--strict-sandbox` / `--paranoid` / `--no-sandbox` | [Sandbox mode](/docs/packages/install#sandbox) for this invocation's dependency lifecycle scripts |
-
-Two `-g`-specific notes:
-
-- **No project-config tier.** Globals use a synthesized package.json that doesn't carry `lpm > scriptPolicy`, `lpm > minimumReleaseAge`, `lpm > minimumReleaseAgePolicy`, `lpm > minimumReleaseAgeExclude`, or `lpm > scripts.autoBuild`. The script-policy and cooldown precedence chains collapse to CLI flag > `~/.lpm/config.toml` > default. Triage on `-g` requires the explicit `--auto-build` flag for mixed-trust trees — there's no per-project knob.
-- **Reinstall to rerun blocked scripts.** After `lpm approve-scripts --global`, the trust file is updated but the install root isn't re-executed. Run `lpm uninstall -g <pkg> && lpm install -g <pkg>` for each affected top-level global to actually run the approved scripts. `lpm rebuild --global` is a planned follow-up.
-
-## Approving scripts for globals
-
-Globally-installed packages have their own blocked-set for dependency lifecycle scripts. Manage it with:
+## Remove a package
 
 ```bash
-lpm approve-scripts --global             # review the global blocked set
-lpm approve-scripts --global --group     # group by top-level globally-installed package
+lpm global remove eslint
+lpm global unlink my-cli
 ```
 
-Approvals write to `~/.lpm/global/trusted-dependencies.json` (separate from any project's `package.json`). The success banner enumerates the top-level globals affected so you can run the matching `lpm uninstall -g … && lpm install -g …` for each.
+Use `remove` for registry packages and `unlink` for local checkouts.
+Registry removal also removes the package's aliases.
+Files held open by another process can delay directory cleanup.
+After you stop that process, [`lpm cache prune --apply`](/docs/packages/cache) can retry cleanup.
+
+## Recover an interrupted operation
+
+Ordinary global commands attempt recovery before they proceed.
+A preview refuses pending recovery instead of changing that state.
+
+```bash
+lpm global list
+lpm global update --dry-run
+```
+
+An interrupted local link removes unfinished command files unless its registration already committed.
+An interrupted unlink completes cleanup after its registration is removed.
+
+Recovery preserves changed files, conflicting ownership records, and unexpected recovery files.
+If it reports a conflict, save the identified files separately and restore the expected state before retrying.
+Do not delete recovery state to bypass a conflict.
+
+A missing or policy-blocked registry version also causes comparisons or update plans to fail.
+Inspect the package's saved specification and the release-age configuration before changing either.
+
+## Flags and JSON output
+
+| Flag | Command | Effect |
+| --- | --- | --- |
+| `--outdated` | `list` | Compare registry packages with newer eligible releases. |
+| `--verbose` | `list` | Add details. The fields depend on whether `--outdated` is present. |
+| `--dry-run` | `update` | Plan updates without changing installations or recovery state. |
+| `--json` | All | Emit structured output for automation. |
+
+See the [global flags](/docs/commands#global-flags) for registry, authentication, color, and diagnostic controls.
+
+| Operation | Useful JSON fields |
+| --- | --- |
+| `list --outdated` | `success`, `outdated`, `up_to_date`, `unresolved`, `skipped_local_links`, `count_outdated`, `count_unresolved`. |
+| `update --dry-run` | `success`, `dry_run`, `plans`. Failed plans have `action: "plan_error"`. |
+| `update` | `success`, `dry_run`, `results`. Failed packages have `action: "failed"`. |
+| `unlink` | `success`, `package`, `version`, `path`, `commands`, `retained_wrapper`. |
+
+An empty update set returns empty `updated` and `skipped` arrays instead of `plans` or `results`.
+`retained_wrapper` is `null` when unlink leaves no wrapper directory.
+Check `success` and the process exit status before treating a comparison or update as complete.
 
 ## See also
 
-- [`lpm install -g`](/docs/packages/install) — install into the global root (with `--replace-bin` / `--alias`)
-- [`lpm uninstall -g`](/docs/packages/uninstall) — equivalent to `lpm global remove`
-- [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project) — script approval for globals
-- [Save policy](/docs/packages/save-policy) — determines what `update <pkg>@<spec>` writes
+- [`lpm install`](/docs/packages/install) — install global executables and select security policy
+- [`lpm uninstall`](/docs/packages/uninstall) — remove project or global dependencies
+- [`lpm approve-scripts`](/docs/packages/approve-scripts) — review dependency script approvals
+- [`lpm cache`](/docs/packages/cache) — retry deferred cleanup
+- [`lpm config`](/docs/infra/config) — configure user policy
+- [Registries](/docs/registries) — configure npm, LPM.dev Registry, and private registries
