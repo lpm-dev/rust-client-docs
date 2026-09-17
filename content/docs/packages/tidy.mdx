@@ -1,117 +1,203 @@
 ---
 title: lpm tidy
-description: "Find unused dependency declarations and undeclared imports."
+description: Find unused dependencies and undeclared imports, then remove unused declarations and update the installed tree.
 ---
 
+Find dependency declarations that your package does not use, and imports that lack a declaration.
+
 ```bash
-lpm tidy [--fix]
+lpm tidy [OPTIONS]
 ```
 
-`lpm tidy` scans the current package for two dependency hygiene issues:
+## Quickstart
 
-- declared dependencies that are not imported, referenced by scripts, or found in common config files
-- phantom imports: source imports for packages that are not declared in `package.json`
+```bash
+lpm tidy
+lpm tidy --fix
+lpm tidy
+```
 
-By default it only reports findings. It does not rewrite `package.json`, `lpm.lock`, or `node_modules`.
+The default command reports findings without changing files. `--fix` removes unused declarations and reinstalls the remaining dependencies.
+
+| Mode | Effect |
+| --- | --- |
+| `lpm tidy` | Report unused declarations and undeclared package imports. |
+| `lpm tidy --fix` | Remove fixable unused declarations, then update the lockfile and installed tree. |
+| `lpm tidy --json` | Emit a structured report for scripts or CI. |
+
+Run the command from the directory that contains the package's `package.json`. It does not search parent directories or process every workspace member.
 
 ## Examples
 
 ```bash
-lpm tidy
+# Inspect before removing dependencies
 lpm tidy --json
+
+# Apply removals without a confirmation prompt
 lpm tidy --fix
+
+# Gate CI without changing files
+lpm tidy --json > dependency-report.json
+
+# Review one workspace member
+cd packages/web
+lpm tidy
 ```
 
-Use `lpm tidy` in CI when dependency drift should fail the build. Findings exit `1`; a clean package exits `0`.
+A clean package exits with code `0`. Remaining findings exit with code `1`, including after `--fix`.
 
-## What `--fix` changes
+## Configuration
 
-`--fix` removes unused entries from:
+There is no dedicated tidy section in `lpm.json`. You can define an uncached task:
 
-- `dependencies`
-- `devDependencies`
-- `optionalDependencies`
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:check": {
+      "command": "lpm tidy",
+      "cache": false
+    }
+  }
+}
+```
 
-After editing `package.json`, LPM CLI reconciles `lpm.lock`, `lpm.lockb`, and `node_modules` through the normal install and uninstall cleanup paths.
+```bash
+lpm run deps:check
+```
 
-`peerDependencies` are report-only. They may describe a library contract for consumers even when the package does not import the peer itself.
+`command` defines the invocation. `cache: false` reruns the inspection instead of reusing an earlier result.
 
-Phantom imports are also report-only. `lpm tidy --fix` does not auto-add dependencies, because adding a package needs an explicit version/range and save-policy decision.
+Tools referenced by `lpm.json` service and task commands count as used. Node loader options, such as `node --import=tsx`, also retain their packages. An explicit `lpm.json` task command takes precedence when [lpm run](/docs/dev/run) selects a command.
 
-## What counts as used
+### Ignore intentional dependencies
 
-A dependency is treated as used when LPM CLI sees it in any of these places:
-
-- source imports from `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, or `.cjs` files
-- package scripts, including installed `bin` names when `node_modules` is present
-- common tool config files such as `eslint.config.js`, `vite.config.ts`, `tsconfig.json`, `jest.config.js`, `tailwind.config.js`, and `webpack.config.js`
-- matching TypeScript declaration packages, such as `@types/react` for `react`
-
-Generated directories, nested packages, `node_modules`, build output, and local import aliases are skipped by the same source scanner used by install-time phantom dependency warnings.
-
-## Ignore config
-
-Use `[tidy]` in `lpm.toml` when a dependency is intentionally indirect or loaded by a framework convention the scanner cannot see.
+Use `[tidy]` in `lpm.toml` for dependencies loaded through framework conventions or other usage that static inspection cannot detect.
 
 ```toml title="lpm.toml"
 [tidy]
 ignore-unused = ["eslint-config-next", "@types/node"]
-ignore-phantom = ["virtual:*"]
-ignore-paths = ["generated/**", "fixtures/**"]
+ignore-phantom = ["test-harness"]
+ignore-paths = ["generated/**", "src/fixtures/**"]
 ```
 
 | Key | Type | Effect |
 | --- | --- | --- |
-| `ignore-unused` | string or string array | Suppress unused-dependency findings by package-name glob |
-| `ignore-phantom` | string or string array | Suppress phantom-import findings by package-name glob |
-| `ignore-paths` | string or string array | Ignore source imports from matching project-relative paths |
+| `ignore-unused` | String or string array. | Suppress unused findings that match a package-name glob. |
+| `ignore-phantom` | String or string array. | Suppress undeclared imports that match a package-name glob. |
+| `ignore-paths` | String or string array. | Skip matching source files and directories before reading or parsing them. |
+
+Paths are relative to the package directory. Invalid patterns or malformed tidy configuration stop the command before a fix.
+
+There are no CLI overrides or one-run bypass flags for these lists. To inspect an ignored item, remove its matching entry and rerun the report.
+
+## What counts as used
+
+LPM CLI checks these sources:
+
+- Imports in `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, and `.cts` files, including TypeScript declarations.
+- Root entrypoints, scripts, tests, and other source directories within the package.
+- `package.json` scripts and `lpm.json` task or service commands.
+- Installed executable names declared by a dependency's `bin` field.
+- Common tool configuration files, such as `eslint.config.js`, `vite.config.ts`, `tsconfig.json`, and `webpack.config.js`.
+- Matching type packages, such as `@types/react` for `react` and `@types/node` for Node built-in imports.
+
+The scan recognizes static imports, re-exports, `require()`, and dynamic imports with literal package names. It also recognizes TypeScript import types, import-equals declarations, and `/// <reference types="..." />` directives.
+
+Other comments, ordinary strings, relative imports, and recognized local aliases do not count as package usage.
+
+Script and configuration checks are conservative. Common tool families can remain declared when related scripts or configuration exist. An unused report still needs review before removal.
+
+### Scan scope and limits
+
+The source scan skips nested packages with their own `package.json`, unless a published entrypoint points into that package. It also skips linked source paths, hidden directories, `node_modules`, and known build-output directories.
+
+If `main`, `module`, `types`, `typings`, `exports`, or `bin` points into `dist` or `build`, that output directory joins the scan.
+
+The limits are 10,000 source files, 2 MiB per file, 64 MiB total, 64 directory levels, 100,000 directory entries, and 100,000 imports.
+
+An unreadable input, special file in place of configuration, invalid source syntax, or exceeded limit stops the command. It does not apply removals from a partial scan.
+
+For generated or fixture files that do not describe package usage, add an explicit `ignore-paths` entry. Keep required source files in the scan.
+
+Report mode uses local files. It does not query a registry. Installed manifests improve executable detection, but a missing installed dependency does not require an install first.
+
+## Apply removals
+
+```bash
+lpm tidy
+lpm tidy --fix
+```
+
+The fixer removes unused entries from `dependencies`, `devDependencies`, and `optionalDependencies`. It then updates `lpm.lock`, its supported binary companion, and `node_modules/`.
+
+This install can contact the configured registries and run the root package's install lifecycle. The normal dependency script policy still applies.
+
+`peerDependencies` remain report-only because they can describe a contract for consumers. Undeclared imports also remain report-only.
+
+To add a required undeclared package, choose its version and save policy with [lpm install](/docs/packages/install):
+
+```bash
+lpm install left-pad
+lpm tidy
+```
+
+For an intentional peer declaration, review it and add the package name to `ignore-unused`. Rerun the report after application changes.
+
+There is no separate dry-run flag. The default report is the preview. `--fix` does not prompt for confirmation.
+
+### Recovery
+
+Before writing, the fixer checks that `package.json` still matches the analyzed bytes. A concurrent manifest change stops the operation.
+
+A failed reinstall restores the saved manifest and lockfiles. The transaction does not restore every change to `node_modules/` or script-created files.
+
+If installation fails, correct the reported cause and restore the installed tree:
+
+```bash
+lpm install
+lpm tidy
+```
+
+Review the manifest diff and run your package tests after a successful fix. Static inspection cannot identify every dynamic dependency use.
 
 ## JSON output
 
 ```bash
 lpm tidy --json
+lpm tidy --fix --json
 ```
 
-```json
-{
-  "success": false,
-  "fixed": false,
-  "manifest": "package.json",
-  "counts": {
-    "declared": 3,
-    "imported": 2,
-    "unused": 1,
-    "phantoms": 1,
-    "ignored": 0,
-    "removed": 0,
-    "remaining": 2
-  },
-  "unused": [
-    {
-      "name": "lodash",
-      "section": "dependencies",
-      "spec": "^4.17.21",
-      "fixable": true,
-      "reason": "not imported, referenced by scripts, or found in known config files"
-    }
-  ],
-  "phantoms": [
-    {
-      "name": "left-pad",
-      "file": "src/index.js",
-      "line": 2,
-      "import_count": 1
-    }
-  ],
-  "removed": [],
-  "ignored": [],
-  "elapsed_ms": 8
-}
-```
+Both modes emit one report. Nested install details do not precede the JSON document.
+
+| Field | Meaning |
+| --- | --- |
+| `success` | No findings remain. |
+| `fixed` | The invocation selected `--fix`. This does not mean that every finding was fixed. |
+| `manifest` | The package manifest path. |
+| `counts` | Declared and imported packages, unused and undeclared findings, ignored findings, removals, and remaining findings. |
+| `unused` | Unused declarations with their section, version specifier, reason, and `fixable` status. |
+| `phantoms` | Undeclared imports with a file, line, and import count. |
+| `removed` | Declarations removed by this invocation. |
+| `ignored` | Findings suppressed by package-name ignore rules. |
+| `elapsed_ms` | Elapsed command time in milliseconds. |
+
+`phantoms[].available_via` can explain that an undeclared import currently resolves through a transitive dependency. That availability does not make it a direct dependency.
+
+After a fix, `unused` and `counts.remaining` describe unresolved findings. Parse errors and installation failures use the [standard error envelope](/docs/reference/exit-codes).
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--fix` | Remove fixable unused declarations and reinstall. |
+| `--json` | Emit a structured report, with a nonzero status when findings remain. |
+
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — install and lockfile reconciliation
-- [`lpm uninstall`](/docs/packages/uninstall) — explicit dependency removal
-- [`lpm audit`](/docs/packages/audit) — vulnerability and behavior findings
-- [`lpm.toml`](/docs/reference/lpm-toml) — project-level tidy ignore config
+- [lpm install](/docs/packages/install) — add dependencies or restore the installed tree.
+- [lpm uninstall](/docs/packages/uninstall) — remove a specific dependency.
+- [lpm audit](/docs/packages/audit) — inspect vulnerabilities and source risks.
+- [lpm.toml](/docs/reference/lpm-toml) — project configuration and tidy ignore lists.
+- [lpm.json](/docs/reference/lpm-json) — reusable task and service commands.
