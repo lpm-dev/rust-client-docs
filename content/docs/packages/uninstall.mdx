@@ -1,79 +1,194 @@
 ---
 title: lpm uninstall
-description: "Remove a dependency from package.json and node_modules."
+description: "Remove project dependencies, global commands, and Swift registry packages."
 ---
 
+`lpm uninstall` removes project dependencies and their installed files, or removes a global command with `-g`.
+
 ```bash
-lpm uninstall <packages...>   # aliases: lpm un, lpm unlink
+lpm uninstall [OPTIONS] [PACKAGES]...
+lpm un [OPTIONS] [PACKAGES]...
+lpm unlink [OPTIONS] [PACKAGES]...
 ```
 
-Drops one or more packages from `package.json`, removes them from `node_modules`, removes any local `node_modules/.bin` shims owned by those packages, and rewrites `lpm.lock` plus `lpm.lockb` when the post-uninstall graph fits the binary format. When a removed package makes transitive packages unreachable, LPM CLI prunes those orphaned entries from both the lockfile and `node_modules`, removes their owned bin shims as well, then cleans up empty scoped-package directories such as `node_modules/@scope/`.
+Supply at least one package name. Use the name from `package.json`, including a local alias, without a version or range.
 
-`lpm uninstall` only touches `dependencies` and `devDependencies`. **`peerDependencies`, `optionalDependencies`, and `lpm > trustedDependencies` are intentionally left alone** — a peer-dep declaration is a contract with consumers and shouldn't disappear when the underlying package is removed; trust entries persist so that re-adding the same `name@version` doesn't silently re-open the script-trust review. Clean stale trust entries with [`lpm trust prune`](/docs/packages/trust#lpm-trust-prune).
+## Quickstart
 
-To remove a globally-installed CLI, pass `-g`. To remove source files added with [`lpm add`](/docs/packages/add), use [`lpm remove`](/docs/packages/remove).
+From the directory with `package.json`, remove a dependency:
 
-Human output reports the direct removals and any orphaned transitives:
-
-```text
-- @scope/root@1.0.0
-- @scope/leaf@1.0.0 (orphaned)
-✓ Cleaned empty directories
-✓ Freed 42 B on disk
-✓ Done · removed 1 package in 42ms
+```bash
+lpm uninstall lodash
 ```
+
+LPM CLI removes the dependency declaration, its installed package, and its owned commands.
+It also prunes unused dependencies from a readable lockfile. Commit the updated manifest and lockfiles.
+
+### Choose a removal mode
+
+| Goal | Command |
+| --- | --- |
+| Remove project dependencies | `lpm uninstall react react-dom` |
+| Remove a global command | `lpm uninstall -g typescript` |
+| Remove a Swift registry dependency | `lpm uninstall @lpm.dev/owner.swift-pkg` |
+| Remove copied source files | [`lpm remove`](/docs/packages/remove) |
+
+[`lpm.json`](/docs/reference/lpm-json) has no uninstall configuration block.
+Project removal uses `package.json` and the project lockfile. Workspace members share the root lockfile.
 
 ## Examples
 
 ```bash
-lpm uninstall lodash
-lpm un react react-dom            # multiple at once
-lpm uninstall -g typescript       # remove a global install
-lpm uninstall lodash --filter web # workspace member only
-lpm uninstall -w eslint           # remove from workspace root
+lpm un react react-dom                    # remove multiple dependencies
+lpm uninstall lodash --filter web         # target one workspace member
+lpm uninstall -w eslint                   # target the workspace root
+lpm uninstall lodash --filter '*' --yes   # target all workspace members
+lpm uninstall -g typescript               # remove one global package
 ```
+
+### Non-interactive removal
+
+Use JSON output in scripts:
+
+```bash
+lpm uninstall lodash --json
+lpm uninstall lodash --filter web --fail-if-no-match --yes --json
+```
+
+Project JSON output contains `success`, `removed`, `not_found`, and `target_set`.
+The target set lists the selected manifest paths.
+A successful no-op returns the same fields with empty removal lists.
+
+An unknown project package succeeds and appears in `not_found`.
+An empty workspace selection also succeeds, unless you pass `--fail-if-no-match`.
+That flag checks the workspace selection, not whether each selected project declares the package.
+
+## What changes
+
+Project removal updates `dependencies` and `devDependencies`.
+It preserves `optionalDependencies`, `peerDependencies`, and `lpm.trustedDependencies`.
+
+If an optional declaration still requires a package, its installed files and commands remain.
+Required peers also remain while another installed dependency needs them.
+Use [`lpm trust prune`](/docs/packages/trust#lpm-trust-prune) to remove stale project trust entries.
+
+With a readable lockfile, LPM CLI removes package records that no remaining dependency needs.
+It writes `lpm.lock` and writes `lpm.lockb` when the remaining graph supports the binary format.
+If the lockfile is missing or malformed, requested-package removal continues without lockfile pruning.
+
+Cleanup removes the requested package entries and unused matching versions from `node_modules`.
+It removes owned `node_modules/.bin` commands and empty package-scope directories.
+Commands that belong to another package remain.
+
+For LPM.dev Registry packages, cleanup also removes package skills.
+Legacy editor cleanup removes matching skill links and preserves regular files and unrelated links.
+Package links can point into the shared store. Cleanup removes the links and preserves their targets.
+
+LPM CLI rejects linked `node_modules`, scope, and `.bin` parent directories before requested-package cleanup.
+These directories must belong to the project. Individual package links remain supported.
+
+Package removal does not clear the shared store. See [`lpm store`](/docs/infra/store) for store maintenance.
 
 ## Workspaces
 
-In a monorepo, target a specific member or the workspace root:
+From a workspace member or its subdirectory, removal targets that member.
+At the workspace root, select a member or pass `-w`:
 
 ```bash
-lpm uninstall lodash --filter web   # remove from packages/web/
-lpm uninstall lodash --filter-prod ...web # prod dependency closure only
-lpm uninstall -w eslint             # remove from the root package.json
+lpm uninstall lodash --filter web
+lpm uninstall lodash --filter '...web' --yes
+lpm uninstall lodash --filter-prod '...web' --yes
+lpm uninstall -w eslint
 ```
 
-`--filter` / `--filter-prod` and `-w` are mutually exclusive. `--filter-prod` uses the same grammar but ignores `devDependencies` during closure expansion. `--changed-files-ignore-pattern <glob>` and `--test-pattern <glob>` apply when a filter contains a `[git-ref]` atom. `--fail-if-no-match` makes a typo'd filter exit non-zero (recommended in CI). When uninstall would mutate more than one member's `package.json`, LPM CLI prompts for confirmation; pass `-y` to skip the prompt.
+`--filter` supports dependency closures and Git changes. `--filter-prod` excludes development dependencies from closure expansion.
+Both flags can repeat. See [Workspaces](/docs/packages/workspaces) for filter syntax.
 
-See [Workspaces](/docs/packages/workspaces) for filter grammar.
-
-## Global
+For a filter with a Git reference, configure which changes select members:
 
 ```bash
-lpm uninstall -g eslint
-# Equivalent to: lpm global remove eslint
+lpm uninstall lodash --filter '...[main]' \
+  --changed-files-ignore-pattern '**/*.md' \
+  --test-pattern '**/*.test.ts' \
+  --fail-if-no-match --yes
 ```
 
-`--global` is mutually exclusive with filters / `-w` / `--fail-if-no-match` (those are project-scoped). Both invocations route through the same global-uninstall implementation.
+`-w` cannot combine with workspace filters or their change-pattern flags.
+Workspace filters require a workspace.
+
+When multiple members are selected and standard input is interactive, LPM CLI asks for confirmation.
+`--yes`, `--json`, and non-interactive input skip this prompt.
+
+Outside a workspace, run from the directory with `package.json`.
+Project removal does not search parent directories for a standalone manifest.
+
+## Global commands
+
+Remove one global package per command:
+
+```bash
+lpm uninstall -g typescript
+lpm global remove typescript
+```
+
+Both commands use the same removal behavior.
+LPM CLI removes the package registration and its owned commands and aliases.
+When the installation lockfiles are readable, it prunes global script trust entries that no other global install needs.
+
+An unknown global package fails. Global removal rejects workspace flags and `--yes`.
+If another process locks the package files, cleanup can finish during a later global operation.
+
+See [`lpm global`](/docs/packages/global) for global paths and command aliases.
+
+## Swift packages
+
+Remove a registry dependency by its LPM.dev Registry package name:
+
+```bash
+lpm uninstall @lpm.dev/owner.swift-pkg
+```
+
+LPM CLI removes the registry dependency and its product references from `Package.swift`.
+For an Xcode wrapper, it also removes the related exports.
+Then it runs `swift package resolve` to update `Package.resolved`.
+
+If Swift resolution fails, LPM CLI restores the manifest and lockfiles.
+Installed npm files that cleanup already removed can require a new install.
+
+## Recovery
+
+If removal reports an incomplete lockfile, restore the install before another attempt:
+
+```bash
+lpm install
+lpm uninstall lodash
+```
+
+After a failed removal, [`lpm install`](/docs/packages/install) also restores missing files from the restored manifest.
+
+If cleanup rejects a linked parent directory, restore a project-local directory before another attempt.
+Keep shared package targets intact. Individual package links do not require changes.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `-g`, `--global` | Remove a globally-installed package from `~/.lpm/global/` |
-| `--filter <EXPR>` | Workspace filter (mutually exclusive with `-w` and `-g`) |
-| `--filter-prod <EXPR>` | Workspace filter with production-only dependency closures (mutually exclusive with `-w` and `-g`) |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `[git-ref]` fan-out decisions |
-| `-w`, `--workspace-root` | Target the workspace root `package.json` |
-| `--fail-if-no-match` | Exit non-zero if filters match no members |
-| `-y`, `--yes` | Skip the multi-member confirmation prompt |
+| `-g`, `--global` | Remove exactly one global package. Reject project flags and `--yes`. |
+| `--filter <FILTER>` | Select workspace members. Can repeat. |
+| `--filter-prod <FILTER_PROD>` | Select members with production dependency closures. Can repeat. |
+| `--changed-files-ignore-pattern <CHANGED_FILES_IGNORE_PATTERN>` | Ignore matching paths in Git filters. Can repeat. |
+| `--test-pattern <TEST_PATTERN>` | Treat matching Git changes as tests, without dependent fan-out from those changes. Can repeat. |
+| `-w`, `--workspace-root` | Target the workspace root manifest. Cannot combine with filters or change-pattern flags. |
+| `--fail-if-no-match` | Fail if the workspace selection is empty. |
+| `-y`, `--yes` | Skip confirmation for multiple workspace members. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [Global flags](/docs/commands#global-flags) for `--json`, verbosity, and other shared flags.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — the forward direction
-- [`lpm remove`](/docs/packages/remove) — undo an `lpm add` (different command)
-- [`lpm global`](/docs/packages/global) — manage globally-installed CLIs
-- [Workspaces](/docs/packages/workspaces)
+- [`lpm install`](/docs/packages/install) — install dependencies and restore missing files
+- [`lpm remove`](/docs/packages/remove) — remove copied source files
+- [`lpm global`](/docs/packages/global) — manage global commands
+- [`lpm trust`](/docs/packages/trust) — inspect and prune script trust
+- [Workspaces](/docs/packages/workspaces) — select members and dependency closures
+- [Lockfile](/docs/packages/lockfile) — understand the shared dependency record
