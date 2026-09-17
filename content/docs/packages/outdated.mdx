@@ -1,94 +1,208 @@
 ---
 title: lpm outdated
-description: "List dependencies with newer versions available."
+description: Compare direct dependency versions with the declared range and registry tags.
 ---
 
+Check which direct dependencies have newer versions available before you plan an upgrade.
+
 ```bash
-lpm outdated
+lpm outdated [OPTIONS]
 ```
 
-Compares every entry in `package.json > dependencies` and `package.json > devDependencies` against the registry and prints the ones with newer versions available. Read-only — never modifies anything.
+## Quickstart
 
-## Example output
+```bash
+lpm outdated
+lpm outdated --json
+```
+
+The terminal table shows outdated dependencies. JSON includes every successfully checked dependency, including packages that are current.
+
+| Mode | Behavior |
+| --- | --- |
+| `lpm outdated` | Check eligible LPM.dev Registry and npm dependencies. |
+| `lpm outdated --registry-only lpm` | Check only packages named `@lpm.dev/*`. |
+| `lpm outdated --json` | Write structured results without a prompt. |
+
+The command preserves project files and installed packages. Each invocation revalidates registry metadata and can update local caches.
+
+There is no outdated block in `lpm.json`.
+
+## Read the columns
 
 ```text
-Section            Package                            Current      Wanted       Latest
-dependencies       react                              18.2.0       18.3.1       19.0.0
-dependencies       zod                                4.3.5        4.3.6        4.4.0
-devDependencies    typescript                         5.4.0        5.6.2        5.7.0
+Section            Package       Current      Wanted       Latest
+dependencies       react         18.2.0       18.3.1       19.0.0
+devDependencies    typescript    5.4.0        5.9.3        5.9.3
 ```
 
-A row appears when the newest installable version is greater than the installed direct dependency version from `lpm.lock`. `wanted` is the newest installable version that still satisfies the declared range. `latest` is the newest installable version overall.
+| Column | Meaning |
+| --- | --- |
+| Current | The direct dependency version recorded in `lpm.lock`. |
+| Wanted | The selected version for the declared range or tag, including the rollback fallback described here. |
+| Latest | The eligible version of the registry's `latest` tag. |
 
-If your installed version is newer than the registry version, the command does not report an available update. This behavior prevents a registry rollback from appearing as an upgrade.
+A dependency is outdated if `Wanted` or `Latest` is greater than `Current`. A newer prerelease on a declared `next` tag therefore appears.
 
-Fresh direct dependency versions inside the cooldown window are ignored until they mature. This behavior matches [`lpm upgrade`](/docs/packages/upgrade) and [`lpm install`](/docs/packages/install).
+`Latest` does not mean the greatest published version. A maintainer can move the tag backward while newer versions remain available.
 
-## Ecosystem scope
+If neither candidate exceeds `Current`, the dependency is current. A registry rollback alone does not report an update.
 
-By default, `lpm outdated` checks both `@lpm.dev/*` packages and npm packages whose lockfile source can be checked without disclosing a private name to a new registry.
+If Latest is lower and no eligible release satisfies a non-exact range, Wanted retains Current when Current still matches that range. This fallback uses the lockfile without requiring that version to remain published or pass the release-age policy.
 
-```bash
-lpm outdated                     # both ecosystems (default)
-lpm outdated --registry-only=lpm # @lpm.dev only — useful when npm is rate-limiting or offline
+Registry candidates pass the release-age policy. The report does not evaluate engine requirements, platform filters, overrides, peer compatibility, or security verdicts.
+
+## Which dependencies are checked?
+
+LPM CLI works with npm, the LPM.dev Registry, and private registries. Outdated uses recorded sources to avoid disclosing private package names.
+
+The command reads the current directory's `package.json`. In a workspace member, it uses that member's records from the shared root lockfile.
+
+It checks `dependencies`, `devDependencies`, and `optionalDependencies`. Optional declarations take precedence over runtime declarations. Runtime declarations take precedence over development declarations.
+
+The report excludes transitive dependencies and standalone peer declarations. There is no package selector, global mode, or workspace-wide flag.
+
+Eligible metadata sources are:
+
+- Packages named `@lpm.dev/*`.
+- npm packages recorded as public npm or configured LPM.dev Registry proxy installs.
+
+Other npm packages appear in `skipped_private`. Local paths, Git sources, tarballs, workspace references, and JSR references appear in `skipped_non_registry`.
+
+A skipped dependency does not make the command fail. A successful report therefore does not guarantee coverage of every declaration.
+
+### Aliases and catalogs
+
+Outdated checks the registry package behind an `npm:` alias and reports its local dependency name. Catalog references use the owning catalog's declaration.
+
+```json title="package.json"
+{
+  "dependencies": {
+    "strip-ansi-cjs": "npm:strip-ansi@^6.0.0",
+    "react": "catalog:"
+  },
+  "catalogs": {
+    "default": {
+      "react": "^18.0.0"
+    }
+  }
+}
 ```
-
-`--registry-only=all` is the explicit form of the default.
-
-## Acting on the report
-
-[`lpm upgrade`](/docs/packages/upgrade) applies the report for `@lpm.dev/*` packages and for npm packages whose existing `lpm.lock` entry records either public npm or the configured LPM.dev Registry proxy as the source. That keeps the common flow as:
-
-```bash
-lpm outdated
-lpm upgrade -y
-```
-
-For one-off manual bumps, use `lpm install` with the spec you want:
-
-```bash
-lpm install zod@latest
-lpm install react@^19            # explicit range
-```
-
-Packages without a recorded public npm or LPM.dev Registry-proxy source are still skipped instead of being queried against `registry.npmjs.org`. Run `lpm install` first so the source is captured in `lpm.lock`, then rerun `lpm outdated` or `lpm upgrade`.
-
-## JSON output
 
 ```bash
 lpm outdated --json
 ```
 
-Emits a schema-versioned envelope with `schema_version`, `success`, `count`, `outdated_count`, and a `packages[]` array. Each row carries:
+The `wanted_range` field retains the original alias or `catalog:` text. A declared `latest` tag follows that tag for direct dependencies, aliases, and catalogs.
 
-| Field            | Meaning                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- |
-| `schema_version` | JSON contract version for the envelope. Current value: `2`                                                    |
-| `name`           | Package name                                                                                                  |
-| `current`        | Version resolved in `lpm.lock`, or `"?"` if the lockfile is missing                                           |
-| `wanted`         | The newest installable version that satisfies the declared range, or `null` when nothing published satisfies it |
-| `wanted_range`   | The raw declared spec from `package.json` (for example `"^4.3.0"`)                                            |
-| `latest`         | The newest installable version on the registry, regardless of range                                           |
-| `section`        | Which dependency map produced the row: `dependencies` or `devDependencies`                                    |
-| `outdated`       | `true` when `latest` is greater than `current`                                                               |
+## Release-age configuration
 
-When `lpm outdated` skips non-`@lpm.dev/*` packages because they do not have recorded public npm or LPM.dev Registry-proxy source attribution in `lpm.lock`, the envelope also includes `skipped_private` and `skipped_private_reason`.
+Outdated uses the project's [minimum release age](/docs/packages/install#recently-published-packages):
 
-LPM CLI reports registry lookup failures and malformed metadata. In human mode, LPM CLI lists the unresolved packages and exits non-zero.
+```json title="package.json"
+{
+  "lpm": {
+    "minimumReleaseAge": 86400,
+    "minimumReleaseAgeExclude": ["@my-org/*"],
+    "minimumReleaseAgePolicy": "strict"
+  }
+}
+```
 
-In `--json` mode, the envelope keeps successfully checked rows and sets `success: false`. It also adds `unresolved_count` and `unresolved[]`. Then `lpm outdated` exits with code 1.
+`minimumReleaseAge` is a duration in seconds. `minimumReleaseAgeExclude` exempts matching package names. Outdated still checks only direct dependencies with the `strict` policy.
 
-If `lpm.lock` exists but is malformed or unsupported, the command stops and reports the lockfile error. It does not treat the file as missing.
+When the `latest` release is too recent, the Latest column uses an eligible version at or below that tag. Without a `latest` tag, it uses the greatest eligible version.
+
+Version ranges also exclude releases inside the age window. An exact pin or named tag that selects a blocked release produces an unresolved result.
+
+Outdated has no one-run release-age override flag.
+
+## Examples
+
+### Check one workspace member
+
+```bash
+cd packages/web
+lpm outdated
+```
+
+### Inspect upgrades before applying them
+
+```bash
+lpm outdated
+lpm upgrade react -y --dry-run --json
+lpm upgrade react -y
+```
+
+[`lpm upgrade`](/docs/packages/upgrade) has its own version-selection rules. Its plan can differ from the Wanted column.
+
+For a catalog dependency, edit the owning catalog, then run [`lpm install`](/docs/packages/install).
+
+### Fail CI when checked dependencies are outdated
+
+```bash
+set -e
+lpm outdated --json > outdated.json
+jq -e '.success and .outdated_count == 0' outdated.json
+```
+
+Outdated returns zero after a successful check, even if newer versions exist. The `jq` check makes those versions fail the job.
+
+For complete coverage, also inspect `skipped_private` and `skipped_non_registry`.
+
+## Recover from an incomplete report
+
+If a public dependency lacks a recorded source or current version, refresh the project first:
+
+```bash
+lpm install
+lpm outdated
+```
+
+Private registries remain outside this report's supported metadata routes.
+
+A missing current version, unavailable tag, or registry failure produces an unresolved dependency. An unsatisfied range also fails unless the rollback fallback applies.
+
+The command retains other successful rows and exits with code 1.
+
+If a lockfile is malformed or unsupported, the command stops with that error. A project without direct dependencies returns an empty report before it reads the lockfile.
+
+## JSON output
+
+```bash
+lpm outdated --json > outdated.json
+```
+
+The current envelope uses `schema_version: 2`. It includes `success`, `count`, `outdated_count`, and `packages`.
+
+| Package field | Meaning |
+| --- | --- |
+| `name` | The local dependency name. |
+| `current` | The recorded direct dependency version. |
+| `wanted` | The selected version for the declared range or tag. |
+| `wanted_range` | The original declaration from `package.json`. |
+| `latest` | The eligible registry `latest` version or its fallback. |
+| `section` | `dependencies`, `devDependencies`, or `optionalDependencies`. |
+| `outdated` | Whether Wanted or Latest is greater than Current. |
+
+`count` counts successful rows. `outdated_count` counts successful rows with `outdated: true`. Current and Wanted are concrete versions on successful rows.
+
+An incomplete lookup result sets `success: false`. It adds `error`, `error_code`, `unresolved_count`, and `unresolved` rows with `name`, `section`, and `reason`.
+
+Skipped categories include their name arrays, counts, and reasons when present. Configuration or lockfile errors can return the [standard error envelope](/docs/reference/exit-codes) before any rows exist.
 
 ## Flags
 
-| Flag                         | Effect                                              |
-| ---------------------------- | --------------------------------------------------- |
-| `--registry-only <all\|lpm>` | Limit checks to a single ecosystem (default: `all`) |
+| Flag | Effect |
+| --- | --- |
+| `--registry-only <all\|lpm>` | Select eligible sources. Defaults to `all`. |
+| `--json` | Write structured results without a prompt. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful for scripting.
+See the [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm upgrade`](/docs/packages/upgrade) — apply the updates surfaced by `lpm outdated`
-- [`lpm audit`](/docs/packages/audit) — check for vulnerable versions you should bump
+- [`lpm upgrade`](/docs/packages/upgrade) — preview and apply dependency upgrades.
+- [`lpm install`](/docs/packages/install) — update installed packages and lockfile records.
+- [`lpm audit`](/docs/packages/audit) — check known vulnerabilities.
+- [Catalogs](/docs/packages/catalog) — share dependency declarations.
