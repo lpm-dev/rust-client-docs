@@ -1,40 +1,151 @@
 ---
 title: lpm search
-description: "Search the registry for packages by name and description."
+description: "Find packages in npm, private registries, or the LPM.dev Registry catalogue."
 ---
 
+Find packages by name or description before you inspect or install them.
+
 ```bash
-lpm search <query> [--limit <N>]
+lpm search [OPTIONS] <QUERY>
 ```
 
-Searches the registry that matches your query:
+## Quickstart
 
-- `@lpm.dev/...` queries the LPM.dev Registry catalogue.
-- `@scope/...` queries follow the current project's `.npmrc` `@scope:registry=...` mapping when one exists.
-- Everything else searches the current project's default `.npmrc` registry, or npmjs.org when no override is present.
+```bash
+lpm search react
+lpm search "react hooks" --limit 5
+lpm search @lpm.dev/alice
+```
 
-`lpm search` still returns a single normalized JSON envelope, but the backing search API depends on where the query routes.
+The command searches one registry per query. It returns at most 20 results and has no subcommands.
 
-Human output is compact: each result prints the package name, an indented description when one exists, and a metadata line such as `latest 1.2.3 · quality 91 · ecosystem js`. Use `--json` when you need the full routed search envelope, including fields such as `downloadCount` and distribution mode.
+LPM CLI supports npm and private registries. Queries that start with `@lpm.dev/` always use the LPM.dev Registry catalogue.
 
 ## Examples
 
 ```bash
-lpm search react                    # npmjs.org (or project .npmrc default registry)
-lpm search @my-co/internal          # project .npmrc scoped registry
-lpm search @lpm.dev/highlight       # force LPM.dev Registry catalogue search
-lpm search "react hooks" --json     # structured output
+# Search the default registry
+lpm search "date formatting" --limit 10
+
+# Search a configured scope
+lpm search @my-co/internal
+
+# Search the catalogue using an owner name
+lpm search @lpm.dev/alice
+
+# Search for a specific LPM.dev Registry package
+lpm search @lpm.dev/alice.highlight
+
+# Produce structured output without prompts
+lpm search "react hooks" --json | jq '.packages[].name'
 ```
+
+Catalogue queries can return related matches from other owners.
+
+Use [`lpm info`](/docs/packages/info) for versions and dependencies. Use [`lpm install`](/docs/packages/install) to install a result.
+
+## Registry configuration
+
+Search has no `lpm.json` configuration. Registry routing and npm credentials come from `.npmrc`.
+
+```ini title="~/.npmrc"
+registry=https://registry.npmjs.org/
+@my-co:registry=https://packages.example.com/npm/
+//packages.example.com/npm/:_authToken=${PRIVATE_NPM_TOKEN}
+```
+
+Environment-backed credentials belong in user configuration. Project-local environment interpolation for credentials is refused.
+
+On macOS and Linux, restrict access to the file:
+
+```bash
+chmod 600 ~/.npmrc
+lpm search @my-co/internal --limit 5
+```
+
+| Query | Destination |
+| --- | --- |
+| `@lpm.dev/...` | The LPM.dev Registry catalogue. `.npmrc` cannot override this scope. |
+| `@scope/...` with a registry mapping | The registry configured for that scope. |
+| `@jsr/...` without a scope mapping | `https://npm.jsr.io`. |
+| Other queries | The default `.npmrc` registry, or npmjs.org. |
+
+Configuration merges global and user `.npmrc` files, then the selected project or workspace-root file. See [registry configuration](/docs/registries).
+
+The global `--registry <URL>` flag changes the LPM.dev Registry endpoint. It does not override the default npm registry or a scope mapping.
+
+Registry URLs can include a path prefix. Search rejects URLs with a query string or fragment.
+
+### Authentication and visibility
+
+Npm and private-registry searches use credentials that match the destination in `.npmrc`. Environment tokens work through `.npmrc` interpolation, as in the example.
+
+Stored publish credentials and a bare `NPM_TOKEN` do not supply npm search credentials. See [authentication](/docs/infra/authentication) for registry credentials.
+
+LPM.dev Registry catalogue searches are anonymous, even with a stored login or `--token`. They do not expose your private package inventory.
+
+Search results depend on the selected registry's search support, index, and visibility rules. A successful empty result exits with status `0`.
+
+## Output
+
+Human output shows each package name, a short description, and its latest version. Npm-compatible results show `ecosystem js`. Other ecosystem values and quality appear when available.
+
+```text
+@lpm.dev/alice.highlight
+  Syntax highlighting tools
+  latest 1.2.3 · ecosystem js
+```
+
+`--json` returns normalized data with `success`, `count`, and `packages`. `count` is the number of returned results, not the registry's total matches.
+
+For example, this excerpt shows one npm result:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "packages": [
+    {
+      "name": "react",
+      "description": "A library for user interfaces.",
+      "distributionMode": "npm",
+      "latestVersion": "19.0.0"
+    }
+  ]
+}
+```
+
+Field values depend on the registry. Absent optional values appear as `null`. LPM.dev Registry results can supply `owner`, `downloadCount`, and other catalogue fields.
+
+Catalogue results keep `owner` and `name` separate. Human output combines them as `@lpm.dev/<owner>.<name>`.
+
+The JSON output omits quality and ecosystem fields. It does not preserve the full upstream response.
+
+Each invocation requests fresh results. Search has no pagination, offline mode, or version-history output.
+
+## Troubleshooting
+
+| Result | Action |
+| --- | --- |
+| No matches | Use a broader query or check the scope's registry mapping. |
+| Authentication failure from an npm-compatible registry | Correct the matching `.npmrc` credential and token permissions. |
+| Missing environment variable | Set the variable referenced by `.npmrc`, then repeat the command. |
+| Invalid search response | Check the selected registry's search endpoint and response. |
+| Invalid limit | Choose an integer from 1 to 20. |
+
+Search rejects malformed responses instead of treating them as empty results. Responses larger than 10 MiB also fail.
 
 ## Flags
 
-| Flag          | Effect                                         |
-| ------------- | ---------------------------------------------- |
-| `--limit <N>` | Maximum results to return (1–20, default `20`) |
+| Flag | Description |
+| --- | --- |
+| `--limit <LIMIT>` | Maximum results, from 1 to 20. Default: `20`. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` is useful for piping into other tools.
+The command also supports the [global flags](/docs/commands#global-flags), including `--json`, `--registry`, and `--cwd`.
 
 ## See also
 
-- [`lpm info`](/docs/packages/info) — full metadata for a single package through the same routing rules
-- [`lpm quality`](/docs/packages/quality) — quality report
+- [`lpm info`](/docs/packages/info) — inspect a package and its versions
+- [`lpm install`](/docs/packages/install) — install a package
+- [`lpm quality`](/docs/packages/quality) — inspect an LPM.dev Registry quality report
+- [Registry configuration](/docs/registries) — choose registries and credentials
