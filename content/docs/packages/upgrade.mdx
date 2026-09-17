@@ -1,95 +1,211 @@
 ---
 title: lpm upgrade
-description: "Bump dependencies to their latest matching version, with optional major upgrades."
+description: Upgrade project dependencies with an interactive selection, a preview, or a non-interactive run.
 ---
 
-```bash
-lpm upgrade [package...]
-```
-
-Walks `package.json` `dependencies` and `devDependencies`, looks up the newest installable version for each eligible package, and updates the lockfile + `node_modules` accordingly. By default it stays within your declared semver — pass `--major` to bump across breaking-change boundaries.
-
-**Default scope: `@lpm.dev/*` plus npm packages already recorded as public npm or LPM.dev Registry-proxy installs in `lpm.lock`.** That means a normal `react`, `lodash`, or `@scope/pkg` install that currently resolves through `registry.npmjs.org` or the configured LPM.dev Registry proxy is eligible for `lpm upgrade` too. Packages without recorded public npm or LPM.dev Registry-proxy source attribution are skipped by unscoped `lpm upgrade` instead of being queried against `registry.npmjs.org` — this avoids leaking private/custom-registry package names. If you added a public npm package before LPM CLI recorded source metadata, run [`lpm install`](/docs/packages/install) once to refresh `lpm.lock`, then rerun `lpm upgrade`.
-
-Pass package names to target only those direct manifest dependencies:
+Upgrade direct dependencies in the current project, then update its manifest, lockfile, and installed packages.
 
 ```bash
-lpm upgrade zod
-lpm upgrade zod react --dry-run --json
+lpm upgrade [OPTIONS] [PACKAGE]...
 ```
 
-Targeted upgrade filters candidates before metadata fetch. In a TTY, the multiselect only shows the requested packages; in CI/non-TTY, only those packages are upgraded. A requested package that is not in `dependencies` or `devDependencies` is a hard error. A requested npm package with no recorded public npm or LPM.dev Registry-proxy source is also a hard error instead of a silent skip.
-
-For npm alias declarations such as `"strip-ansi-cjs": "npm:strip-ansi@^6"`, target the local manifest key:
+## Quickstart
 
 ```bash
-lpm upgrade strip-ansi-cjs
+lpm upgrade react --dry-run --json
+lpm upgrade react -y
 ```
 
-LPM CLI looks up metadata and lockfile source attribution through the canonical target (`strip-ansi`) while preserving the local key and `npm:strip-ansi@...` shape when it rewrites `package.json`.
+The first command previews the upgrade. The second applies it without a prompt.
 
-In a TTY, `lpm upgrade` shows an interactive multiselect so you can pick which packages to bump. In CI or a non-TTY, it runs non-interactively. Override with `-i` (force interactive) or `-y` (force non-interactive).
+| Mode | Behavior |
+| --- | --- |
+| `lpm upgrade` | Show a selection menu when stdin and stdout are terminals. Otherwise, apply eligible upgrades without a prompt. |
+| `lpm upgrade -y` | Apply eligible upgrades without a prompt. |
+| `lpm upgrade -i` | Force the selection menu. |
+| `lpm upgrade -y --major` | Allow upgrades across major versions. |
+| `lpm upgrade -y --dry-run` | Preview changes without changing project files. Registry caches can change. |
 
-The interactive multiselect annotates each candidate with the signals you'd want before saying yes: whether the upgrade target ships install scripts, whether any peer-dependency declaration shifts under your current lockfile, and whether an existing `lpm patch` for this package won't cleanly apply to the new version.
+`--json` also selects non-interactive mode. The `CI` environment variable alone does not disable the menu.
 
-`lpm upgrade` honors the same [minimum release age](/docs/packages/install#recently-published-packages) policy for the direct dependencies it proposes. If the registry's latest version is still inside the cooldown window, upgrade selects the newest mature candidate at or below the current `dist-tags.latest` target instead of rewriting `package.json` to a version the install step would reject. This preserves a maintainer rollback even when an older release has a greater SemVer major.
-
-Before it changes the project, `lpm upgrade` revalidates registry metadata and uses that metadata for the install. This shared snapshot keeps the selected version and integrity stable between planning and installation.
-
-An implicit upgrade only selects a version that is newer than the installed version. If a registry rollback removes a newer release, `lpm upgrade` does not downgrade your project.
-
-If `lpm.lock` exists but is malformed or unsupported, the command stops and reports the lockfile error. It does not plan from incomplete state.
+There is no upgrade block in `lpm.json`. Dependency declarations and upgrade-related configuration belong in `package.json`.
 
 ## Examples
 
 ```bash
-lpm upgrade                # interactive at TTY, all-at-once in CI
-lpm upgrade zod            # upgrade only zod
-lpm upgrade zod react      # upgrade only these direct dependencies
-lpm upgrade --dry-run      # show what would change
-lpm upgrade --major        # also offer breaking upgrades
-lpm upgrade -y --dry-run   # CI-friendly JSON/text preview of upgrade candidates
-lpm upgrade -y             # non-interactive (skip prompts)
-lpm upgrade -i             # interactive (even in non-TTY)
+# Select upgrades in a terminal
+lpm upgrade
+
+# Upgrade two direct dependencies without a prompt
+lpm upgrade react react-dom -y
+
+# Preview major upgrades
+lpm upgrade react react-dom -y --major --dry-run
+
+# Apply major upgrades
+lpm upgrade react react-dom -y --major
+
+# Upgrade a dependency in one workspace member
+cd packages/web
+lpm upgrade react -y
 ```
 
-## Major upgrades
+To inspect available versions without applying changes, use [`lpm outdated`](/docs/packages/outdated).
+
+### Upgrade an alias
+
+Given this declaration:
+
+```json title="package.json"
+{
+  "dependencies": {
+    "strip-ansi-cjs": "npm:strip-ansi@^6.0.0"
+  }
+}
+```
+
+Target the local name:
 
 ```bash
-lpm upgrade --major
+lpm upgrade strip-ansi-cjs -y
 ```
 
-In **non-interactive** mode, `--major` actually performs the major bump on every dep that has one. In **interactive** mode, major upgrades appear as separate rows in the multiselect — you toggle the ones you want.
+LPM CLI preserves the local name and the `npm:` alias syntax.
 
-After a `--major` run, review the changelog of every bumped package before shipping. LPM CLI never reads release notes for you.
+## Which packages are eligible?
 
-## What changes
+LPM CLI works with npm, the LPM.dev Registry, and private registries. Upgrade uses recorded package sources to select safe metadata routes.
 
-- `package.json` — declared ranges are rewritten to match the new resolved versions, respecting your [save policy](/docs/packages/save-policy).
-- `lpm.lock` — fully refreshed, with `lpm.lockb` refreshed when the graph fits the binary format.
-- `node_modules/` — re-linked with the new versions.
+It checks `dependencies`, `devDependencies`, and `optionalDependencies` in the current directory's `package.json`. It does not select transitive dependencies or standalone peer declarations.
 
-If your `package.json` says `"react": "^18.0.0"` and the lockfile records `react` as coming from public npm or the configured LPM.dev Registry proxy, `lpm upgrade` will land `^18.3.1` when 18.3.1 is the newest mature matching 18.x release. With `--major` and a mature react 19 release available, it would also offer `^19.0.0`.
+Optional declarations take precedence over runtime and development declarations. Runtime declarations take precedence over conflicting development declarations. Identical runtime and development declarations update together.
 
-## Arguments
+Eligible sources are:
 
-| Argument | Effect |
+- Packages named `@lpm.dev/*`.
+- npm packages that `lpm.lock` records as public npm or configured LPM.dev Registry proxy installs.
+
+An untargeted run skips packages without eligible source records. An explicitly requested package without eligible source records causes an error.
+
+Local paths, Git sources, tarballs, workspace references, JSR references, and catalog references are not upgrade targets. An untargeted run skips them.
+
+For a catalog dependency, edit the owning catalog, then run [`lpm install`](/docs/packages/install). Upgrade never replaces a `catalog:` reference with a version.
+
+## Version selection
+
+Without `--major`, simple exact, caret, and tilde declarations advance within the current numeric major version. This can exceed the original declared range.
+
+| Declaration | Possible result without `--major` |
 | --- | --- |
-| `<package...>` | Optional direct dependency names to upgrade. Names must already exist in `dependencies` or `devDependencies`. |
+| `1.2.0` | `1.8.0` |
+| `~1.2.0` | `~1.8.0` |
+| `^1.2.0` | `^1.8.0` |
+| `^0.2.0` | `^0.9.0` |
+
+Complex ranges retain their text and select a version within that range. Stored tags, such as `latest` or `next`, retain their text and follow that tag. A missing tag causes an error.
+
+`--major` selects the eligible `latest` version for version-range declarations. It preserves an exact, caret, or tilde prefix. Other version-range forms become an exact version.
+
+Version-range selection does not pass the current `latest` tag. A maintainer rollback therefore limits the upgrade target, even if greater versions remain published.
+
+Upgrade does not downgrade an installed package. Named tags can select a newer major or prerelease version without `--major`.
+
+Selected packages use the versions from the preview. Other direct registry dependencies retain compatible locked versions. New dependencies and incompatible manifest changes still require resolution. Transitive dependencies can change.
+
+Upgrade preserves the declaration style described here. It does not use the [save policy](/docs/packages/save-policy) for new dependencies.
+
+## Configuration
+
+Upgrade uses the project's [minimum release age](/docs/packages/install#recently-published-packages) policy:
+
+```json title="package.json"
+{
+  "lpm": {
+    "minimumReleaseAge": 86400,
+    "minimumReleaseAgeExclude": ["@my-org/*"],
+    "minimumReleaseAgePolicy": "strict"
+  }
+}
+```
+
+`minimumReleaseAge` is a duration in seconds. `minimumReleaseAgeExclude` exempts matching package names. `minimumReleaseAgePolicy: "strict"` also checks transitive dependencies during installation.
+
+When the latest release is too recent, version-range selection uses an eligible release at or below the current `latest` tag. Upgrade has no one-run release-age override flag.
+
+Package overrides also apply. Upgrade omits a proposed target when an override controls that target. Installation still applies the normal engine, peer, registry, and security policies.
+
+## Read the preview
+
+The menu and JSON output include three signals:
+
+| Signal | Meaning |
+| --- | --- |
+| Install scripts | Registry metadata reports install lifecycle scripts for the target. This does not approve those scripts. |
+| Peer impact | Target peer declarations are compared with the current lockfile. Other selected upgrades are not included in this comparison. |
+| Patch invalidation | A patch registration exists for the old version. This does not test whether the patch applies to the new version. |
+
+The menu shows major upgrades as separate rows. If you select two targets for the same declaration, the higher version wins.
+
+Use `-y --major` for a batch major upgrade. `--major` is incompatible with interactive mode.
+
+## Project files and scripts
+
+A successful upgrade updates `package.json`, `lpm.lock`, and `node_modules`. It also writes `lpm.lockb` when the graph supports the binary format.
+
+In a workspace member, upgrade updates that member's part of the shared root lockfile. Sibling members keep their lockfile records.
+
+The root project's install lifecycle runs around installation. Dependency lifecycle scripts remain subject to the normal approval policy. Upgrade has no `--auto-build` flag.
+
+Use [`lpm approve-scripts`](/docs/packages/approve-scripts) and [`lpm rebuild`](/docs/packages/rebuild) for dependency scripts. In JSON mode, root script output goes to stderr.
+
+## Recover from an error
+
+If a public dependency lacks a recorded source, refresh the project first:
+
+```bash
+lpm install
+lpm upgrade react -y --dry-run
+```
+
+If a stored tag no longer exists, correct its declaration before another upgrade.
+
+A malformed lockfile, metadata error, or concurrent manifest edit stops the upgrade. Installation failure restores the saved manifest and lockfiles, while preserving detected concurrent edits.
+
+Rollback does not undo arbitrary lifecycle script effects. A failed installation can also change `node_modules`. After correcting the error, run [`lpm install`](/docs/packages/install).
+
+## Automation and JSON
+
+```bash
+lpm upgrade react -y --dry-run --json > upgrade-plan.json
+lpm upgrade react -y --json > upgrade-result.json
+```
+
+A preview and a later apply are separate invocations. Each invocation revalidates metadata and builds its own plan.
+
+Successful JSON includes `success`, `dry_run`, `upgraded`, `packages`, and `fetch_errors`. On a preview, `upgraded` counts proposed declaration updates.
+
+Each package row includes `name`, `from`, `to`, `new_range`, `is_dev`, `semver_class`, `has_install_scripts`, `peer_impact`, and `patch_invalidation`. Optional dependency rows also include `is_optional`.
+
+Skipped packages appear in `skipped_private` or `skipped_non_registry` when applicable. A successful result with no candidates has `upgraded: 0` and an empty `packages` array.
+
+An error produces `success: false` and a nonzero exit status. Upgrade does not apply a partial plan after a metadata lookup failure.
 
 ## Flags
 
-| Flag                  | Effect                                                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--major`             | Allow upgrading to a higher major version. Mutually exclusive with interactive mode — in interactive mode, major-bumps appear as togglable rows instead |
-| `--dry-run`           | Show what would be upgraded without making changes                                                                                                      |
-| `-i`, `--interactive` | Force interactive mode even outside a TTY. Mutually exclusive with `-y` and `--json`                                                                    |
-| `-y`, `--yes`         | Force non-interactive mode (useful at a TTY). Mutually exclusive with `-i`                                                                              |
+| Argument or flag | Effect |
+| --- | --- |
+| `[PACKAGE]...` | Target existing direct dependency names. Use the local key for an alias. |
+| `--major` | Select the eligible latest version across major versions. Requires non-interactive mode. |
+| `--dry-run` | Preview changes without changing project files. |
+| `-i`, `--interactive` | Force the menu. Conflicts with `-y`, `--json`, and `--major`. |
+| `-y`, `--yes` | Disable the menu. Conflicts with `-i`. |
+| `--json` | Write structured output and disable the menu. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See the [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm outdated`](/docs/packages/outdated) — see which deps have updates available
-- [`lpm install`](/docs/packages/install) — reinstall after a manual `package.json` edit
-- [Save policy](/docs/packages/save-policy) — how new ranges get saved
+- [`lpm outdated`](/docs/packages/outdated) — compare installed and available versions.
+- [`lpm install`](/docs/packages/install) — apply manual dependency or catalog changes.
+- [`lpm add`](/docs/packages/add) — add a dependency or request a specific version.
+- [Patches](/docs/packages/patch) — maintain local package changes.
