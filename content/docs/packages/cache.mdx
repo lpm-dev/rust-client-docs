@@ -1,161 +1,259 @@
 ---
 title: lpm cache
-description: "Manage ephemeral caches and prune the global package store."
+description: "Inspect caches, clear reusable data, and preview or remove unused package-store entries."
 ---
 
-```bash
-lpm cache <action>
-```
-
-`lpm cache` covers two adjacent concerns: ephemeral caches under `~/.lpm/cache/` (registry metadata, task results, dlx installs, and the verified MCP runtime) and the global package store at `~/.lpm/store/`.
-
-## Examples
+`lpm cache` inspects reusable data and frees disk space. Use `clean` for temporary caches and `prune` for unused packages.
 
 ```bash
-lpm cache path                          # print ~/.lpm/cache/
-lpm cache path metadata                 # print ~/.lpm/cache/metadata/
-lpm cache path mcp                      # print ~/.lpm/cache/mcp/
-
-lpm cache clean                         # wipe metadata + tasks + dlx + mcp
-lpm cache clean metadata                # only wipe registry metadata
-lpm cache clean tasks                   # only wipe task-runner cache
-lpm cache clean dlx                     # only wipe dlx install cache
-lpm cache clean mcp                     # only wipe the verified MCP runtime
-
-lpm cache status                        # local task cache usage + remote status
-lpm cache status --json                 # structured status for CI
-
-lpm cache prune                         # preview orphan store entries (dry-run)
-lpm cache prune --apply                 # actually remove orphans
-lpm cache prune --max-age 30d --apply   # only entries last touched > 30d ago
-lpm cache prune --project ./my-app      # manual repair: walk one project only
+lpm cache <COMMAND>
+lpm cache clean [CATEGORY]
+lpm cache clear [CATEGORY]
+lpm cache path [CATEGORY]
+lpm cache status
+lpm cache prune [--apply] [--max-age <MAX_AGE>] [--project <PATH>]
 ```
 
-## Actions
+## Quickstart
 
-| Action | Effect |
+Inspect the task cache, then preview unused package data:
+
+```bash
+lpm cache status
+lpm cache prune
+```
+
+After you review the preview, apply the cleanup:
+
+```bash
+lpm cache prune --apply
+```
+
+### Choose an action
+
+| Action | Purpose |
 | --- | --- |
-| `path` | Print the cache root (`~/.lpm/cache/`) or one of its subcategories |
-| `clean` | Wipe ephemeral caches (`~/.lpm/cache/`). `lpm cache clear` is an alias. |
-| `status` | Report local task-cache usage and hosted remote-cache status for the current project |
-| `prune` | Reference-aware orphan removal from the global store (`~/.lpm/store/`) plus a sweep of deferred global-install tombstones |
+| `path [CATEGORY]` | Print the cache root or one category path. |
+| `clean [CATEGORY]` | Delete temporary cache data immediately. `clear` is an alias. |
+| `status` | Show local task-cache usage and remote-cache status for the current directory. |
+| `prune` | Preview unused package data and pending global-install cleanup. |
+| `prune --apply` | Remove the eligible data without a confirmation prompt. |
 
-`clean` accepts an optional subcategory (`metadata`, `tasks`, `dlx`, `mcp`); without one, all four are wiped. `clean` never touches the global package store — for that, use `prune`.
+`clean` and `path` accept `metadata`, `tasks`, `dlx`, or `mcp`.
+Without a category, they select all four caches or the cache root.
 
-The MCP runtime is locked while an editor is using it. A blanket `lpm cache clean` skips that one category and reports it as in use while still cleaning the others. `lpm cache clean mcp` fails with an actionable error instead of deleting files underneath a running server.
+The default cache root is `~/.lpm/cache/`. The package store is separate at `~/.lpm/store/`.
+`LPM_HOME` changes both locations. See [Environment variables](/docs/reference/env-vars).
+
+## Task-cache configuration
+
+[`lpm.json`](/docs/reference/lpm-json) configures task caching. It has no automatic cache-cleanup or prune policy.
+
+This example caches a build that writes to `dist/`:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "build": {
+      "command": "tsc",
+      "cache": true,
+      "outputs": ["dist/**"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "cacheEnv": ["NODE_ENV"]
+    }
+  }
+}
+```
+
+```bash
+lpm run build
+lpm cache status
+lpm run build --no-cache
+```
+
+[`lpm run`](/docs/dev/run) reuses matching task results. `--no-cache` disables task caching for one run.
+
+| Field | Effect |
+| --- | --- |
+| `cache` | Enable caching for this task. Default: `false`. |
+| `outputs` | Files to save and restore. Caching requires a non-empty list. |
+| `inputs` | Files that affect the cache key. An omitted or empty list uses the project defaults. |
+| `cacheEnv` | Inherited environment variables that affect the cache key. Omit it to include all inherited variables. Use `[]` to exclude them. |
+
+Environment values loaded by the project remain cache inputs regardless of `cacheEnv`.
+
+Add `remoteCache.enabled: true` to share task results through LPM.dev Registry.
+`LPM_REMOTE_CACHE=0` disables remote caching for one process and keeps local caching available.
+See [Remote task cache](/docs/infra/remote-cache) for authentication, team selection, input defaults, and upload policy.
+
+## Clear a cache
+
+```bash
+lpm cache path metadata
+lpm cache clean metadata
+lpm cache clean tasks
+lpm cache clean dlx
+lpm cache clean mcp
+```
+
+| Category | Deleted data | Next use |
+| --- | --- | --- |
+| `metadata` | Cached registry responses. | Fetch package metadata again. |
+| `tasks` | Local task results across projects. | Run the task again, or restore a remote result. |
+| `dlx` | Cached packages for temporary commands. | Install the command again. |
+| `mcp` | The verified MCP runtime. | Prepare the runtime again. |
+
+To clear all categories, run:
+
+```bash
+lpm cache clean
+```
+
+`clean` leaves the package store and remote task artifacts intact.
+It has no preview mode.
+
+If an editor uses the MCP runtime, an all-category cleanup skips `mcp` and reports it as in use.
+A targeted `clean mcp` fails. Close the editor connection, then retry.
 
 ## Status
 
-`lpm cache status` reports the local task-cache path and size. With remote caching enabled through `lpm.json` or `LPM_REMOTE_CACHE`, it also reports hosted status, usage, and quota.
+```bash
+lpm cache status
+lpm cache status --json
+```
 
-See [Remote task cache](/docs/infra/remote-cache) for setup, namespace selection, and CI examples. `lpm cache clean tasks` clears local task results without deleting hosted artifacts.
+Status shows the shared local task-cache path and size.
+It reads `lpm.json` in the current directory for remote-cache configuration.
 
-Remote status failures do not make `lpm cache status` fail; the JSON envelope includes `remote.error` so CI can decide whether to warn or ignore.
+With remote caching enabled, status also shows service availability, usage, and quota.
+A remote lookup failure appears in `remote.error` without making the command fail.
 
-A paused or disabled remote cache does not stop local tasks. LPM CLI reports the cache state and continues locally. An authorization warning indicates that the token lacks the required permission.
+## Prune unused packages
 
-Organization cache access continues during the billing grace period. After grace expires, remote reads and uploads stop, including uploads that are still in progress. The dashboard and `lpm cache status` report `paused`. Restore the organization subscription to resume cache access.
+```bash
+lpm cache prune
+lpm cache prune --max-age 30d
+lpm cache prune --max-age 30d --apply
+```
 
-## Prune
+Prune inspects both supported store layouts, v2 and v3.
+The preview reports eligible paths and logical bytes. It leaves package contents and global recovery records unchanged.
 
-`lpm cache prune` walks both the default v2 store and the experimental v3 store, removes entries no project still references, then sweeps any deferred global-install tombstones left behind by `lpm uninstall -g`. Default is dry-run; pass `--apply` to mutate.
-Human output ends with an elapsed summary; `--json` keeps the machine-readable report shape and includes `success`.
+With `--apply`, LPM CLI removes eligible entries and retries deferred cleanup from [`lpm uninstall -g`](/docs/packages/uninstall#global).
+An incomplete cleanup returns a nonzero exit code.
 
-The tombstone sweep runs even when the orphan walk is skipped (registry missing or corrupt — see [Safety rails](#safety-rails)), so `lpm uninstall -g`'s deferred cleanup always has a way to reach disk.
+### What stays in the store
 
-If the project registry is corrupt, prune disables only the project-reachability
-walk. It still plans or applies crash recovery and age-based eviction for
-compatibility islands and native build artifacts, cleans their orphaned lock
-files, and sweeps global-install tombstones. In JSON mode,
-`registry_corrupt: true` and `registry_corrupt_reason` carry the registry
-problem; tombstone inspection and sweep failures are reported separately.
+LPM CLI records installed projects in `~/.lpm/known-projects.json`.
+Prune follows their `node_modules` links and keeps each reachable package, its dependencies, and its source data.
+It does not use lockfiles as the root set.
 
-### How it decides what to keep
+A project with no `node_modules` does not retain packages through its lockfile alone.
+A later [`lpm install`](/docs/packages/install) can download removed data again.
 
-LPM CLI tracks every project it has installed into in a registry at `~/.lpm/known-projects.json`. For each registered project, prune walks the project's `node_modules/` symlinks back into `~/.lpm/store/v2/links/<graph-key>/` or `~/.lpm/store/v3/links/<graph-key>/`, then BFS through each link entry's sidecar metadata to mark every reachable graph-key. Anything not marked is an orphan. Object directories under each layout's `objects/` directory are pruned by collecting every surviving link entry's object reference and removing the rest.
+`--max-age` also retains recently referenced packages and their dependencies.
+It accepts positive whole numbers followed by `d` for days or `h` for hours.
+The age comes from package-store use, not the project registration date.
 
-For v3, each surviving object identifies a live source record; source records identify tree manifests; manifests identify content-and-mode blobs. Prune retains that complete transitive closure and reports orphan source metadata, trees, blobs, and macOS materialized-tree caches separately. If a live source record or manifest is malformed, prune fails closed instead of guessing which CAS content is safe to delete.
+The age limit does not protect unrelated source objects that no retained package needs.
 
-On macOS, cached compatibility islands under each virtual-store layout's `compat/` directory are pruned by crash recovery and LRU age: incomplete islands are eligible immediately, and complete islands are eligible only when their last-used sentinel is older than `--max-age`.
+### Build artifacts
 
-Native lifecycle-build artifacts under `~/.lpm/store/v2/builds/` use the same
-crash-recovery and LRU rule on macOS and Linux. An incomplete publication is
-eligible immediately. A complete artifact is kept unless its last-used
-sentinel is older than `--max-age`. This cleanup is independent of project
-reachability, so it remains safe and active when the project registry is
-missing or corrupt. `--apply` also removes advisory build-key lock files that
-no longer have an artifact and graph-entry lock files whose link entry was
-removed.
+Prune also cleans cached compatibility trees and native build artifacts.
+Incomplete artifacts are eligible immediately.
+Complete artifacts remain unless `--max-age` finds that their last use exceeds the limit.
 
-Stale registry entries (projects that have moved or been deleted) are dropped silently during the walk. The `--max-age` filter operates on each link entry's `last_referenced_at` timestamp (recorded in the entry's sidecar at first population, refreshed by `lpm install` cache hits) — not on the project registry's `last_seen`, which is set at install-time only.
+This cleanup does not depend on the project registry.
+LPM CLI also removes associated lock files that no longer have a retained artifact or package entry.
 
-### Manual repair: `--project <path>`
+### Use one project as the root set
 
-When the registry is missing, corrupted, or doesn't reflect actual machine state (after a restore, after copying `~/.lpm/` between machines, etc.), pass `--project <path>` to walk only that project's lockfile + `node_modules/` for roots. The registry is ignored.
+```bash
+lpm cache prune --project ./my-app
+lpm cache prune --project ./my-app --max-age 30d --apply
+```
 
-This mode is for scripted cleanup of a single project's footprint. **Default mode is safer when you have multiple projects on the machine** — `--project` only sees the one you point it at, so any link entry referenced by another project would look like an orphan.
+`--project` requires a directory. It replaces the registered project list with this one project's `node_modules`.
+It does not restrict cleanup to packages that the project previously installed.
 
-### Safety rails
+**Other projects do not protect their packages in this mode.**
+If several projects share the store, use the default scan.
 
-- **Dry-run by default.** No deletions without `--apply`.
-- **Reachability-degraded mode.** If the registry is missing, corrupt, or unreadable AND no `--project <path>` is supplied, prune cannot identify link/object or v3 CAS orphans safely (without trustworthy roots, every link entry would look unreachable). `--apply` skips those reachability-dependent removals. Compatibility-island and native-build-artifact cleanup, orphan lock cleanup, and the tombstone sweep still run. LPM CLI prints a warning naming the cause; for corrupt registries it includes the parser's reason ("not valid JSON" / "unknown schema version" / I/O details) so you can repair the file or delete it for a clean rebuild.
-- **Malformed live CAS metadata fails closed.** Prune does not delete v3 trees or blobs when it cannot prove the complete live closure.
-- **Canonicalized paths.** The registry stores fully resolved absolute paths, so symlink-cwd quirks don't accumulate aliased entries.
-- **Atomic registry rewrites.** Updates go through `<path>.tmp.<pid>` → rename. No partial-write corruption.
-- **In-flight installs are respected.** Prune coordinates with concurrent `lpm install`, `lpm audit`, and `lpm query` invocations through the store reader/writer lock — dry-run takes the shared half, `--apply` takes the exclusive half. See [`lpm store` — Locking model](/docs/infra/store#concurrent-operations).
+## Recovery and incomplete state
+
+If the project registry is missing or corrupt, prune skips package and source-data deletion.
+Artifact cleanup and deferred global-install cleanup remain available.
+The report identifies the registry problem.
+
+Concurrent installs preserve each other's project registrations.
+A later install preserves an unusable registry instead of replacing it with an incomplete project list.
+
+Before normal package pruning, restore a complete registry from backup.
+To rebuild it, move the damaged file aside and run [`lpm install`](/docs/packages/install) in every project that shares the store.
+Include global tools that you still use. Do not apply package pruning until those registrations are complete.
+
+If a preview reports unfinished global recovery, run [`lpm global list`](/docs/packages/global), then retry the preview.
+
+Unreadable project directories, inconsistent package metadata, and redirected internal store directories stop prune.
+LPM CLI validates both store plans before it starts package deletion.
+Use [`lpm store verify`](/docs/infra/store) to inspect store damage, then repair the affected installation.
+
+Prune coordinates with installs through the [store lock](/docs/infra/store#concurrent-operations).
+A failure during deletion can leave completed cleanup in place. Correct the reported cause, then retry.
+
+## Non-interactive use
+
+```bash
+lpm cache clean metadata --json
+lpm cache prune --max-age 30d --json
+lpm cache prune --max-age 30d --apply --json
+```
+
+These commands do not prompt. `--apply` authorizes package deletion.
+For automation, inspect both the exit code and the JSON result.
 
 ## Flags
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--apply` | `prune` | Actually remove orphans + sweep tombstones (default is dry-run) |
-| `--max-age <DUR>` | `prune` | Only prune entries last touched older than this. Accepts `<N>d` (days) or `<N>h` (hours) — nothing else |
-| `--project <PATH>` | `prune` | Manual repair: walk only this project's roots, ignore the registry |
+| `--apply` | `prune` | Delete eligible entries and retry deferred global cleanup. Default: preview. |
+| `--max-age <MAX_AGE>` | `prune` | Retain recent packages and dependencies. Evict complete artifacts older than this age. Examples: `30d`, `24h`. |
+| `--project <PATH>` | `prune` | Use only this directory's installed packages as roots. Ignore the project registry. |
+| `--json` | All actions | Emit structured output. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [Global flags](/docs/commands#global-flags) for shared options.
 
 ## JSON output
 
-```bash
-lpm cache status --json
+`clean` reports `success`, `cleaned[]`, `skipped[]`, `total_bytes_freed`, and `total_freed`.
+A busy MCP runtime appears in `skipped` with `reason: "in use"`.
 
-lpm cache prune --json            # dry-run report
-lpm cache prune --apply --json    # post-apply report (same shape, mutations recorded)
-```
+`status` reports `local.path`, `local.bytes`, and `local.size`.
+Its `remote` object includes availability, usage, quota, and an `error` when a lookup fails.
 
-`status --json` emits:
+The prune report includes:
 
-| Field | Meaning |
+| Fields | Meaning |
 | --- | --- |
-| `local.path` / `local.bytes` / `local.size` | Local task-cache location and usage |
-| `remote.enabled` / `remote.status` | Hosted cache configuration and server status |
-| `remote.usage_bytes` / `remote.limit_bytes` | Hosted usage and included quota when the server returns them |
-| `remote.error` | Status lookup error, if any |
+| `success`, `applied` | Whether inspection or cleanup completed, and whether the command used `--apply`. |
+| `projects_walked`, `registry_entries_dropped` | Project coverage and stale registrations. The preview does not rewrite the registry. |
+| `link_entries_*`, `object_entries_*` | Counts and eligible package or source-object paths. |
+| `cas_trees_total`, `cas_blobs_total`, `cas_materialized_total` | v3 source-data counts. Related `*_orphaned` arrays contain eligible paths. |
+| `compat_islands_*`, `build_artifacts_*` | Artifact counts and eligible paths. |
+| `bytes_freed_or_eligible`, `logical_bytes_freed_or_eligible` | Logical bytes eligible in the preview or removed during apply. |
+| `observed_physical_bytes_freed` | Measured increase in free disk space, or `null` when unavailable. |
+| `registry_missing`, `registry_corrupt`, `registry_corrupt_reason` | Why package-reachability cleanup was unavailable. |
+| `tombstones_pending`, `tombstones_swept`, `tombstones_retained`, `tombstone_bytes_freed` | Deferred global-install cleanup results. |
+| `tombstone_count_error`, `tombstone_sweep_error` | Errors that prevent inspection or cleanup of deferred global installs. |
 
-`prune --json` reports both the orphan walk and the tombstone sweep:
-
-| Field | Meaning |
-| --- | --- |
-| `success` | `false` when prune could not complete every requested inspection or cleanup step |
-| `applied` | `true` when `--apply` was passed |
-| `projects_walked` / `registry_entries_dropped` | Project-registry coverage stats |
-| `link_entries_total` / `_reachable` / `_orphaned[]` | Link-entry walk results; `_orphaned[]` is a list of paths |
-| `object_entries_total` / `_reachable` / `_orphaned[]` | Object-entry walk results |
-| `cas_trees_total` / `cas_tree_files_orphaned[]` | v3 tree-manifest inventory and orphan paths |
-| `cas_blobs_total` / `cas_blob_files_orphaned[]` | v3 content-and-mode blob inventory and orphan paths |
-| `cas_source_record_files_orphaned[]` / `cas_source_validation_files_orphaned[]` | Unreferenced v3 source identity and validation metadata |
-| `cas_materialized_total` / `cas_materialized_entries_orphaned[]` | v3 macOS materialized-tree cache inventory and orphan paths |
-| `compat_islands_total` / `_orphaned[]` | Cached compatibility-island results; `_orphaned[]` lists incomplete or stale LRU islands |
-| `build_artifacts_total` / `_orphaned[]` | Native lifecycle-build artifact results; `_orphaned[]` lists incomplete or stale LRU artifacts |
-| `bytes_freed_or_eligible` / `logical_bytes_freed_or_eligible` | Logical bytes the orphan walk would free (dry-run) or selected for removal (apply) |
-| `observed_physical_bytes_freed` | Filesystem usage actually released by an applied prune; may differ from logical bytes on copy-on-write or hardlinked store-internal data |
-| `registry_missing` / `registry_corrupt` / `registry_corrupt_reason` | Reachability-degraded flags — when either is true, link/object orphan arrays are empty because that walk was skipped; compatibility-island, native-build-artifact, lock, and tombstone cleanup still operate independently |
-| `tombstones_pending` / `_swept` / `_retained[]` / `tombstone_bytes_freed` | Tombstone sweep results — `_swept` and `_bytes_freed` are zero on dry-run |
-
-`lpm cache clean` emits a parallel `{success, cleaned[], skipped[], total_bytes_freed, total_freed}` envelope per subcategory. A busy MCP runtime appears in `skipped` with `reason: "in use"`.
+Logical bytes can exceed reclaimed disk space because files can share physical storage.
+Retained global tombstones make `success` false and produce exit code 1.
+A planning error can return a standard error envelope instead of a prune report.
 
 ## See also
 
-- [Content-addressable store](/docs/packages/content-addressable-store) — design overview, on-disk layout
-- [`lpm store`](/docs/infra/store) — integrity checks, store path, blunt full wipe
-- [`lpm doctor`](/docs/infra/doctor) — surfaces store-size hints alongside other checks
+- [Content-addressable store](/docs/packages/content-addressable-store) — package storage and reuse.
+- [`lpm store`](/docs/infra/store) — store inspection, integrity checks, and full cleanup.
+- [`lpm run`](/docs/dev/run) — cached project tasks.
+- [Remote task cache](/docs/infra/remote-cache) — shared task results.
+- [`lpm global`](/docs/packages/global) — global tools and recovery.
