@@ -1,81 +1,70 @@
 ---
 title: lpm patch / patch-commit / patch-remove
-description: "Create, finalize, and remove local dependency patches with integrity binding."
+description: "Create, apply, and remove dependency patches without a separate package fork."
 ---
 
-```bash
-lpm patch <selector>                  # step 1 — extract for editing
-lpm patch-commit <staging_dir>        # step 2 — finalize as a .patch file
-lpm patch-remove <selector>           # remove a registered patch
-```
-
-Two-step workflow for fixing a bug in a dependency without forking it. The patch travels with your repo under `patches/<name>@<version>.patch` and re-applies automatically on every subsequent `lpm install`.
-
-Same shape as [`patch-package`](https://www.npmjs.com/package/patch-package) — but bound to the original store integrity, so a silently-republished version of the dep can never substitute for the version the patch was authored against.
-
-## The workflow
+`lpm patch` creates an editable copy of a dependency so you can fix its files without a separate fork.
 
 ```bash
-# 1. Extract a clean copy of the store entry to a staging dir
-lpm patch lodash@4.17.21
-# → /tmp/lpm-patch-XXXXXX/node_modules/lodash/  (path printed)
-
-# 2. Edit files in the staging dir however you want
-vim /tmp/lpm-patch-XXXXXX/node_modules/lodash/index.js
-
-# 3. Produce the patch file and register it in package.json
-lpm patch-commit /tmp/lpm-patch-XXXXXX
-# → patches/lodash@4.17.21.patch
-# → package.json :: lpm.patchedDependencies updated
-# → lpm.lock :: [patches] checksum updated when a lockfile exists
+lpm patch [OPTIONS] <KEY>
+lpm patch-commit [OPTIONS] <STAGING_DIR>
+lpm patch-remove [OPTIONS] <SELECTORS>...
 ```
 
-After `patch-commit`, **commit `patches/`, `package.json`, and `lpm.lock`** to your repo. The next `lpm install` (yours, your teammates', CI's) verifies the lockfile-recorded patch checksum, then auto-applies the patch after linking.
-
-## `lpm patch <selector>`
-
-```bash
-lpm patch lodash                # bare name — resolves against the project lockfile
-lpm patch lodash@4.17.21        # exact pin — works without a lockfile
-lpm patch lodash@^4.0.0         # semver range — resolves against the project lockfile
-```
-
-| Selector | Notes |
+| Command | Purpose |
 | --- | --- |
-| Bare name (`lodash`) | Resolves to whatever exact version is in `lpm.lock`. Requires a lockfile (run `lpm install` first). |
-| Exact pin (`lodash@4.17.21`) | Works without a lockfile. The version must already be in the global store. |
-| Semver range (`lodash@^4.0.0`) | Resolves to the lockfile's pinned version. Requires a lockfile. |
-| Dist-tags (`latest`, `next`) | Not accepted. Pin to an exact version or range. |
+| `lpm patch` | Copy the original package files to a temporary directory. |
+| `lpm patch-commit` | Create a patch file and register it in the project. |
+| `lpm patch-remove` | Remove one or more patch registrations. |
 
-Steps:
+The commands use the nearest ancestor with `package.json`. They do not prompt for confirmation.
 
-1. Resolves the selector to an exact `(name, version)` pair (using the lockfile for non-exact inputs).
-2. Looks up `<name>@<version>` in the global store. Errors with a `lpm install <name>@<version>` hint if not present.
-3. Copies the **pristine** store bytes into a unique staging directory under the OS temp root (`/tmp/lpm-patch-XXXXXX/node_modules/<name>/`). "Pristine" matters: re-running `lpm patch` on a project where this dep is already patched still seeds the staging dir from the upstream bytes, so the resulting diff is delta-from-upstream, not delta-from-previously-patched.
-4. Writes a `.lpm-patch.json` breadcrumb in the staging root recording the resolved `name`, `version`, exact-pin `key`, and the store source path.
-5. Prints the staging path. The dir is intentionally NOT auto-deleted — it must outlive the process so you can edit it.
+## Quickstart
 
-With `--json`, `lpm patch` emits `success`, `name`, `version`, `key`, `staging_dir`, `package_dir`, and `next_steps[]`. The next step is an object with `description` and a runnable `lpm patch-commit <staging_dir>` command after you edit `package_dir`.
-
-## `lpm patch-commit <staging_dir>`
+First, install the dependency with [`lpm install`](/docs/packages/install):
 
 ```bash
-lpm patch-commit /tmp/lpm-patch-XXXXXX
+lpm install lodash@4.17.21
+lpm patch lodash
 ```
 
-Steps:
+Edit the files inside the printed `package_dir`. Then commit the printed staging directory:
 
-1. Reads the breadcrumb to recover `(name, version, key)`.
-2. Re-locates the store baseline from the live store (not the breadcrumb's recorded path), so a store relocation between `patch` and `patch-commit` doesn't break the diff.
-3. Generates a unified diff between the staging directory and the pristine baseline. Aborts if the diff is **empty** ("no changes detected") or contains **binary file edits** (patches must be text-only — `originalIntegrity` already covers binary drift on install).
-4. Writes `<project>/patches/<key>.patch` atomically (`.tmp` then rename). Scoped names have `/` translated to `__` for cross-platform portability — `@scope/pkg@1.0.0` lands at `patches/@scope__pkg@1.0.0.patch`. Mirrors pnpm.
-5. Updates `package.json > lpm > patchedDependencies` with an entry recording the patch path and the original SRI integrity hash.
-6. Updates `lpm.lock > [patches]` when a lockfile exists, recording the patch path, patch-file SHA-256, and original integrity.
-7. Cleans up the staging directory (best-effort).
+```bash
+# Replace this example path with the printed staging directory.
+lpm patch-commit /tmp/lpm-patch-XXXXXX
+lpm install
+```
 
-The on-disk `package.json > lpm > patchedDependencies` entry looks like:
+`patch-commit` writes the patch and its registration. The next install applies it to `node_modules` before lifecycle scripts run.
 
-```json
+Commit `patches/`, `package.json`, and `lpm.lock` to Git. If LPM CLI writes `lpm.lockb`, commit that file too.
+
+## Examples
+
+```bash
+# Select an exact installed version.
+lpm patch lodash@4.17.21
+
+# Select one installed version from a range.
+lpm patch 'lodash@^4.0.0'
+
+# Patch a scoped dependency.
+lpm patch '@scope/package@1.2.3'
+
+# Preview removal of two registered patches.
+lpm patch-remove lodash '@scope/package@1.2.3' --dry-run
+
+# Remove a registration and retain its patch file.
+lpm patch-remove lodash --keep-file
+lpm install
+```
+
+### Project configuration
+
+`patch-commit` creates this entry automatically:
+
+```json title="package.json"
 {
   "lpm": {
     "patchedDependencies": {
@@ -88,42 +77,135 @@ The on-disk `package.json > lpm > patchedDependencies` entry looks like:
 }
 ```
 
-## `lpm patch-remove <selector>`
+| Field | Meaning |
+| --- | --- |
+| Entry key | The package name and exact version. |
+| `path` | The patch file, relative to this `package.json`. |
+| `originalIntegrity` | The source integrity recorded when you created the patch. |
+
+[`lpm.json`](/docs/reference/lpm-json) has no patch configuration block.
+There is no install flag to disable all patches for one run.
+An install that omits a dev or optional dependency also skips its patch and retains the registration.
+A later full install restores that dependency and applies its patch.
+
+## Select a package
+
+| Selector | Behavior |
+| --- | --- |
+| `lodash` | Select one package identity from the project lockfile. |
+| `lodash@4.17.21` | Select an exact version. Without a matching lockfile entry, require an unambiguous cached source. |
+| `lodash@^4.0.0` | Select one package identity that matches the range in the project lockfile. |
+| `lodash@latest` | Rejected. Patch creation does not resolve registry tags. |
+
+Bare names and ranges require a lockfile. Multiple matching versions produce an error that lists the choices.
+
+The same name and version from different sources can also be ambiguous.
+Patch registrations cannot distinguish those sources. Pin the dependency to one source before you create its patch.
+
+Packages must already exist in the local store. Registry authentication is unnecessary for extraction, commit, and removal.
+
+## Edit and commit a patch
+
+Extraction always starts from the original package files, including when the project already uses a patch.
+To replace an existing patch, include every edit that you want to retain.
+
+The staging directory contains `node_modules/<name>/` and a `.lpm-patch.json` file with the selected package and integrity.
+Keep this file intact. Keep the staging directory at its original temporary location until commit succeeds.
+
+Supported edits include additions, changes, and deletions of UTF-8 text files.
+Binary edits and symlinks are rejected. File permissions, executable-mode changes, and empty directories are not represented in the patch.
+
+Patch filenames and file paths must pass the same checks during commit and install.
+Paths cannot escape the package, use internal metadata names, or contain unsupported filename characters.
+The patch file and each changed file have a 256 MiB limit. Prepared file contents have a combined 512 MiB limit.
+
+`patch-commit` rejects an empty patch. On validation failure, it preserves the staging directory and the project files.
+On success, it updates the registration and existing lockfile, then removes the staging directory.
+
+Short, unscoped packages usually produce `patches/<name>@<version>.patch`.
+Scoped or long names use a readable prefix and a digest. Use the reported filename instead of constructing it yourself.
+
+A commit cannot replace an artifact that another registration still references.
+To keep both patches, move the existing artifact to a separate path.
+Then update its registration before commit.
+
+### Workspace members
+
+From a member directory, the patch commands update that member's manifest and its records in the shared root lockfile.
+Run the commands from the project that owns the patch. See [Workspaces](/docs/packages/workspaces).
+
+## Remove patches
 
 ```bash
-lpm patch-remove lodash@4.17.21
-lpm patch-remove lodash --dry-run
-lpm patch-remove lodash@4.17.21 --keep-file
+lpm patch-remove lodash '@scope/package@1.2.3' --dry-run
+lpm patch-remove lodash '@scope/package@1.2.3'
+lpm install
 ```
 
-Removes entries from `package.json > lpm > patchedDependencies` and removes matching `lpm.lock > [patches]` records when a lockfile exists. Exact pins (`lodash@4.17.21`) match one manifest entry. Bare names (`lodash`) work only when they uniquely match a single patched version; if multiple patched versions exist, use the exact key.
+Removal accepts exact keys and bare names that match one registered version. It does not accept ranges or registry tags.
 
-By default, LPM CLI also deletes the patch file when it is safely inside the project and no remaining patch entry references it. Use `--keep-file` to leave the file on disk. Use `--dry-run` to preview the manifest and file changes without writing.
+By default, removal deletes an unshared patch file only inside the project's `patches/` directory.
+A file that another registration references stays on disk. `--keep-file` retains the file even after its last registration disappears.
 
-After removing a patch, run `lpm install` to refresh `node_modules`.
+`--dry-run` performs the same selection and file-safety checks without changes.
+An unsafe deletion fails during the preview. Use `--keep-file` when you want to remove only its registration and lockfile record.
 
-## Drift safety
+Removal does not immediately change installed package files. The next install restores the original package files.
 
-On every install, LPM CLI verifies both patch inputs before applying anything:
+## Integrity checks
 
-- The current patch file's SHA-256 must match `lpm.lock > [patches].sha256`.
-- The store entry's integrity must match `originalIntegrity`.
+Installs check the patch file against the checksum in `lpm.lock`.
+Each selected destination must also have the source integrity recorded in `originalIntegrity`.
+A cached copy of the old source cannot authorize a patch for a different source.
 
-**Drift is a hard error** — your install will refuse to apply the patch if the patch file changed outside `lpm patch-commit`, or if the underlying package's content changed (re-publish under the same version, tampering, etc.). Restore the recorded patch file, or re-author it through `lpm patch` + `lpm patch-commit`.
+A mismatch stops installation. The check binds the patch to the selected package bytes.
+It does not detect an upstream republish until an install selects those new bytes.
 
-This is the key safety property versus stock `patch-package`: a republished `lodash@4.17.21` with different bytes can't silently slip past your patch.
+Patches apply after dependency resolution. A patch to `package.json` cannot change the resolved graph or repair a peer conflict that prevents installation.
+Use [Overrides](/docs/reference/package-json-lpm#overrides) or [Peer dependencies](/docs/reference/package-json-lpm#peerdependencyrules) for those changes.
 
-## When to use
+### Recovery
 
-- A dependency has a known bug; the upstream PR isn't merged yet.
-- A peer-dep mismatch needs a one-line fix to make installation work.
-- A vendored package needs a tiny tweak that doesn't justify forking.
+| Error | Action |
+| --- | --- |
+| Package is absent from the store | Run [`lpm install`](/docs/packages/install), then extract the package again. |
+| Patch checksum differs | Restore the recorded artifact, or create its replacement through `patch` and `patch-commit`. |
+| Source integrity differs or a hunk fails | Preserve your edits. Extract the current package and create a new patch against it. |
+| Patch target is absent from the dependency graph | Remove its stale registration with `patch-remove`. |
+| Staging metadata is missing or invalid | Extract a new staging directory, then copy your edits into its package directory. |
+| Patch set changed before an offline install | Run an online install once, then retry `lpm install --offline`. |
 
-For larger or longer-lived divergence, prefer forking + publishing your own scoped variant.
+## JSON and automation
+
+All three commands accept the global `--json` flag:
+
+```bash
+lpm patch lodash@4.17.21 --json > patch-work.json
+jq -r '.package_dir, .staging_dir' patch-work.json
+
+# After a script or editor changes the files in package_dir:
+lpm patch-commit "$(jq -r '.staging_dir' patch-work.json)" --json
+lpm patch-remove lodash --dry-run --json
+```
+
+Extraction returns `name`, `version`, `key`, `staging_dir`, `package_dir`, and `next_steps`.
+Use `next_steps[].args` to obtain the commit arguments without parsing a shell command.
+
+Commit returns the artifact path, changed-file counts, original integrity, and whether it updated a lockfile.
+Removal returns a `removed` array with each key, file-deletion result, and retention reason.
+
+## Flags
+
+| Command | Flag | Behavior |
+| --- | --- | --- |
+| `patch-remove` | `--dry-run` | Check and preview removal without changes. |
+| `patch-remove` | `--keep-file` | Retain the patch files. |
+| All three | `--json` | Write structured output. |
+| All three | `-h`, `--help` | Show command help. |
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — auto-applies patches after linking
-- [`lpm sbom`](/docs/packages/sbom) — includes patch metadata in generated SBOMs
-- [`package.json` "lpm.patchedDependencies"](/docs/reference/package-json-lpm#patcheddependencies) — the file format
-- [Content-addressable store](/docs/packages/content-addressable-store) — what the patch is generated against
+- [`lpm install`](/docs/packages/install) — apply registered patches.
+- [`lpm sbom`](/docs/packages/sbom) — include patch metadata in a software bill of materials.
+- [`package.json > lpm.patchedDependencies`](/docs/reference/package-json-lpm#patcheddependencies) — registration format.
+- [Content-addressable store](/docs/packages/content-addressable-store) — original package storage.
