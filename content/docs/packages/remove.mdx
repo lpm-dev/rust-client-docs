@@ -1,44 +1,180 @@
 ---
 title: lpm remove
-description: "Remove source files that lpm add previously copied into your project."
+description: "Remove tracked source files, restore overwritten originals, and preserve your edits."
 ---
 
+`lpm remove` removes source files that [`lpm add`](/docs/packages/add) copied into the current project.
+
 ```bash
-lpm remove <package>   # alias: lpm rm
+lpm remove [OPTIONS] <PACKAGE>
+lpm rm [OPTIONS] <PACKAGE>
 ```
 
-Cleans up the on-disk artifacts of an [`lpm add`](/docs/packages/add) invocation by reading the project-local `.lpm/added-sources.json` manifest that `lpm add` writes. Exact tracked files are removed from whatever path they were copied to, then LPM CLI cleans up any package skills it installed.
+Use it for source packages from npm, LPM.dev Registry, or a private registry.
+For dependencies in `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall).
 
-This is the **reverse of [`lpm add`](/docs/packages/add)** for source-delivered packages on LPM.dev Registry, npm, or a private registry routed via `.npmrc`. To remove a runtime dependency from `package.json` and `node_modules`, use [`lpm uninstall`](/docs/packages/uninstall).
+## Quickstart
 
-## Scope
-
-`lpm remove` accepts the same package identity you passed to [`lpm add`](/docs/packages/add): bare npm names (`lodash.merge`), scoped registry packages (`@scope/private-pkg`), and LPM.dev Registry packages (`@lpm.dev/owner.ui-kit`). For legacy LPM.dev Registry cleanup, the short remove-only form (`owner.ui-kit`) still works too.
+From the project directory, remove a source package:
 
 ```bash
-lpm remove lodash.merge
-lpm remove @scope/private-pkg
 lpm remove @lpm.dev/owner.ui-kit
-lpm rm owner.ui-kit                 # short form
 ```
 
-## What it removes
+LPM CLI reads `.lpm/added-sources.json` and checks each tracked file before removal.
+It preserves your edits and restores originals that the add operation overwrote.
+The command works without a registry connection or confirmation prompts.
 
-For a tracked package, the command:
+| Goal | Command |
+| --- | --- |
+| Remove a source package | `lpm remove source-pkg` |
+| Remove a scoped source package | `lpm remove @scope/components` |
+| Use the short LPM.dev Registry name | `lpm rm owner.ui-kit` |
+| Return a machine-readable result | `lpm remove source-pkg --json` |
 
-1. Removes the exact file paths recorded in `.lpm/added-sources.json` when `lpm add` copied the source files.
-2. Prunes now-empty parent directories under the project root.
-3. Removes `.lpm/skills/<owner>.<name>/` if the add installed package-published skills. Current installs do not create editor links for package skills; cleanup also removes links left by older LPM CLI versions.
+[`lpm.json`](/docs/reference/lpm-json) has no remove configuration block.
+Removal uses the tracked paths, including custom destinations from `lpm add --path`.
 
-That manifest-backed path means custom `--path` installs are reversible now — if you ran `lpm add source-pkg --path ./src/vendor`, `lpm remove source-pkg` removes the tracked files from `src/vendor` rather than guessing from framework defaults.
+## Examples
 
-For older projects added before `.lpm/added-sources.json` existed, `lpm remove` falls back to the legacy heuristic scan of canonical directories such as `components/`, `src/components/`, `lib/`, `src/lib/`, `Sources/`, and `Packages/LPMComponents/Sources/`. That fallback can still miss custom pre-manifest installs.
+### Remove source from a custom directory
 
-There is still no dedicated `--dry-run` or "show me the tracked paths" flag. If you need to inspect what a manifest-backed remove will target, read `.lpm/added-sources.json` in the project root.
+```bash
+lpm add source-pkg --path ./src/vendor --yes
+lpm remove source-pkg
+```
 
-The command exits successfully even when no files were found, with a warning naming the package — useful for idempotent CI cleanup, but it also means a typo'd name fails silently.
+The remove command finds the recorded paths under `src/vendor`. It needs no destination flag.
+
+### Reconcile dependencies after removal
+
+```bash
+lpm remove source-pkg
+lpm install
+```
+
+Removal can delete dependency declarations that the source package introduced.
+It leaves dependency lockfiles and `node_modules` unchanged.
+[`lpm install`](/docs/packages/install) reconciles them with the updated `package.json`.
+
+### Remove source in automation
+
+```bash
+lpm remove source-pkg --json > remove-result.json
+```
+
+An untracked package returns success with an empty `removed` list.
+This permits repeated cleanup, but success alone does not show that the name matched a tracked package.
+
+## Files and ownership
+
+LPM CLI removes an unchanged file that the add operation created.
+For an unchanged overwritten file, it restores the saved original, including its recorded Unix permissions.
+If the copied replacement is already missing, LPM CLI still restores the original.
+
+Removal preserves:
+
+- Files that you edited after the add operation.
+- Preexisting files that the add operation left unchanged.
+- Files whose tracking record lacks enough information for safe removal.
+- Files and dependency declarations that another source package still owns.
+
+LPM CLI keeps ownership records and backups for preserved managed files.
+For shared files, it transfers the required ownership and backup information to the remaining package.
+The last owner can then remove the managed file or restore the original.
+
+Only empty directories created by source delivery are eligible for cleanup.
+Preexisting directories and directories with other content remain.
+
+Keep `.lpm/added-sources.json` and `.lpm/added-source-backups/` with the project until removal is complete.
+Without a tracking record, the command cannot identify source files for removal.
+
+### Dependency declarations
+
+For a dependency declaration, removal requires all these conditions:
+
+- The source package introduced the declaration.
+- Its dependency section and version requirement still match the recorded values.
+- No remaining source package needs it.
+
+Existing or edited declarations remain in `package.json`.
+See [`lpm add --no-install-deps`](/docs/packages/add#flags) to skip consumer dependency changes during source delivery.
+
+### Package skills
+
+Removal cleans up unchanged package skills under `.lpm/skills/`.
+It rejects modified skill files or unexpected content in the package skill directory.
+
+For editor links from older CLI versions, cleanup removes only links to that package's materialized skill files.
+User files, directories, and links to other targets remain.
+See [AI agent skills](/docs/reference/ai-agent-skills).
+
+## Workspaces
+
+Run the command from the member that received the source files:
+
+```bash
+cd packages/web
+lpm remove @lpm.dev/owner.ui-kit
+```
+
+Removal uses the current directory. It does not search parent directories or select other workspace members.
+Workspace members share the root project lock, which prevents conflicting package operations.
+
+## Recovery
+
+After an interrupted removal, run the same command again:
+
+```bash
+lpm remove source-pkg
+```
+
+Before the new operation, LPM CLI recovers unfinished source changes, source tracking, and staged manifests.
+Recovery also restores original directory objects and overwrite backups.
+If removal already committed, the next command finishes archive cleanup.
+
+If recovery finds later edits, it stops and preserves them.
+Save those edits separately before you reconcile the paths named in the error.
+Recovery records and original copies remain under `.lpm/install-recovery/` and the reported `.lpm/.source-remove-*` archive.
+In a workspace, the recovery records belong to the workspace root. A removal archive stays with its member.
+
+Keep those recovery files until recovery succeeds.
+If dependency state needs reconciliation, run [`lpm install`](/docs/packages/install) after source recovery.
+
+## JSON output
+
+```bash
+lpm remove source-pkg --json
+```
+
+```json
+{
+  "success": true,
+  "package": "source-pkg",
+  "removed": ["src/vendor/Source.ts"],
+  "preserved": ["src/vendor/Edited.ts"],
+  "dependenciesRemoved": ["source-helper"]
+}
+```
+
+`removed` includes tracked files that LPM CLI deleted or restored, plus removed skill paths and editor links.
+`preserved` lists source files that remain after ownership and content checks.
+`dependenciesRemoved` lists deleted dependency declarations.
+Empty `preserved` and `dependenciesRemoved` fields are omitted.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Return the removal result as JSON. |
+| `-h`, `--help` | Show command help. |
+
+The command has no dedicated `--dry-run`, `--force`, or `--yes` flag.
+See [global flags](/docs/commands#global-flags) for shared output controls.
 
 ## See also
 
-- [`lpm add`](/docs/packages/add) — the forward direction
-- [`lpm uninstall`](/docs/packages/uninstall) — remove a runtime dependency
+- [`lpm add`](/docs/packages/add) — copy and track source packages
+- [`lpm uninstall`](/docs/packages/uninstall) — remove installed dependencies
+- [`lpm install`](/docs/packages/install) — reconcile dependencies after source removal
+- [Workspaces](/docs/packages/workspaces) — manage projects with shared dependencies
