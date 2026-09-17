@@ -1,112 +1,263 @@
 ---
 title: lpm add
-description: "Copy source files from a package into your project (shadcn-style)."
+description: "Copy package source into your project, configure its files, and update tracked source safely."
 ---
 
-```bash
-lpm add <package>
-```
-
-`lpm add` extracts a package's source files into your project rather than installing it as a runtime dependency. Think `shadcn-ui` style: the code lands in your repo, you own it, you edit it.
-
-`lpm install` is the runtime-dependency command. `lpm add` is the source-delivery command. The two are not aliases.
-
-Works with **any registry** the resolver can reach — LPM.dev Registry, npmjs.org, or a `.npmrc`-declared private registry. Anything that ships a tarball is fair game.
-
-Try the public npm example package:
+`lpm add` copies source files into your project so you can edit and commit them with your application.
 
 ```bash
-lpm add lpm-source-package
+lpm add [OPTIONS] <PACKAGE>
 ```
 
-[`lpm-source-package`](https://www.npmjs.com/package/lpm-source-package) is a minimal configurable source package published to npm, so it exercises the same registry-agnostic `lpm add` path without requiring an LPM.dev Registry package.
+Use [`lpm install`](/docs/packages/install) to add runtime dependencies to `node_modules`.
+`lpm add` supports registry package names, versions, and tags from npm, LPM.dev Registry, and private registries through `.npmrc`.
+Only `@lpm.dev/*` packages always use LPM.dev Registry. See [Registries](/docs/registries).
 
-Like [`lpm install`](/docs/packages/install#typosquat-guard), `lpm add` rejects a likely typosquatted package name before any registry fetch. Intentional names use the committed [`policy.typosquat.allow`](/docs/reference/lpm-toml#typosquat-policy) list in `lpm.toml`.
+## Quickstart
 
-When npm firewall mode is `monitor` or `enforce`, LPM CLI checks the selected source package with LPM Firewall at `firewall.lpm.dev` when it is a routed public npm package. LPM Firewall is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally or set `LPM_TOKEN` in CI. `monitor` warns and continues when entitlement is denied, while `enforce` blocks packages whose effective firewall action is `block` or denied by entitlement before the source tarball is downloaded or copied. In human output, the source-package download line shows `🔥 LPM Firewall active` when that check is active. LPM.dev Registry packages and other `.npmrc`-declared private/custom registry packages are not sent to the npm firewall verdict API. Dependencies installed after a config-aware source copy use the normal install pipeline and its firewall checks. The legacy string `report` is still accepted as a `monitor` alias.
+Try the public [lpm-source-package](https://www.npmjs.com/package/lpm-source-package) example:
+
+```bash
+lpm add lpm-source-package --yes
+```
+
+For a package without source configuration, provide a destination:
+
+```bash
+lpm add lodash.merge --path src/vendor/lodash-merge --yes
+```
+
+Run the command from the project or workspace member that must receive the files.
+The current directory is the project directory. `lpm add` does not search ancestor directories for `package.json`.
+
+### Choose a delivery mode
+
+| Package contents | Behavior |
+| --- | --- |
+| A root `lpm.config.json` | Apply file mappings, configuration values, import rewrites, and declared dependencies. |
+| No `lpm.config.json` | Copy source files and report external imports. No automatic dependency installation. |
+| A Swift source package | Copy Swift source and its LPM.dev Registry source dependencies. See [Swift packages](#swift-packages). |
+
+## Configuration
+
+[`lpm.json`](/docs/reference/lpm-json) has no source-delivery configuration block.
+The publisher's [`lpm.config.json`](/docs/reference/lpm-config-json) controls file selection, configuration prompts, dependency declarations, and import aliases.
+A valid file activates this behavior regardless of its optional `type` value.
+
+Without `--path`, configured packages detect a destination from the project structure and declared ecosystem.
+Interactive JavaScript commands ask for a destination and offer the detected path as the default.
+For plain copies, an interactive command also asks for a destination.
+Non-interactive commands require `--path` for plain copies.
+
+```bash
+lpm add '@lpm.dev/owner.ui-kit?component=dialog' --yes
+lpm add @my-co/internal --path src/vendor --yes
+lpm add @my-co/internal --path "src/shared UI" --yes
+```
+
+`--path` overrides the automatic or interactive destination.
+Paths must remain inside the project, including through symbolic links. `.lpm` is reserved for project state.
+Source packages cannot map multiple files to the same destination. A file destination cannot also serve as another file's directory.
+
+### Pre-answer prompts
+
+Append query values to the package argument:
+
+```bash
+lpm add '@lpm.dev/owner.ui-kit?component=dialog&styling=panda' --yes
+lpm add '@lpm.dev/owner.ui-kit?name=Team%27s+UI&components=dialog%2Cpopover' --yes
+lpm add '@lpm.dev/owner.ui-kit?components=&withTests=false' --yes
+```
+
+Quote the full argument so the shell preserves `&`.
+Encode punctuation in values: `%26` for `&`, `%2B` for `+`, and `%27` for an apostrophe.
+A `+` means a space. LPM CLI decodes each key and value once, then rejects malformed escapes or duplicate keys.
+
+Inline values take precedence over `defaultConfig`, then the field's `default`.
+An empty optional multi-select, such as `components=`, selects nothing and overrides its default.
+A required selection cannot be empty.
+
+Interactive commands prompt for fields without inline values.
+`--yes`, `--json`, and commands without a terminal apply defaults and reject required fields without a usable value.
+`--yes` does not authorize file overwrites.
+
+### Override import aliases
+
+LPM CLI uses the publisher's import alias and the project's TypeScript or JavaScript configuration to rewrite mapped imports.
+
+```bash
+lpm add @lpm.dev/owner.ui-kit --path src/components --alias '@/components' --yes
+```
+
+`--alias` overrides alias detection for this run.
+Mapped JavaScript imports retain runtime extensions such as `.js` and `.mjs`.
+Source delivery also preserves executable permissions on Unix systems.
 
 ## Examples
 
 ```bash
-lpm add @lpm.dev/owner.ui-kit                      # add an LPM.dev Registry package
-lpm add @lpm.dev/owner.ui-kit@1.2.0                # add a specific version
-lpm add @lpm.dev/owner.ui-kit?component=dialog     # add only one component
-lpm add lodash.merge                               # add an npm package's source
-lpm add @my-co/internal --path ./src/vendor        # custom destination
-lpm add my-pkg --dry-run                           # preview without writing
-lpm add @lpm.dev/owner.ui-kit --no-skills          # skip package skills once
+lpm add @lpm.dev/owner.ui-kit@1.2.0 --yes
+lpm add @my-co/internal --path src/vendor --dry-run --json
+lpm add @lpm.dev/owner.ui-kit --no-install-deps --yes
+lpm add @lpm.dev/owner.ui-kit --pm auto --yes
+lpm add @lpm.dev/owner.ui-kit --no-skills --yes
 ```
 
-On Windows, destination paths can contain spaces and Unicode characters.
-Quote paths that contain spaces:
+## Updates and file conflicts
 
-```powershell
-lpm add @my-co/internal --path "src/shared UI" --yes
+To update tracked source, run `lpm add` with the new version and the intended destination:
+
+```bash
+lpm add @lpm.dev/owner.ui-kit@1.2.1 --path src/components --dry-run --yes
+lpm add @lpm.dev/owner.ui-kit@1.2.1 --path src/components --yes
 ```
 
-The destination must remain inside the project.
-Paths cannot escape through `..` or symbolic links, and `.lpm` remains reserved for project state.
+If cached metadata lacks the requested version, LPM CLI refreshes metadata once before it reports that version unavailable.
+Each add downloads and extracts the source package again. Source tarballs do not enter the dependency store.
 
-## How it works
+| Existing file | Default behavior |
+| --- | --- |
+| No file | Create it. |
+| Tracked file with unchanged installed contents | Update it, or skip it if the new contents match. |
+| Edited or untracked file | Ask interactively. Preserve it in a non-interactive command. |
+| Previously tracked file absent from the new selection | Remove an unchanged created file, or restore its saved original after an overwrite. |
+| Stale file that is edited, shared, or lacks ownership evidence | Preserve it. |
 
-1. Resolves the spec against the appropriate registry.
-2. Downloads the tarball into a temporary file and extracts it to a tempdir. Unlike `lpm install`, the tarball is **not** persisted to `~/.lpm/store/` — `lpm add` is a copy-and-discard flow. Re-running `lpm add` re-downloads.
-3. Picks where to put the files. With `--path`, honors it. Without `--path` in a TTY (and not `--yes` / `--json`), prompts for an install directory. Non-interactive (`--yes`, `--json`, or non-TTY) requires `--path` for simple-path packages (no `lpm.config.json`); config-aware packages auto-detect from their declared ecosystem.
-4. Copies the source into the destination, prompting on conflicts.
-5. If the package declares an `lpm.config.json`, runs the package's configured install steps (component selection, alias rewrites, dep installation). If not, it's a plain source copy and you handle dependencies yourself.
+Use `--force` to overwrite file conflicts:
 
-`lpm add` does **not** auto-install bare imports it discovers in the copied source. It will surface them at the end of the run so you can add them yourself.
-
-With the default `--pm lpm`, declared dependencies honor the same [minimum release age](/docs/packages/install#recently-published-packages) policy as [`lpm install`](/docs/packages/install). A bare dependency or `name@latest` selects the newest version old enough to install, then saves the project range from that selected version. An author-written range such as `name@^1.11.5` remains unchanged: fallback can only select older versions that still satisfy that range. If no mature version satisfies it, `lpm add` fails and restores the copied files, `package.json`, and lockfiles to their pre-add state.
-
-Human output is structured around the source-copy flow:
-
-```text
-› Downloading source package source-pkg@1.0.0
-› Detecting project structure
-    Framework:    Vite
-    Install path: src/components
-    Import alias: @/src/components/
-✓ Files copied
-+ Foo.tsx
-› Installing declared dependencies
-+ lucide-react@^0.400.0
-✓ Done · added 1 file and 1 dependency in 486ms
+```bash
+lpm add @lpm.dev/owner.ui-kit --path src/components --force --yes
 ```
 
-File conflicts use a slim warning line (`! File exists: ...`) before the interactive choice.
+LPM CLI tracks delivered files and overwrite backups for later updates and [`lpm remove`](/docs/packages/remove).
+Keep `.lpm/added-sources.json` and `.lpm/added-source-backups/` available for these operations.
 
-## Config-aware vs simple copy
+## Preview changes
 
-A package becomes "config-aware" by shipping an `lpm.config.json` at the tarball root. That file declares components, dependencies to auto-install, import aliases, and editor integration hints. Its optional `type` field controls LPM.dev Registry classification, not this command path: a valid config always activates the configured `lpm add` behavior, including with `"type": "package"`. Without a config, `lpm add` is a plain source copy — useful for any tarball, not just LPM.dev Registry packages.
+```bash
+lpm add @lpm.dev/owner.ui-kit --dry-run --yes
+lpm add @lpm.dev/owner.ui-kit --dry-run --json
+```
 
-For `@lpm.dev/*` source packages, `lpm add` also reconciles package-published agent guidance into `.lpm/skills/<package>/` by default. Use `--no-skills` to skip that step once, or `lpm config lpm-skills --set false` to persist the preference. `--skills` overrides the persistent opt-out for one run. The setting does not delete existing package skills or affect explicit `lpm skills add` commands; see [AI agent skills](/docs/reference/ai-agent-skills).
+`--dry-run` resolves and downloads the source package, but does not change project files or run a package manager.
+It shows incoming file actions, stale-file actions, declared dependency counts, and tracked dependencies to remove.
+Swift previews also include recursive source dependencies.
+
+Preview uses the non-interactive conflict policy: preserve unmanaged or edited files unless `--force` is present.
+It applies import rewrites before it compares contents.
+A successful preview does not guarantee that dependency resolution, engine checks, or a later installation will succeed.
+
+JSON output is one document. `files` paths are relative to `target`.
+Optional `stale_files` paths are relative to the project.
+Optional `dependencies_removed` lists dependency names, sections, and saved specifications.
+Optional `source_dependencies` contains the Swift child previews.
+
+If an earlier operation requires recovery, preview stops without changing that recovery state.
+Run a regular add or [`lpm remove`](/docs/packages/remove) to recover first.
+
+## Dependencies
+
+Configured packages can declare conditional dependencies in `lpm.config.json`.
+If that field is absent, LPM CLI uses the source package's `dependencies` and `peerDependencies`.
+An explicit empty `dependencies` field disables this fallback.
+Plain copies never install dependencies automatically.
+
+If the selected source declares dependencies, the receiving project must already have `package.json`.
+LPM CLI stops before it copies files if that manifest is missing.
+
+```bash
+lpm init
+lpm add @lpm.dev/owner.ui-kit --yes
+```
+
+To manage dependencies yourself, skip consumer dependency changes:
+
+```bash
+lpm add @lpm.dev/owner.ui-kit --no-install-deps --yes
+```
+
+This flag skips both dependency installation and stale dependency removal.
+Earlier dependency ownership remains tracked for future updates or [`lpm remove`](/docs/packages/remove).
+Swift source dependencies still copy recursively.
+
+### Choose a package manager
+
+```bash
+lpm add @lpm.dev/owner.ui-kit --pm pnpm --yes
+lpm add @lpm.dev/owner.ui-kit --pm auto --yes
+```
+
+The default is `--pm lpm`.
+`auto` looks for pnpm, Yarn, Bun, then npm lockfiles. Without a recognized lockfile, it selects LPM CLI.
+Other package managers must be available and apply their own dependency and lifecycle-script rules.
+
+With `--pm lpm`, dependencies use the normal [install policies](/docs/packages/install#lifecycle-scripts).
+The [minimum release age](/docs/packages/install#recently-published-packages) policy also applies to the selected source package.
+Bare dependency names select an eligible version and save the resulting range.
+Explicit ranges remain unchanged and only accept eligible versions within that range.
+
+An update removes a stale dependency only if source tracking owns it and its saved section and specification still match.
+Edited and pre-existing dependency declarations remain in place. Other source packages can retain shared dependency ownership.
+
+## Registry security and package skills
+
+Source downloads require registry integrity metadata or a checksum.
+The [typosquat guard](/docs/packages/install#typosquat-guard) is disabled by default.
+If enabled, it checks source package names before registry requests.
+
+For routed public npm packages, active [LPM Firewall](/docs/guides/firewall) modes check the source package before download.
+`monitor` warns and continues. `enforce` blocks denied packages and requires an eligible LPM.dev Registry account.
+Private registry packages and LPM.dev Registry packages do not use the public npm verdict API.
+
+For `@lpm.dev/*` packages, source delivery installs package-published skills by default.
+A skills failure produces a warning after the source copy.
+
+```bash
+lpm add @lpm.dev/owner.ui-kit --no-skills --yes
+lpm config lpm-skills --set false
+lpm add @lpm.dev/owner.ui-kit --skills --yes
+```
+
+`--no-skills` skips skills once. The configuration command changes the persistent default.
+`--skills` overrides that default once. These controls do not remove existing skills.
+See [AI agent skills](/docs/reference/ai-agent-skills).
 
 ## Swift packages
 
-For Swift packages, prefer **[`lpm install`](/docs/packages/install)** — it resolves SPM dependencies through the [SE-0292 Registry](/docs/packages/swift-package-registry) and edits `Package.swift`.
-
-`lpm add` remains a legacy source-delivery path for Swift. On that path, `--target <NAME>` only appends a directory to the automatic destination: `Sources/<NAME>` for an SPM project or `Packages/LPMComponents/Sources/<NAME>` when an Xcode project or workspace is present. It does not edit `Package.swift` or wire an Xcode target.
-
-## Authoring config-aware packages: `lpm.config.json`
-
-Ship `lpm.config.json` at the root of your tarball to control how `lpm add` extracts your package. With the file present, `lpm add` becomes a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting.
-
-Install the [`lpm-guide`](https://github.com/lpm-dev/lpm-guide) skill if you want an agent to draft the config from your source tree:
+Use [`lpm install`](/docs/packages/install) for Swift registry dependencies and `Package.swift` changes.
+`lpm add` remains a legacy path for Swift source delivery.
 
 ```bash
-lpm skills add lpm-dev/lpm-guide
+lpm add @lpm.dev/owner.swift-components --target App --yes
 ```
 
-Then paste a prompt like this into your agent:
+`--target` adds a destination suffix: `Sources/App` for SPM projects or `Packages/LPMComponents/Sources/App` for Xcode projects.
+It does not edit `Package.swift` or connect an Xcode target.
+`--path` overrides the automatic destination.
 
-```text
-Use the lpm-guide skill's Source Config workflow. Inspect this package's source tree and generate an lpm.config.json for a configurable source package.
+Swift source dependencies from LPM.dev Registry copy recursively, including with `--no-install-deps`.
+LPM CLI rejects incompatible version requirements and avoids repeated delivery through dependency cycles.
 
-Identify the options consumers should choose, such as components, styling framework, variants, or optional examples. Use required fields when choices would conflict, add defaultConfig so lpm add --yes works, map files[] from the package root to the consumer install path, declare conditional dependencies, and include example lpm add commands with query params.
-```
+## Interruption recovery
 
-```json title="lpm.config.json (sketch)"
+After an interrupted add, run `lpm add` again or run [`lpm remove`](/docs/packages/remove).
+LPM CLI recovers copied files, overwrite backups, source tracking, and staged manifests before the next operation.
+Recovery removes newly created directories only when they are empty.
+
+If you edited a copied file after the interruption, recovery stops and preserves your edits.
+Save those edits separately.
+The matching JSON record in `.lpm/install-recovery/sources/` identifies the path. Its `.original` file contains the original bytes.
+Restore those bytes and permissions, or remove a new file that had no original. Then retry the command.
+Keep the recovery directory until recovery succeeds.
+
+A hard stop can leave dependency lockfiles or `node_modules` changed.
+Run [`lpm install`](/docs/packages/install) after source recovery to reconcile dependency state.
+
+## Publish a configured source package
+
+Include `lpm.config.json` at the root of the published package:
+
+```json title="lpm.config.json"
 {
   "$schema": "https://cli.lpm.dev/schemas/lpm.config.json",
   "ecosystem": "js",
@@ -114,111 +265,55 @@ Identify the options consumers should choose, such as components, styling framew
   "configSchema": {
     "component": {
       "type": "select",
-      "label": "Which component?",
       "options": ["dialog", "popover"],
       "default": "dialog",
       "required": true
-    },
-    "withTests": { "type": "boolean", "label": "Include tests?", "default": false }
+    }
   },
   "files": [
-    { "src": "src/dialog/**", "dest": "dialog", "include": "when",
-      "condition": { "component": "dialog" } },
-    { "src": "tests/**", "dest": "__tests__", "include": "when",
-      "condition": { "withTests": true } }
+    {
+      "src": "src/dialog/**",
+      "dest": "dialog",
+      "include": "when",
+      "condition": { "component": "dialog" }
+    },
+    {
+      "src": "src/popover/**",
+      "dest": "popover",
+      "include": "when",
+      "condition": { "component": "popover" }
+    }
   ],
-  "dependencies": {
-    "withTests": { "true": ["vitest"] }
-  }
+  "dependencies": {}
 }
 ```
 
-The full schema reference — every field, every value type, every default — lives at [`lpm.config.json`](/docs/reference/lpm-config-json). The published JSON Schema at [`https://cli.lpm.dev/schemas/lpm.config.json`](https://cli.lpm.dev/schemas/lpm.config.json) drives editor autocomplete (add `$schema` as shown above).
-
-### Pre-answering prompts
-
-Prompts can be pre-answered from the CLI by appending `?key=value&key=value` to the package spec:
-
-```bash
-lpm add '@lpm.dev/owner.ui-kit?component=dialog&styling=panda'
-```
-
-Quote the full package argument so the shell preserves `&`. Encode punctuation inside values: `%26` for `&`, `%2B` for `+`, and `%27` for an apostrophe. A `+` means a space. LPM CLI decodes each key and value once, then rejects malformed escapes or duplicate keys.
-
-```bash
-lpm add '@lpm.dev/owner.ui-kit?name=Team%27s+UI&components=dialog%2Cpopover'
-lpm add '@lpm.dev/owner.ui-kit?components=&withTests=false' --yes
-```
-
-Inline values bypass prompts. An empty optional multi-select, such as `components=`, selects nothing and overrides its default. A required selection cannot be empty.
-
-For fields without inline values, `defaultConfig` takes precedence over the field's `default`. Non-interactive commands apply these defaults and reject required fields that have no usable value.
-
-On the package detail page, **Configure** supports strings, booleans, and selections. Complete every required field before copying the command. The generated command preserves both boolean values and empty or full multi-selections.
-
-### Behavior matrix
-
-| State | What `lpm add` does |
-| --- | --- |
-| No `lpm.config.json` | Plain source copy. Prompts for a destination interactively; otherwise requires `--path`. Does not install dependencies. Reports bare imports. |
-| `lpm.config.json` present, TTY | Prompts for every `configSchema` key not already inlined; copies per `files[]` rules; installs `dependencies` matching the chosen values. |
-| `lpm.config.json` present, `--yes` | Applies defaults to omitted fields and rejects missing required values. |
-| `lpm.config.json` present, `--json` or non-TTY without `--yes` | Uses the same configuration defaults and required-field validation as `--yes`. |
-
-### Prerequisites
-
-If the source package declares dependencies (config-driven or via its own `package.json`), your project must already have a `package.json`. `lpm add` runs a preflight check before copying any files and exits early with a remediation hint if the manifest is missing — there's nowhere for the dep entries to land otherwise, and we'd rather fail loudly than copy source files you can't `import` from.
-
-```
-$ lpm add @author/ui-kit
-error: this source package declares dependencies, but the project has no
-       `package.json` to record them in.
-       Run `lpm init` (or `npm init -y`) first to create a manifest, then
-       re-run `lpm add`.
-       To copy the source files without installing the declared dependencies,
-       pass `--no-install-deps` and resolve the imports yourself.
-```
-
-If you only want the source files (and you'll handle the imports yourself), pass `--no-install-deps` to skip the preflight and let the copy proceed without touching `package.json`.
-
-## Updates and interruption recovery
-
-To update copied source, run `lpm add` with the new version. If cached metadata lacks that version, LPM CLI refreshes metadata once before reporting it unavailable.
-
-```bash
-lpm add @lpm.dev/owner.ui-kit@1.2.1 --path src/vendor
-```
-
-Mapped JavaScript imports retain runtime extensions such as `.js` and `.mjs`. Source delivery preserves executable permissions on Unix systems.
-
-After an interrupted add, run `lpm add` again or run [`lpm remove`](/docs/packages/remove). Before either command proceeds, LPM CLI recovers copied files, overwrite backups, source tracking, and staged manifests. Recovery removes newly created directories only when they are empty.
-
-If you edited a copied file after the interruption, recovery stops and preserves your edits. Save those edits separately. The matching JSON record in `.lpm/install-recovery/sources/` identifies the path; its `.original` file contains the original bytes. Restore those bytes and permissions, or remove a new file that had no original, then retry. Keep the recovery directory until recovery succeeds.
-
-A hard stop can leave dependency lockfiles or `node_modules` changed. Run [`lpm install`](/docs/packages/install) after source recovery to reconcile dependency state.
+The [full schema reference](/docs/reference/lpm-config-json) covers supported fields, conditions, defaults, and dependency selection.
+The published schema supplies editor autocomplete through `$schema`.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--path <DIR>` | Target directory (overrides interactive prompt and auto-detection) |
-| `-y`, `--yes` | Skip interactive prompts, use defaults |
-| `--force` | Overwrite existing files without prompting |
-| `--dry-run` | Show what would be done without writing anything |
-| `--no-install-deps` | Skip dependency installation after copy (for config-aware packages) |
-| `--skills` | Install package-published LPM.dev skills for this invocation, overriding user config |
-| `--no-skills` | Skip package-published LPM.dev skill auto-install for this invocation |
+| `--path <PATH>` | Override the destination directory. |
+| `-y`, `--yes` | Skip prompts and use configuration defaults. Preserve file conflicts unless `--force` is present. |
+| `--force` | Overwrite file conflicts without a prompt. |
+| `--dry-run` | Preview source actions without project changes or dependency installation. |
+| `--no-install-deps` | Skip consumer dependency changes. Still copy Swift source dependencies. |
+| `--skills` | Install package-published skills for this run, overriding the persistent default. |
+| `--no-skills` | Skip automatic package skills for this run. Conflicts with `--skills`. |
 | `--no-editor-setup` | Compatibility flag. Package skills do not create editor integrations. |
-| `--pm <NAME>` | Package manager for dep installation (`lpm`, `npm`, `pnpm`, `yarn`, `bun`, `auto`; default `lpm`) |
-| `--alias <ALIAS>` | Import alias prefix (e.g., `@/components`) — overrides auto-detection |
-| `--target <NAME>` | Swift source-copy destination suffix; does not perform SPM or Xcode target wiring |
-| `--no-engine-strict` | Use warning-only root checks and, when LPM CLI installs dependencies, dependency checks (see [`lpm install`](/docs/packages/install#engines-enforcement)). Root preflight runs before any manifest mutation, so a constraint violation can't leave the project half-modified. |
+| `--pm <PM>` | Dependency manager: `lpm`, `npm`, `pnpm`, `yarn`, `bun`, or `auto`. Default: `lpm`. |
+| `--alias <ALIAS>` | Override the import alias prefix. |
+| `--target <NAME>` | Add a suffix to the automatic Swift source destination. |
+| `--no-engine-strict` | Warn on root engine mismatches. Also relax dependency checks when LPM CLI installs dependencies. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [global flags](/docs/commands#global-flags) for `--json` and registry overrides.
 
 ## See also
 
-- [`lpm remove`](/docs/packages/remove) — undo an `lpm add`
-- [`lpm install`](/docs/packages/install) — install runtime dependencies
-- [Registries](/docs/registries) — how packages route
-- [Swift Package Registry](/docs/packages/swift-package-registry) — SE-0292 design and the `lpm install`-preferred path for Swift
+- [`lpm remove`](/docs/packages/remove) — remove tracked source and restore saved originals
+- [`lpm install`](/docs/packages/install) — install runtime or Swift registry dependencies
+- [`lpm.config.json`](/docs/reference/lpm-config-json) — configure a published source package
+- [Registries](/docs/registries) — configure package routing and credentials
+- [Swift Package Registry](/docs/packages/swift-package-registry) — use Swift registry packages
