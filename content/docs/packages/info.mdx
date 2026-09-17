@@ -1,76 +1,190 @@
 ---
 title: lpm info
-description: "Show metadata for a package — versions, dependencies, integrity, ecosystem."
+description: "Inspect package versions, dependencies, integrity, and current registry metadata."
 ---
 
+Inspect a package before you install it or choose a version.
+
 ```bash
-lpm info <package[@version]> [--version <V>]
+lpm info [OPTIONS] <PACKAGE>
+lpm info <PACKAGE>@<VERSION>
+lpm info <PACKAGE> --version <PACKAGE_VERSION>
 ```
 
-Fetches a package's metadata and prints it in a human-readable card: name, description, the chosen version's ecosystem, integrity hash, and full dependency list. With `--json`, it returns metadata from the selected registry, plus `success` and `_cache` diagnostics.
+## Quickstart
 
-`lpm info` checks the registry for current metadata on every run. If the cached response has an ETag, the registry can return HTTP 304.
+```bash
+lpm info react
+lpm info react@19.0.0
+lpm info react --version next
+```
 
-For HTTP 304, LPM CLI reuses the cached body. Install and resolution commands keep their five-minute metadata cache for speed.
+The command has human and JSON output modes. It has no subcommands.
 
-Routing matches [`lpm install`](/docs/packages/install):
-
-- `@lpm.dev/*` fetches from LPM.dev Registry.
-- `@scope/pkg` follows the current project's `.npmrc` `@scope:registry=...` mapping when one exists.
-- Unscoped names (`react`, `zod`, `lodash.merge`) use the current project's default `.npmrc` registry, or npmjs.org when no override is present.
-
-If you specifically mean an LPM.dev Registry package, prefer the fully scoped `@lpm.dev/owner.pkg` form. That is the unambiguous spelling.
-
-By default, `lpm info` shows the latest version. Use inline `package@version` or pass `--version <V>` to inspect a specific release.
+LPM CLI supports npm, private registries, and the LPM.dev Registry. Package names that start with `@lpm.dev/` always use the LPM.dev Registry.
 
 ## Examples
 
 ```bash
-lpm info react                                       # npmjs.org (or project .npmrc default registry)
-lpm info react@0.14.3                                # npm-style inline version
-lpm info @my-co/internal                             # project .npmrc scoped registry
-lpm info @lpm.dev/owner.pkg                          # force LPM.dev Registry
-lpm info @lpm.dev/owner.pkg --version 2.1.0          # specific version
-lpm --verbose info @lpm.dev/owner.pkg                # show cache and revalidation details
-lpm info @lpm.dev/owner.pkg --json | jq '.versions' # structured output for tooling
+# Inspect the default version
+lpm info react
+
+# Inspect a specific version
+lpm info react@19.0.0
+
+# Select the highest version that matches a range
+lpm info 'react@^19'
+
+# Inspect a private-registry package
+lpm info @my-co/internal
+
+# Inspect an LPM.dev Registry package
+lpm info @lpm.dev/alice.highlight
+
+# Produce structured output without prompts
+lpm info react@19.0.0 --json | jq '.versions[.selected_version].dependencies'
+
+# Show metadata cache diagnostics
+lpm --verbose info react
 ```
 
-## What's shown
+## Registry configuration
 
-For the chosen version:
+Info has no `lpm.json` configuration. Registry routing and npm credentials come from `.npmrc`.
 
-- `version` — the actual semver
-- `ecosystem` — `js`, `swift`, etc.
-- `integrity` — SRI hash (truncated for display, full in `--json`)
-- `dependencies` — declared runtime deps with their ranges
+```ini title="~/.npmrc"
+registry=https://registry.npmjs.org/
+@my-co:registry=https://packages.example.com/npm/
+//packages.example.com/npm/:_authToken=${PRIVATE_NPM_TOKEN}
+```
 
-JSON includes the version metadata that the selected registry returns. npm and custom registries can omit fields such as the README and maintainers.
+On macOS and Linux, restrict access to the file:
 
-JSON output also includes `_cache` diagnostics:
+```bash
+chmod 600 ~/.npmrc
+lpm info @my-co/internal --json
+```
+
+Environment-backed credentials belong in user configuration. Project-local environment interpolation for credentials is refused.
+
+| Package name | Destination |
+| --- | --- |
+| `@lpm.dev/<owner>.<name>` | The LPM.dev Registry. `.npmrc` cannot override this scope. |
+| `@scope/pkg` with a registry mapping | The registry configured for that scope. |
+| `@jsr/...` without a scope mapping | `https://npm.jsr.io`. |
+| Other names | The default `.npmrc` registry, or npmjs.org. |
+
+Configuration merges global and user `.npmrc` files, then the selected project or workspace-root file. See [registry configuration](/docs/registries).
+
+The global `--registry <URL>` flag changes the LPM.dev Registry endpoint. It does not override the default npm registry or a scope mapping.
+
+Registry URLs can include a path prefix. Info rejects URLs with a query string or fragment.
+
+Npm-compatible reads use matching `.npmrc` credentials. LPM.dev Registry reads use your LPM.dev Registry token or session when available.
+
+See [authentication](/docs/infra/authentication) for credential sources and private-package access.
+
+## Version selection
+
+Without a selector, the command uses `dist-tags.latest`, then the registry's legacy `latestVersion` value.
+
+An explicit selector can be an exact version, a dist-tag such as `next`, or a semantic-version range. Quote ranges that contain shell operators.
+
+```bash
+lpm info react --version next
+lpm info 'react@>=18 <20'
+```
+
+The command resolves a tag first, then an exact version, then the highest version that matches the range.
+
+Use either an inline selector or `--version`. Supplying both is an error.
+
+A requested version that does not exist fails in both output modes. Dangling tags and unmatched ranges also fail. A selected version must agree with its entry in the registry metadata.
+
+With no selector and no default version, the command returns a package overview without selected-version details. It does not choose the highest version automatically.
+
+## Human output
+
+The report includes the package name and description. Available fields for the selected version include:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The selected version. |
+| `ecosystem` | The package ecosystem, when supplied. |
+| `integrity` | The integrity hash, with a legacy shasum fallback. Long values appear shortened. |
+| `dependencies` | Regular dependencies and their declared ranges. |
+| `peer dependencies` | Peer dependencies and their declared ranges. |
+| `published` | The selected version's publication time, when supplied. |
+
+The report also lists available versions. Distribution and download totals appear when supplied.
+
+Optional and development dependencies remain available in JSON when the registry supplies them. They do not appear in the human dependency sections.
+
+## JSON output
+
+`--json` returns normalized metadata with `success`, `selected_version`, and `_cache` diagnostics.
+
+```bash
+# Read the selected version
+lpm info react@19.0.0 --json | jq '.selected_version'
+
+# Read all available versions
+lpm info react --json | jq '.versions | keys'
+
+# Read the selected version's full metadata
+lpm info react@19.0.0 --json | jq '.versions[.selected_version]'
+```
+
+`selected_version` is a version string. It is `null` when no selector was supplied and the registry has no default version. The complete `versions` object remains available after explicit selection.
+
+The JSON output preserves supported metadata fields. It does not return the raw registry response. Unsupported fields, including top-level README and maintainer data, are omitted.
+
+### Freshness and cache diagnostics
+
+The command requests current metadata on every run. A cached ETag permits conditional revalidation.
+
+If the registry returns HTTP `304`, LPM CLI uses the cached response body. A failed revalidation does not become a successful stale response.
+
+For example, `_cache` can contain:
 
 ```json
 {
-  "_cache": {
-    "status": "revalidated",
-    "age_seconds": 143,
-    "network_request": true,
-    "not_modified": true
-  }
+  "status": "revalidated",
+  "age_seconds": 143,
+  "network_request": true,
+  "not_modified": true
 }
 ```
 
-Use the global `--verbose` flag to show the same cache and revalidation information in human output.
+`age_seconds` can be `null`. After HTTP `304`, it describes the cached response's age before revalidation.
+
+Install and resolution commands can reuse metadata for up to five minutes. Registry cache directives can shorten or disable that reuse.
+
+Info has no offline mode. `--verbose` shows cache diagnostics in human output.
+
+## Troubleshooting
+
+| Result | Action |
+| --- | --- |
+| Package not found | Check the package name, registry mapping, and private-package access. |
+| Version or tag not found | Remove the selector and use `--json` to inspect `.versions` and `."dist-tags"`. A dangling default requires a registry metadata fix. |
+| No default version | Choose an explicit version from the package overview. |
+| Inconsistent selected version | Check the registry or mirror's metadata. |
+| Two version selectors | Use either `package@version` or `--version`, then repeat the command. |
+| Npm authentication failure | Correct the matching `.npmrc` credential and token permissions. |
+| Registry or network failure | Correct the connection or credentials, then repeat the request. |
 
 ## Flags
 
-| Flag            | Effect                                    |
-| --------------- | ----------------------------------------- |
-| `--version <V>` | Show a specific version instead of latest. Alternative to inline `package@version`; do not pass both. |
+| Flag | Description |
+| --- | --- |
+| `--version <PACKAGE_VERSION>` | Select an exact version, tag, or range. Conflicts with an inline selector. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` returns registry metadata plus LPM diagnostics.
+The command also supports the [global flags](/docs/commands#global-flags), including `--json`, `--verbose`, `--registry`, and `--cwd`.
 
 ## See also
 
-- [`lpm search`](/docs/packages/search) — search npm, custom registries, or LPM.dev Registry depending on the query
-- [`lpm quality`](/docs/packages/quality) — quality report
-- [`lpm download`](/docs/packages/download) — fetch the tarball without installing
+- [`lpm search`](/docs/packages/search) — find packages by query
+- [`lpm install`](/docs/packages/install) — install a selected version
+- [`lpm download`](/docs/packages/download) — download a package without installation
+- [`lpm quality`](/docs/packages/quality) — inspect an LPM.dev Registry quality report
