@@ -148,6 +148,18 @@ Project capability changes require their own authorization. A script-policy gran
 
 Dry runs retain policy and authorization checks. They skip execution, engine enforcement, and sandbox or native-cache preparation.
 
+## Dependency tools and script context
+
+With the default store, each dependency script first finds executables from its own dependencies and peers. Project executables and the inherited `PATH` follow.
+
+If a project tool has the same executable name, this selection preserves the dependency's tool version.
+
+The sandbox permits reads from those installed dependencies. These read grants do not permit writes to dependency tools or their helper packages.
+
+Each script receives its own [npm context](/docs/packages/npm-compatibility#script-execution). `INIT_CWD` remains the directory where the CLI command started.
+
+Scripted dependencies run before their dependents, including through packages with no scripts. Cyclic dependencies cannot guarantee that order.
+
 ## Build state and `--force`
 
 A successful generic build records its lifecycle script hash. The hash includes recognized local JavaScript delegates and their reachable local imports.
@@ -175,6 +187,10 @@ Examples include `node-gyp`, `prebuild-install`, and supported esbuild or sharp 
 Native artifact reuse is available on macOS and Linux. Windows still executes builds through its normal sandbox.
 
 The cache key includes package integrity, dependency and peer identities, patches, script commands, runtime identity, platform, exposed environment, and discoverable toolchain state.
+
+The key also includes the selected dependency tools and their live helper files. Changes to those files or executable permissions invalidate reuse.
+
+Packages with a nested dependency of the same name bypass artifact reuse. Their dependency links remain intact during rebuild.
 
 A changed key invalidates the local native build state. Before a replacement native build, LPM CLI restores pristine package contents.
 
