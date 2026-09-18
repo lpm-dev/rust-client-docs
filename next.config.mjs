@@ -80,6 +80,7 @@ const INSTALLER_REDIRECTS = ["/install", "/install.sh"].map((source) => ({
   permanent: false,
 }));
 const LEGACY_DOCS_REDIRECTS = [
+  ["/docs/packages/free-distribution", "/docs/packages/package-distribution"],
   ["/docs/configuration/config-toml", "/docs/reference/config-toml"],
   ["/docs/infra/dependency-graph", "/docs/packages/dependency-graph"],
   ["/docs/infra/graph", "/docs/packages/graph"],
