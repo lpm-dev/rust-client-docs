@@ -1,97 +1,232 @@
 ---
 title: lpm resolve
-description: "Print the resolved dependency tree for one or more package specs — without installing."
+description: "Resolve package specs, inspect exact dependency and peer targets, and report peer issues without installing."
 ---
 
-```bash
-lpm resolve <packages...>
-```
-
-Runs the resolver against the given specs and prints the dependency tree it would install. **Read-only** — no filesystem changes, no lockfile, no downloads, no `package.json` mutation.
-
-Useful for previewing the impact of a candidate dep, debugging unexpected transitive selections, or scripting dep-graph analysis (`--json` makes the output structured).
-
-## Examples
+Use `lpm resolve` to inspect candidate versions and their dependency graphs before you change a project.
 
 ```bash
-lpm resolve react                            # latest, full tree
-lpm resolve react@^19                        # a specific range
-lpm resolve react vue zod                    # multiple at once
-lpm resolve @lpm.dev/owner.pkg               # @lpm.dev/* through LPM.dev Registry
-lpm resolve @my-co/internal                  # through the current project's .npmrc scoped registry
-lpm resolve react --json | jq '.packages'    # structured output for scripts
+lpm resolve [OPTIONS] [PACKAGES]...
 ```
 
-## Spec format
+At least one package spec is required. The command supports a human-readable tree and JSON output.
 
-Each spec is `<name>` or `<name>@<range>`. Bare names default to `*` (latest matching anything). Scoped names work as expected — the parser handles the leading `@` correctly so `@lpm.dev/owner.pkg@^1.0.0` parses as `(name=@lpm.dev/owner.pkg, range=^1.0.0)`.
+## Quickstart
 
-| Spec                    | Resolves to                 |
-| ----------------------- | --------------------------- |
-| `react`                 | Latest react                |
-| `react@^19`             | Latest react matching `^19` |
-| `react@19.0.0`          | Exact `19.0.0`              |
-| `react@beta`            | Latest tag `beta`           |
-| `@lpm.dev/owner.pkg@^1` | Latest `^1` from LPM.dev Registry |
+```bash
+# Inspect a candidate version and its dependencies
+lpm resolve express@^5
 
-## How it works
+# Resolve related packages together
+lpm resolve react@^19 react-dom@^19
 
-1. Parses each spec into `(name, range)`.
-2. Calls the resolver with the combined dep map. `@lpm.dev/*` names route to LPM.dev Registry; `.npmrc`-declared scoped or default registries are honored for npm/private packages; everything else resolves against npmjs.org.
-3. Prints the resolved tree as `name@version` rows, nesting transitives under their parent with tree edges.
+# Save a non-interactive result for analysis
+lpm resolve express@^5 --json > candidate-graph.json
+```
 
-No tarballs are downloaded. The resolver only needs metadata.
+The command reads registry metadata. It does not download package archives, install packages, or run scripts.
+It leaves project manifests, lockfiles, and `node_modules` unchanged. Registry metadata caches can change.
 
-Human output is written as a readable tree:
+### Add a repeatable task
+
+`lpm.json` has no dedicated resolve configuration. Use an uncached task to repeat a candidate check:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "check-candidates": {
+      "command": "lpm resolve react@^19 react-dom@^19",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run check-candidates
+lpm run check-candidates -- --json
+```
+
+`cache: false` runs the command each time. Registry metadata caches still apply.
+An explicit task command takes precedence over a package script with the same name.
+See [Tasks](/docs/dev/task-runner) for task options.
+
+## Package specs and aliases
+
+```bash
+lpm resolve react
+lpm resolve react@19.2.4
+lpm resolve 'react@^19'
+lpm resolve react@next
+lpm resolve @my-co/internal@^2
+lpm resolve react-previous@npm:react@^18 react@^19
+```
+
+| Spec | Meaning |
+| --- | --- |
+| `react` or `react@*` | A wildcard request, with a preference for a compatible `latest` version. |
+| `react@19.2.4` | An exact version. |
+| `react@^19` | A semver range. |
+| `react@next` | A registry dist-tag. |
+| `@my-co/internal@^2` | A scoped package and range. |
+| `react-previous@npm:react@^18` | A local alias for another package. |
+
+The default resolver excludes prereleases from bare wildcard requests.
+With `LPM_RESOLVER=pubgrub`, wildcard requests can select prereleases.
+
+Repeated requests with the same local name and range produce one root.
+A bare name and `@*` count as the same request.
+Different ranges or alias targets under one local name cause an error before registry requests.
+
+```bash
+# Use separate aliases to compare two versions
+lpm resolve react-old@npm:react@^18 react-new@npm:react@^19
+```
+
+## Registries and project scope
+
+LPM CLI supports npm, LPM.dev Registry, and private registries:
+
+- `@lpm.dev/*` always uses LPM.dev Registry.
+- Other scoped packages follow their `.npmrc` registry mappings.
+- Unscoped packages use the configured default registry, or npm when no override exists.
+- Aliases follow the target package's registry mapping.
+
+See [Registry configuration](/docs/registries) for authentication and routing.
+
+Resolve uses the supplied specs and default resolution policies.
+It does not load project dependency declarations, catalogs, overrides, or peer rules as install inputs.
+A later [lpm install](/docs/packages/install) can select a different graph because project settings and install checks also apply.
+
+For an existing project graph, use [lpm graph](/docs/packages/graph).
+For a locked graph, [lpm fetch](/docs/packages/fetch) downloads its packages into the store.
+
+## Read the tree
+
+Each row shows a package name, version, and node ID. Alias rows also show their local names.
+Dependency edges and peer edges retain their exact targets, including separate nodes with the same name and version.
 
 ```text
-react@19.0.0
-  └─ scheduler@0.25.0
+app@1.0.0 [#1]
+  ├─ helper-alias → helper@2.0.0 [#2]
+  └─ host@3.0.0 [#3] (peer)
 ```
+
+| Marker | Meaning |
+| --- | --- |
+| `[#N]` | Node ID within this result. |
+| `(peer)` | A resolved peer binding. |
+| `(shared)` | This node already appeared. Its children are not repeated. |
+| `(circular)` | This edge returns to a node on the current path. |
+| `(depth limit; use --json)` | This branch reached the tree's depth limit. |
+
+The tree has limits of 128 edge levels, 10,000 rows, and 2 MiB of output.
+A truncation marker identifies the row or byte limit. JSON includes the complete graph without these display limits.
+Node IDs are local to one result. They are not lockfile IDs or stable identifiers across separate runs.
+
+## Peer diagnostics
+
+```bash
+lpm resolve react@^19 react-dom@^19 --json | jq '.peer_issues'
+```
+
+The default resolver can add required peer packages automatically.
+If incompatible peer ranges require a best-effort choice, the result includes the selected version and unsatisfied consumers.
+With `LPM_RESOLVER=pubgrub`, absent required peers can remain as warnings because that mode does not automatically add them.
+
+Human output shows peer warnings. JSON separates missing peers, incompatible versions, and conflicts.
+An absent optional peer stays quiet. An optional peer with an incompatible available version can produce a warning.
+Exact peer bindings take precedence over unrelated matching versions elsewhere in the graph.
+
+Peer warnings do not make a successful resolution fail.
+If no published version can satisfy a required peer, resolution can fail with a structured error.
+
+```bash
+# Fail a CI step when a successful resolution still reports peer issues
+lpm resolve react@^19 react-dom@^19 --json > resolved.json
+jq -e '.success and (.peer_issues.total_count == 0)' resolved.json
+```
+
+The counts describe diagnostic records. One conflict and its version warning can both contribute to `total_count`.
 
 ## JSON output
 
 ```bash
-lpm resolve react --json
+lpm resolve is-number@7.0.0 --json
 ```
 
 ```json
 {
   "success": true,
-  "count": 47,
-  "elapsed_secs": 0.83,
   "packages": [
-    { "package": "react", "version": "19.0.0" },
-    { "package": "scheduler", "version": "0.25.0" }
-  ]
+    {
+      "id": 1,
+      "package": "is-number",
+      "version": "7.0.0",
+      "context": null,
+      "dependencies": {},
+      "peers": {}
+    }
+  ],
+  "roots": [{ "name": "is-number", "target": 1 }],
+  "ambient_peer_installs": [],
+  "peer_issues": {
+    "missing": [],
+    "bad": [],
+    "conflicts": [],
+    "intersections": [],
+    "missing_count": 0,
+    "bad_count": 0,
+    "conflicts_count": 0,
+    "intersections_count": 0,
+    "total_count": 0
+  },
+  "count": 1,
+  "elapsed_secs": 0.04
 }
 ```
 
-| Field                | Type     | Notes                                        |
-| -------------------- | -------- | -------------------------------------------- |
-| `count`              | `number` | Total resolved packages (root + transitive). |
-| `elapsed_secs`       | `number` | Resolver wall-clock time.                    |
-| `packages[].package` | `string` | Package name.                                |
-| `packages[].version` | `string` | Resolved exact version.                      |
+| Field | Meaning |
+| --- | --- |
+| `packages[].id` | Exact node ID within this result. |
+| `packages[].package` | Canonical registry package name, without context text. |
+| `packages[].version` | Selected version. |
+| `packages[].context` | Resolution context, or `null`. Use the node ID for graph joins. |
+| `packages[].dependencies` | Local dependency names mapped to exact target IDs. |
+| `packages[].peers` | Local peer names mapped to exact provider IDs. An unbound peer has no entry. |
+| `roots` | Requested local names and target IDs, in argument order after duplicate removal. |
+| `ambient_peer_installs` | Names of automatically added peer packages. These names do not identify exact nodes. |
+| `peer_issues` | Diagnostic arrays and counts. `intersections` is empty for this command. |
+| `count` | Number of resolved nodes, including separate contexts for the same package. |
+| `elapsed_secs` | Elapsed time through resolution and peer checks, before output. |
 
-Integrity hashes aren't part of the resolve envelope — pair with [`lpm download`](/docs/packages/download) to fetch the tarball + SRI for a specific resolved version.
+Every dependency, peer, and root target references an entry in `packages`.
+For scripts, join records by ID instead of package name and version.
 
-## When to reach for this
+```bash
+# List selected versions
+lpm resolve express@^5 --json | jq -r '.packages[] | "\(.package)@\(.version)"'
 
-- Preview the transitive impact of adding a new dep before touching `package.json`.
-- Investigate why a specific transitive version got picked. Pair with `--json` and `jq` for ad-hoc analysis.
-- Generate dep-graph fixtures for testing.
-- Check whether a candidate version has unexpected peer-dep conflicts.
+# Inspect requested roots
+lpm resolve react@^19 react-dom@^19 --json | jq '.roots'
+```
 
-For installing the result, run `lpm install <spec>`. For just downloading the tarball, use [`lpm download`](/docs/packages/download).
+To inspect an archive and its integrity hash, use [lpm download](/docs/packages/download) with an exact selected version.
 
 ## Flags
 
-`lpm resolve` takes no specific flags. Use the [global flags](/docs/commands#global-flags) — `--json` is especially useful here, and `--registry` / `--token` route the lookup against a specific endpoint or session.
+Resolve has no command-specific flags. These [global flags](/docs/commands#global-flags) apply:
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | Write the graph and diagnostics as JSON. |
+| `--registry <REGISTRY>` | Select the LPM.dev Registry endpoint. `.npmrc` controls npm and private registry routing. |
+| `--token <TOKEN>` | Supply a token for the selected LPM.dev Registry endpoint. |
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — installs the resolved tree
-- [`lpm download`](/docs/packages/download) — fetch + extract the tarball without installing
-- [`lpm graph`](/docs/packages/graph) — visualize the dep tree of an already-installed project
-- [Resolver](/docs/packages/resolver) — design overview
+- [lpm install](/docs/packages/install)
+- [lpm download](/docs/packages/download)
+- [lpm fetch](/docs/packages/fetch)
+- [lpm graph](/docs/packages/graph)
+- [Resolver](/docs/packages/resolver)
