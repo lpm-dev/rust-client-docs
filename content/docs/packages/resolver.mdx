@@ -1,152 +1,243 @@
 ---
 title: Resolver
-description: "How LPM CLI picks versions — greedy-fusion by default, with PubGrub as the documented fallback."
+description: "Understand version selection, peer dependencies, overrides, and resolution failures."
 ---
 
-The resolver decides which version of every transitive dependency lands in your `node_modules/`. It walks `package.json`, talks to the appropriate registry for each canonical package, and computes a `(name, version)` set that satisfies every declared semver range. This page is the conceptual deep-dive.
+The resolver selects exact package versions and connects each dependency to the package instance that satisfies it.
+Use this page to understand unexpected versions, peer conflicts, and failed installs.
 
-## Two resolvers
+LPM CLI resolves packages from npm, LPM.dev Registry, and private registries.
+[Registry configuration](/docs/registries) controls routing and authentication. Only `@lpm.dev/*` packages always use LPM.dev Registry.
 
-LPM CLI ships two resolvers in the same binary. Both speak the same npm-compatible semver dialect (`^`, `~`, `||`, `*`, `x`, hyphen ranges, prereleases, `latest`/`beta`/`next` dist-tags) and produce the same lockfile shape. They differ in how they pick versions when multiple ranges target the same canonical package.
+## Quickstart
 
-| Resolver | Default? | Algorithm | Notes |
-| --- | --- | --- | --- |
-| **Greedy-fusion** | **Yes** | First-match version pick, reuse-on-compatible / allocate-on-incompatible | Faster. Bun-style. The fused dispatcher IS the metadata fetch dispatcher — no separate walker spawn. |
-| **PubGrub-with-split-retry** | No (opt-in) | Conflict-driven backtracking | Slower but exhaustive. |
+```bash
+# Resolve and install the project's declared dependencies
+lpm install
 
-Pick the alternative for one invocation:
+# Inspect candidate packages without changing the project
+lpm resolve 'react@^19' 'react-dom@^19' --json
+
+# Explain a package in the existing project graph
+lpm graph --why react
+
+# Require the committed graph in CI
+lpm ci
+```
+
+[lpm resolve](/docs/packages/resolve) uses the supplied package specs and default resolution policies.
+It does not apply the project's dependency declarations, catalogs, overrides, or peer rules.
+[lpm install](/docs/packages/install) applies those project settings, so its result can differ.
+
+## Configuration
+
+`lpm.json` has no dedicated resolver settings.
+Project resolution settings belong in [`package.json > lpm`](/docs/reference/package-json-lpm):
+
+```json title="package.json"
+{
+  "lpm": {
+    "autoInstallPeers": true,
+    "strictPeerDependencies": true,
+    "overrides": {
+      "example-parent>example-child": "^2.0.0"
+    }
+  }
+}
+```
+
+For a repeatable candidate check, use an uncached task:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "check-candidates": {
+      "command": "lpm resolve \"react@^19\" \"react-dom@^19\"",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run check-candidates -- --json
+```
+
+Task caching stays off, but registry metadata caches still apply.
+See [Task runner](/docs/dev/task-runner) for task configuration.
+
+## Locked installs and new selections
+
+An eligible [lockfile](/docs/packages/lockfile) replays exact package instances instead of selecting new versions.
+A newer registry release alone does not replace a locked version.
+Use [lpm upgrade](/docs/packages/upgrade) to update selected dependencies.
+
+For a new resolution, the default resolver prefers a compatible `latest` version or the requested dist-tag.
+It then considers other matching versions in descending version order, subject to install policy.
+The numerically highest release is not always the selected release.
+
+For ordinary transitive dependencies, a compatible version already selected by a manifest dependency can take precedence.
+Otherwise, reuse requires the selected version to match.
+Overrides can require a separate selection.
+
+Several versions of the same package can coexist. For example, dependencies that require `helper@^1` and `helper@^2` need separate versions.
+Different peer contexts can also require separate instances of the same name and version.
+See [Dependency graph](/docs/packages/dependency-graph) for the distinction between a package version and an installed instance.
+
+## Resolver modes
+
+| Mode | Selection |
+| --- | --- |
+| Greedy-fusion | Default. Selects versions as metadata becomes available and supports multiple versions and automatic peer installation. |
+| PubGrub with split retries | Optional alternative. Retries conflicts with separate package selections, but does not automatically install missing peers. |
 
 ```bash
 LPM_RESOLVER=pubgrub lpm install
 ```
 
-For deeper debugging of the dispatcher, force the walker-arm orchestration:
+The environment variable applies to this command. Remove it to restore the default.
+A locked install can reuse its graph without running either resolver.
+
+PubGrub stops when a conflict report provides no new package to split. It does not guarantee a solution for every satisfiable graph.
+Its wildcard requests can select prereleases. The default resolver excludes prereleases from bare wildcard requests.
+If you need a prerelease, use an explicit prerelease range or tag.
+
+## Peer and optional dependencies
+
+The default resolver automatically installs missing required peers when `autoInstallPeers` is enabled.
+These packages can appear at the project root without an entry in `package.json`.
+Optional peers are not automatically installed. They can bind to a compatible version already present in the graph.
+
+| Setting | Precedence and default |
+| --- | --- |
+| Automatic peers | `lpm.autoInstallPeers`, then user `auto-install-peers`, then `true`. |
+| Strict peers | CLI flag, then `lpm.strictPeerDependencies`, then user `strict-peer-dependencies`, then `false`. |
 
 ```bash
-LPM_GREEDY_FUSION=0 lpm install
+# Fail on missing required peers, mismatches, and conflicting requirements
+lpm install --strict-peer-dependencies
+
+# Use warnings for this invocation
+lpm install --no-strict-peer-dependencies
 ```
 
-Both are stable. The default is greedy-fusion because it's faster and matches bun/npm/pnpm semantics for the multi-version case below.
+PubGrub does not add missing peers, even when automatic peers are enabled.
+Strict peer checks still apply to the resulting graph.
+A required peer with no available candidate can fail resolution before these checks.
+`peerDependencyRules` changes post-resolution warnings. It does not change automatic peer selection or conflict detection.
 
-## How greedy-fusion picks versions
+With the default linker selection, peer conflicts can switch an install to the isolated layout.
+An explicit `--linker` flag or persistent linker setting prevents this automatic switch.
+Isolation does not make incompatible peer ranges compatible.
 
-The resolver maintains a graph keyed by `(canonical, version)`. When it processes an edge:
+Optional dependencies can be skipped when resolution, download, platform, or engine checks reject them.
+If a required dependency also reaches the package, required-dependency rules apply.
+See [lpm install](/docs/packages/install#peer-dependency-strict-mode) for peer configuration and diagnostics.
 
-1. **Reuse-on-compatible.** If the canonical already has a node and that node's version satisfies the new edge's range, the new edge points at the existing node. First-version-wins inside any single satisfying range bucket — same as bun, npm, and pnpm.
-2. **Allocate-on-incompatible.** If no existing node satisfies the new range, the resolver picks the best available version for the new range and allocates a new `(canonical, version)` node. Both versions live independently in the resolved tree.
+## Overrides and aliases
 
-Example: edge A wants `lodash@^4`. The resolver picks `lodash@4.17.21` and allocates one node. Edge B then wants `lodash@^4` — same range bucket, reuses A's node. Edge C wants `lodash@^3` — `4.17.21` doesn't satisfy `^3`, so the resolver allocates a new `lodash@3.10.1` node. The tree now has two `lodash` versions, each shared by everyone whose range pointed at it.
-
-This is the "multi-version per canonical" property. npm has it. pnpm has it. Yarn-classic (with hoisting) approximated it. LPM CLI follows the bun-shaped recipe.
-
-## Candidate policy
-
-The resolver walks available versions newest-first. Semver range satisfaction is the first filter, then LPM CLI applies install policy:
-
-- **Minimum release age** is off by default. When enabled, it skips too-new matching candidates for direct/root package ranges and keeps walking to the newest mature candidate. Strict release-age policy extends the same check to transitive candidates and lockfile replays. Exact checked pins to a too-new version fail.
-- **`trust-policy = "no-downgrade"`** skips candidates that reduce npm trusted-publisher or staged-publish evidence compared with an earlier published version. Registry attestation pointers do not count before verification. Ranges can fall back to an older allowed candidate; exact blocked pins fail with the trust-policy reason. After selection, the install gate separately requires new verified provenance when the lockfile contains verified history for that package name.
-- **Platform metadata** (`os`, `cpu`, `libc`) is preserved in the lockfile and applied at reify/filter time, not used to hide the newest semver-satisfying version from the lockfile. Incompatible optional packages are skipped on the current host; incompatible required packages fail with a platform error.
-
-This split keeps lockfiles reviewable and portable across hosts while still avoiding known-bad candidates before the graph is committed.
-
-## Resolution failures
-
-When no compatible package version exists, LPM CLI fails before writing the lockfile or touching `node_modules/`. The error names the dependency edge that failed, the package that required it when that context is available, and the newest published version LPM CLI saw.
-
-```text
-✗ Could not resolve dependencies
-  package missing-leaf@^2.0.0
-  required by parent-pkg@1.0.0
-  reason no published version satisfies ^2.0.0
-  available 1 version, newest 1.0.0
-```
-
-`--json` uses the stable top-level `error_code: "resolution_failed"` and puts resolver-specific fields in the `error` object:
-
-```json
-{
-  "success": false,
-  "error_code": "resolution_failed",
-  "error": {
-    "code": "RESOLUTION_FAILED",
-    "message": "failed to resolve missing-leaf@^2.0.0 required by parent-pkg@1.0.0: no published version satisfies ^2.0.0",
-    "package": "missing-leaf",
-    "requested": "^2.0.0",
-    "dependency": "missing-leaf",
-    "kind": "no_matching_version",
-    "reason": "no published version satisfies ^2.0.0",
-    "required_by": "parent-pkg@1.0.0",
-    "available_versions": 1,
-    "newest_version": "1.0.0"
-  }
-}
-```
-
-`kind` distinguishes the class of resolver failure (`no_matching_version`, `platform_incompatible`, `policy_blocked`, `fetch_failed`, `no_solution`, or `peer_conflict`). Use that field for automation that needs to decide whether to relax a range, change a platform target, approve a policy exception, or retry a registry lookup.
-
-## Streaming dispatch
-
-The resolver loop is single-threaded — bun's PackageManager event loop runs on one thread, and parallelism comes from I/O fan-out. Each iteration:
-
-1. Pop a pending edge off the task queue.
-2. Resolve the canonical's manifest. Fast path: the shared cache hit — the BFS walker has been prefetching concurrently. Slow path: wait on the per-canonical `Notify` for an in-flight fetch to complete.
-3. Pick a version per the rules above.
-4. Enqueue the chosen version's deps for the next iteration.
-
-The dispatcher and metadata fetcher are **fused** in the default resolver — the same loop drives both, so the resolver sees in-flight metadata land as it streams in rather than waiting for level-step batch fetches.
-
-## peerDependencies and optionalDependencies
-
-- **Peer deps are auto-installed by default.** After the main resolution pass, an eager peer-drain step synthesizes installs for every non-optional `peerDependency` not already in the resolved tree. These "ambient" installs surface at `node_modules/<name>/` even though they aren't in `package.json`. `check_unmet_peers` then runs a post-pass to warn on anything that couldn't be satisfied (e.g., peer-range conflicts between consumers).
-- Toggle the auto-install with `package.json > lpm > autoInstallPeers` (default `true`) → `~/.lpm/config.toml > auto-install-peers` → built-in default. Set to `false` for npm-classic / pnpm-classic semantics (no synthesis, peer warnings only).
-- **Optional peers** (`peerDependenciesMeta.<name>.optional = true`) are **never** auto-installed regardless of the flag — the manifest author opted out of the dependency entirely.
-- **Optional deps** are tried; failure to resolve or download is logged but doesn't fail the install.
-
-## Overrides and resolutions
-
-The resolver consumes three sources of override declarations, with `lpm.overrides` winning on conflict:
+Override sources have this precedence:
 
 | Source | Priority |
 | --- | --- |
 | `package.json > lpm > overrides` | Highest |
-| `package.json > overrides` (npm-style) | Middle |
-| `package.json > resolutions` (yarn-style) | Lowest |
+| `package.json > overrides` | Middle |
+| `package.json > resolutions` | Lowest |
 
-Selectors:
+```json title="package.json"
+{
+  "lpm": {
+    "overrides": {
+      "example-child": "^2.0.0",
+      "example-parent>other-child": "3.1.0"
+    }
+  }
+}
+```
 
-- `"foo"` — every instance of `foo`
-- `"foo@<1.0.0"` — instances whose natural version satisfies a range
-- `"baz>foo"` / `"baz>foo@1"` — path-selector: instances reached **through** `baz`
+A plain package selector applies throughout the graph.
+Plain selectors and unqualified parent selectors can replace a range that has no available version.
+`parent>child` targets a direct parent-child edge. A version selector, such as `child@<2`, matches the naturally selected version.
+A range-qualified selector cannot match without a natural candidate.
+Multi-level paths such as `a>b>c` are rejected.
+Override targets must be strings. Nested npm override objects produce a warning and are not applied.
 
-Multi-segment paths (`a>b>c`) are rejected at parse time. See [`package.json` overrides](/docs/reference/package-json-lpm#overrides).
+Release-age, trust, engine, and platform checks still apply to overridden versions.
+If an override target is unavailable or rejected during selection, LPM CLI warns and keeps the natural selection.
+If neither selection is available, required dependencies fail and optional dependencies can be skipped.
 
-An override replaces the consumer range for direct and transitive dependencies. Release-age, trust, and platform policy still apply. Override targets must be strings. LPM CLI warns about nested-object values and does not apply them.
+Override summaries omit unchanged selections. A rescued selection shows `unresolved` as its original version.
+JSON output and saved override records use `from_version: null` for this case.
+See [Override selectors](/docs/reference/package-json-lpm#overrides) for the supported forms.
 
-## npm aliases
+An npm alias gives a dependency a local name:
 
-Deps declared as `"my-pkg": "npm:other-pkg@^1.0.0"` (npm-alias edges) are passed through the resolver verbatim. The cache populates an `aliases` map; the resolved tree records each alias edge. The lockfile's `alias-dependencies` and `root-aliases` blocks preserve the metadata for warm installs.
+```json title="package.json"
+{
+  "dependencies": {
+    "react-previous": "npm:react@^18"
+  }
+}
+```
 
-Projects with alias edges, peer pinning, dependency engine constraints, platform metadata, optional-reachability state, catalogs, or registry signatures may write **only `lpm.lock`** — the binary lockfile (`lpm.lockb`) is skipped whenever its v3 wire format cannot represent the TOML metadata. See [`lpm.lockb` format](/docs/reference/lockb-format#whats-not-stored-in-the-binary-lockfile).
+The alias follows the target package's registry route. The lockfile preserves the alias and its exact target for later installs.
 
-## Tunables
+## Policies that affect the result
 
-| Env var | Effect |
+| Policy | Effect |
 | --- | --- |
-| `LPM_RESOLVER=pubgrub` | Use PubGrub-with-split-retry instead of greedy-fusion |
-| `LPM_GREEDY_FUSION=0` | Force walker-arm orchestration (debug) |
-| `LPM_NPM_FANOUT=N` | Concurrent npm metadata fetches (default `256`) |
-| `LPM_WALKER=stream` | Use the continuous-stream walker; default is the level-step BFS |
+| Minimum release age | Off by default. When enabled, checks direct dependencies; strict policy also checks transitive dependencies and lockfile replay. |
+| Trust policy | Can reject candidates that reduce trusted-publisher evidence. Fetch-time checks can also require previously verified provenance. |
+| Engines | Required incompatible packages fail by default. Optional-only incompatible packages can be skipped. |
+| Platform | Preserves `os`, `cpu`, and `libc` metadata in the lockfile, then checks compatibility for the current host. |
 
-## When to look at the resolver
+During resolution, ranges can select an older version that passes release-age or publisher-trust checks.
+Fetch-time provenance failures do not trigger version reselection.
+A blocked exact pin fails instead of silently changing its version.
+See [Install policies](/docs/packages/install), [Trust](/docs/packages/trust), and [Security and audit](/docs/packages/security-audit).
 
-- An install picked a transitive version you didn't expect → use [`lpm graph --why <pkg>`](/docs/packages/graph) to trace the path, then add an `lpm.overrides` entry.
-- Resolution is slow → check whether your tree exercises the multi-version path repeatedly, or try `LPM_NPM_FANOUT` higher.
-- A new release breaks a peer dep → check `lpm install` output for unmet peer warnings; add the peer to `dependencies` to opt into the resolver's allocation.
+## Diagnose a failed or unexpected selection
+
+```bash
+lpm graph --why example-child
+lpm install --strict-peer-dependencies --json
+lpm resolve 'example-child@^2' --json
+```
+
+Resolution errors identify the requested package, range, and parent when that information is available.
+Structured resolution failures use `error_code: "resolution_failed"`. The nested `error.kind` describes the cause.
+Strict peer-check failures use `error_code: "peer_dependency"`.
+
+| Cause | Recovery |
+| --- | --- |
+| No matching version or no solution | Check the range, tag, registry route, and override selectors. |
+| Policy rejection | Read the named policy and choose an allowed version. |
+| Registry request failure | Check registry availability and credentials before retrying. |
+| Peer conflict | Align the consumer ranges or explicitly declare a compatible peer. |
+| Platform or engine mismatch | Use a supported environment or a compatible package release. |
+
+To change a locked selection, use [lpm upgrade](/docs/packages/upgrade) or update the applicable override, then review `lpm.lock`.
+Deleting the lockfile changes the scope of resolution to the whole project.
+Current lockfile version 13 uses authoritative TOML and does not produce a binary companion.
+
+## Advanced diagnostics
+
+These environment variables help compare resolver behavior during troubleshooting:
+
+| Variable | Effect |
+| --- | --- |
+| `LPM_RESOLVER=pubgrub` | Select the alternative resolver. |
+| `LPM_GREEDY_FUSION=0` | Keep greedy selection but disable fused metadata scheduling. |
+| `LPM_NPM_FANOUT=<N>` | Set the metadata concurrency limit. Defaults vary with install scheduling. |
+| `LPM_WALKER=stream` | Select streaming metadata traversal when the non-fused path runs. |
+
+Higher metadata concurrency does not guarantee a faster install and can increase registry load.
+See [Environment variables](/docs/reference/env-vars#resolver-advanced) for diagnostic controls.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — runs the resolver as part of the install pipeline
-- [`lpm resolve`](/docs/packages/resolve) — runs the resolver standalone, prints the tree, no install
-- [Lockfile](/docs/packages/lockfile) — what gets persisted after resolution
-- [`package.json` overrides](/docs/reference/package-json-lpm#overrides) — selector grammar
-- [Environment variables](/docs/reference/env-vars#resolver-advanced) — every tunable
+- [lpm install](/docs/packages/install) — apply project resolution settings and install the graph.
+- [lpm resolve](/docs/packages/resolve) — inspect candidate packages without installing them.
+- [lpm graph](/docs/packages/graph) — inspect an existing project's dependencies.
+- [Lockfile](/docs/packages/lockfile) — retain exact selections across installs.
+- [Save policy](/docs/packages/save-policy) — choose the ranges written to the manifest.
