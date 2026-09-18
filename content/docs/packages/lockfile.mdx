@@ -1,211 +1,207 @@
 ---
 title: Lockfile
-description: "How LPM CLI pins standalone and workspace graphs, importer projections, and warm-install state."
+description: "Use lpm.lock to preserve exact dependency graphs across local installs, workspaces, and CI."
 ---
 
-LPM CLI's authoritative lockfile is **`lpm.lock`**: TOML, deterministic, and git-diffable. Current installs use this file for exact graph replay.
-
-Older lockfile schemas can also have **`lpm.lockb`**, a generated binary companion. Lockfile version 13 does not write this file.
-
-This page is the conceptual overview — when each file gets read, what the dual format buys you, and how the warm-install fast paths work. For the on-disk schema, see [`lpm.lock` format](/docs/reference/lockfile-format) and [`lpm.lockb` format](/docs/reference/lockb-format).
-
-## Why two files
-
-| File | Optimized for | When it's read |
-| --- | --- | --- |
-| `lpm.lock` | Humans, git diffs, authoritative install input | Read by install, audit, graph, and review workflows |
-| `lpm.lockb` | Generated binary companion for the representable subset | Used for binary validation/writeback and cheap generated-cache inspection when present |
-
-The TOML lockfile is the canonical source. The binary companion does not contain exact package-instance identities.
-
-Current installs skip `lpm.lockb` and remove stale binary files. You do not select this behavior manually.
-
-## What's pinned
-
-Each entry in the lockfile records:
-
-- **Exact resolved version** — never a range
-- **Source registry** (e.g. `registry+https://registry.npmjs.org`)
-- **SRI integrity hash** (`sha512-…`) — verified on every install
-- **Platform metadata** (`os`, `cpu`, `libc`) and optional reachability
-- **Registry signature evidence** (`registry-signatures`, `registry-published-at`) when npm metadata provides it
-- **Verified provenance evidence** — publisher/workflow identity, exact npm package URL, tarball SHA-512 binding, transparency-log coordinates, certificate digest, and original bundle digest
-- **Patch records** (`path`, patch-file `sha256`, `original-integrity`) when `lpm.patchedDependencies` changes installed bytes
-- **Direct dep names + versions** — for transitive walking
-- **Tarball URL hint** — cached resolved URL that lets warm installs skip the per-package metadata round-trip
-- **Importer snapshot** — the package.json dependency sections and resolver-affecting settings that frozen installs compare before replaying the lockfile
-- **Workspace importer projection** — content-addressed package IDs plus importer-local root selections, peers, aliases, patches, catalogs, provenance, and automatic linker state
-- **Exact package-instance graph** — each package row, dependency, peer, and root selection identifies one graph instance
-- **(if any)** npm-alias edges — `local_name → target_canonical_name` pairs
-
-After a standalone `lpm install`:
-
-- `lpm.lock` — commit it
-- `lpm.lockb` — remove a stale copy after LPM CLI upgrades the lockfile to version 13
-
-After a recursive workspace install, commit the single root `lpm.lock`. LPM CLI migrates legacy member lockfiles into that root union after a successful install, then removes the obsolete member `lpm.lock` / `lpm.lockb` files.
-
-## Workspace lockfiles
-
-A workspace lockfile separates storage from importer views:
-
-- `workspace-packages` stores each distinct locked package row under a SHA-256 content address.
-- `importers` maps `"."` and member-relative paths such as `"packages/web"` to the package IDs and root state visible to that project.
-- Member commands locate the nearest owning root lockfile and materialize only their projection. A conflicting version or peer context in another member is not visible unless it is also reachable from the current importer.
-
-Cold recursive installs fuse eligible importers into one synthetic-root greedy-fusion traversal, then project the result per importer. Conflicting roots, aliases, optional reachability, peer bindings, overrides, and release policy remain importer-specific. If one importer cannot be projected safely, only that importer runs an isolated resolver fallback.
-
-Workspace mutations use the root lockfile as their commit point. Filtered add, uninstall, upgrade, audit fix, patch, and tidy changes do not commit their manifests or patches until the corresponding importer projection has been written successfully. A failure restores the previous manifests, patches, and lockfiles, then deletes affected install hashes so the next install repairs any provisional `node_modules` changes.
-
-## Install fast paths
-
-The install pipeline has a tiered fast-path hierarchy. Each tier skips more work than the next.
-
-### Tier 1: Up-to-date install (~14 ms)
-
-If the install-hash file (`.lpm/install-hash`) matches the current state of `package.json`, its authoritative lockfile projection, and the resolved linker mode, install exits immediately. Nothing to do.
-
-This is the "I just ran `lpm install` and now I'm running it again" case. Hits in CI between consecutive `lpm install` calls in a script. The hash check is sync — file stat + timestamp comparison — so the entire `lpm install` invocation finishes in a few milliseconds on small projects and around 14 ms on the VitePress docs benchmark fixture.
-
-`lpm install <pkg>` finalizes its saved range (for example, the bare `zod` request becomes `^4.3.6`) and reconciles the importer snapshot plus install hash inside the same manifest transaction. An immediate bare `lpm install` therefore sees the finalized `package.json` and lockfile as one completed state and can take this tier instead of repairing a transient `*` importer.
-
-### Tier 2: Warm install (~387 ms)
-
-If the current standalone lockfile or workspace importer projection matches `package.json` (no drift), but `node_modules/` is missing or stale, the install rebuilds `node_modules/` directly from that projected graph + the [global content-addressable store](/docs/packages/content-addressable-store).
-
-No metadata fetches. No tarball downloads. Project `node_modules/<pkg>` is created as a symlink into the matching link entry under the selected store version's `links/<graph-key>/` directory (v2 by default). The link entries live in the **global** store, not in the project, so `rm -rf node_modules` between iterations only loses the cheap project-side symlinks — the canonical extracted bytes and the per-graph wrappers stay put. Warm install is a symlink rebuild over already-materialized link entries.
-
-[`lpm fetch`](/docs/packages/fetch) is the lockfile-only way to create that warm store state ahead of time. It reads `lpm.lock`, downloads compatible remote tarballs into the store, and leaves `package.json`, `node_modules`, and the lockfile untouched.
-
-### Tier 3: Lockfile-only install (offline-able)
-
-`lpm install --offline` forces this path. The resolver does not run. LPM CLI reads each exact package instance from `lpm.lock`.
-
-Replay also checks the source against the current manifest. A registry range cannot replay a Git, tarball, or local-path package.
-
-Local `file:` and `link:` entries must resolve to a declared path or a reachable transitive source. Offline mode keeps this rule.
-
-Lockfile versions 1–12 do not contain an exact package-instance graph. Offline and frozen installs reject these lockfiles because replay can select the wrong peer context.
-
-`lpm migrate --no-install` intentionally writes a version 12 staging lockfile. Run an online `lpm install` to create version 13 before offline use.
-
-For a standalone project, run an online mutable install once:
+`lpm.lock` records the exact dependency graph for a project. LPM CLI uses this TOML file to reuse package selections across installs.
 
 ```bash
+# Create or update the lockfile locally
 lpm install
-git add lpm.lock
-git commit
+
+# Review and commit the dependency graph
+git diff -- lpm.lock
+git add package.json lpm.lock
+git commit -m "Update dependencies"
+
+# Install the committed graph in CI
+lpm ci
 ```
 
-For a workspace, run a recursive install from the workspace root:
+A lockfile pins the graph. The [content-addressable store](/docs/packages/content-addressable-store) holds package files, and `node_modules` exposes those files to your project.
 
-```bash
-lpm install --recursive
-git add lpm.lock
-git commit
-```
+## Which files to commit
 
-The online install resolves the graph again and writes lockfile version 13. Then retry the offline or frozen install.
+| File | Purpose | Commit it? |
+| --- | --- | --- |
+| `lpm.lock` | Authoritative dependency graph and manifest snapshot | Yes. In a workspace, commit the root lockfile. |
+| `lpm.lockb` | Generated binary companion for older, representable lockfiles | Commit it when LPM CLI writes it. Commit its removal when LPM CLI removes it. |
 
-This is the CI-recommended path:
+Current installs write lockfile version **13**. This version requires TOML-only data, so LPM CLI writes `lpm.lock` and removes an obsolete `lpm.lockb`.
 
-```bash
-lpm install --offline --strict-integrity
-```
+Install and inspection commands read the authoritative TOML. An old binary companion does not override it. Do not create a binary companion manually.
 
-`--strict-integrity` tightens the contract further: tarball-URL deps must declare their SRI inline. Trust-on-first-use is disabled.
-
-### Unavailable pinned artifacts
-
-An online lockfile replay keeps the exact package version, source, and integrity pinned in `lpm.lock`. If a cached tarball URL returns 404, LPM CLI can refresh registry metadata once. It retries a moved URL only when the package contract stays unchanged. It never uses that recovery to select a newer version or another registry.
-
-If the pinned artifact remains unavailable, install fails and preserves the existing bytes of both `lpm.lock` and `lpm.lockb`. This applies to ordinary mutable replay, explicit `--frozen-lockfile`, plain `lpm install` automatically frozen by CI, and `lpm ci`. A mutable replay does not silently replace the pin.
-
-For a direct dependency, run the reported command using its `package.json` key, then commit the result:
-
-```bash
-lpm upgrade <manifest-key>
-git add lpm.lock
-git commit
-```
-
-Aliases use their local manifest key. For example, `"local": "npm:canonical@1.0.0"` is upgraded with `lpm upgrade local`. An unavailable transitive package has no machine-actionable upgrade command because its canonical name is not a direct `package.json` entry. Restore the artifact, or update the owning direct dependency or an override in a mutable development environment.
-
-If the upgrade removes `lpm.lockb`, stage that removal with `lpm.lock`.
-
-The failure reports the pinned package and version with a sanitized source identity. Registry and remote-tarball diagnostics omit credentials and secret URL components.
-
-Authentication, rate-limit, timeout, transport, and registry 5xx failures remain distinct errors. LPM CLI does not report them as unavailable artifacts.
-
-### Tier 4: Resolve-and-install (cold)
-
-If the lockfile drifts from `package.json` (a new dep was added, a range was bumped), the resolver runs. The streaming dispatcher fetches metadata, picks versions, downloads tarballs, populates the store, links into `node_modules/`, and writes a fresh lockfile. In a cold recursive workspace install, eligible importers share one union resolution, with shared expansion passes as needed, and one root lockfile commit.
-
-This is the slow path, but "slow" is relative — cold install on the 535-package VitePress docs fixture is **2,945 ms** in our benchmarks (vs npm 17,354 ms / pnpm 6,125 ms).
-
-## Lockfile-version
-
-The TOML lockfile is **schema-versioned** (current: `13`), not tool-versioned. A version changes only when the file structure changes.
-
-Version 11 added local manifest fingerprints. Version 12 added structured peer edges. Version 13 added exact package-instance identities for rows, edges, and roots.
-
-An older LPM CLI rejects a newer schema. A current LPM CLI rejects unsafe replay of lockfile versions 1–12 in offline and frozen modes.
-
-The binary lockfile has its own wire-format version (current: `3`). Version `3` added a sparse provenance section and an 8-byte footer.
-
-If the binary version does not match, the reader rejects it and reads TOML. Lockfile version 13 does not rebuild the binary file.
-
-LPM CLI reports a binary writeback only when it actually writes a representable `lpm.lockb`. TOML-only maintenance such as reconciling an importer snapshot, patch record, or lockfile schema does not produce a misleading binary-format upgrade message.
-
-## When the binary lockfile is skipped
-
-`lpm.lockb` is intentionally smaller than `lpm.lock`. It does not contain the exact package-instance graph from lockfile version 13.
-
-As a result, current installs write **only `lpm.lock`**. LPM CLI also removes a stale binary companion during a lockfile version 13 write.
-
-An incomplete binary file can disagree with the reviewer-visible TOML lockfile. Therefore, LPM CLI skips the write and removes stale binary state.
-
-If your project only has `lpm.lock`, that's expected when the graph needs TOML-only metadata.
-
-## Determinism
-
-The lockfile is deterministic by construction:
-
-- Entries sorted by name
-- Workspace package rows keyed by a SHA-256 digest of their serialized locked content
-- Importer package IDs sorted and deduplicated
-- Per-entry `dependencies` arrays sorted
-- Optional fields omitted (never written as `null`)
-- Schema-versioned
-
-This is what makes `git diff lpm.lock` actionable. A new dep adds entries. A version bump rewrites a single package's fields. Supply-chain surprises (a transitive integrity change without a version bump, a new package appearing without a corresponding `package.json` change) are visible without parsing.
-
-## Safe atomic rewrites
-
-When LPM CLI replaces `lpm.lock` or `lpm.lockb`, it writes through an exclusively created, collision-resistant file in the same directory and then atomically replaces the destination. An attacker-preplanted temporary symlink, hardlink, junction, or reparse entry is not followed, so an ordinary lockfile update cannot use a predictable staging name to overwrite its external target.
-
-Metadata and artifact fetch failures happen before lockfile replacement and leave any existing `lpm.lock` and `lpm.lockb` byte-for-byte unchanged.
-
-This guarantee covers LPM-managed atomic rewrites and their temporary leaf entries. It does not confine an attacker-controlled parent directory, apply to every filesystem write made by LPM CLI or package scripts, or by itself promise that a completed write survives sudden power loss.
-
-## Should I commit `lpm.lockb`?
-
-Commit `lpm.lock` always. In a workspace, commit only the root `lpm.lock`. Member lockfiles are obsolete after migration.
-
-Lockfile version 13 is TOML-only. If an upgrade removes `lpm.lockb`, commit the removal. Do not create a binary file manually.
-
-The only special handling: mark `lpm.lockb` as binary in `.gitattributes`:
+For repositories that retain a binary companion, `.gitattributes` can mark it as binary:
 
 ```text
 lpm.lockb binary
 ```
 
-`lpm init` adds this line for you.
+[`lpm init`](/docs/packages/init) adds this attribute during project setup.
+
+## What the lockfile records
+
+The graph records exact package instances, dependency edges, peer bindings, and root selections. Two instances can share a name and version but have different peer bindings or sources.
+
+The lockfile also records:
+
+- Exact versions and package sources, including registries, Git revisions, and local paths.
+- Integrity hashes and tarball URL hints when available.
+- Alias names, platform restrictions, and optional dependency reachability.
+- Dependency declarations and resolver settings used to detect manifest changes.
+- Catalog selections, patch records, and automatic linker state when applicable.
+- Registry signatures and verified provenance evidence when recorded.
+
+The manifest snapshot includes dependency sections, overrides, resolutions, catalogs, patch fingerprints, and peer settings. Workspace snapshots also track applicable root peer providers.
+
+A lockfile does not approve dependency scripts or make package sources trustworthy. [Script approval](/docs/packages/approve-scripts), registry policy, and integrity checks remain separate controls.
+
+For field definitions and examples, see the [`lpm.lock` format](/docs/reference/lockfile-format).
+
+## Frozen and offline installs
+
+Frozen installs preserve the selected graph. Offline installs use local package data. These controls serve different purposes.
+
+| Command | Behavior |
+| --- | --- |
+| `lpm install` | Reuses a compatible graph. Resolves again when the manifest or relevant settings change. |
+| `lpm ci` | Requires a compatible lockfile and rejects changes that need new package selections. Can download missing packages. |
+| `lpm install --frozen-lockfile` | Explicitly requires a compatible lockfile. |
+| `lpm install --offline` | Replays the locked graph using available local package data. Fails if required data is missing. |
+| `lpm ci --offline` | Combines frozen validation with offline installation. |
+| `lpm install --no-frozen-lockfile` | Explicitly permits lockfile updates, including in CI. |
+
+With an existing lockfile, plain [`lpm install`](/docs/packages/install) automatically uses frozen mode when LPM CLI detects CI. Without a lockfile, plain install can create one. Use [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) when CI must reject a missing lockfile.
+
+Frozen mode rejects manifest drift, incompatible lockfile schemas, package-add requests, and `--force`. LPM CLI leaves `lpm.lock` and any `lpm.lockb` unchanged in frozen mode. Frozen mode does not disable downloads or lifecycle scripts.
+
+To prepare the store for offline CI:
+
+```bash
+# Run with network access
+lpm fetch
+
+# Use the populated store and committed lockfile
+lpm ci --offline
+```
+
+[`lpm fetch`](/docs/packages/fetch) downloads supported remote artifacts from the lockfile. Local paths and Git sources can require additional preparation. Fetch does not run dependency scripts or create `node_modules`.
+
+`--strict-integrity` rejects registry packages without integrity hashes. During resolution, it also requires inline SRI for direct tarball URLs. Replay uses the integrity already recorded in the lockfile:
+
+```bash
+lpm ci --offline --strict-integrity
+```
+
+Locked source types must match the manifest. A registry dependency cannot reuse a locked Git, tarball, or local-path package. Local paths must remain declared or reachable through the dependency graph.
+
+Offline package replay is not a network sandbox for lifecycle scripts or policy extensions.
+
+A compatible lockfile does not imply that every warm install hashes all cached package bytes. Store reuse, artifact verification, and script policy have separate rules.
+
+## Workspace ownership
+
+A recursive workspace install writes one root `lpm.lock`. Each member has its own recorded dependency view within that file.
+
+```bash
+# Run from the workspace root
+lpm install --recursive
+git diff -- lpm.lock
+git add lpm.lock
+```
+
+After a successful migration, LPM CLI removes obsolete member `lpm.lock` and `lpm.lockb` files. Cleanup failures produce warnings. Commit successful removals with the root lockfile.
+
+Member commands use the nearest ancestor lockfile that records that member. A legacy local lockfile does not override its owning workspace lockfile.
+
+If an owning workspace lockfile is malformed, inspection fails. It does not silently select a different local graph, including when the member also declares a nested workspace.
+
+A standalone project can use its local lockfile despite an unrelated malformed ancestor lockfile. A directory containing only an exported `lpm.lock` can also support inspection:
+
+```bash
+cd exported-graph
+lpm graph --format json
+```
+
+An ancestor lockfile that records the exported directory as a member still owns that view. See [workspaces](/docs/packages/workspaces) for installation and selection rules.
+
+## Reuse and updates
+
+If the lockfile matches the manifest, LPM CLI can rebuild `node_modules` from the recorded graph and available store entries. Missing artifacts or online checks can still require network access.
+
+The local `.lpm/install-hash` records reusable install state. It is disposable state, not a substitute for a committed lockfile.
+
+For dependency changes, use [`lpm install`](/docs/packages/install), [`lpm upgrade`](/docs/packages/upgrade), or the relevant mutation command. Review the resulting manifest and lockfile changes together.
+
+Sorted entries make lockfile changes reproducible and reviewable. A version change can also change transitive packages, peer instances, and workspace records.
+
+## Recovery
+
+### Manifest drift
+
+If a frozen install reports a mismatch, update the lockfile in a development environment:
+
+```bash
+lpm install --no-frozen-lockfile
+git diff -- package.json lpm.lock
+```
+
+Review and commit the result before you retry CI. For a workspace, add `--recursive` from the root to update all members.
+
+### Older lockfile schemas
+
+Lockfile versions 1–12 lack the exact package-instance graph required for frozen and offline replay. Run an online mutable install to write version 13:
+
+```bash
+lpm install --no-frozen-lockfile
+```
+
+[`lpm migrate --no-install`](/docs/packages/migrate) intentionally creates a version 12 staging lockfile. It also requires an online install before frozen or offline use.
+
+An older LPM CLI can reject a newer schema. Use a CLI release that supports the committed lockfile.
+
+### Missing cached packages
+
+If offline installation reports missing data, populate the store with network access:
+
+```bash
+lpm fetch
+lpm ci --offline
+```
+
+For source types that fetch does not prepare, restore the required source or run an online install first.
+
+### Unavailable pinned artifacts
+
+An online replay preserves the pinned version, source, and integrity. If a cached tarball URL returns 404, LPM CLI can refresh registry metadata once. It retries a moved URL only when the pinned package contract remains unchanged.
+
+If the artifact remains unavailable, installation fails and preserves the existing lockfile bytes. It does not select a newer version automatically.
+
+For a direct dependency, use its manifest key:
+
+```bash
+lpm upgrade <manifest-key>
+```
+
+For `"local": "npm:canonical@1.0.0"`, the key is `local`. For an unavailable transitive package, restore the artifact or update its owning direct dependency or override. Review and commit the new graph.
+
+Authentication, rate limits, transport errors, and registry server errors remain separate failures.
+
+### Invalid files or failed cleanup
+
+If an owning lockfile is malformed, restore a valid committed copy before you retry inspection or a frozen install.
+
+Current lockfile writes remove obsolete binary companions. If permissions or a directory at `lpm.lockb` prevent cleanup, LPM CLI reports an error. Inspect the reported path and preserve unrelated contents before you correct it.
+
+Each lockfile replacement is atomic, but the TOML write and companion cleanup are separate operations. A cleanup error can occur after the new TOML file exists. This is not a multi-file transaction or a guarantee against power loss.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — what reads the lockfile, and how `--offline` / `--strict-integrity` work
-- [`lpm.lock` format](/docs/reference/lockfile-format) — full TOML schema reference
-- [`lpm.lockb` format](/docs/reference/lockb-format) — binary format wire spec
-- [Resolver](/docs/packages/resolver) — what produces a lockfile
-- [Content-addressable store](/docs/packages/content-addressable-store) — where the bytes the lockfile points at live
+- [`lpm install`](/docs/packages/install) — installation flags, integrity, and scripts
+- [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) — frozen installs in CI
+- [`lpm fetch`](/docs/packages/fetch) — prepare package artifacts from a lockfile
+- [`lpm.lock` format](/docs/reference/lockfile-format) — TOML fields and validation
+- [`lpm.lockb` format](/docs/reference/lockb-format) — older binary companions
+- [Resolver](/docs/packages/resolver) — package selection
+- [Dependency graph](/docs/packages/dependency-graph) — inspect locked dependencies
+- [Content-addressable store](/docs/packages/content-addressable-store) — package storage and reuse
