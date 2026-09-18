@@ -165,7 +165,7 @@ For Docker layers, see [Docker deploys](/docs/guides/docker-deploys).
 ## Save policy
 
 A package name without a version saves as `^resolvedVersion` by default.
-Explicit versions and ranges remain as written. Prerelease versions selected from a name or tag save exactly.
+Without catalog conversion, explicit versions and ranges remain as written. Prerelease versions selected from a name or tag save exactly.
 
 | Request | Saved value, if the resolved version is `4.3.6` |
 | --- | --- |
@@ -179,7 +179,9 @@ Explicit versions and ranges remain as written. Prerelease versions selected fro
 `--exact`, `--tilde`, and `--save-prefix` are mutually exclusive.
 An explicit version or range takes precedence over these flags.
 
-If you reinstall a dependency without a version or a save override, its saved range remains unchanged.
+Without catalog conversion, a bare reinstall preserves the saved specification unless a save flag requests a new range. Save flags preserve existing source dependencies, including catalog entries that identify sources.
+
+Identical package arguments run once. Conflicting requests for the same local name fail before manifest changes.
 
 Set persistent save defaults in `lpm.toml` or `~/.lpm/config.toml`:
 
@@ -208,7 +210,9 @@ The entry must exist, and its range must include the resolved version. Otherwise
 | --- | --- |
 | `manual` (default) | Resolve existing catalog references, but do not create them automatically |
 | `prefer` | Save through a matching default catalog entry. Warn and retain a direct version spec on mismatch |
-| `strict` | Require a matching default catalog entry for each added package |
+| `strict` | Require a matching default catalog entry for each added registry dependency |
+
+Automatic catalog modes take precedence over explicit registry versions, save flags, and existing registry ranges. They preserve workspace, local-path, alias, Git, and tarball sources. `--catalog` cannot replace a source dependency.
 
 `lpm.cleanupUnusedCatalogs = true` removes unused root catalog entries after a successful install.
 The default preserves them. See [Catalogs](/docs/packages/catalog).
@@ -301,6 +305,8 @@ The next install reconciles those files with the authoritative lockfile.
 Registry packages follow [registry routing](/docs/registries), including private registries from `.npmrc`.
 Local directories, links, archives, and Git dependencies retain their own source identity.
 Packages with the same name and version can still refer to different sources.
+
+Declare source dependencies in `package.json`, then run `lpm install`. Explicit package arguments support `workspace:`. Alias, Git, local-path, and tarball version tokens are rejected.
 
 ### Local package archives
 
@@ -421,7 +427,7 @@ lpm install -g foo --replace-bin serve
 Global installs reject workspace flags, `-D`, `--yes`, omission flags, catalog flags, frozen flags, `--offline`, `--force`, `--skills`, `--timing`, and audit-after-install flags.
 `--no-skills`, `--no-editor-setup`, and `--no-security-summary` have no effect on global installs.
 
-After [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project), reinstall the affected global package to run its approved scripts.
+After [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-approvals), reinstall the affected global package to run its approved scripts.
 See [Global packages](/docs/packages/global).
 
 ## How it works

@@ -1,147 +1,231 @@
 ---
 title: Save policy
-description: "How LPM CLI writes version ranges to package.json — caret default, explicit preservation, prerelease safety."
+description: "Control the versions and catalog references that LPM CLI saves in package.json."
 ---
 
-When `lpm install <pkg>` mutates `package.json`, the **save policy** decides what string lands in `dependencies` (or `devDependencies`). The decision is a pure function of: what you typed, the resolved version, your CLI flags, and your config.
-
-This page is the reference for the rules. For the CLI flag surface, see [`lpm install`](/docs/packages/install). For the file format, see [`lpm.toml`](/docs/reference/lpm-toml) and [`~/.lpm/config.toml`](/docs/reference/config-toml).
-
-## The decision table
-
-| You ran | `package.json` ends up with | Why |
-| --- | --- | --- |
-| `lpm install zod` | `"zod": "^4.3.6"` | Bare install — caret default |
-| `lpm install zod@4.3.6` | `"zod": "4.3.6"` | Explicit exact — preserved verbatim |
-| `lpm install zod@^4.3.0` | `"zod": "^4.3.0"` | Explicit range — preserved verbatim |
-| `lpm install zod@~4.3.6` | `"zod": "~4.3.6"` | Explicit tilde — preserved verbatim |
-| `lpm install zod@latest` | `"zod": "^4.3.6"` | Dist-tag → caret default |
-| `lpm install zod@beta` | `"zod": "4.4.0-beta.2"` | Prerelease — saved exact for safety |
-| `lpm install zod@*` | `"zod": "*"` | Explicit wildcard — preserved (only allowed when explicit) |
-| `lpm install zod@workspace:*` | `"zod": "workspace:*"` | Workspace protocol — preserved verbatim |
-| `lpm install --catalog zod` | `"zod": "catalog:"` | Explicit default-catalog save when the root default catalog entry matches the resolved version |
-| `lpm install --catalog=ui zod` | `"zod": "catalog:ui"` | Explicit named-catalog save when `catalogs.ui.zod` matches the resolved version |
-
-The throughline: **what you typed wins**. The default kicks in only when you didn't say anything.
-
-## Precedence
-
-Seven layers, highest first:
-
-1. **Explicit catalog save.** `--catalog` or `--catalog=<name>` writes `catalog:` or `catalog:<name>` when the selected root catalog entry exists and satisfies the resolved version.
-2. **Explicit user spec in `pkg@spec`.** Exact, range, wildcard, workspace — preserved verbatim, never reinterpreted.
-3. **CLI flag override.** `--exact`, `--tilde`, `--save-prefix '<p>'`. Mutually exclusive (clap enforces).
-4. **Prerelease-exact safety.** If the resolved version is a prerelease and no CLI flag forced something else, save the exact resolved version. Prereleases shouldn't auto-widen under a forgotten `save-prefix` config setting.
-5. **Persistent config.** `save-exact = true`, then `save-prefix = "^|~|"`. Reads from `./lpm.toml` first, then `~/.lpm/config.toml`.
-6. **Catalog mode.** `package.json > lpm.catalogMode = "prefer"` or `"strict"` can save matching default-catalog entries as `catalog:`; strict mode fails on missing or mismatched default entries.
-7. **Default.** `^resolvedVersion`.
-
-Each tier feeds the next only when the higher one is silent. Direct save-prefix controls do not override what you typed; `--catalog` is the deliberate exception because it explicitly asks LPM CLI to save a catalog reference after verifying the selected catalog matches the resolved version.
-
-## CLI flags
+Save policy controls the dependency specifications that [`lpm install`](/docs/packages/install) writes to `package.json`. The lockfile records the selected versions separately.
 
 ```bash
-lpm install zod --exact                 # save the exact resolved version, no prefix
-lpm install zod --tilde                 # save with ~ prefix
-lpm install zod --save-prefix ''        # same as --exact (empty prefix)
-lpm install zod --save-prefix '~'       # same as --tilde
-lpm install zod --save-prefix '^'       # explicit caret (the default)
-lpm install --catalog zod               # save as catalog:
-lpm install --catalog=ui zod            # save as catalog:ui
+# Save a new dependency with the default caret range
+lpm install zod
+
+# Save the resolved version exactly
+lpm install zod --exact
+
+# Preserve an explicit range
+lpm install 'zod@~4.3.6'
+
+# Save an existing catalog reference
+lpm install --catalog zod
 ```
 
-`--exact`, `--tilde`, `--save-prefix`, and `--catalog[=<name>]` are **mutually exclusive** save-policy flags. `*` is **not** a valid `--save-prefix` value — wildcards must be requested per-package via `pkg@*`.
+These rules apply to npm, LPM.dev Registry, and private npm-compatible registries. This page covers JavaScript dependencies. Swift requirements follow the [Swift package workflow](/docs/packages/swift-package-registry).
 
-Setting any of these flags forces a rewrite (see [Bare reinstall](#bare-reinstall-doesnt-rewrite) below).
+## What gets saved
 
-`--catalog` is a save policy, not a catalog editor. The target entry must already exist in the root catalog set (`package.json > catalogs` or `pnpm-workspace.yaml > catalog` / `catalogs`), and the resolved version must satisfy that catalog range. On mismatch or missing entry, LPM CLI rolls `package.json` back and exits with an error.
+For a new dependency, assume that the stable selection is `4.3.6` and the prerelease selection is `4.4.0-beta.2`:
 
-## Persistent config
+| Input | Saved specification |
+| --- | --- |
+| `zod` | `^4.3.6` |
+| `zod@latest` | `^4.3.6` |
+| `zod@4.3.6` | `4.3.6` |
+| `zod@^4.3.0` | `^4.3.0` |
+| `zod@~4.3.6` | `~4.3.6` |
+| `zod@*` | `*` |
+| `zod@next` | `4.4.0-beta.2` |
+| `@my-co/shared@workspace:*` | `workspace:*` |
 
-Pin a default for one project:
+This table assumes no catalog policy or save override. A `workspace:` request requires a matching package in the current workspace. Explicit workspace ranges must accept its local version.
+
+Tags such as `latest` select a version. The saved specification contains that version, not the tag.
+
+Quote arguments that contain shell characters such as `*`, `^`, or `>`:
+
+```bash
+lpm install 'zod@*'
+lpm install 'zod@>=4.3.0 <5'
+```
+
+`--dev` selects `devDependencies`. It does not change the range rules.
+
+## Catalogs take precedence
+
+For ordinary registry dependencies, catalog saves and automatic catalog modes run before the direct range rules:
+
+1. `--catalog` or `--catalog=<name>` selects an existing catalog entry.
+2. `catalogMode: "prefer"` saves a matching default entry as `catalog:`. A mismatch retains the direct specification and prints a warning.
+3. `catalogMode: "strict"` requires a matching default entry. A missing entry or version mismatch fails the operation.
+
+```json title="package.json"
+{
+  "catalogs": {
+    "default": { "zod": "^4.3.0" }
+  },
+  "lpm": {
+    "catalogMode": "prefer"
+  }
+}
+```
+
+```bash
+# A matching default entry saves as catalog:, including an explicit version
+lpm install zod@4.3.6
+```
+
+For registry dependencies, automatic catalog mode can override explicit version text, save flags, and an existing direct range. The catalog range must still accept the resolved version.
+
+Automatic catalog modes preserve source dependencies, including workspace links, local paths, aliases, Git sources, and tarball URLs. `--catalog` cannot replace these sources.
+
+The default catalog mode is `manual`. In the workspace root, set `package.json > lpm.catalogMode` to `manual` to stop automatic conversion.
+
+This setting does not replace existing `catalog:` references during bare reinstalls. There is no one-run catalog-mode override.
+
+`--catalog` does not create or edit the catalog entry. A failed catalog check restores the manifest. See [`lpm catalog`](/docs/packages/catalog).
+
+## Direct range precedence
+
+When no catalog reference applies, an explicit exact version, range, wildcard, or `workspace:` specification remains unchanged.
+
+For a new bare dependency or a tag, LPM CLI uses the first applicable rule:
+
+| Priority | Rule |
+| --- | --- |
+| 1 | `--exact`, `--tilde`, or `--save-prefix`. |
+| 2 | Save a prerelease exactly. |
+| 3 | `save-exact = true`. |
+| 4 | The configured `save-prefix`. |
+| 5 | The default caret prefix, `^`. |
+
+```bash
+lpm install zod --exact
+lpm install zod --tilde
+lpm install zod --save-prefix ''
+lpm install zod --save-prefix '^'
+```
+
+`--exact`, `--tilde`, `--save-prefix`, and `--catalog` are mutually exclusive. A save flag does not replace an explicit range:
+
+```bash
+lpm install 'zod@~4.3.6' --exact
+# Saves ~4.3.6
+```
+
+## Persistent defaults
+
+Set project defaults beside the installation's `package.json`:
 
 ```toml title="lpm.toml"
 save-prefix = "~"
-save-exact  = false
+save-exact = false
 ```
 
-Or for every project on this machine:
+When you add packages in a workspace, LPM CLI reads the workspace root's `lpm.toml`.
 
-```toml title="~/.lpm/config.toml"
-save-prefix = "^"
-save-exact  = false
-```
-
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix used when nothing else applies |
-| `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix` |
-
-Manage `~/.lpm/config.toml` via the CLI:
+Set user defaults through [`lpm config`](/docs/infra/config):
 
 ```bash
 lpm config set save-prefix '~'
-lpm config set save-exact true
+lpm config set save-exact false
 ```
 
-Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the file.
+Each project key overrides the corresponding user key in `~/.lpm/config.toml`. Missing keys inherit their user value. `LPM_HOME` changes the user configuration directory.
 
-## Prerelease safety
+| Key | Recommended values | Default |
+| --- | --- | --- |
+| `save-prefix` | `"^"`, `"~"`, or `""` | `"^"` |
+| `save-exact` | `true` or `false` | `false` |
+
+The loader also accepts quoted boolean values: `"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, and `"no"`.
+
+`save-exact = true` takes precedence over the configured prefix. To replace a global exact policy with a project tilde policy, set both keys as shown.
+
+`lpm.json` and `package.json > lpm` do not define these two keys. Catalog mode is a separate manifest setting.
+
+Invalid values fail with the configuration file path. `*` is not a valid default prefix. Request a wildcard for a specific package instead.
+
+## Existing dependencies
+
+A bare reinstall preserves an existing specification in the selected dependency section when no save flag or catalog conversion applies:
 
 ```bash
-lpm install zod@next          # resolves to e.g. 4.4.0-beta.2
-# package.json now has: "zod": "4.4.0-beta.2"
+# Existing dependency: "zod": "~4.3.6"
+lpm install zod
+# Still ~4.3.6
 ```
 
-Prereleases are saved **exact** even when your config says `save-prefix = "^"`. The reasoning: a `^4.4.0-beta.2` range matches `4.4.0-beta.3` (and every other 4.x prerelease + stable), which is almost never what you want. The next prerelease could fix nothing or break everything; you should opt into the bump explicitly.
-
-Override per-invocation if you want the caret behavior anyway:
+For an ordinary registry dependency, a save flag requests a rewrite of a bare dependency:
 
 ```bash
-lpm install zod@next --save-prefix '^'   # → "^4.4.0-beta.2"
+lpm install zod --exact
 ```
 
-## Bare reinstall doesn't rewrite
+Save flags preserve an existing source specification during a bare reinstall. They also preserve a catalog reference whose entry identifies a source.
+
+Changing persistent defaults alone does not rewrite every existing dependency. An install without package arguments also does not apply a new prefix across the manifest.
+
+## Prereleases
+
+A tag that selects a prerelease saves the exact version by default:
 
 ```bash
-lpm install zod         # already in package.json as "~4.3.6"
-# → still "~4.3.6", refresh-only
+lpm install zod@next
+# Example: 4.4.0-beta.2
 ```
 
-Re-installing an existing dep without a version or override flag refreshes the lockfile + store entry but **doesn't rewrite the existing range**. Your team's intentional `~4.3.6` pin survives a routine reinstall.
+The range `^4.4.0-beta.2` accepts later prereleases of `4.4.0`. It also accepts stable versions from `4.4.0` up to, but excluding, `5.0.0`. It excludes prereleases of other version tuples, such as `4.5.0-beta.1`.
 
-To force a rewrite, set any flag (`--exact`, `--tilde`, `--save-prefix`) — even one that matches the existing prefix.
-
-## Why no `*` default
-
-`*` matches every version, including future major bumps that break your code. There is no save policy under which the default is `"*"`. The only way to get `"*"` is to type it: `lpm install zod@*`. Wildcards are a deliberate per-package opt-in.
-
-This is enforced at every layer:
-
-- `--save-prefix '*'` is rejected at the CLI parser
-- `save-prefix = "*"` is rejected at the TOML config loader
-- The bare-install default never produces `"*"`, regardless of resolved version
-
-## Workspace protocol
+Use a CLI override to request that range:
 
 ```bash
-lpm install @my-co/shared@workspace:*
-# package.json: "@my-co/shared": "workspace:*"
+lpm install zod@next --save-prefix '^'
 ```
 
-`workspace:*`, `workspace:^`, `workspace:~`, and `workspace:<range>` are always preserved verbatim. Save policy doesn't touch them — workspace protocol semantics are out of scope.
+Without catalog conversion, an explicit prerelease range remains unchanged. Persistent prefix settings alone do not widen a newly resolved prerelease.
 
-## Why this is in `lpm.toml`, not `package.json`
+## Source dependencies
 
-The save-policy config keys (`save-prefix`, `save-exact`) deliberately don't live under `package.json > lpm`. Reasons:
+Explicit `workspace:` arguments are supported:
 
-- **Save policy is tool behavior, not publishable metadata.** It doesn't ship to consumers of your package.
-- **It changes more often.** Tweaking a personal preference shouldn't dirty the manifest.
-- **Teams disagree about whether to commit it.** `lpm.toml` lets each repo decide — commit it for project-shared policy, `.gitignore` it for individual preference.
+```bash
+lpm install '@my-co/shared@workspace:*'
+```
+
+Declare other source dependencies in `package.json`, then run [`lpm install`](/docs/packages/install#dependency-sources):
+
+```json title="package.json"
+{
+  "dependencies": {
+    "shared": "file:../shared",
+    "compat": "npm:actual-package@^2.0.0"
+  }
+}
+```
+
+```bash
+lpm install
+```
+
+Package arguments with alias, Git, local-path, or tarball version tokens fail before installation. LPM CLI does not interpret these source tokens as registry tags.
+
+A bare reinstall preserves existing source declarations, including names under `@lpm.dev/`. If selected workspace targets mix a source dependency and a Swift registry package, install those target groups separately.
+
+## Repeated package arguments
+
+Identical requests for the same local package name are processed once. Different requests for that name fail before manifest changes:
+
+```bash
+lpm install zod zod
+
+# Conflicting requests: choose one specification
+lpm install zod zod@4.3.6
+```
 
 ## See also
 
-- [`lpm install`](/docs/packages/install#save-policy) — CLI flag reference
-- [`lpm.toml`](/docs/reference/lpm-toml) — project-level config file
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level config file
-- [`lpm config`](/docs/infra/config) — manage user-level keys from the CLI
+- [`lpm install`](/docs/packages/install#save-policy) — install flags and workspace mutations
+- [`lpm catalog`](/docs/packages/catalog) — catalog declarations and saved references
+- [Lockfile](/docs/packages/lockfile) — exact versions and frozen installs
+- [Workspaces](/docs/packages/workspaces) — local dependency protocols
+- [`lpm.toml`](/docs/reference/lpm-toml) — project defaults
+- [User configuration](/docs/reference/config-toml) — persistent user defaults
