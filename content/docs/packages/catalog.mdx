@@ -1,93 +1,133 @@
 ---
 title: lpm catalog
-description: "Inspect workspace catalog usage and resolved catalog provenance."
+description: "Inspect catalog declarations, find unused entries, and read resolved versions from the lockfile."
 ---
 
+Use `lpm catalog` to inspect shared dependency versions before cleanup or to read the versions that an install selected.
+
 ```bash
-lpm catalog list
-lpm catalog list --unused
+lpm catalog <COMMAND>
+lpm catalog list [--unused]
 lpm catalog show --resolved
 ```
 
-`lpm catalog` inspects the version catalogs declared by the workspace root. Use it to find unused catalog pins before cleanup, or to verify which catalog references were resolved into `lpm.lock`.
-
-Catalogs are declared in root `package.json > catalogs` or in pnpm-style `pnpm-workspace.yaml > catalog` / `catalogs`. Root and workspace-member manifests reference them with `"catalog:"` for the default catalog or `"catalog:<name>"` for a named catalog.
-
-## Examples
+## Quickstart
 
 ```bash
-lpm catalog list                 # every declared catalog entry
-lpm catalog list --unused        # only entries no manifest references
-lpm catalog show --resolved      # resolved catalog snapshots from lpm.lock
-lpm catalog show --resolved --json
-```
-
-## List Declared Entries
-
-```bash
+# List declared catalog entries and their usage
 lpm catalog list
-```
 
-`list` reads the root catalog declarations and scans the root package plus every workspace member for `catalog:` references in dependency sections. Human output prints one row per entry:
-
-```text
-default react ^18.2.0 used
-default react-dom ^18.2.0 used
-testing vitest ^1.0.0 unused
-```
-
-Use `--unused` before enabling catalog cleanup:
-
-```bash
+# Inspect entries that no current manifest references
 lpm catalog list --unused
-```
 
-`--unused` filters out entries that are still referenced. If none remain, LPM CLI prints `No unused catalog entries.`
-
-## Show Resolved Snapshots
-
-```bash
+# Read the saved catalog resolutions
 lpm catalog show --resolved
 ```
 
-`show --resolved` reads catalog snapshots from `lpm.lock`. These snapshots record the catalog entry, the saved catalog reference, the resolved version, and the original catalog range:
+| Command | Source | Result |
+| --- | --- | --- |
+| `list` | Current root and member manifests | Declared ranges and whether a manifest references each entry. |
+| `list --unused` | Current root and member manifests | Declared entries without references. |
+| `show --resolved` | `lpm.lock` | Saved ranges, selected versions, and catalog references. |
 
-```text
-default react catalog: -> 18.2.0 (^18.2.0)
-testing vitest catalog:testing -> 1.6.1 (^1.0.0)
-```
+These commands do not install packages, contact registries, or change the project.
+From a workspace member, they inspect the workspace root and its members.
+Outside a workspace, they inspect the current directory.
 
-`lpm catalog show` currently requires `--resolved`. If a manifest references a catalog entry that is missing from `lpm.lock`, LPM CLI exits non-zero and asks you to run `lpm install` so the lockfile snapshot cannot look falsely clean.
+## Declare catalogs
 
-## JSON Output
+Put shared ranges in the root `package.json`. Reference each range from a dependency section:
 
-Pass the global `--json` flag for automation:
-
-```bash
-lpm catalog list --unused --json
-```
-
-```json
+```json title="package.json"
 {
-  "success": true,
-  "mode": "unused",
-  "count": 1,
-  "used_count": 2,
-  "unused_count": 1,
-  "entries": [
-    {
-      "catalog": "testing",
-      "package": "vitest",
-      "specifier": "^1.0.0",
-      "used": false
+  "catalogs": {
+    "default": {
+      "react": "^19.0.0"
+    },
+    "testing": {
+      "vitest": "^3.0.0"
     }
-  ]
+  },
+  "dependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:testing"
+  }
+}
+```
+
+`catalog:` and `catalog:default` refer to the default catalog. `catalog:<name>` selects a named catalog.
+Workspace members use the root declarations. Member-level catalog declarations do not replace them.
+
+pnpm-style workspaces can declare the same ranges in `pnpm-workspace.yaml`:
+
+```yaml title="pnpm-workspace.yaml"
+packages:
+  - packages/*
+catalog:
+  react: ^19.0.0
+catalogs:
+  testing:
+    vitest: ^3.0.0
+```
+
+For duplicate entries, root `package.json > catalogs` takes precedence over the YAML declarations.
+Catalogs select version ranges. Registry routing still comes from [registry configuration](/docs/registries).
+
+### Add an inspection task
+
+`lpm.json` has no catalog configuration block. Use a task for repeatable inspection:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "catalog-unused": {
+      "command": "lpm catalog list --unused",
+      "cache": false
+    }
+  }
 }
 ```
 
 ```bash
+lpm run catalog-unused
+lpm run catalog-unused -- --json
+```
+
+The task reads current manifests on every run. An explicit task command takes precedence over a package script with the same name.
+See [Tasks](/docs/dev/task-runner) for task configuration.
+
+## Inspect usage
+
+```bash
+lpm catalog list
+lpm catalog list --unused --json
+```
+
+Usage includes references in regular, development, optional, and peer dependencies.
+It also includes supported catalog targets in `overrides`, `resolutions`, and `lpm.overrides`.
+An entry counts as used even when an install does not select it.
+
+Human output contains the catalog, package, range, and usage:
+
+```text
+default react ^19.0.0 used
+testing vitest ^3.0.0 used
+```
+
+With `--json`, `entries` contains the selected rows. `count` is their number.
+`used_count` and `unused_count` count all declared entries, even with `--unused`.
+An empty result succeeds. The command does not fail a CI job merely because unused entries exist.
+
+## Read saved versions
+
+```bash
+lpm catalog show --resolved
 lpm catalog show --resolved --json
 ```
+
+Each result contains `catalog`, `package`, `specifier`, `version`, and `reference`:
 
 ```json
 {
@@ -97,32 +137,76 @@ lpm catalog show --resolved --json
     {
       "catalog": "default",
       "package": "react",
-      "specifier": "^18.2.0",
-      "version": "18.2.0",
+      "specifier": "^19.0.0",
+      "version": "19.0.0",
       "reference": "catalog:"
     }
   ]
 }
 ```
 
-## Cleanup Policy
+The command requires snapshots for effective direct catalog dependencies in each project recorded by the lockfile.
+Optional declarations require a snapshot only when the lockfile records a selected dependency.
+A missing optional package, a peer-only declaration, or an unused override does not require a snapshot.
+Applied override snapshots remain visible.
 
-By default, LPM CLI preserves unused catalog entries exactly as written. Set `package.json > lpm.cleanupUnusedCatalogs = true` to prune unreferenced root `package.json > catalogs` entries after successful installs. In pnpm-style workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` does the same for `pnpm-workspace.yaml > catalog` / `catalogs`, unless `package.json > lpm.cleanupUnusedCatalogs` explicitly overrides it.
+For duplicate dependency names, optional dependencies take precedence over regular dependencies, which take precedence over development dependencies.
+Workspace inspection checks each recorded member separately, then combines equal entries.
+Members outside a filtered lockfile's saved scope do not require snapshots.
 
-Run `lpm catalog list --unused` first when you want a dry inspection before the next install mutates catalog declarations.
+Different saved ranges or versions for the same catalog entry cause an error.
+Equivalent default references combine as `catalog:`. This normalization does not change the lockfile.
+
+This command reports saved resolutions. It does not resolve newer versions or compare every saved range with current catalog declarations.
+A selected optional package can remain in the lockfile even when the current platform cannot install it.
+
+### Recover from a missing snapshot
+
+If the lockfile is missing, unreadable, or lacks a required snapshot, refresh it:
+
+```bash
+lpm install
+lpm catalog show --resolved
+```
+
+[lpm install](/docs/packages/install) can also reconcile conflicting workspace snapshots.
+`lpm catalog show` requires `--resolved`. Both inspection commands support non-interactive use without `--yes`.
+
+## Remove unused declarations
+
+By default, installs preserve unused catalog entries. Inspect them before you enable automatic cleanup:
+
+```bash
+lpm catalog list --unused
+```
+
+```json title="package.json"
+{
+  "lpm": {
+    "cleanupUnusedCatalogs": true
+  }
+}
+```
+
+After a successful install, this policy removes unreferenced root catalog entries.
+In pnpm-style workspaces, `cleanupUnusedCatalogs: true` in `pnpm-workspace.yaml` also enables cleanup.
+An explicit `package.json > lpm.cleanupUnusedCatalogs` value takes precedence.
+Set it to `false` to disable cleanup. There is no catalog command flag for a one-run cleanup override.
 
 ## Flags
 
 | Command | Flag | Effect |
 | --- | --- | --- |
-| `lpm catalog list` | `--unused` | Show only catalog entries no root/member manifest references |
-| `lpm catalog show` | `--resolved` | Read resolved catalog entries from `lpm.lock` |
+| `list` | `--unused` | Show only entries without current manifest references. |
+| `show` | `--resolved` | Read saved resolutions. Required for `show`. |
+| Both | `--json` | Write a JSON result for automation. |
 
-Plus the [global flags](/docs/commands#global-flags). `--json` emits structured envelopes for both subcommands.
+See [Global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [Workspaces](/docs/packages/workspaces#catalogs) - catalog declarations and member references
-- [Save policy](/docs/packages/save-policy#cli-flags) - saving dependencies as `catalog:` references
-- [`lpm install --catalog`](/docs/packages/install) - force a catalog save for one invocation
-- [`package.json > lpm`](/docs/reference/package-json-lpm#catalogs) - catalog fields and cleanup policy
+- [lpm install](/docs/packages/install)
+- [Workspaces](/docs/packages/workspaces#catalogs)
+- [Save policy](/docs/packages/save-policy#cli-flags)
+- [package.json configuration](/docs/reference/package-json-lpm#catalogs)
+- [Lockfile](/docs/packages/lockfile)
