@@ -84,7 +84,11 @@ The extra arguments apply to that run. See [lpm run](/docs/dev/run).
 
 ## What setup changes
 
-Setup performs these operations in order:
+Setup first checks existing project and user-wide SwiftPM configuration.
+Malformed JSON, unsupported versions, invalid field types, and linked configuration files stop setup before changes.
+`--force` does not bypass this check.
+
+After that check, setup performs these operations in order:
 
 1. Set the `lpmdev` registry scope for the current project.
 2. If HTTPS and a Registry credential are available, log in through SwiftPM.
@@ -97,7 +101,7 @@ After you resolve the error, rerun setup.
 ### Registry scope and URL
 
 The project scope points to `<registry-url>/api/swift-registry`.
-Explicit setup always invokes SwiftPM scope configuration. Automatic installation can skip a matching project scope.
+Explicit setup checks the Swift toolchain and updates the project scope. Automatic installation retains a matching project scope.
 
 A trailing slash in the base URL does not change the endpoint.
 Scheme matching is case-insensitive. Base URLs with embedded credentials, query parameters, or fragments are rejected before setup changes.
@@ -131,11 +135,7 @@ The certificate request has a 10-second connection limit and a 30-second overall
 LPM CLI accepts one complete DER X.509 certificate between 100 bytes and 64 KiB.
 Malformed, oversized, and trailing-data responses stop setup. This check validates certificate structure, not its expiry or certificate chain.
 
-The local certificate path is:
-
-```text
-~/.swiftpm/security/trusted-root-certs/lpm.der
-```
+The certificate is `security/trusted-root-certs/lpm.der` under the [SwiftPM user directory](#swiftpm-user-directory).
 
 Matching valid bytes avoid a file replacement. Missing, malformed, or different bytes cause an atomic replacement.
 `--force` also replaces a matching certificate.
@@ -143,11 +143,7 @@ A download or validation failure preserves the previous certificate and returns 
 
 ### Signing trust
 
-User-wide trust configuration lives in:
-
-```text
-~/.swiftpm/configuration/registries.json
-```
+User-wide trust configuration is `configuration/registries.json` under the [SwiftPM user directory](#swiftpm-user-directory).
 
 LPM CLI sets strict default signing actions to `error`.
 It sets `onUntrustedCertificate` to `silentAllow` for the selected Registry hostname.
@@ -158,6 +154,19 @@ Loopback HTTP has no authenticated transport. See [Swift signing trust](/docs/pa
 
 The configuration file has a 16 MiB limit before parsing.
 An oversized file stops setup without replacement. Matching valid trust configuration avoids a rewrite.
+Concurrent LPM CLI updates preserve each other’s registry entries. If the CLI detects an external edit during setup, it stops without replacing that edit.
+
+### SwiftPM user directory
+
+| Platform | Directory |
+| --- | --- |
+| macOS | `~/Library/org.swift.swiftpm` |
+| Linux and Windows, with `XDG_CONFIG_HOME` | `$XDG_CONFIG_HOME/swiftpm` |
+| Linux and Windows, without `XDG_CONFIG_HOME` | `~/.swiftpm` |
+
+`XDG_CONFIG_HOME` must be an absolute path. On macOS, it does not replace the native Library directory.
+SwiftPM can create directory aliases under `~/.swiftpm`. LPM CLI preserves these aliases.
+Project scope configuration remains at `.swiftpm/configuration/registries.json` inside the project.
 
 ## JSON output
 
@@ -191,6 +200,7 @@ JSON mode suppresses SwiftPM terminal output.
 | SwiftPM login fails | Replace an expired explicit token, or renew the stored session. Then rerun setup. |
 | Certificate request times out or returns invalid data | Check the Registry endpoint and connection. Rerun setup after recovery. |
 | Registry certificate rotates | Rerun ordinary setup. It detects changed certificate bytes. |
+| Existing configuration is malformed, unsupported, or linked | Correct the reported file or field. For a linked configuration, use a regular file at the reported path. Then rerun setup. |
 | Trust configuration exceeds 16 MiB | Inspect the reported file before reducing or replacing it. |
 
 ## Flags
