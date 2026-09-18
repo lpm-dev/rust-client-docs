@@ -15,7 +15,9 @@ This guide covers the Bun-specific parts. For the full flag reference, see [`lpm
 - A `package.json` plus `bun.lock` or `bun.lockb` in the project root.
 - A clean or committed working tree.
 
-`bun.lock` is the direct path. When `bun.lockb` is selected, LPM CLI first looks for a sibling `bun.lock`; if it exists, LPM CLI parses that text lockfile instead. If no sibling text lockfile exists, LPM CLI runs `bun bun.lockb` and parses the emitted JSON. If the `bun` binary is unavailable, migration exits with a clear error.
+`bun.lock` supports JSON comments and trailing commas. If `bun.lockb` is selected, LPM CLI converts a fixed copy with the `bun` executable on `PATH`.
+The binary converter emits Yarn text, which LPM CLI converts to its staging lockfile.
+An older sibling `bun.lock` does not replace the selected binary input. If Bun is unavailable, migration fails.
 
 ## 1. Preview
 
@@ -70,8 +72,8 @@ Only remove files that exist in your repo. Do not commit `.backup` files unless 
 
 ## Bun-Specific Notes
 
-- `bun.lock` JSON is parsed directly.
-- `bun.lockb` needs either a sibling `bun.lock` or the `bun` binary available during migration.
+- `bun.lock` comments, trailing commas, dependency metadata, and integrity strings are supported.
+- A selected `bun.lockb` needs the `bun` executable on `PATH`.
 - Bun lockfile metadata carries dev and optional package flags, so the converted lockfile preserves those package classifications.
 - The install step rebuilds `node_modules`. Single-package projects default to LPM CLI's hoisted v2 layout; workspaces and peer-conflict installs use isolated layout unless you override the linker.
 - Dependency lifecycle scripts remain denied by default. After migration, run [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for packages that need install-time builds.
@@ -82,7 +84,8 @@ Only remove files that exist in your repo. Do not commit `.backup` files unless 
 lpm migrate --rollback
 ```
 
-Restores backups from the previous migration run and removes LPM CLI files created by that run. Safe to run repeatedly.
+Restores the original managed files and removes files created by migration. Repeated migrations retain the first snapshots.
+Rollback does not restore `node_modules` or undo arbitrary script output. Use Bun to restore its dependency layout after rollback.
 
 ## See also
 

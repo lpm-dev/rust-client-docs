@@ -1,104 +1,229 @@
 ---
 title: lpm migrate
-description: "Convert a project from npm, pnpm, yarn, or bun to LPM CLI."
+description: "Convert npm, pnpm, Yarn, or Bun lockfiles, install dependencies, and verify your project."
 ---
 
+Use `lpm migrate` to move an existing JavaScript project to LPM CLI while you keep its current package manager available.
+
 ```bash
+lpm migrate [OPTIONS]
+
+# Preview the conversion, then migrate
+lpm migrate --dry-run
 lpm migrate
 ```
 
-Detects the current package manager and converts its lockfile to a version 12 LPM staging lockfile. The staging graph can include `lpm.lockb`.
+Run the command from the directory that contains `package.json` and the source lockfile.
+The default flow converts the lockfile, configures `.npmrc`, installs dependencies, and runs available `build` and `test` scripts.
 
-By default, the command then runs an online `lpm install`. This install resolves exact package-instance identities and writes the current version 13 TOML lockfile.
+LPM CLI works with npm, private registries, and LPM.dev Registry. Your project does not need an LPM.dev Registry account for public npm dependencies.
 
-`lpm migrate` is non-destructive: every file it touches is backed up first (`package-lock.json.backup`, `.npmrc.backup`, etc.), and `--rollback` restores them.
+| Mode | Command | Result |
+| --- | --- | --- |
+| Preview | `lpm migrate --dry-run` | Check conversion and pnpm translations without project writes or script execution. |
+| Migrate | `lpm migrate` | Convert, install, and verify the project. |
+| Repeat | `lpm migrate --force` | Replace an existing `lpm.lock` and retain the original rollback snapshots. |
+| Restore | `lpm migrate --rollback` | Restore managed files from the migration snapshots. |
 
 ## Examples
 
 ```bash
-lpm migrate                  # default — non-interactive
-lpm migrate --dry-run        # parse + convert, write nothing
-lpm migrate --force          # overwrite an existing lpm.lock
-lpm migrate --no-install     # convert lockfile only, don't install
-lpm migrate --skip-verify    # skip the build/test verification step
-lpm migrate --no-npmrc       # don't touch .npmrc
-lpm migrate --ci             # also generate a CI workflow template
-lpm migrate --rollback       # restore from .backup files
+# Convert without an install, verification, or registry configuration
+lpm migrate --no-install --skip-verify --no-npmrc --no-ci
+
+# Install dependencies but skip build and test scripts
+lpm migrate --skip-verify
+
+# Generate a template for the existing CI platform
+lpm migrate --ci
+
+# Get one JSON result for automation
+lpm migrate --no-install --skip-verify --no-npmrc --no-ci --json
+
+# Retry after a failed install or verification
+lpm migrate --force
 ```
 
-The flow is non-interactive — there are no prompts to skip and `-y` is reserved for a future interactive mode. Pass `--force` if you want to overwrite an existing `lpm.lock`.
+The command is non-interactive. `-y` and `--yes` are accepted no-ops and do not imply `--force`.
 
-## Input limits and supported formats
+`--no-install` only skips dependency installation. Use `--skip-verify` to also skip `build` and `test`.
+Configuration changes, lockfile conversion, backups, and requested CI templates remain independent of these two flags.
 
-`lpm migrate` reads one fixed snapshot of the selected source lockfile. It rejects malformed files and unsupported versions.
+### Add a project task
 
-The command supports npm lockfile versions 1, 2, and 3. It supports pnpm lockfile major versions 5, 6, and 9.
+`lpm.json` has no dedicated migration configuration. Use a task for a repeatable conversion command:
 
-Each source lockfile has these limits:
+```json title="lpm.json"
+{
+  "tasks": {
+    "convert-lockfile": {
+      "command": "lpm migrate --no-install --skip-verify --no-npmrc --no-ci",
+      "cache": false
+    }
+  }
+}
+```
 
-- The file size limit is 64 MiB.
-- The package-entry limit is 200,000.
+```bash
+lpm run convert-lockfile
+lpm run convert-lockfile -- --dry-run
+lpm run convert-lockfile -- --force
+```
 
-npm lockfiles have these additional limits:
+The explicit task command takes precedence over a package script with the same name.
+`cache: false` makes each invocation run the command. See [Tasks](/docs/dev/task-runner) for task configuration.
 
-- The package-path limit is 32 KiB.
-- The package nesting limit is 256 levels.
-- The dependency limit for one package is 10,000.
-- The total dependency-edge limit is 1,000,000.
+## Source lockfile
 
-For `bun.lockb`, LPM CLI copies the selected file before conversion. The Bun converter has these limits:
+The command selects the most recently modified supported lockfile in the current directory.
+For equal timestamps, the priority is `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`.
+Other detected lockfiles stay in place.
+Binary Bun conversion uses the Yarn text output from the Bun executable.
 
-- The time limit is 30 seconds.
-- The converted output limit is 64 MiB.
-- The diagnostic-output limit is 64 KiB.
+| Input | Supported format |
+| --- | --- |
+| `package-lock.json` | npm lockfile versions 1, 2, and 3. |
+| `pnpm-lock.yaml` | pnpm lockfile major versions 5, 6, and 9. |
+| `yarn.lock` | Yarn Classic and Yarn Berry lockfiles. |
+| `bun.lock` | Bun text lockfile with JSON comments and trailing commas. |
+| `bun.lockb` | Binary lockfile converted with the `bun` executable on `PATH`. |
 
-If a file or conversion exceeds a limit, migration stops before it changes the project.
+The conversion reads a fixed snapshot of the selected file. A selected `bun.lockb` does not fall back to an older `bun.lock`.
+The command reports unsupported package entries and conversion warnings.
+Review these reports before you commit the result.
 
-## What runs, in order
+### Input limits
 
-1. **Pre-flight** — confirm `package.json` exists; refuse if `lpm.lock` already exists (unless `--force` or `--dry-run`).
-2. **Detect + parse + convert** — identify source PM (npm / pnpm / yarn / bun), read its lockfile, convert to LPM CLI format.
-3. **Translate `pnpm.*` blocks** — auto-translate `pnpm.overrides`, `pnpm.patchedDependencies`, and `pnpm.peerDependencyRules` into the matching `lpm.*` fields. Patch translations also add `lpm.lock > [patches]` checksum records. Validation runs up-front: range parse errors, conflicting keys / ranges, unsupported value shapes, missing patch integrity bindings — all surface BEFORE any disk mutation. The original `pnpm.*` block stays in place after migration so a parallel `pnpm install` keeps working during the transition. See [Migrating from pnpm](/docs/guides/migrating-from-pnpm) for per-block details.
-4. **Write** — emit a version 12 staging `lpm.lock`. Emit `lpm.lockb` only when the graph fits the binary format. Back up all files before replacement.
-5. **`.npmrc`** — optionally append `@lpm.dev:registry=https://lpm.dev/api/registry/` to `.npmrc` (or create one). Backs up the original on touch. **No-op** if the file already declares an `@lpm.dev:registry` scope. Skip the whole step with `--no-npmrc`.
-6. **Install** — run an online `lpm install`. This step resolves exact identities, writes version 13, and removes the staging binary file. Skip with `--no-install`.
-7. **Verify** — run `build` + `test` scripts to confirm nothing broke. Skip with `--skip-verify`.
-8. **CI template** — print a hint pointing at a CI workflow template, or generate one with `--ci`. Suppress with `--no-ci`.
-9. **Completion** — print a compact status transcript: detected source + backup reminder, converted lockfile outputs, any install/verify phases, then `Done · migration completed successfully`.
+Each source file has a 64 MiB size limit and a 200,000-entry package limit.
+Malformed input stops conversion before project writes.
 
-## Rollback
+npm lockfiles also have these limits:
 
-If anything goes wrong (or the migration was a mistake), restore in one command:
+- Package paths: 32 KiB.
+- Package nesting: 256 levels.
+- Dependencies per package: 10,000.
+- Total dependency edges: 1,000,000.
+
+For `bun.lockb`, the converter has a 30-second deadline, a 64 MiB output limit, and a 64 KiB diagnostic limit.
+
+## Converted files and installation
+
+Conversion writes a version 12 staging `lpm.lock` and, when the graph permits it, a binary `lpm.lockb` companion.
+It also adds the binary lockfile rule to `.gitattributes`.
+
+The default online [lpm install](/docs/packages/install) resolves the final package instances and writes the current version 13 TOML lockfile.
+This install can change `node_modules` and run the root install lifecycle.
+Dependency lifecycle scripts remain subject to the [script policy](/docs/packages/install#lifecycle-scripts).
+
+If you use `--no-install`, run [lpm install](/docs/packages/install) before an offline or frozen install:
+
+```bash
+lpm migrate --no-install --skip-verify
+lpm install
+```
+
+An install failure makes migration fail. The converted files and backups remain available for a retry or rollback.
+
+### pnpm configuration
+
+Migration translates supported entries from these `package.json` fields:
+
+| Existing field | Destination |
+| --- | --- |
+| `pnpm.overrides` | `lpm.overrides` |
+| `pnpm.patchedDependencies` | `lpm.patchedDependencies` and lockfile patch records |
+| `pnpm.peerDependencyRules` | `lpm.peerDependencyRules` |
+
+The command checks conflicts, patch paths, and integrity bindings before it writes the conversion.
+Patch files move through copies into `patches/<package>@<version>.patch`. Scoped names use `__` in place of `/`.
+Original patch files remain in place.
+
+The `pnpm` fields remain available. For copied patches, migration updates their pnpm paths to the new patch copies.
+See [Migrating from pnpm](/docs/guides/migrating-from-pnpm) for supported translations and conflicts.
+
+### Registry configuration
+
+Unless you pass `--no-npmrc`, migration adds this scope mapping when the project `.npmrc` has no active mapping:
+
+```ini title=".npmrc"
+@lpm.dev:registry=https://lpm.dev/api/registry/
+```
+
+An existing valid `@lpm.dev:registry` mapping stays in place. The default registry setting also stays in place.
+See [Registries](/docs/registries) for npm and private registry configuration.
+
+## Build and test verification
+
+Unless you pass `--skip-verify`, migration runs the `build` and `test` scripts that exist in `package.json`.
+It uses the managed runtime, project environment, pre/post hooks, and configured task cache.
+An explicit `lpm.json` task command does not replace these selected package scripts during migration verification.
+
+A script failure makes migration fail. Verification keeps the converted files so you can inspect the result.
+A successful migration does not prove compatibility for scripts that the project does not define.
+
+With `--json`, stdout contains one result or error object. Install diagnostics, verification output, and cache replay go to stderr.
+
+## CI templates
+
+`--ci` detects an existing CI configuration and writes a separate template:
+
+| Detected platform | Template |
+| --- | --- |
+| GitHub Actions | `.github/workflows/ci.lpm.yml` |
+| GitLab CI | `.gitlab-ci.lpm.yml` |
+| CircleCI | `.circleci/config.lpm.yml` |
+| Bitbucket Pipelines | `bitbucket-pipelines.lpm.yml` |
+
+Detection uses this table order. Without a detected platform, the command does not generate a template.
+Without `--ci`, it only shows a template hint. `--no-ci` suppresses both the hint and generation, including when `--ci` is present.
+
+GitLab jobs install the CLI and dependencies in each job environment.
+The templates run both `build` and `test`. Review their scripts, credentials, and trigger rules before use.
+GitHub Actions recognizes the generated file in `.github/workflows`. The other platforms require integration into their active configuration.
+
+## Rollback and recovery
 
 ```bash
 lpm migrate --rollback
 ```
 
-Walks the backups created by the previous migration and restores them in place. Safe to run repeatedly.
+Migration keeps `.backup` files and `.lpm-migrate-manifest.json` so rollback can restore original managed files and remove newly created ones.
+This includes converted lockfiles, `.gitattributes`, translated manifests, copied patches, changed `.npmrc` files, and generated CI templates.
+Repeated migrations preserve the first snapshots until rollback or manual cleanup.
+
+Rollback covers these managed files. It does not undo `node_modules`, store changes, or arbitrary files changed by install, build, or test scripts.
+After rollback, use your previous package manager to restore its dependency layout.
+
+Rollback checks the complete recovery record before it changes files. Unsafe paths, linked directories, malformed records, and unknown record versions cause an error.
+An untracked existing `.backup` file also blocks migration so the command cannot replace it.
+
+If an install or script fails, fix the reported error, then retry with `--force`.
+To restore the original managed files instead, use `--rollback`.
+Keep the backup files and manifest together until you accept the migration.
+`--rollback` and `--dry-run` cannot be combined.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--dry-run` | Parse and convert only — write nothing |
-| `--force` | Overwrite an existing `lpm.lock` |
-| `-y`, `--yes` | Reserved. The flow is non-interactive today, so this flag is a no-op. It does NOT imply `--force`. |
-| `--no-install` | Don't run `lpm install` after conversion |
-| `--skip-verify` | Skip the build/test verification step |
-| `--no-npmrc` | Don't touch `.npmrc` |
-| `--ci` | Generate a CI workflow template for the detected platform |
-| `--no-ci` | Suppress the CI template hint |
-| `--rollback` | Restore files from `.backup` copies created by a previous migration |
+| `--dry-run` | Check conversion and translations without project writes. |
+| `--force` | Replace an existing `lpm.lock`. |
+| `--no-install` | Skip dependency installation. |
+| `--skip-verify` | Skip the `build` and `test` verification scripts. |
+| `--no-npmrc` | Skip project `.npmrc` configuration. |
+| `--ci` | Generate a template for the detected CI platform. |
+| `--no-ci` | Suppress CI hints and template generation. |
+| `--rollback` | Restore managed files from the migration backups. Conflicts with `--dry-run`. |
+| `-y`, `--yes` | Accepted no-op. Migration already runs without prompts. |
+| `--json` | Write one JSON result or error to stdout. |
 
-Plus the [global flags](/docs/commands#global-flags).
-
-`--no-install` leaves the version 12 staging lockfile in place. Run `lpm install` before an offline or frozen install.
+See [Global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
+- [lpm install](/docs/packages/install)
+- [Lockfile](/docs/packages/lockfile)
 - [Migrating from npm](/docs/guides/migrating-from-npm)
 - [Migrating from pnpm](/docs/guides/migrating-from-pnpm)
 - [Migrating from Yarn](/docs/guides/migrating-from-yarn)
 - [Migrating from Bun](/docs/guides/migrating-from-bun)
-- [`lpm install`](/docs/packages/install) — runs after conversion to materialize `node_modules`
-- [Lockfile](/docs/packages/lockfile) — `lpm.lock` and `lpm.lockb` formats
