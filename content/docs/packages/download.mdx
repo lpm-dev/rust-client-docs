@@ -1,115 +1,190 @@
 ---
 title: lpm download
-description: "Download and extract a package tarball — no install side-effects."
+description: "Download and inspect one package archive without installing its dependencies or running its scripts."
 ---
 
-```bash
-lpm download <package[@version]> [--version <V>] [--output <DIR>]
-```
-
-Fetches a package tarball and extracts it into a directory you choose. **No lockfile**, **no `node_modules`**, **no script execution**, **no `package.json` mutation**. Just the bytes.
-
-Useful for inspecting a package's contents before you trust it, archiving a snapshot for offline reference, generating a fixture, or reading the source of a package you don't want to install.
-
-Routing matches [`lpm install`](/docs/packages/install):
-
-- `@lpm.dev/*` fetches from LPM.dev Registry.
-- `@scope/pkg` follows the current project's `.npmrc` `@scope:registry=...` mapping when one exists.
-- Unscoped names (`react`, `zod`, `lodash.merge`) use the current project's default `.npmrc` registry, or npmjs.org when no override is present.
-
-If you specifically mean an LPM.dev Registry package, prefer the fully scoped `@lpm.dev/owner.pkg` form.
-
-When npm firewall mode is `monitor` or `enforce`, LPM CLI checks routed public npm packages with LPM Firewall at `firewall.lpm.dev` after selecting the version and before downloading the tarball. LPM Firewall is an LPM.dev Registry Pro/Org feature, so active modes send LPM.dev Registry auth; run `lpm login` locally or set `LPM_TOKEN` in CI. `monitor` warns and continues when entitlement is denied, while `enforce` blocks packages whose effective firewall action is `block` or denied by entitlement before any package bytes are extracted. In human output, the download line shows `🔥 LPM Firewall active` when that check is active. LPM.dev Registry packages and other `.npmrc`-declared private/custom registry packages are not sent to the npm firewall verdict API. The legacy string `report` is still accepted as a `monitor` alias.
-
-## Examples
+Use `lpm download` to inspect package contents, save a source snapshot, or create a local fixture.
 
 ```bash
-lpm download react                                   # npmjs.org (or project .npmrc default registry)
-lpm download react@0.14.3                            # npm-style inline version
-lpm download @my-co/internal                         # project .npmrc scoped registry
-lpm download @lpm.dev/owner.pkg                      # force LPM.dev Registry
-lpm download @lpm.dev/owner.pkg --version 2.1.0      # a specific version
-lpm download react --version next                    # dist-tag or semver range
-lpm download @lpm.dev/owner.pkg --json               # structured output (URL, integrity, paths)
+lpm download [OPTIONS] <PACKAGE>
 ```
 
-## How it works
+## Quickstart
 
-1. Fetches the package metadata from the routed registry to find the tarball URL and SRI integrity hash for the requested (or latest) version.
-2. Downloads the tarball. Automatically followed redirects are checked before each hop; once the request chain has used HTTPS, a redirect to HTTP fails with `refused HTTPS-to-HTTP redirect`.
-3. Verifies the SRI hash when the registry ships one. If the registry does not ship integrity, `lpm download` refuses to extract by default; re-run with `--allow-unverified` only when you intentionally accept an unverified tarball.
-4. Extracts into the output directory.
+```bash
+# Extract a package into a separate directory
+lpm download react --output inspect-react
 
-The output directory defaults to the current working directory. The tarball's top-level `package/` is unwrapped during extraction (equivalent to `tar x --strip-components=1`), so you get the package contents directly.
+# Select an exact version
+lpm download react@19.2.4 --output inspect-react-19
 
-Direct HTTP follows the same rules as [`lpm install`](/docs/packages/install): loopback is available for local development, and a deliberate registry `--insecure` override can allow a configured non-loopback HTTP endpoint. Neither case allows an HTTPS redirect to downgrade to HTTP. See [Redirect transport policy](/docs/registries#redirect-transport-policy).
+# Write a non-interactive JSON result
+lpm download react --version next --output inspect-react-next --json
+```
 
-## Archive safety limits
+The command downloads one archive and extracts its contents. It does not install dependencies, run scripts, or populate the package store.
+It does not edit project dependency declarations or lockfiles.
+If the archive contains `package.json`, that file appears inside the output directory.
 
-LPM CLI validates the complete tar archive before it accepts the extraction:
+### Add a repeatable task
 
-- 100,000 archive entries.
-- 100,000 GNU or PAX metadata entries.
-- 256 path components, including the top-level `package/` component.
-- 32 KiB for each encoded archive path.
-- 1 MiB for each GNU or PAX metadata record.
-- 500 MiB for each file.
-- 5 GiB for all extracted file data.
+`lpm.json` has no dedicated download configuration. Use an uncached task for a repeated inspection command:
 
-If an archive exceeds a limit, LPM CLI stops the extraction and removes the files from that extraction.
+```json title="lpm.json"
+{
+  "tasks": {
+    "inspect-react": {
+      "command": "lpm download react@19.2.4",
+      "cache": false
+    }
+  }
+}
+```
 
-These limits also apply when `lpm install` or `lpm add` extracts a registry package.
+```bash
+lpm run inspect-react -- --output inspection-1 --json
+lpm run inspect-react -- --output inspection-2 --json
+```
 
-## What `lpm download` does NOT do
+Each run downloads and checks the archive. Use a separate output directory for each snapshot.
+An explicit task command takes precedence over a package script with the same name.
+See [Tasks](/docs/dev/task-runner) for task configuration.
 
-- Install dependencies — none of the package's `dependencies` are fetched
-- Touch `package.json` or any lockfile
-- Run lifecycle scripts (`preinstall`, `postinstall`, etc.)
-- Place the result in `node_modules/`
-- Update the global content-addressable store
+## Select a package and version
 
-For a real install, use [`lpm install`](/docs/packages/install). For source delivery into your project, use [`lpm add`](/docs/packages/add).
+```bash
+lpm download react@19.2.4 --output react-source
+lpm download react --version '^19' --output react-19
+lpm download @my-co/internal --output internal-source
+lpm download @lpm.dev/owner.pkg --output registry-source
+```
 
-## Flags
+`<PACKAGE>` accepts a package name with an optional `@version` suffix.
+Versions can be exact versions, semver ranges, or dist-tags such as `latest` and `next`.
+Without a version, the command selects the registry's latest version.
+Use an inline version or `--version`. Supplying both causes an error.
 
-| Flag                   | Effect                                                                                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--version <V>`        | Version spec to download: exact version, dist-tag (`latest`, `next`), or semver range. Defaults to `latest`. Alternative to inline `package@version`; do not pass both.      |
-| `--output <DIR>`, `-o` | Output directory (default: current working directory). The `output_dir` field in `--json` mode is canonicalized to an absolute path regardless of how the flag was passed.   |
-| `--allow-unverified`   | Waive the default integrity gate when the registry returns no SRI hash. Intended for legacy sources that genuinely do not ship integrity; you take on verification yourself. |
+LPM CLI supports npm, LPM.dev Registry, and private registries:
 
-Plus the [global flags](/docs/commands#global-flags).
+- `@lpm.dev/*` always uses LPM.dev Registry.
+- Other scoped packages follow the scope's `.npmrc` registry mapping.
+- Unscoped packages use the configured default registry, or npm when no override exists.
 
-## `--json` envelope
+This command accepts package names, not arbitrary archive URLs.
+See [Registry configuration](/docs/registries) for routing and authentication.
+
+## Output directories and collisions
+
+`--output` defaults to the current directory. The archive's first path component is removed, so package files appear directly inside that directory.
+Use `--output` to keep inspection files separate from project files.
+
+Before publication, LPM CLI verifies the archive and checks its complete contents in private temporary storage.
+It then checks the output paths for collisions.
+Existing real directories can contain unrelated files. Existing payload files, links, or other entries cause an error.
+The command writes regular files. It does not create archive links or empty directories.
+The command has no overwrite flag.
+
+```bash
+# Choose a fresh directory after a collision
+lpm download react@19.2.4 --output another-inspection
+```
+
+Archive validation errors leave existing output files unchanged.
+If a write fails during publication, the error reports completed new files, new directories, and any incomplete new file.
+Those new entries remain in the output directory. Use a fresh directory before retrying.
+A file created by another process is never replaced to complete the download.
+
+## Integrity and transport
+
+Download checks the registry's SRI hash. For legacy metadata, a valid SHA-1 `dist.shasum` also supplies the expected hash.
+Missing integrity fails before the tarball request.
+A hash mismatch always fails, including with `--allow-unverified`.
+
+For a trusted source that supplies no hash, you can explicitly allow unverified extraction:
+
+```bash
+lpm download @my-co/legacy --output legacy-source --allow-unverified --json
+```
+
+This option only permits a missing hash. The result reports `integrity_verified: false`.
+Archive path and size checks still apply.
+
+Redirects follow the [registry transport policy](/docs/registries#redirect-transport-policy).
+An HTTPS request cannot redirect to HTTP. A deliberate HTTP registry override does not permit that downgrade.
+
+## Archive limits
+
+LPM CLI rejects unsafe paths, case-fold path collisions, and archives that exceed these limits:
+
+| Limit | Maximum |
+| --- | --- |
+| Compressed archive | 500 MiB |
+| Archive entries | 100,000 |
+| GNU or PAX metadata entries | 100,000 |
+| Path components, including the removed first component | 256 |
+| Encoded archive path | 32 KiB |
+| Each GNU or PAX metadata record | 1 MiB |
+| Each extracted file | 500 MiB |
+| Total extracted file data | 5 GiB |
+
+These checks complete before output publication. Download and extraction use temporary files with bounded memory.
+The temporary archive, staged package, and output files can occupy disk space at the same time.
+
+## Firewall checks
+
+When [LPM Firewall](/docs/packages/security-audit) is active, download checks eligible public npm packages after version selection and before transfer.
+It excludes LPM.dev Registry packages and private registry packages.
+
+`monitor` warns and continues. `enforce` blocks denied packages or denied entitlement.
+Active modes require LPM.dev Registry authentication through [lpm login](/docs/infra/login) or `LPM_TOKEN` in CI.
+
+## JSON output
+
+```bash
+lpm download react@19.2.4 --output react-source --json
+```
 
 ```json
 {
   "success": true,
-  "package": "@lpm.dev/owner.pkg",
-  "version": "2.1.0",
-  "tarball_url": "https://lpm.dev/api/registry/@lpm.dev/owner.pkg/-/owner.pkg-2.1.0.tgz",
+  "package": "react",
+  "version": "19.2.4",
+  "tarball_url": "https://registry.npmjs.org/react/-/react-19.2.4.tgz",
   "integrity": "sha512-...",
   "integrity_verified": true,
   "size_bytes": 87654,
-  "output_dir": "/abs/path/to/output",
+  "output_dir": "/absolute/path/react-source",
   "files_extracted": 42,
   "elapsed_secs": 0.412
 }
 ```
 
-Fields:
+| Field | Meaning |
+| --- | --- |
+| `tarball_url` | URL from the selected version's metadata. Redirects can change the final transport URL. |
+| `integrity` | Expected SRI hash, including the SHA-1 fallback, or `null` for an allowed unverified download. |
+| `integrity_verified` | Whether the downloaded bytes matched the expected hash. |
+| `size_bytes` | Compressed archive size in bytes. |
+| `output_dir` | Canonical absolute output path. |
+| `files_extracted` | Number of published files. |
+| `elapsed_secs` | Total elapsed time in seconds. |
 
-| Field                | Meaning                                                                                                                                                                                                           |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tarball_url`        | Resolved tarball URL the bytes came from. Useful for mirroring or audit logs.                                                                                                                                     |
-| `integrity`          | SRI string the registry advertised for this version (e.g. `sha512-…`), or `null` if the registry didn't ship one. A `null` value only reaches a success envelope when you explicitly passed `--allow-unverified`. |
-| `integrity_verified` | `true` when the SRI was present and verified, `false` only on the explicit `--allow-unverified` path where extraction proceeds without a registry-provided hash. A verification failure still aborts the run.     |
-| `output_dir`         | Absolute path where files were extracted (canonicalized).                                                                                                                                                         |
-| `files_extracted`    | Count of files written from the tarball, after the `package/` prefix is stripped.                                                                                                                                 |
+An active firewall check can add a `firewall` object.
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--version <PACKAGE_VERSION>` | Select an exact version, range, or dist-tag. Alternative to an inline version. |
+| `-o, --output <OUTPUT>` | Choose the extraction directory. Default: current directory. |
+| `--allow-unverified` | Permit extraction when the registry supplies no integrity hash. |
+| `--json` | Write the result as JSON. |
+
+See [Global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — full install, with `node_modules` and lockfile
-- [`lpm add`](/docs/packages/add) — source delivery into your project
-- [`lpm info`](/docs/packages/info) — package metadata without downloading
-- [`lpm resolve`](/docs/packages/resolve) — print the resolved dep tree without downloading
+- [lpm info](/docs/packages/info)
+- [lpm resolve](/docs/packages/resolve)
+- [lpm fetch](/docs/packages/fetch)
+- [lpm install](/docs/packages/install)
