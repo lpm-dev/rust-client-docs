@@ -1,118 +1,205 @@
 ---
 title: lpm sbom
-description: "Export a CycloneDX or SPDX Software Bill of Materials from lpm.lock."
+description: Export package identities, dependency relationships, licenses, and provenance as CycloneDX or SPDX JSON.
 ---
 
+Export a Software Bill of Materials (SBOM) for a project or workspace member.
+
 ```bash
-lpm sbom
-lpm sbom --format spdx
+lpm sbom [OPTIONS]
+```
+
+## Quickstart
+
+```bash
+lpm install
 lpm sbom --output bom.cdx.json
-lpm sbom --registry-metadata
 ```
 
-`lpm sbom` exports a Software Bill of Materials for the current project. An SBOM is a machine-readable inventory of the packages in a build: names, versions, package URLs, dependency edges, sources, integrity hashes, licenses when local metadata is available, patch metadata, and provenance metadata when cached or fetched.
+An SBOM records resolved package versions and their relationships. Use it for dependency reviews, vulnerability scanners, and release records.
 
-Security teams, enterprise customers, release pipelines, and vulnerability scanners use SBOMs to answer "what shipped?" after a build. Generate one in CI and attach it to releases or container images.
+| Format | Command | Output |
+| --- | --- | --- |
+| CycloneDX 1.7 (default) | `lpm sbom` | JSON document |
+| SPDX 2.3 | `lpm sbom --format spdx` | JSON document |
 
-## Formats
+LPM CLI supports npm, private registries, and the LPM.dev Registry. The SBOM can include packages from each source.
 
-Default output is CycloneDX 1.7 JSON:
+## Examples
 
 ```bash
+# Export SPDX for a release
+lpm sbom --format spdx --output reports/bom.spdx.json
+
+# Send CycloneDX to another tool
 lpm sbom > bom.cdx.json
+
+# Include current registry metadata and provenance checks
+lpm sbom --registry-metadata --output reports/bom.cdx.json
+
+# Generate a report in CI
+lpm sbom --json --output reports/bom.cdx.json
 ```
 
-SPDX 2.3 JSON is available with `--format spdx`:
+For a reusable report, define an uncached task:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:sbom": {
+      "command": "lpm sbom --output reports/bom.cdx.json",
+      "cache": false
+    }
+  }
+}
+```
 
 ```bash
-lpm sbom --format spdx > bom.spdx.json
+lpm run deps:sbom
 ```
 
-Both formats are generated from `lpm.lock`, so run `lpm install` first.
+There is no dedicated SBOM configuration in `lpm.json`. The task's `command` holds the options. `cache: false` creates a fresh report each time.
 
-## Enrichment
+For a different format or destination, run the command directly. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
 
-By default, SBOM generation is local-first and does not depend on the network. It reads:
+## Project and workspace scope
 
-- `lpm.lock` for the resolved package graph
-- `package.json` for root metadata and direct dependency scopes
-- installed package manifests from `node_modules/` and the LPM CLI store when present
-- `lpm.lock > [patches]` for patch paths, original integrity bindings, and patch-file SHA-256 records
-- verified provenance evidence from `lpm.lock`
-- cached Sigstore bundles under `~/.lpm/cache/metadata/attestations`, only when the package has integrity that can bind the bundle to its exact tarball
+The command finds the applicable `lpm.lock` and project manifest. Invocation from a nested source directory uses the same project.
 
-Use `--registry-metadata` when you want live registry metadata and provenance attestation checks during SBOM generation:
+In a workspace member, the report uses that member's lockfile projection. Sibling-only dependencies do not appear.
+
+The report includes resolved versions, package URLs, dependency and peer relationships, source URLs, integrity hashes, and available metadata.
+
+Separate dependency instances remain separate components, even with the same name and version. Their references preserve the relationships recorded in the lockfile.
+
+The report describes the selected dependency inventory. It does not inspect a compiled bundle to determine which files shipped.
+
+## Installed manifests and dependency scope
+
+Installed package manifests are required. LPM CLI follows the project's installation paths, including aliases and separate dependency instances.
+
+Missing or invalid manifests stop the command. Packages omitted for platform compatibility, and dependencies reachable only through those packages, do not appear.
+
+A package still needs a manifest if another compatible dependency requires it.
+
+| CycloneDX scope | Meaning |
+| --- | --- |
+| `required` | Required through a production or peer dependency path |
+| `optional` | Required only through optional paths |
+| `excluded` | Required only through development paths |
+
+Development packages still appear in the document. `excluded` describes their runtime scope and does not remove them from the inventory.
+
+SPDX preserves the package inventory and dependency relationships. It does not use the CycloneDX `scope` field.
+
+If the manifest changed, update the installation before export:
+
+```bash
+lpm install
+lpm sbom --output bom.cdx.json
+```
+
+## Local and registry metadata
+
+By default, SBOM generation makes no registry requests. It reads project files, installed manifests, lockfile evidence, and locally cached provenance bundles.
+
+Local manifests supply descriptions, licenses, homepages, repositories, and authors. The lockfile supplies patch paths and recorded patch checksums.
+
+To request current registry metadata, use:
 
 ```bash
 lpm sbom --registry-metadata --output bom.cdx.json
 ```
 
-The flag respects the same registry routing and `.npmrc` behavior as metadata-reading commands. Plain `lpm sbom` stays deterministic and offline-friendly.
+For npm-compatible packages, this flag contacts the registry recorded in the lockfile. A changed default registry does not replace that source.
 
-Lockfile evidence is preferred because it is already bound to the package's exact name, version, source, npm package URL, and SHA-512 integrity. A cache entry is never treated as a writable “verified” snapshot: the cache stores the original bundle bytes, and every use reruns certificate, transparency-log, identity, subject, and tarball-digest verification. A cache entry cannot contribute provenance when the package has no integrity to bind it.
+Packages under `@lpm.dev/*` use the configured LPM.dev Registry endpoint. Credentials and TLS configuration apply to the destination registry.
 
-## Output file
+Registry values fill missing local fields. Registry licenses do not replace or expand an existing local license declaration.
+
+Metadata lookup failures and absent locked versions stop the command. A refreshable LPM.dev Registry session can recover access to a hidden private version once.
+
+Directory, link, Git, and direct tarball sources do not receive registry enrichment.
+
+## License declarations
+
+The report records declared licenses. It does not establish legal permission or inspect license-file contents.
+
+LPM CLI trims license text and removes empty or duplicate declarations. CycloneDX preserves declarations as named license entries.
+
+SPDX uses valid license expressions. Multiple declarations join with `AND`, with parentheses that preserve compound expressions.
+
+Custom text, `UNLICENSED`, and `SEE LICENSE IN ...` cannot serve as SPDX expressions. SPDX uses `NOASSERTION` and retains those declarations in `licenseComments`.
+
+Use [lpm licenses](/docs/packages/licenses) for license policy checks.
+
+## Patch and provenance records
+
+CycloneDX includes patch records in `pedigree.patches`. Additional properties include:
+
+| Property | Value |
+| --- | --- |
+| `lpm:source` | Locked package source |
+| `lpm:integrity` | Locked integrity value |
+| `lpm:patch:path` | Recorded patch path |
+| `lpm:patch:originalIntegrity` | Integrity before the patch |
+| `lpm:patch:sha256` | Recorded patch checksum |
+| `lpm:provenance:status` | Provenance result |
+
+SPDX carries these records in package `attributionTexts`.
+
+Without registry enrichment, valid lockfile evidence takes precedence over cached provenance bundles. Cached bundles must pass verification and match the package's integrity.
+
+With `--registry-metadata`, LPM CLI checks registry attestations. The report can contain absent, unknown, or rejected provenance results and still succeed.
+
+SBOM generation is an inventory operation. Use [lpm audit](/docs/packages/audit) for security checks and CI failure policies.
+
+## Output files
+
+Without `--output`, standard output contains one JSON document. Progress uses standard error.
+
+With `--output`, the command writes the document to the selected file. It does not duplicate the document on standard output.
+
+Relative paths start from the directory where you run the command. Missing parent directories are created. An existing regular file is overwritten.
+
+Output paths cannot use symbolic links or special files. This includes linked parent directories.
+
+Reports contain a generation timestamp, so repeated exports can differ even with the same dependencies.
+
+## Fix common problems
+
+If a lockfile or installed manifest is missing, repair the installation:
+
+```bash
+lpm install
+lpm sbom --output bom.cdx.json
+```
+
+If registry enrichment fails, check access to the locked registry. For npm-compatible registries, configure credentials in [`.npmrc`](/docs/registries).
+
+For a local report without enrichment, omit the flag:
 
 ```bash
 lpm sbom --output bom.cdx.json
-lpm sbom --format spdx --output bom.spdx.json
 ```
 
-When `--output` is set, LPM CLI writes the SBOM to that path and does not duplicate the JSON to stdout.
-
-Progress is still printed to stderr, so stdout stays reserved for the SBOM document when you do not pass `--output`:
-
-```bash
-› Generating CycloneDX SBOM from lpm.lock
-    packages  207
-    format    cyclonedx
-    output    /path/to/bom.cdx.json
-
-✓ Included patch and provenance metadata
-✓ Done · wrote SBOM in 236ms
-```
-
-## Patch and provenance fields
-
-CycloneDX output uses the native `component.pedigree.patches` field for patched dependencies. LPM CLI also carries checksum and integrity details as component `properties`, for example:
-
-```json
-{
-  "pedigree": {
-    "patches": [
-      {
-        "type": "unofficial",
-        "diff": {
-          "url": "patches/lodash@4.17.21.patch"
-        }
-      }
-    ]
-  },
-  "properties": [
-    {
-      "name": "lpm:patch:sha256",
-      "value": "sha256-..."
-    }
-  ]
-}
-```
-
-SPDX output carries the same LPM CLI details in package `attributionTexts`. This keeps the documents valid while preserving the information needed to audit patched dependencies.
+If the destination is a link or special file, choose a regular file path.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--format <cyclonedx\|spdx>` | Choose the SBOM format. Default: `cyclonedx` |
-| `-o`, `--output <FILE>` | Write to a file instead of stdout |
-| `--registry-metadata` | Fetch live registry metadata and provenance attestations |
+| `--format <cyclonedx\|spdx>` | Select the document format. Default: `cyclonedx`. |
+| `-o`, `--output <OUTPUT>` | Write to a file instead of standard output. |
+| `--registry-metadata` | Fetch current registry metadata and check provenance attestations. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See the [global flags](/docs/commands#global-flags) for JSON error output and other shared options.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — produces the lockfile SBOMs read
-- [`lpm patch`](/docs/packages/patch) — patch metadata included in SBOM output
-- [`lpm licenses`](/docs/packages/licenses) — human/JSON license inventory and CI policy gates
-- [`lpm audit`](/docs/packages/audit) — vulnerability and behavioral analysis
-- [Lockfile](/docs/packages/lockfile) — resolved graph source of truth
+- [lpm install](/docs/packages/install) — create the installation and lockfile
+- [lpm licenses](/docs/packages/licenses) — inspect licenses and enforce policies
+- [lpm audit](/docs/packages/audit) — check vulnerabilities and package behavior
+- [lpm graph](/docs/packages/graph) — inspect dependency relationships
+- [lpm patch](/docs/packages/patch) — manage local package patches
+- [Lockfile](/docs/packages/lockfile) — understand the resolved dependency graph
