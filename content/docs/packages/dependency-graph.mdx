@@ -16,13 +16,15 @@ The project and each resolved package are graph nodes. A connection from one nod
 | Node type | Meaning |
 | --- | --- |
 | Project root | The current project from `package.json` |
-| Direct package | A package in the selected `dependencies` or `devDependencies` set |
+| Direct package | A package in the selected `dependencies`, `optionalDependencies`, or `devDependencies` set |
 | Transitive package | A package required by another package |
 | Duplicate package | One package name that has more than one resolved version |
 
-A package name and version identify one node. For example, `react@18.3.1` and `react@19.0.0` are separate nodes.
+Each resolved instance is a node. Different versions are separate nodes. Instances with the same name and version can also differ in their dependency context.
 
-LPM CLI marks both nodes as duplicates because the package name is the same. A repeated path to one version is not a duplicate.
+When several instances share a coordinate, their keys include `#<instance-id>`. The suffix distinguishes those nodes and their exact dependency or peer edges.
+
+LPM CLI marks packages as duplicates when one name has multiple resolved versions. A repeated path to one version is not a duplicate.
 
 ## Know where the data comes from
 
@@ -65,11 +67,15 @@ lpm graph react
 
 If the graph contains multiple versions, a name-only query selects the version nearest to the project root.
 
-Give the complete package identity to select an exact version:
+Give a name and version to select an exact coordinate:
 
 ```bash
 lpm graph react@18.3.1
 ```
+
+If that coordinate matches several instances, use an exact key from the error or JSON result. The selected dependency becomes the graph root.
+
+Depth starts at that package, and the package count includes it.
 
 ## Find why a package is installed
 
@@ -137,7 +143,7 @@ lpm graph --dev
 | --- | --- |
 | `--depth <N>` | Keep the first `N` levels. Level 1 is the project root. |
 | `--filter <NAME>` | Keep matching package subtrees and the paths that connect them to the root. |
-| `--prod` | Keep production packages and their reachable transitive packages. |
+| `--prod` | Keep production and optional roots and their reachable dependencies. |
 | `--dev` | Keep development packages and their reachable transitive packages. |
 
 The name filter uses a substring match. For example, `--filter press` matches `express`.
@@ -180,7 +186,7 @@ The top-level object contains these fields:
 | Field | Meaning |
 | --- | --- |
 | `success` | Whether LPM CLI created the result |
-| `root` | Project name and version |
+| `root` | The selected root name and version, or an empty string if no root remains |
 | `packages` | Package count. This count excludes the project root. |
 | `lpm_packages` | LPM.dev Registry package count |
 | `npm_packages` | npm registry package count |
@@ -193,18 +199,20 @@ Each item in `nodes` contains these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `key` | Package identity in `name@version` form |
+| `key` | Package identity, with an instance suffix when needed |
 | `name` | Package name |
 | `version` | Resolved package version |
 | `registry` | `lpm`, `npm`, or `unknown` |
 | `depth` | Zero-based node depth in JSON |
 | `is_direct` | Whether the selected dependency set contains the package |
 | `is_duplicate` | Whether another resolved version has the same name |
-| `is_root` | Whether the node represents the project |
+| `is_root` | Whether this node is the current graph root |
 | `dependency_count` | Number of dependency relationships from this node |
 | `deps` | Package identities for direct child nodes |
 
-The `nodes` array includes the project root. The top-level `packages` count excludes that root.
+A full graph includes a synthetic project root. The top-level `packages` count excludes that node.
+
+A selected dependency subtree has no synthetic project node. Its root is a real package and counts toward `packages`.
 
 ## Fix common problems
 
@@ -233,7 +241,7 @@ Run the complete graph without filters:
 lpm graph
 ```
 
-Then use the exact `name@version` value for a subtree query.
+Then use an exact key from the result for a subtree query.
 
 ### A browser cannot open the HTML graph
 

@@ -1,92 +1,216 @@
 ---
 title: lpm graph
-description: "Visualize the dependency graph as tree, DOT, Mermaid, JSON, stats, or HTML."
+description: Inspect resolved dependencies, explain why a package is present, and export dependency diagrams.
 ---
 
+Inspect the dependency graph in `lpm.lock`, or trace the packages that require a dependency.
+
 ```bash
-lpm graph [package] [--format <FMT>] [filters...]
-lpm ls [package] [--format <FMT>] [filters...]
-lpm why <package>
+lpm graph [OPTIONS] [PACKAGE]
+lpm ls [OPTIONS] [PACKAGE]
+lpm why [OPTIONS] <PACKAGE>
 ```
 
-Renders the project's dependency graph in one of six formats. With no `package` argument, shows the entire installed tree from the root; with a package name, shows just that subtree.
+## Quickstart
 
-`lpm ls` is an alias for `lpm graph`. `lpm why <package>` is a top-level shortcut for `lpm graph --why <package>` with the same human and `--json` output.
+```bash
+lpm graph --depth 2
+lpm why lodash
+lpm graph --json
+```
+
+| Mode | Effect |
+| --- | --- |
+| `lpm graph` | Show the selected project's dependency tree. |
+| `lpm graph <package>` | Show one package and its dependency subtree. |
+| `lpm graph --why <name>` | Show every path to dependencies with this name. |
+| `lpm ls` | Alias for `lpm graph`, with the same arguments and flags. |
+| `lpm why <name>` | Shortcut for `lpm graph --why <name>`. Supports shared global flags. |
+
+Graph uses local project files. It requires a usable `lpm.lock`, but it does not require installed packages or contact a registry.
+
+LPM CLI supports npm, private registries, and the LPM.dev Registry. Graph can include packages from each source.
 
 ## Examples
 
 ```bash
-lpm graph                              # full tree, terminal output
-lpm graph react                        # subtree under react
-lpm graph --format mermaid             # Mermaid for embedding in markdown
-lpm graph --format dot > graph.dot     # GraphViz, pipe into `dot`
-lpm graph --format html                # writes .lpm/graph.html, opens in browser
-lpm graph --format html --no-open      # write the file but don't open it (CI-safe)
-lpm graph --format json                # structured for tooling
-lpm graph --format stats               # counts and aggregates only
-lpm graph --why lodash                 # why is lodash in the tree?
-lpm why lodash                         # same renderer, easier to remember
-lpm ls --depth 2                       # alias for lpm graph --depth 2
-lpm graph --depth 3                    # truncate tree at depth 3
-lpm graph --filter react               # only subtrees whose package names contain 'react'
-lpm graph --filter press               # substring match: keeps the express branch
-lpm graph --prod                       # production deps only
-lpm graph --dev                        # devDependencies only
+# Inspect an exact resolved version
+lpm graph react@19.0.0
+
+# Show production roots and their dependencies
+lpm graph --prod --depth 3
+
+# Keep matching package subtrees and the paths to them
+lpm graph --filter react
+
+# Export a diagram
+lpm graph --format mermaid > dependencies.mmd
+lpm graph --format dot | dot -Tpng > dependencies.png
+
+# Write an interactive HTML graph without opening a browser
+lpm graph --format html --no-open
+
+# Save a machine-readable explanation
+lpm why lodash --json > why-lodash.json
 ```
 
-## Output formats
+For a reusable report, define an uncached task:
 
-| Format           | Output destination                                                                                           | Best for                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| `tree` (default) | stdout — indented terminal tree of resolved `name@version` nodes                                             | Quick eyeballing                                    |
-| `dot`            | stdout — GraphViz DOT source                                                                                 | Pipe into `dot -Tpng > graph.png`                   |
-| `mermaid`        | stdout — Mermaid graph block                                                                                 | Embedding in markdown / docs                        |
-| `json`           | stdout — structured graph data                                                                               | Tooling, custom analyses                            |
-| `stats`          | stdout — counts (total deps, max depth, duplicates)                                                          | High-level audits                                   |
-| `html`           | **writes** `<project>/.lpm/graph.html` and auto-opens it in your default browser (suppress with `--no-open`) | Interactive exploration, sharing with non-CLI users |
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:graph": {
+      "command": "lpm graph --prod --format html --no-open",
+      "cache": false
+    }
+  }
+}
+```
 
-The `html` format is the only one that writes to disk — every other format prints to stdout so you can pipe or redirect it. Pair `--format html` with `--no-open` in headless / CI environments where opening a browser would either fail or be unwanted.
+```bash
+lpm run deps:graph
+```
+
+There is no dedicated graph configuration in `lpm.json`. The task's `command` holds the graph options. `cache: false` regenerates the report each time.
+
+For a different one-run view, run the graph command directly. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
+
+## Project and workspace scope
+
+Graph finds the nearest project manifest and its applicable `lpm.lock`. Invocation from a nested source directory uses the same project.
+
+In a workspace member, graph uses that member's dependency tree. Sibling-only dependencies do not appear. Run the command from the workspace root to inspect its root dependencies.
+
+The manifest supplies the project identity and direct dependency names. The lockfile supplies resolved packages, dependency edges, and resolved peer edges.
+
+If the manifest changed after the last install, update the lockfile with [lpm install](/docs/packages/install) before you inspect the graph.
+
+## Select a package
+
+```bash
+lpm graph react
+lpm graph react@19.0.0
+```
+
+A name selects the nearest matching package. If multiple packages have the same depth, the first sorted identity wins.
+
+A name and version select that exact coordinate. Separate dependency instances can share both values. If the coordinate is ambiguous, the error lists exact keys.
+
+Copy one of those keys, including its `#<instance-id>` suffix:
+
+```bash
+lpm graph '<name>@<version>#<instance-id>'
+```
+
+The selected dependency becomes the graph root. It still counts as a package, and its direct children start at level 2.
 
 ## `lpm why <package>`
 
 ```bash
 lpm why lodash
-lpm graph --why lodash
+lpm graph --why lodash --format json
 ```
 
-Walks every path from the root to the named package and prints them. Useful for "why am I shipping this" investigations and for hunting down a transitive bump that pulled in something unexpected.
+Why accepts a package name and includes all its resolved versions. It shows every path from the selected graph root to that dependency.
 
-`lpm why <package>` and `lpm graph --why <package>` are the same renderer. With global `--json`, both emit the same structured object with `target`, `found`, `path_count`, `paths`, `applied_overrides`, and `applied_patches`.
+Recorded overrides and patches appear with the explanation. These records describe the last installation that wrote them.
 
-Dense graphs can produce large output because the path count can increase exponentially.
+If the name is absent, the command succeeds with a not-found result. Use [lpm query](/docs/packages/query) with `--assert-none` for a presence gate.
 
-## Filtering
+Why supports human output and JSON. Other `--format` values are incompatible with `--why`.
 
-`--depth`, `--filter`, `--prod`, and `--dev` are applied at the graph level — every output format (tree, dot, mermaid, json, stats, html) sees the same truncated set, including the stats summary embedded in the HTML header.
+Dense graphs can produce large reports because the number of paths can grow exponentially.
 
-| Flag              | Effect                                                                                                                                                                                                |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--depth <N>`     | Truncate the graph at depth N (root counts as level 1, direct deps as level 2). `--depth 1` keeps just the root, `--depth 2` keeps root + direct deps, `--depth 3` keeps one transitive layer beyond. |
-| `--filter <NAME>` | Only show subtrees that contain this substring in a package name. Diamond patterns (two parents to the same target) keep both branches.                                                               |
-| `--prod`          | Production dependencies only (mutually exclusive with `--dev`)                                                                                                                                        |
-| `--dev`           | devDependencies only                                                                                                                                                                                  |
+## Filter the graph
+
+```bash
+lpm graph --depth 2
+lpm graph --filter press
+lpm graph --prod
+lpm graph --dev
+```
+
+| Filter | Effect |
+| --- | --- |
+| `--depth <N>` | Keep the first `N` levels. The current graph root is level 1. |
+| `--filter <NAME>` | Keep matching dependency subtrees and every path that connects them to the root. |
+| `--prod` | Select production and optional direct dependencies, then keep their reachable dependencies. |
+| `--dev` | Select development direct dependencies, then keep their reachable dependencies. |
+
+The name filter uses a case-sensitive substring. For example, `press` matches `express`. The project name does not count as a dependency match.
+
+`--prod` and `--dev` cannot be combined. A shared transitive package remains if a selected root requires it.
+
+All formats use the same filtered graph. With a package argument, depth starts at that package. An empty selection still produces a valid output document.
+
+## Output formats
+
+| Format | Destination | Use |
+| --- | --- | --- |
+| `tree` (default) | Standard output | Inspect the tree in a terminal. |
+| `dot` | Standard output | Create a Graphviz diagram. |
+| `mermaid` | Standard output | Include a diagram in Markdown. |
+| `json` | Standard output | Read graph data from a script or tool. |
+| `stats` | Standard output | Inspect counts, depth, and duplicate versions. |
+| `html` | `<project>/.lpm/graph.html` | Explore an interactive graph in a browser. |
+
+In HTML, collapse a package to hide its dependency branches. A shared dependency stays visible through another expanded parent.
+
+HTML opens the file in the default browser. With `--no-open`, it only writes the file. The destination belongs to the selected project, including a workspace member.
+
+All other formats print to standard output. Use shell redirection to save them.
+
+### JSON
+
+```bash
+lpm graph --json
+lpm graph --format json
+lpm why lodash --json
+```
+
+Global `--json` selects JSON output. It cannot accompany `--format dot`, `mermaid`, `stats`, or `html`.
+
+Graph JSON contains `success`, `root`, package counts, `max_depth`, `duplicates`, `nodes`, and `edges`.
+
+The synthetic project root does not count as a package. A selected dependency root does count. Separate instances remain separate nodes.
+
+Why JSON contains `target`, `found`, `path_count`, `paths`, `applied_overrides`, and `applied_patches`. An absent dependency has `found: false` and zero paths.
+
+See [Dependency graph](/docs/packages/dependency-graph#read-json-graph-data) for node fields and count definitions.
+
+## Common problems
+
+If no usable lockfile exists, run [lpm install](/docs/packages/install) from the project.
+
+If a package is absent, inspect the complete graph without filters:
+
+```bash
+lpm graph --format json
+```
+
+For an ambiguous package, copy an exact key from the result or error.
+
+If a browser cannot open the HTML report, generate the file with `--no-open`. Then open the printed path in another browser.
 
 ## Flags
 
-| Flag              | Effect                                                                                                                                                                                                                                                      |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--format <FMT>`  | One of `tree`, `dot`, `mermaid`, `json`, `stats`, `html` (default: `tree`)                                                                                                                                                                                  |
-| `--why <PKG>`     | Show every path from the root to `<PKG>`                                                                                                                                                                                                                    |
-| `--depth <N>`     | Truncate the graph at depth N (applied to every format)                                                                                                                                                                                                     |
-| `--filter <NAME>` | Only subtrees containing this substring in a package name                                                                                                                                                                                                   |
-| `--prod`          | Production deps only                                                                                                                                                                                                                                        |
-| `--dev`           | devDependencies only                                                                                                                                                                                                                                        |
-| `--no-open`       | With `--format html`: write the file but skip the auto-open call. Useful in headless / CI environments. Used without `--format html`, prints a one-line warning that the flag has no effect in human mode; the warning is suppressed under global `--json`. |
+| Argument or flag | Effect |
+| --- | --- |
+| `[PACKAGE]` | Select a dependency subtree by name, coordinate, or exact instance key. |
+| `--format <tree\|dot\|mermaid\|json\|stats\|html>` | Select the output format. Default: `tree`. |
+| `--why <WHY>` | Explain every path to dependencies with this package name. |
+| `--depth <DEPTH>` | Keep this many graph levels. Must be at least `1`. |
+| `--filter <FILTER>` | Match dependency names by substring. |
+| `--prod` | Select production and optional roots. Conflicts with `--dev`. |
+| `--dev` | Select development roots. |
+| `--no-open` | Write HTML without opening a browser. Other formats ignore this flag and warn in human output. |
+| `--json` | Emit structured graph or why data. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm query`](/docs/packages/query) — selector-based queries against installed packages
-- [`lpm audit`](/docs/packages/audit) — security and quality audit
-- [Dependency graph](/docs/packages/dependency-graph) — understand package relationships and graph results
+- [Dependency graph](/docs/packages/dependency-graph) — interpret graph nodes, edges, and statistics.
+- [lpm query](/docs/packages/query) — select packages by behavior, state, or relationships.
+- [lpm audit](/docs/packages/audit) — inspect security findings and analysis coverage.
+- [Lockfile](/docs/packages/lockfile) — understand resolved dependency data.
