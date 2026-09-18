@@ -1,56 +1,163 @@
 ---
 title: lpm swift-registry
-description: "Configure Swift Package Manager to use LPM.dev Registry as a SE-0292 package registry."
+description: "Configure Swift Package Manager access and signing trust for LPM.dev Registry."
 ---
 
+`lpm swift-registry` configures Swift Package Manager access and package signing trust for LPM.dev Registry.
+
 ```bash
-lpm swift-registry              # repair or explicitly rerun setup
-lpm swift-registry --force      # repair stale/corrupt state or refresh the certificate
+lpm swift-registry [OPTIONS]
 ```
 
-Most users do not need to run this command before installing a package. [`lpm install`](/docs/packages/install) automatically configures Swift Package Manager (SPM) when it adds a Swift package from LPM.dev Registry.
+Use this command to prepare or repair Swift registry access.
+[lpm install](/docs/packages/install) runs setup automatically for Swift packages, so a separate setup command is usually unnecessary.
 
-Use `lpm swift-registry` when setup needs to be repaired or rerun explicitly. Use `--force` after a documented certificate rotation or when Registry configuration or the local certificate may be stale or corrupt. Sign in with [`lpm login`](/docs/infra/login) for Private, Pool, or Marketplace packages. Free releases can be installed anonymously.
+| Mode | Command |
+| --- | --- |
+| Configure access and repair stale configuration | `lpm swift-registry` |
+| Also replace a matching local signing certificate | `lpm swift-registry --force` |
 
-## Normal install flow
+The registry scope applies to the current Swift project.
+The certificate and signing-trust configuration apply to your user account and can affect other Swift projects.
+
+## Quickstart
+
+From the directory with `Package.swift`, run:
 
 ```bash
 lpm login
+lpm swift-registry
+```
+
+See [lpm login](/docs/infra/login) for authentication.
+Swift must be available on `PATH`. The command uses your installed Swift toolchain.
+
+For a normal package installation, run:
+
+```bash
 lpm install @lpm.dev/owner.swift-pkg
 ```
 
-On the first install, LPM CLI sets the `lpmdev` Registry scope and installs the signing certificate. It also configures signing trust, updates `Package.swift`, and resolves the dependency.
+Automatic setup skips login for Free releases.
+Protected releases use the current Registry credential, including when the project already has the correct scope.
 
-Automatic setup skips SPM login when all requested releases allow anonymous access. Certificate and signing-trust checks still run. Protected installs sign in with the current Registry session, including when the scope already matches.
-
-For an Xcode install, automatic setup also sets the global `lpmdev` scope. This lets the enclosing Xcode workspace resolve dependencies outside the generated wrapper. See [Xcode projects and workspaces](/docs/guides/using-with-swift#xcode-projects-and-workspaces).
-
-LPM CLI accepts the global `--token <TOKEN>` flag for explicit setup and automatic setup during install. It can also refresh an expired browser session before it calls SPM.
-
-## What it does
-
-Four setup steps. Scope, SPM login, certificate, and signing-trust failures abort an explicit run. A failed session refresh also aborts the command:
-
-1. **Set the registry for the `lpmdev` scope.** Runs `swift package-registry set --scope lpmdev <registry-url>/api/swift-registry`. Adds `--allow-insecure-http` only for `http://` registry URLs (local dev); the hosted LPM.dev Registry endpoint is HTTPS-only.
-2. **Log in.** Resolves the LPM.dev Registry bearer token through the standard LPM CLI session. It writes the token to a temporary file and calls `swift package-registry login --token-file <path> --no-confirm`. On Unix, the file mode is `0600`. LPM CLI removes the file after SPM exits, so the bearer does not appear in process arguments. This step runs only for HTTPS because SPM refuses to send authentication over HTTP. If no token is found, this step warns and is skipped. Setup can finish, but protected Swift package requests return `401` until you run `lpm login`.
-3. **Install and verify the signing certificate.** Downloads the CMS signing cert from `<registry-url>/api/swift-registry/certificate` with a bounded response reader, parses exactly one complete DER X.509 object, and compares its bytes with `~/.swiftpm/security/trusted-root-certs/lpm.der`. Missing, malformed, trailing-data, stale, or mismatched local bytes are atomically repaired; malformed or oversized Registry responses abort.
-4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with strict default signing actions (`"error"`). It sets `security.registryOverrides["lpm.dev"].signing.onUntrustedCertificate` to `"silentAllow"` for the hosted Registry. See [Trust model](/docs/packages/swift-package-registry#trust-model) for the rationale.
-
-Fresh configuration includes the required `version` and `registries` fields. LPM CLI migrates the obsolete scope signing action to the configured Registry hostname. It preserves unrelated registry mappings and authentication configuration.
-
-The configuration operation is idempotent. LPM CLI retains matching scope, certificate, and trust configuration without a rewrite. It repairs stale or partial configuration with atomic file writes.
-
-Automatic setup skips SPM login for Free releases and when no credential exists. If a credential exists, a refresh or login failure stops the install. A rejected refresh-backed bearer causes one session refresh and one login retry.
-
-The existing `~/.swiftpm/configuration/registries.json` file has a 16 MiB limit enforced before JSON parsing. Missing retains the setup command's normal create behavior; an oversized file fails with its path and byte limit instead of being treated as absent or overwritten. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
-
-## `--force`
+## Examples
 
 ```bash
-lpm swift-registry --force
+lpm swift-registry                         # configure or repair access
+lpm swift-registry --force                 # replace the local certificate
+lpm swift-registry --json                  # report each setup outcome
+lpm swift-registry --registry https://registry.example.com
 ```
 
-Re-runs setup and re-downloads the signing certificate even when a valid one is on disk. Use it to repair stale or corrupt Registry configuration, or after a documented certificate rotation. A failed `--force` re-download is **fatal** even if a stale cert is still on disk — silently keeping the stale cert would defeat the explicit rotation the user asked for.
+For an unattended run, provide a Registry credential through the environment:
+
+```bash
+LPM_TOKEN="$REGISTRY_TOKEN" lpm swift-registry --json
+```
+
+The command has no confirmation prompt or `--yes` flag.
+SwiftPM receives `--no-confirm` for login and can persist the credential in its own authentication storage.
+
+### A task in `lpm.json`
+
+[`lpm.json`](/docs/reference/lpm-json) has no dedicated Swift registry configuration.
+An uncached task can run setup from a Swift project:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "swift-setup": {
+      "command": "lpm swift-registry",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run swift-setup
+lpm run swift-setup -- --force --json
+```
+
+The extra arguments apply to that run. See [lpm run](/docs/dev/run).
+
+## What setup changes
+
+Setup performs these operations in order:
+
+1. Set the `lpmdev` registry scope for the current project.
+2. If HTTPS and a Registry credential are available, log in through SwiftPM.
+3. Download and install the current package signing certificate.
+4. Configure the user-wide signing-trust policy.
+
+A failed operation stops the command. Earlier successful operations remain in place.
+After you resolve the error, rerun setup.
+
+### Registry scope and URL
+
+The project scope points to `<registry-url>/api/swift-registry`.
+Explicit setup always invokes SwiftPM scope configuration. Automatic installation can skip a matching project scope.
+
+A trailing slash in the base URL does not change the endpoint.
+Scheme matching is case-insensitive. Base URLs with embedded credentials, query parameters, or fragments are rejected before setup changes.
+
+HTTPS works for hosted and private registries that implement this API.
+HTTP works only for loopback development addresses. SwiftPM receives `--allow-insecure-http` for those addresses and skips authentication.
+The global `--insecure` flag does not permit a remote HTTP server for this command.
+
+For Xcode installations, automatic setup also configures the global `lpmdev` scope.
+See [Xcode projects and workspaces](/docs/guides/using-with-swift#xcode-projects-and-workspaces).
+
+### Authentication
+
+`--token` overrides `LPM_TOKEN`, which overrides stored credentials.
+A stored browser session can refresh before login and retry once after SwiftPM rejects the first login attempt.
+Explicit and environment tokens do not refresh automatically.
+
+LPM CLI passes the credential through a temporary file, with Unix permissions `0600`.
+It removes that file after SwiftPM exits. The credential does not appear in SwiftPM process arguments.
+SwiftPM can retain its own authentication after the temporary file is removed.
+
+If no credential exists, setup skips login and can still succeed.
+This does not clear credentials that SwiftPM already stores.
+For protected access, run [lpm login](/docs/infra/login), then rerun setup or [lpm install](/docs/packages/install).
+
+### Signing certificate
+
+Every setup run downloads the current certificate, including a run without `--force`.
+The certificate request has a 10-second connection limit and a 30-second overall limit, including the response body.
+
+LPM CLI accepts one complete DER X.509 certificate between 100 bytes and 64 KiB.
+Malformed, oversized, and trailing-data responses stop setup. This check validates certificate structure, not its expiry or certificate chain.
+
+The local certificate path is:
+
+```text
+~/.swiftpm/security/trusted-root-certs/lpm.der
+```
+
+Matching valid bytes avoid a file replacement. Missing, malformed, or different bytes cause an atomic replacement.
+`--force` also replaces a matching certificate.
+A download or validation failure preserves the previous certificate and returns an error, with or without `--force`.
+
+### Signing trust
+
+User-wide trust configuration lives in:
+
+```text
+~/.swiftpm/configuration/registries.json
+```
+
+LPM CLI sets strict default signing actions to `error`.
+It sets `onUntrustedCertificate` to `silentAllow` for the selected Registry hostname.
+It also removes the obsolete `lpmdev` scope signing override and preserves unrelated valid mappings and authentication configuration.
+
+For HTTPS, trust starts with the authenticated connection that supplies the signing certificate.
+Loopback HTTP has no authenticated transport. See [Swift signing trust](/docs/packages/swift-package-registry#trust-model).
+
+The configuration file has a 16 MiB limit before parsing.
+An oversized file stops setup without replacement. Matching valid trust configuration avoids a rewrite.
 
 ## JSON output
 
@@ -58,34 +165,49 @@ Re-runs setup and re-downloads the signing certificate even when a valid one is 
 lpm swift-registry --json
 ```
 
-Emits a structured envelope describing what was configured:
-
 | Field | Meaning |
 | --- | --- |
-| `registry_url` | The `<base>/api/swift-registry` URL the `lpmdev` scope now points at |
-| `scope` | Always `"lpmdev"` today |
-| `https` | `true` when the registry URL is HTTPS; `false` for local-dev `http://` |
-| `signing_certificate_installed` / `signing_certificate_outcome` | `"installed"` (new write) or `"already_installed"` (idempotent no-op) |
-| `signing_trust_configured` / `signing_trust_outcome` | `"configured"` or `"already_configured"` |
-| `trust_anchor` | Always `"https"` — the trust anchor is the HTTPS connection to LPM.dev Registry, not a cert chain |
-| `signer_trust_policy` | Always `"silentAllow"` — see [Trust model](/docs/packages/swift-package-registry#trust-model) |
+| `success` | All required setup operations succeeded. Login can still be skipped. |
+| `registry_url` | The configured Swift registry endpoint. |
+| `scope` | `lpmdev`. |
+| `https` | Whether the endpoint uses HTTPS. |
+| `authentication_outcome` | `configured`, `skipped_no_credential`, or `skipped_http`. |
+| `signing_certificate_installed` | Boolean that reports a valid certificate is present. |
+| `signing_certificate_outcome` | `installed` for replacement or `already_installed` for matching bytes. |
+| `signing_trust_configured` | Boolean that reports the required trust configuration is present. |
+| `signing_trust_outcome` | `configured` for a change or `already_configured` for matching configuration. |
+| `trust_anchor` | `https` or `insecure_http`. |
+| `signer_trust_policy` | `silentAllow` for the selected Registry hostname. |
+
+Failed setup returns `success: false` with `error` and `error_code`.
+JSON mode suppresses SwiftPM terminal output.
+
+## Recovery
+
+| Error or result | Action |
+| --- | --- |
+| Swift is unavailable | Install a compatible Swift toolchain and make `swift` available on `PATH`. |
+| `skipped_no_credential` or protected requests return `401` | Sign in, then rerun setup to update SwiftPM authentication. |
+| SwiftPM login fails | Replace an expired explicit token, or renew the stored session. Then rerun setup. |
+| Certificate request times out or returns invalid data | Check the Registry endpoint and connection. Rerun setup after recovery. |
+| Registry certificate rotates | Rerun ordinary setup. It detects changed certificate bytes. |
+| Trust configuration exceeds 16 MiB | Inspect the reported file before reducing or replacing it. |
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--force` | Re-download the signing certificate even when a valid one is on disk |
+| `--force` | Replace the local signing certificate even when it matches the Registry certificate. |
+| `--json` | Print setup outcomes or a structured error. |
+| `--token <TOKEN>` | Override the Registry credential for this run. |
+| `--registry <URL>` | Override the Registry base URL. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` is documented above; `--registry <URL>` redirects the configured base URL.
-
-## Prerequisites
-
-- `swift` on `PATH` (steps 1 and 2 spawn it). Without Swift installed, `lpm swift-registry` errors with `Is Swift installed?` and exits.
-- An LPM CLI session (`lpm login`) for Private, Pool, or Marketplace access. Free releases need no session.
+`LPM_TOKEN` and `LPM_REGISTRY_URL` provide token and Registry defaults.
+Explicit flags override these values. See [Global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [Swift Package Registry (SE-0292)](/docs/packages/swift-package-registry) — design overview, identity mapping, trust model, wire format
-- [Using LPM CLI with Swift](/docs/guides/using-with-swift) — end-to-end setup + publish walkthrough
-- [`lpm install`](/docs/packages/install) — the normal command for Swift dependencies; it configures SPM when needed
-- [`lpm publish`](/docs/packages/publish) — publishes Swift packages with CMS signatures
+- [Swift Package Registry](/docs/packages/swift-package-registry) — identities, signatures, and trust.
+- [Using LPM CLI with Swift](/docs/guides/using-with-swift) — package installation and publication.
+- [lpm install](/docs/packages/install) — automatic setup for Swift dependencies.
+- [lpm publish](/docs/packages/publish) — publish signed Swift packages.

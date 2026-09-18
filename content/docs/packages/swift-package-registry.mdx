@@ -52,7 +52,7 @@ Before resolving the first Swift package in an unconfigured project, LPM CLI per
 3. **Install the signing certificate.** Downloads the CMS signing cert (DER) from `https://lpm.dev/api/swift-registry/certificate` and writes it to SPM's trust store at `~/.swiftpm/security/trusted-root-certs/lpm.der`. The DER body is size-checked before being written; an empty / truncated / HTML-error response aborts instead of leaving a broken cert on disk.
 4. **Configure the SPM signing trust policy.** Writes `~/.swiftpm/configuration/registries.json` with strict default signing actions (`"error"`). It sets `security.registryOverrides["lpm.dev"].signing.onUntrustedCertificate` to `"silentAllow"` for the hosted Registry — see [Trust model](#trust-model) for the rationale.
 
-[`lpm swift-registry`](/docs/packages/swift-registry) exposes this setup explicitly for repair and certificate rotation. Its `--force` flag re-downloads the certificate even when a valid file is present. A failed forced refresh is fatal rather than silently retaining the stale certificate.
+[`lpm swift-registry`](/docs/packages/swift-registry) exposes this setup explicitly for repair and certificate rotation. Every setup run downloads the certificate and repairs changed bytes. Its `--force` flag also replaces a matching local certificate. A failed download stops setup and preserves the previous file.
 
 ## Trust model
 
@@ -126,14 +126,14 @@ LPM.dev Registry independently inspects the uploaded source before publication. 
 
 ## Verifying signatures
 
-SPM verifies the CMS detached signature on every package archive at install time. LPM CLI configures the certificate and signing policy during the normal install flow. Use `lpm swift-registry --force` only when a documented certificate rotation or local corruption requires an explicit refresh.
+SPM verifies the CMS detached signature on every package archive at install time. LPM CLI configures the certificate and signing policy during the normal install flow. Run [lpm swift-registry](/docs/packages/swift-registry) to repair configuration or retrieve a rotated certificate.
 
 Two failure shapes a user can run into:
 
 - **Unsigned package** — the default signing policy rejects packages without a signature. The Registry hostname override changes only the untrusted-certificate action.
-- **Cert missing or out of date** — SPM emits a "signer is not trusted" error. Re-run `lpm swift-registry` (or `lpm swift-registry --force` if you suspect a stale cert) to refresh both the cert file and the registries.json registry override.
+- **Cert missing or out of date** — SPM emits a "signer is not trusted" error. Run [lpm swift-registry](/docs/packages/swift-registry) to repair the certificate and signing-trust configuration.
 
-If the cert rotates server-side, re-run `lpm swift-registry --force`. A failed `--force` re-download is fatal — `lpm` will not silently keep using the stale cert.
+If the certificate rotates, rerun [lpm swift-registry](/docs/packages/swift-registry). A failed download stops setup and preserves the previous certificate.
 
 ## Wire format details
 
