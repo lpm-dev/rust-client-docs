@@ -9,7 +9,7 @@ Every `package.json` read by LPM CLI has a 16 MiB limit enforced before JSON par
 
 **Project-only.** Every key in this block — `scriptPolicy`, `trustedDependencies`, `minimumReleaseAge`, `minimumReleaseAgePolicy`, `scripts.autoBuild`, `linker`, the rest — applies to `lpm install` (and other commands that run in the project context). `lpm install -g` does **not** read this file: globals synthesize their own package.json and use the equivalent CLI flags plus `~/.lpm/config.toml` for the user-config tier. Global trust lives in a separate file at `~/.lpm/global/trusted-dependencies.json`.
 
-Security-sensitive project keys such as `scriptPolicy`, `minimumReleaseAge`, and `minimumReleaseAgePolicy` are treated as project **proposals**, not machine authority. If a repo asks for a weaker posture than this machine currently allows, install or rebuild fails and points you at [`lpm security unlock`](/docs/infra/security#unlock) or a persistent [`lpm config`](/docs/infra/config) change.
+Security-sensitive project keys such as `scriptPolicy`, `minimumReleaseAge`, and `minimumReleaseAgePolicy` are treated as project **proposals**, not machine authority. If a repo asks for a weaker posture than this machine currently allows, install or rebuild fails and points you at [`lpm security unlock`](/docs/infra/security#temporary-unlocks) or a persistent [`lpm config`](/docs/infra/config) change.
 
 A few related fields live at the **top level** of `package.json` (not inside `"lpm"`) — `workspaces`, `engines`, `scripts`, `bin`, and `overrides` / `resolutions`. Those follow npm/pnpm/yarn conventions and are listed [at the bottom](#related-top-level-fields).
 
@@ -116,13 +116,15 @@ Precedence: `lpm install --strict-peer-dependencies` / `--no-strict-peer-depende
 { "lpm": { "catalogMode": "prefer" } }
 ```
 
-How `lpm install <pkg>` saves dependencies that match the root default catalog.
+How [`lpm install`](/docs/packages/install) saves registry dependencies that match the root default catalog.
 
 | Value | Behavior |
 | --- | --- |
 | `"manual"` (default) | Keep normal raw save specs such as `"^4.3.6"` or the explicit range you typed. |
 | `"prefer"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; warn and save the direct spec when it does not. |
 | `"strict"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+
+Automatic modes take precedence over explicit registry versions, save flags, and existing registry ranges. They preserve source dependencies, including workspace links, paths, aliases, Git sources, and tarball URLs. `--catalog` cannot replace these sources.
 
 This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the root catalog set, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
 
@@ -224,7 +226,7 @@ Use `lpm install --allow-new` to bypass the cooldown. Use [`minimumReleaseAgeExc
 
 Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > disabled default (`0`).
 
-If the repo lowers the cooldown below the current approved machine floor, install fails with `security_approval_required` and points you at a temporary [`lpm security unlock`](/docs/infra/security#unlock) or a persistent machine-level config change.
+If the repo lowers the cooldown below the current approved machine floor, install fails with `security_approval_required` and points you at a temporary [`lpm security unlock`](/docs/infra/security#temporary-unlocks) or a persistent machine-level config change.
 
 ### `minimumReleaseAgePolicy`
 
