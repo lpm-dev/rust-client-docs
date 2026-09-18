@@ -1,137 +1,213 @@
 ---
 title: Workspaces
-description: "Monorepo support — workspace declaration, filter grammar, workspace:* protocol, catalogs, deploy."
+description: "Manage related packages with shared installation, local dependencies, filters, and deployment output."
 ---
 
-LPM CLI treats workspaces as a first-class concept. Declare them in `package.json`, then every command that touches the dep graph (`install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`, `deploy`) accepts `--filter` / `--filter-prod`, `--all`, and `--affected` to scope work. Git-diff selectors can ignore noisy paths with `--changed-files-ignore-pattern` and classify test-only changes with `--test-pattern`. The resolver tracks cross-member edges via the `workspace:*` protocol, and `lpm deploy` produces a self-contained production tree for a single member.
-
-This page covers the conceptual model. For a step-by-step setup walkthrough, see the [Monorepo setup guide](/docs/guides/monorepo-setup).
-
-## Declaring workspaces
-
-Two equivalent shapes — both accepted in `package.json`:
-
-```json title="package.json (array form)"
-{ "workspaces": ["packages/*", "apps/*"] }
-```
-
-```json title="package.json (object form)"
-{ "workspaces": { "packages": ["packages/*", "apps/*"] } }
-```
-
-Both globs match recursively under the project root. Each match is a workspace **member** — a directory with its own `package.json`, with its own dependencies, scripts, and version.
-
-`pnpm-workspace.yaml` is read as a **fallback** when `package.json > workspaces` is absent. If both are present, `package.json` wins. Migrating from pnpm doesn't require deleting `pnpm-workspace.yaml` — though copying the globs into `package.json > workspaces` is the cleaner long-term shape. (See [Migrating from pnpm](/docs/guides/migrating-from-pnpm).)
-
-Root and member `package.json` files and `pnpm-workspace.yaml` each have a 16 MiB limit enforced before parsing. A missing `pnpm-workspace.yaml` keeps the fallback behavior above; an oversized file fails before workspace discovery proceeds or the resolver contacts a registry. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
-
-Release and version operations scan workspace members before planning. These scans allow at most 10,000 patterns, 100,000 directory entries, and a 16 MiB path budget. Use specific member directories instead of a broad recursive pattern.
-
-## Installing the workspace
-
-Run no-argument install from the workspace root:
+A workspace groups packages under one root. Each member keeps its own dependencies, scripts, and version. LPM CLI shares the root lockfile and local package links.
 
 ```bash
+# Install the workspace from its root
 lpm install
+
+# Add a dependency to one member
+lpm install zod --filter web
+
+# Preview the members that depend on shared
+lpm filter '...shared'
+
+# Run tests for changed members and their dependents
+lpm run test --affected --base origin/main
 ```
 
-LPM CLI installs members in dependency order and installs the root last. On a cold recursive install, eligible members enter one shared union resolution, with shared expansion passes when an importer requires an additional ambient peer package; LPM CLI then projects an isolated dependency graph for each importer, preserving conflicting direct versions, aliases, optional reachability, peer bindings, overrides, and policy decisions. An importer that cannot be projected safely falls back to its own resolver pass without disabling the union for other members.
+Registry dependencies can come from npm, LPM.dev Registry, or private registries. Workspace dependencies use local packages.
 
-The workspace writes one authoritative `lpm.lock` at the root. Its content-addressed `workspace-packages` table stores each distinct locked package row once, while `importers` records the package IDs and root state visible to each member. Member commands read only their importer projection, so `lpm graph`, `lpm licenses`, `lpm sbom`, audit, upgrade, patch, uninstall, tidy, doctor, frozen installs, and ordinary member-local installs keep member semantics without per-member lockfiles. Recursive install commits the root lockfile only after every selected target succeeds.
+## Declare members
 
-Existing workspaces migrate automatically: a successful recursive install absorbs legacy member `lpm.lock` files into the root union and removes the obsolete member files and `lpm.lockb` companions. Union workspace lockfiles are TOML-only because the binary companion format cannot represent importer projections.
+```json title="package.json at the workspace root"
+{
+  "name": "my-workspace",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"]
+}
+```
 
-Bare install from inside a member stays member-local. Widen it explicitly when needed:
+The object form is also supported:
+
+```json
+{
+  "workspaces": {
+    "packages": ["packages/*", "apps/*"]
+  }
+}
+```
+
+Each matching directory must contain a `package.json`. Use `*` for one path segment and `**` for recursive patterns.
+
+LPM CLI combines patterns from `package.json > workspaces` and `pnpm-workspace.yaml > packages`. Duplicate patterns are processed once.
+
+```yaml title="pnpm-workspace.yaml"
+packages:
+  - packages/*
+  - apps/*
+```
+
+A missing YAML file is allowed. An invalid or oversized file fails workspace discovery. Root manifests, member manifests, and the YAML file each have a 16 MiB limit.
+
+Release and version scans also bound pattern counts, directory entries, and path storage. See [project size limits](/docs/project-setup#local-configuration-size-limits).
+
+`lpm.json` does not declare workspace members. It can define [tasks](/docs/dev/run) for those members:
+
+```json title="packages/web/lpm.json"
+{
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+Each member defines its own tasks. Members do not inherit root task definitions. `^build` requires upstream members to finish their build tasks first. Each upstream member must define that task.
 
 ```bash
+lpm run build --filter web
+```
+
+## Install and change dependencies
+
+At the workspace root, [`lpm install`](/docs/packages/install#workspaces) refreshes the members and the root. Inside a member, a bare install stays local to that member.
+
+```bash
+# Refresh the whole workspace from a member
 lpm install --recursive
-lpm -r install
+
+# Refresh only the current project
+lpm install --no-recursive
+
+# Refresh selected members and their required local dependencies
+lpm install --recursive --filter web
+lpm install --recursive --filter-prod web
+
+# Add a dependency to a member or the root
+lpm install zod --filter web
+lpm install typescript --save-dev -w
+
+# Remove a dependency from a member
+lpm uninstall zod --filter web
 ```
 
-Use `--no-recursive` at the workspace root for a root-only refresh. `--recursive` only refreshes existing manifests; to add a dependency, keep using `lpm install <pkg> --filter <member>` or `-w` for the root.
+Filtered refreshes include the required workspace dependency closure. They exclude unrelated members and the root. `--filter-prod` excludes development edges from that selection.
 
-Filters scope recursive refreshes and automatically include the selected members' required workspace dependency closure:
+`--recursive` refreshes existing manifests. It does not add package arguments to every member.
 
-```bash
-lpm install --filter web
-lpm install --filter-prod web
+For mutations across multiple members, interactive terminals request confirmation. `--yes`, JSON mode, and non-interactive input skip that prompt.
+
+Workspace installations use the isolated layout by default. See [dependency layouts](/docs/packages/dependency-graph) for overrides and visibility rules.
+
+## Workspace protocol
+
+```json title="packages/web/package.json"
+{
+  "name": "web",
+  "dependencies": {
+    "@my-co/shared": "workspace:*"
+  }
+}
 ```
 
-The production form omits `devDependencies` edges. Filtered refreshes do not install the workspace root or unrelated members.
+A `workspace:` reference requires a matching local package. The provider can be a member or the named package at the workspace root.
 
-Filtered mutations update the selected importer projections inside the same root lockfile. Manifest, patch, and lockfile changes share one transaction boundary: if resolution, materialization, or the root lockfile commit fails, LPM CLI restores those files and invalidates affected install hashes. `node_modules` is not copied for rollback; the missing hash makes the next install re-link and converge it.
+| Specification | Requirement |
+| --- | --- |
+| `workspace:*` | Any local version. |
+| `workspace:^` | Use the local version with caret semantics. |
+| `workspace:~` | Use the local version with tilde semantics. |
+| `workspace:^1.2.0` | The local version must satisfy `^1.2.0`. |
 
-### Refreshing shared versions
+These specifications remain unchanged under [save policy](/docs/packages/save-policy).
 
-After you change an override or catalog in the root `package.json`, run [lpm install](/docs/packages/install) from the workspace root:
+A `workspace:` self-reference in production, optional, or peer dependencies fails. A dev-only self-reference is excluded from installation.
+
+Matching local packages can also satisfy compatible ordinary version ranges, including transitive registry dependencies. A nonmatching version requires another candidate.
+
+## Shared lockfile
+
+The root `lpm.lock` records the workspace graph and a separate dependency view for each importer. Member commands use their own view.
+
+A successful recursive install absorbs legacy member lockfiles into the root lockfile and removes obsolete member companions. Workspace lockfiles are TOML-only.
+
+Manifest and lockfile changes commit after the selected installation succeeds. A failure restores those files. Changes inside `node_modules` can remain until the next install repairs them.
+
+After a root catalog or override change, refresh the workspace and commit the root manifest with its lockfile:
 
 ```bash
 lpm install
 ```
 
-LPM CLI refreshes affected members even when their own manifests do not change. Member-specific overrides still take precedence over matching root overrides.
-
-Commit the updated root manifest and `lpm.lock` together. Use a frozen install in CI to reject configuration changes that the lockfile does not record:
+For CI, use a frozen install:
 
 ```bash
 lpm install --frozen-lockfile
 ```
 
-Catalog references can coexist with local `file:` dependencies. Repeated installs preserve each member's dependency versions and compatible peers supplied by the root. An unchanged frozen install preserves the lockfile.
+See [lockfile behavior](/docs/packages/lockfile) for frozen checks, migration, and recovery.
 
 ## Filter grammar
 
-The filter expression — used by `--filter` and `--filter-prod` on every workspace-aware command — has its own small DSL. Filters compose: `--filter web --filter api` unions the two sets.
+Filters select member names or paths. Multiple positive expressions select their union. Each filter group requires a positive expression before exclusions can apply.
 
-| Filter | Matches |
+| Expression | Selected members |
 | --- | --- |
-| `web` | The member literally named `web` |
-| `@scope/*` | Every member with a name under a scope |
-| `@scope/*{./apps/web}` | Members matching both the package-name atom and exact path |
-| `./apps/*` | Every member under a path glob |
-| `{./apps/web}` | Exact path match (path with literal characters) |
-| `[origin/main]` | Members changed since a git ref |
-| `web...` | `web` and **every member `web` depends on** (transitive deps — downstream closure) |
-| `web^...` | Same, excluding `web` itself (deps-only) |
-| `...web` | `web` and **every member that depends on `web`** (transitive dependents — upstream closure) |
-| `...^web` | Same, excluding `web` itself (dependents-only) |
-| `!web` | Exclusion — remove `web` from the resulting set |
+| `web` | The exact package name. |
+| `@scope/*` | Names under that scope. |
+| `./apps/*` | Paths that match the glob. |
+| `{./apps/web}` | The exact path. |
+| `@scope/*{./apps/web}` | Both the name and path conditions. |
+| `[origin/main]` | Members with files changed since that Git reference. |
+| `web...` | `web` and its dependencies. |
+| `web^...` | Dependencies of `web`, excluding `web`. |
+| `...web` | `web` and its dependents. |
+| `...^web` | Dependents of `web`, excluding `web`. |
+| `!web` | Exclude `web` from that filter group. |
 
-`--filter-prod <expr>` uses the same grammar, but closure operators walk only production graph edges: `dependencies`, `optionalDependencies`, and `peerDependencies`. `devDependencies` edges are skipped. This is useful for production deploy/build selections that should not pull in test-only workspace dependents.
-
-> **Substring matching is not supported.** `--filter core` does NOT match `@babel/core` — write `--filter '*/core'` for that. This is the most common surprise for users coming from `pnpm`.
-
-Preview what an expression selects without running anything:
+An exact name does not perform substring matching. To select `@babel/core` by its suffix, use `*/core`.
 
 ```bash
-lpm filter web...                     # terse name list
-lpm filter --filter-prod ...shared    # prod dependents of shared
-lpm filter '[main]' --changed-files-ignore-pattern '**/README.md'
-lpm filter '...[main]' --test-pattern '**/*.test.js'
-lpm filter web... --explain           # full per-package trace (which filter matched, how)
-lpm filter web --fail-if-no-match     # exit non-zero if empty (useful in CI)
+lpm filter 'web...' --explain
+lpm filter --filter-prod '...shared' --json
+lpm filter web --fail-if-no-match
 ```
 
-`lpm filter` drives the same `FilterEngine` as `lpm run --filter`, so the selection is identical. In an interactive terminal, the terse preview uses status bullets; when piped or redirected it stays a bare one-name-per-line list. Pass `--json` for structured output suitable for scripts or agents.
+`--filter-prod` follows dependencies, optional dependencies, and peer dependencies. It excludes development edges.
 
-## `--affected`
+The regular filter group, production filter group, and `--affected` group are evaluated separately and then combined. An exclusion in one group does not remove members selected by another group.
+
+## Select changed packages
 
 ```bash
-lpm run test --affected              # default base = main
-lpm run test --affected --base develop
-lpm run test --affected --changed-files-ignore-pattern '**/README.md'
-lpm run test --affected --test-pattern '**/*.test.js'
+lpm filter '[origin/main]'
+lpm filter '...[origin/main]'
+lpm run test --affected --base origin/main --fail-if-no-match
 ```
 
-Selects only members affected by changes vs the base branch. Saves CI minutes — a one-line README change in `apps/marketing` doesn't trigger a full-monorepo test run.
+`[ref]` selects directly changed members. `...[ref]` and `--affected` also include dependents. The default affected base is `main`.
 
-Affected-ness is computed by walking the git diff against the base ref, then expanding through dep edges (a change in `packages/shared` triggers everything that imports it).
+Git paths are relative to the workspace root, including workspaces nested inside a larger repository. Changes outside that workspace do not select its members.
 
-`--changed-files-ignore-pattern <glob>` drops matching paths from the git diff before LPM CLI maps files to workspace members. Pass it more than once for multiple globs.
+A file move selects both its former member and its new member. A changed root file outside any member selects every member. The comparison includes tracked changes against the base reference. It does not include untracked files.
 
-`--test-pattern <glob>` marks matching changed files as test-only. The directly changed package still runs, but reverse closures and `--affected` do not add dependents from packages whose changes are only tests. This keeps `packages/shared/src/foo.test.ts` from rebuilding every app that imports `shared`.
+A missing or invalid reference fails the command. If CI has a shallow clone, fetch the base reference before selection.
 
-Both git-diff tuning flags can be set as project defaults:
+```bash
+lpm run test --affected --base origin/main \
+  --changed-files-ignore-pattern '**/README.md' \
+  --test-pattern '**/*.test.js'
+```
+
+Ignore patterns remove paths before selection. Test patterns keep the changed member but do not add dependents for changes that contain only tests.
+
+Set shared patterns in the root configuration:
 
 ```toml title="lpm.toml"
 [workspace]
@@ -139,139 +215,94 @@ changed-files-ignore-pattern = ["**/README.md", "docs/**"]
 test-pattern = ["**/*.test.js", "**/*.spec.ts"]
 ```
 
-## `--fail-if-no-match`
+CLI patterns append to these defaults. There is no one-run flag that clears the project patterns.
 
-A typo'd filter (`--filter we` instead of `--filter web`) produces an empty match set, and most commands silently exit success with no work done. `--fail-if-no-match` makes that exit non-zero — strongly recommended in CI:
+## Commands and selection options
 
-```bash
-lpm run test --filter-prod ...shared --fail-if-no-match
-```
-
-Available on `install`, `uninstall`, `run`, `test`, `bench`, `lint`, `fmt`, `check`, `filter`.
-
-## Multi-member confirmation
-
-When `lpm install <pkg> --filter ...` would mutate more than one member's `package.json`, LPM CLI prompts for confirmation. JSON mode and non-TTY stdin already skip the prompt automatically; `-y` covers the interactive-terminal-but-no-manual-review case (scripts, agents).
-
-## `workspace:*` protocol
-
-Cross-member deps:
-
-```json title="packages/web/package.json"
-{
-  "dependencies": {
-    "@my-co/shared": "workspace:*"
-  }
-}
-```
-
-Tells `lpm install` "use the local workspace package, not a published version." The target can be a discovered member or the named package at the workspace root, so a docs member can depend on a root package such as `vitepress` via `"vitepress": "workspace:*"`. Workspace deps are extracted before dependency resolution and linked from disk afterward — they never touch the registry. The linker symlinks the local package into `node_modules/` (isolated layout) instead of pulling a published version. Topological order is respected for tasks (`dependsOn: ["^build"]` waits for upstream member's build to finish first).
-
-Named workspace-root packages and members can also satisfy compatible plain semver edges that appear transitively through registry packages. If a registry package depends on `@my-co/shared` and the current workspace has a matching local package, LPM CLI resolves that edge locally instead of leaking the lookup to the registry.
-
-Self-dependencies are invalid: a workspace package that declares itself via `workspace:*` in `dependencies`, `devDependencies`, `peerDependencies`, or `optionalDependencies` fails before LPM CLI writes lockfiles or `node_modules`.
-
-Variants:
-
-| Spec | Meaning |
+| Command | Selection options |
 | --- | --- |
-| `"workspace:*"` | Any local version |
-| `"workspace:^"` | Caret range against the local version |
-| `"workspace:~"` | Tilde range against the local version |
-| `"workspace:^1.2"` | Explicit range applied as if local were that version |
+| [`lpm install`](/docs/packages/install) | Filters, `-w`, recursive refresh, and `--fail-if-no-match`. |
+| [`lpm uninstall`](/docs/packages/uninstall) | Filters, `-w`, and `--fail-if-no-match`. |
+| [`lpm run`](/docs/dev/run), [`lpm test`](/docs/dev/test), [`lpm bench`](/docs/dev/bench), [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), [`lpm check`](/docs/dev/check) | Filters, `--all`, `--affected`, `--base`, and `--fail-if-no-match`. |
+| [`lpm filter`](#filter-grammar) | Positional expressions, production filters, `--explain`, and `--fail-if-no-match`. |
+| [`lpm deploy`](#lpm-deploy) | A regular or production filter that selects exactly one member. |
 
-All variants are preserved verbatim by [save policy](/docs/packages/save-policy) — they never get rewritten.
+`--all` cannot combine with filters or `--affected`. Git ignore and test patterns apply to commands with Git-based selection.
 
 ## Catalogs
 
-Centralize version pins across members:
-
-```json title="package.json (root)"
+```json title="package.json at the workspace root"
 {
   "catalogs": {
-    "default": { "react": "^18.2.0", "react-dom": "^18.2.0" },
-    "testing": { "jest": "^29.0.0", "vitest": "^1.0.0" }
+    "default": { "react": "^19.0.0" },
+    "testing": { "vitest": "^3.0.0" }
   }
 }
 ```
-
-Members reference catalog versions:
 
 ```json title="packages/web/package.json"
 {
-  "dependencies": {
-    "react": "catalog:",            // → ^18.2.0 (default catalog)
-    "react-dom": "catalog:",
-    "vitest": "catalog:testing"     // → ^1.0.0 (named catalog)
-  }
+  "dependencies": { "react": "catalog:" },
+  "devDependencies": { "vitest": "catalog:testing" }
 }
 ```
 
-One pin, every member uses it. Bump the catalog entry in one place to update every member. No more "the API package is on react 18.0 but the web package is on 18.2 because someone forgot."
-
-Set `package.json > lpm.cleanupUnusedCatalogs = true` or `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` when you want `lpm install` to remove catalog entries that no root or member manifest references. By default, LPM CLI preserves unused catalog entries.
-
-Inspect catalog state with:
+Members use the root catalog declarations. After a catalog change, refresh the workspace to update the lockfile.
 
 ```bash
 lpm catalog list --unused
 lpm catalog show --resolved --json
 ```
 
-`catalog list` reads the root catalog declarations and marks which entries are referenced by root/member manifests. `catalog show --resolved` reads the resolved catalog snapshot in `lpm.lock`; if manifests reference a catalog entry that is missing from the lockfile snapshot, LPM CLI exits non-zero and asks you to run `lpm install` so the snapshot cannot look falsely clean.
-
-For the full command reference, see [`lpm catalog`](/docs/packages/catalog).
+See [`lpm catalog`](/docs/packages/catalog) for YAML declarations and cleanup. See [save policy](/docs/packages/save-policy#catalogs-take-precedence) for automatic conversion.
 
 ## `lpm deploy`
 
-For Docker / serverless — materialize one member's deploy closure into a self-contained directory:
+```bash
+lpm deploy /prod/api --filter api --dry-run
+lpm deploy /prod/api --filter api
+lpm deploy /prod/api --filter api --no-optional
+lpm deploy /prod/api --filter api --dev
+```
+
+[`lpm deploy`](#lpm-deploy) copies a member's publishable files and its selected `workspace:` sources. It then installs the output's dependencies. The output directory must neither contain the workspace nor sit inside it.
+
+The default selects production and optional dependencies. `--dev` selects the member's development dependencies instead. Copied providers still use their production dependencies.
+
+`--no-optional` omits optional dependencies, including duplicate names in regular dependencies. An optional declaration takes precedence over a regular declaration.
+
+Selected dependencies declared with `workspace:` go under `.lpm/deploy-workspace/`. Their copied manifests use relative `file:` references. This includes named root providers and peer-only local references.
+
+Catalog references use the root catalog declarations. The copied manifests contain the declared catalog specifications.
+
+Existing `file:`, `link:`, and `portal:` paths are not relocated. Compatible ordinary version ranges do not copy local workspace providers through this mechanism.
+
+A copied peer-only source is not an automatically installed root dependency. The consuming project must supply its required peers.
+
+The file selection uses `files`, then `.npmignore`, then `.gitignore`. The deny list applies at every directory depth, including explicit `files` entries:
+
+- Every name that starts with `.env`, including secret directories and example files.
+- `node_modules`, `.lpm`, `lpm.lock`, and `lpm.lockb`.
+- `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, and `.hg`.
+- `.DS_Store` and `Thumbs.db`.
+
+The output includes its own store and lockfile. Unix installations make internal `node_modules` links relative.
+
+Source files can use hardlinks. Later writes to a shared file can also change the original workspace file. Copy the output across filesystems or into an image before editing it.
+
+On Unix, source symlinks remain symlinks, including links outside the copied package. Windows skips source symlinks and junctions. Review these paths before moving the output to another machine.
+
+`--force` deletes and recreates the output directory. A dry run writes no files. JSON output contains one deployment result.
 
 ```bash
-lpm deploy /prod/api --filter api               # build the deploy output
-lpm deploy /prod/api --filter api --dry-run     # preview, no filesystem changes
-lpm deploy /prod/api --filter api --force       # overwrite a non-empty output dir
-lpm deploy /prod/api --filter api --no-optional # omit optionalDependencies
-lpm deploy /prod/api --filter api --dev         # deploy devDependencies instead
+lpm deploy /prod/api --filter api --json
 ```
-
-Output dir contains:
-
-- The member's publishable source files, copied via hardlink when possible (zero disk cost on the same filesystem; falls back to byte-copy for cross-device)
-- Local workspace dependencies copied under `.lpm/deploy-workspace/` and referenced with relative `file:` specs
-- A populated `node_modules/` (install pipeline runs at the output dir)
-- A deploy-local `.lpm/store/` and `lpm.lock` for the deploy tree
-
-The source copy honors package publishing rules: `files` when present, otherwise `.npmignore`, otherwise `.gitignore`. It also applies a deny list at **every level** (not just the root). Excluded basenames:
-
-- **LPM CLI internal state** that the install pipeline recreates: `node_modules`, `.lpm`, `lpm.lock`, `lpm.lockb`
-- **Secrets** — every `.env*` variant: `.env`, `.env.local`, `.env.development[.local]`, `.env.production[.local]`, `.env.test[.local]`. Critical: a developer-only `.env.local` riding into a Docker image is a credential leak
-- **Version control / packaging control files**: `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, `.hg`
-- **OS / editor cruft**: `.DS_Store`, `Thumbs.db`
-
-In a Dockerfile:
-
-```dockerfile
-FROM workspace as pruned
-RUN lpm deploy /prod/api --filter api
-
-FROM node:22-alpine
-COPY --from=pruned /prod/api /app
-WORKDIR /app
-CMD ["node", "server.js"]
-```
-
-Constraints:
-
-- `--filter` or `--filter-prod` is required and must match exactly one member. `--changed-files-ignore-pattern` and `--test-pattern` apply when the filter contains a `[git-ref]` atom.
-- The output directory must be outside the workspace tree.
-- `--prod` is the default dependency mode. `--dev` deploys dev dependencies instead, and `--no-optional` omits optional dependencies from the manifest and resolver graph.
 
 ## See also
 
-- [Monorepo setup guide](/docs/guides/monorepo-setup) — step-by-step walkthrough
-- [`lpm catalog`](/docs/packages/catalog) — inspect catalog usage and resolved snapshots
-- [`lpm install --filter`](/docs/packages/install#workspaces) — install scoped to members
-- [`lpm uninstall --filter`](/docs/packages/uninstall#workspaces) — remove scoped to members
-- [`lpm run --filter --affected`](/docs/dev/run#workspaces) — task running with workspace selection
-- [`lpm filter`](#filter-grammar) — preview a filter expression with `--explain` / `--json`
-- [Save policy](/docs/packages/save-policy) — `workspace:*` is preserved verbatim
+- [Monorepo setup](/docs/guides/monorepo-setup)
+- [`lpm install`](/docs/packages/install#workspaces)
+- [`lpm uninstall`](/docs/packages/uninstall#workspaces)
+- [`lpm run`](/docs/dev/run#workspaces)
+- [Lockfile](/docs/packages/lockfile)
+- [Save policy](/docs/packages/save-policy)
