@@ -1,169 +1,232 @@
 ---
 title: lpm approve-scripts
-description: "Review and approve packages whose lifecycle scripts were blocked by the default-deny policy."
+description: Review blocked dependency scripts and save approvals for the exact package artifacts you select.
 ---
 
+Review dependency scripts blocked during installation, then save permission to run them.
+
 ```bash
-lpm approve-scripts [package]
+lpm approve-scripts [OPTIONS] [PACKAGE]
 ```
 
-Pairs with [`lpm install`](/docs/packages/install)'s default-deny dependency script policy. After install, dependency packages that declare any recognized lifecycle script — `preinstall`, `install`, `postinstall`, `prepare`, `prepublishOnly`, or the `*uninstall` family — and aren't already trusted are queued in a **blocked set**. `lpm approve-scripts` walks that set interactively, lists it, or bulk-approves.
+## Quickstart
 
-The blocked set is broader than what actually runs. The detection layer queues every recognized dependency lifecycle name so you can review the surface area; the execution layer only runs dependency `preinstall`, `install`, and `postinstall`. A dependency package whose only declared script is `prepare` will appear in your review queue but won't execute anything when approved — see [What `lpm rebuild` runs](/docs/packages/rebuild#what-runs).
+```bash
+# List dependencies that need review
+lpm approve-scripts --list
 
-Approvals bind the package version, integrity, script hash, verified provenance, and requested capabilities. If a bound input changes, LPM requests approval again.
+# Review one installed package
+lpm approve-scripts esbuild
 
-Use `lpm approve-scripts` for individual packages. `lpm trust lifecycle-scope` only manages scope-wide trust and does not create package bindings.
+# Run approved dependency scripts
+lpm rebuild
+```
+
+Approval saves trust. It does not execute scripts. Use [lpm rebuild](/docs/packages/rebuild) after approval.
+
+| Mode | Purpose |
+| --- | --- |
+| No package or mode flag | Review the blocked set interactively |
+| `[PACKAGE]` | Select one package, version, or artifact |
+| `--list` | Show the blocked set without changes |
+| `--yes` | Approve every blocked entry only if all entries have a green classification |
+| `--dry-run` | Preview the selected review flow without writes |
+| `--global` | Review dependencies of globally installed packages |
 
 ## Examples
 
 ```bash
-lpm approve-scripts                          # interactive walk through every blocked package
-lpm approve-scripts esbuild                  # approve a specific package directly
-lpm approve-scripts esbuild@0.25.1           # approve a specific version
-lpm approve-scripts --list                   # read-only listing
-lpm approve-scripts --yes                    # bulk approve, loud — emits a warning banner
-lpm approve-scripts --dry-run                # preview decisions without writing
-lpm approve-scripts --list --json            # structured listing for agents
-lpm approve-scripts esbuild --json           # structured single-package approval
+# Inspect the queue as JSON
+lpm approve-scripts --list --json
 
-lpm approve-scripts --global                 # review globally-installed blocked set
-lpm approve-scripts --global --group         # group by top-level globally-installed package
+# Preview one version without changing trust
+lpm approve-scripts esbuild@0.25.1 --dry-run --json
+
+# Preview bulk approval of a fully green queue
+lpm approve-scripts --yes --dry-run --json
+
+# List global dependencies by the package that installed them
+lpm approve-scripts --global --list --group
 ```
 
-## What approval writes
+For a reusable review report, define an uncached task:
 
-The destination depends on scope: project approvals land in `package.json`, global approvals land in `~/.lpm/global/trusted-dependencies.json`. The binding shape and drift semantics are otherwise identical.
-
-The [`lpm trust` storage contract](/docs/packages/trust#storage-contract) lists every policy destination. `lpm.lock` never stores lifecycle approvals.
-
-### Project scope (default)
-
-Approvals land in `package.json > lpm > trustedDependencies` as the **rich-map form** (not the legacy array form):
-
-```json title="package.json"
+```json title="lpm.json"
 {
-  "lpm": {
-    "trustedDependencies": {
-      "esbuild@0.25.1": {
-        "integrity": "sha512-...",
-        "scriptHash": "sha256-...",
-        "provenanceAtApproval": {
-          "present": true,
-          "publisher": "github:evanw/esbuild",
-          "workflowPath": ".github/workflows/release.yml",
-          "workflowRef": "refs/tags/v0.25.1"
-        },
-        "capabilityHash": "sha256-..."
-      }
+  "tasks": {
+    "deps:scripts": {
+      "command": "lpm approve-scripts --list",
+      "cache": false
     }
   }
 }
 ```
 
-`provenanceAtApproval` is present when verification supplies a provenance snapshot. `capabilityHash` is present when the project requests capabilities beyond the approved baseline.
-
-### Global scope (`--global`)
-
-Approvals land in `~/.lpm/global/trusted-dependencies.json`, which is a separate per-machine trust file. Global approvals use the same integrity, script hash, and provenance fields:
-
-```json title="~/.lpm/global/trusted-dependencies.json"
-{
-  "schema_version": 1,
-  "trusted": {
-    "esbuild@0.25.1": {
-      "integrity": "sha512-...",
-      "scriptHash": "sha256-...",
-      "provenanceAtApproval": {
-        "present": true,
-        "publisher": "github:evanw/esbuild",
-        "workflowPath": ".github/workflows/release.yml",
-        "workflowRef": "refs/tags/v0.25.1"
-      }
-    }
-  }
-}
+```bash
+lpm run deps:scripts
 ```
 
-`approve-scripts --global` fetches the candidate's Sigstore attestation at approval time (best-effort — network failure or no-attestation degrades to `provenanceAtApproval = null`). On the next `lpm install -g`, the drift gate compares the freshly-fetched provenance against this snapshot. The project's `package.json` is not touched.
+There are no dedicated approval fields in `lpm.json`. The task's `command` holds the flags. `cache: false` reads current review state each time.
 
-### Provenance posture during approval
+An explicit task command takes precedence over a same-name package script in [lpm run](/docs/dev/run).
 
-Mutating approval flows use the same Sigstore posture chain as install: `LPM_PROVENANCE_ENFORCE` > `~/.lpm/config.toml > [sigstore].verify` > default `deny`. If that chain weakens verification to `warn` or `off`, `approve-scripts` requires a `provenance-unverified` unlock before it writes trust. Project approvals use a project unlock; `approve-scripts --global` uses a global unlock and suggests `lpm security unlock provenance-unverified --global --ttl 10m`.
+For a different mode on one run, call `lpm approve-scripts` directly. Dependency policy and approvals live in [package.json](/docs/reference/package-json-lpm#the-lpmscripts-block).
 
-`--list` and `--dry-run` are read-only and do not need that unlock. Under `--json`, CI, or non-TTY mode, LPM CLI refuses deterministically with `security_approval_required` instead of opening a native approval prompt.
+## What enters the review queue
 
-### Drift semantics (both scopes)
+[lpm install](/docs/packages/install#lifecycle-scripts) captures dependencies with blocked `preinstall`, `install`, or `postinstall` scripts.
 
-The script-hash binding is what makes drift detectable. If the next install resolves a different `integrity` or `scriptHash` for the same `name@version`, the approval doesn't apply and the package re-enters the blocked set. (See [`lpm trust diff`](/docs/packages/trust) to inspect drift events for project trust.)
+Other script names, including `prepare`, `prepublishOnly`, and uninstall scripts, do not enter this queue. Root-project scripts use the install command's separate lifecycle rules.
 
-On Windows, script approval does not replace [administrator sandbox setup](/docs/infra/doctor#windows-sandbox-permission-setup).
-Protected parent directories or system-installed tools can require that setup before an approved script runs.
-Later installs and scripts run from your normal terminal.
+The project queue comes from authenticated `.lpm/build-state.json`. The command filters out approvals that already match the current project policy.
 
-## Modes
+An approval binds the package name, version, integrity, and lifecycle script hash. The hash also covers recognized local JavaScript delegates and their reachable imports.
 
-| Mode | Behavior |
-| --- | --- |
-| (default — interactive at TTY) | Walk the blocked set one package at a time. Each card shows `name@version`, integrity, script hash, the lifecycle phases the package declares, the [static tier](/docs/packages/security-audit#layer-5-triage) (green / amber / red), and a binding-drift warning when this package was previously approved and the script content has changed since. Approve / skip / inspect per package. |
-| `--list` | Read-only — print the blocked set, no prompts, no mutations. Mutually exclusive with `--yes`. |
-| `--yes` | Bulk approve everything. Emits a warning banner. **Refuses to bulk-approve any package classified outside the green tier** — amber / amber-llm / red entries each require explicit per-package review via the interactive walk or `<pkg>` argument. Error message starts with `--yes refuses` so agents can branch on it. Mutually exclusive with `--list`. |
-| `<pkg>` | Approve a specific package directly. Skips the interactive walk and auto-confirms (no TTY prompt). Accepts `name` or `name@version`. Bare `name` must match exactly one blocked row; if multiple versions or bindings match, LPM CLI exits non-zero and lists the `name@version` candidates to disambiguate. This is the correct non-interactive path for single-package approvals. |
-| `--dry-run` | Run the review flow normally, but skip every write. JSON envelopes carry `"dry_run": true` so agents can detect the mode. |
+Temporary advisor approvals also bind the complete script hash. Changed delegated files invalidate those approvals and their cached decisions.
 
-`--dry-run` composes with `--yes`, `<pkg>`, the interactive walk, and `--global` / `--json`. It's a no-op when combined with `--list` (already read-only).
+Different artifacts with the same name and version remain separate. Equivalent copies share one review entry. Duplicate entries retain conservative classification and drift information.
 
-`--json` is **mutually exclusive with the interactive walk**. Pair it with `--list`, `--yes`, or `<pkg>` for structured output — bare `lpm approve-scripts --json` errors out and names the valid pairings.
+Install capture uses the exact installed package files. Missing or invalid manifests fail capture instead of silently removing review entries.
 
-## Global vs project
-
-By default, `approve-scripts` operates on the current project's blocked set, and writes approvals into the project's `package.json`.
+## Select an artifact
 
 ```bash
-lpm approve-scripts --global
+lpm approve-scripts esbuild
+lpm approve-scripts esbuild@0.25.1
+lpm approve-scripts 'esbuild@0.25.1#<artifact-id>'
 ```
 
-Operates on the **global** blocked set — the union of every `lpm install -g …` install root. Approvals write to `~/.lpm/global/trusted-dependencies.json` instead of any project's `package.json`.
+A bare name or version must match one blocked artifact. If it matches several artifacts, the error lists qualified selectors to use.
+
+Copy a complete selector from that error. Different integrity values or script hashes can require separate approvals at one version.
+
+A named package outside the blocked set fails. A package whose current binding already matches also fails with an explanatory message.
+
+## Review and authorization
+
+Interactive cards show package identity, lifecycle phases, static classification, and drift information. You can approve, skip, or inspect a package.
+
+When an earlier approval exists, project review can show changed script lines and behavioral tags. Script bodies appear only when they match the recorded binding.
+
+If matching bytes are unavailable, the diff reports that limitation. A classification or registry tag is review evidence, not a guarantee of safe behavior.
+
+A named project approval still asks for confirmation in a human terminal. JSON and noninteractive named approvals skip that selection prompt.
+
+On project review, quitting discards the pending selections. On global review, quitting preserves approvals already written during that session.
+
+### Bulk approval
 
 ```bash
+lpm approve-scripts --yes --dry-run
+```
+
+`--yes` refuses amber, amber-llm, red, and unclassified entries before it writes approvals. Review those packages individually.
+
+If every entry is green, live bulk approval still requires authorization and emits a warning. `--yes` does not bypass security authorization.
+
+### Noninteractive approval
+
+From a user-controlled terminal, authorize the project trust change:
+
+```bash
+lpm security unlock trust-bulk-approve --project . --ttl 10m
+```
+
+Then select the package without an interactive review prompt:
+
+```bash
+lpm approve-scripts esbuild --json
+```
+
+The signed grant applies to that project and expires. Managed policy can reject a requested change.
+
+Dry runs retain selector and tier checks. They skip trust writes and provenance fetches. A successful preview does not guarantee authorization for a live write.
+
+## Saved approvals and drift
+
+Project approvals use the rich-map form in `package.json > lpm > trustedDependencies`. Global approvals use `~/.lpm/global/trusted-dependencies.json`.
+
+These approvals do not live in `lpm.lock`. See the [trust storage contract](/docs/packages/trust#project-scope-and-storage).
+
+Bindings can also contain provenance and a hash of approved capabilities. Capability hashes appear when the project requests access beyond its authorized baseline.
+
+Changed scripts, integrity, or capabilities can invalidate an approval. Review the new artifact before another [lpm rebuild](/docs/packages/rebuild).
+
+During live approval, LPM CLI fetches available provenance. Verification failures follow the configured enforcement policy. Missing evidence and transport failures can leave provenance unavailable.
+
+The provenance policy uses `LPM_PROVENANCE_ENFORCE`, then `[sigstore].verify` in user configuration, then the default `deny`.
+
+Weakening verification to `warn` or `off` requires separate `provenance-unverified` authorization. The error supplies the project or global unlock command.
+
+`--list` and `--dry-run` do not require that provenance override grant.
+
+## Global approvals
+
+```bash
+lpm approve-scripts --global --list
 lpm approve-scripts --global --group
+lpm approve-scripts --global esbuild --dry-run --json
 ```
 
-When the global blocked set exceeds 10 entries (auto-enabled at that threshold), `--group` clusters list and review output by top-level globally-installed package. Persisted approvals still record per-dependency-binding rows under the hood.
+Global review combines the captured queues of globally installed packages. Equivalent dependency bindings share a row that lists their installation origins.
 
-If any global install root has a missing or unreadable `.lpm/build-state.json`, `--global --list` reports it in `unreadable_origins`. Mutating blanket approval (`--global --yes`) refuses while the aggregate is incomplete, because otherwise it could claim every global script was reviewed while some install roots were skipped. Reinstall the named globals to refresh their build-state, then approve again.
+`--group` groups list or interactive output by top-level package. Grouping starts automatically when the queue contains more than 10 entries.
 
-After a successful global approval, the banner enumerates the affected top-level globals and prints the matching `lpm uninstall -g <pkg> && lpm install -g <pkg>` command for each. The `--json` envelope carries the same information as `next_step.origins` and also includes `next_steps[]` command objects for agents. `--dry-run` omits both follow-up fields since no mutation occurred. Until `lpm rebuild --global` ships, reinstalling each affected origin is the only way to actually re-execute the approved scripts.
+Named global approval skips the package-review prompt. Live trust changes still require global authorization.
+
+If an install root has missing or invalid review state, global listing reports `unreadable_origins`. Bulk approval refuses an incomplete aggregate.
+
+After live global approval, the output lists the affected top-level packages and their reinstall commands. Global approval does not execute their scripts.
+
+Follow those commands to apply the approvals. Project [lpm rebuild](/docs/packages/rebuild) has no global mode.
 
 ## JSON output
 
 ```bash
-lpm approve-scripts --list --json            # structured listing
-lpm approve-scripts --yes --json             # bulk approval envelope
-lpm approve-scripts esbuild --json           # single-package envelope
-lpm approve-scripts --list --json --dry-run  # preview plan, no writes
+lpm approve-scripts --list --json > blocked-scripts.json
+lpm approve-scripts esbuild --dry-run --json
 ```
 
-`--json` requires a companion mode (`--list`, `--yes`, or `<pkg>`) — it's not valid on its own because the interactive walk can't be expressed as JSON.
+Pair `--json` with `--list`, `--yes`, or a package selector. A nonempty interactive queue cannot use JSON mode.
 
-The envelope carries `schema_version`, `success`, `command`, `dry_run`, `blocked_count`, `approved_count`, `skipped_count`, and a `blocked[]` array of per-package rows: `name`, `version`, `integrity`, `script_hash`, `phases_present`, `static_tier`, `binding_drift`. Successful project approvals that actually write trust include `next_steps: [{description, command}]` with `command: "lpm rebuild"`. Under `--global`, each row also carries `origins` (the top-level globals that pulled it in), list/empty-set envelopes include `unreadable_origins`, and successful `--global --yes` runs add both `next_step: {kind: "reinstall_globals", origins: [...]}` and `next_steps[]` command objects telling the caller which `lpm uninstall -g … && lpm install -g …` pairs to run. `--dry-run` omits follow-up commands since no mutation happened.
+Project reports use `schema_version: 3` and include counts, `dry_run`, and `blocked` entries. Entries include identity, script hash, phases, classification, and drift data.
+
+`version_diff` describes changes relative to a previous approval, or is `null` for a first review. Global entries also include installation origins.
+
+Successful live approvals include follow-up commands when applicable. Dry runs omit these commands because no trust change occurred.
+
+## Fix common problems
+
+If review state is missing, unsigned, invalid, or incompatible, run [lpm install](/docs/packages/install) to capture it again.
+
+If a selector is ambiguous, use an artifact-qualified candidate from the error.
+
+If script bytes no longer match the captured hash, refresh the install and review the new queue.
+
+If `package.json` changes during review, the command refuses the write. Review the current manifest and retry.
+
+If global listing reports unreadable origins, reinstall those top-level packages before bulk approval.
+
+If script execution later fails on Windows, check [sandbox permissions](/docs/infra/doctor#windows-sandbox-permission-setup). Approval does not replace administrator setup.
 
 ## Flags
 
-| Flag | Effect |
+| Flag or argument | Effect |
 | --- | --- |
-| `<package>` | Approve a specific package directly (`name` or `name@version`). Auto-confirms in non-TTY / JSON mode. |
-| `--yes` | Bulk-approve every blocked package (loud). Refuses to bulk-approve amber / red tier packages. |
-| `--list` | Read-only listing |
-| `--dry-run` | Preview without writing |
-| `--global` | Operate on the global blocked set |
-| `--group` | (with `--global`) group rows by top-level globally-installed package. Auto-enabled when the global blocked set exceeds 10 entries. |
+| `[PACKAGE]` | Select `name`, `name@version`, or `name@version#artifact-id`. |
+| `--yes` | Approve a fully green blocked set with authorization. |
+| `--list` | List without prompts or trust changes. Conflicts with `--yes` and a package selector. |
+| `--dry-run` | Preview without writes or provenance fetches. Works with named, bulk, interactive, and global review. |
+| `--global` | Read global install queues and write global trust. |
+| `--group` | Group global list or interactive output. Requires `--global`; conflicts with `--yes` and a package selector. |
+| `--json` | Emit structured output for a noninteractive mode. |
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` is especially useful here.
+`--list --dry-run` remains read-only and records `dry_run: true`. See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install#lifecycle-scripts) — what produces the blocked set
-- [`lpm rebuild`](/docs/packages/rebuild) — runs scripts for already-trusted packages
-- [`lpm trust`](/docs/packages/trust) — diff and prune the trust allowlist
-- [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the underlying file
+- [lpm install](/docs/packages/install#lifecycle-scripts) — install dependencies and capture blocked scripts
+- [lpm rebuild](/docs/packages/rebuild) — execute approved dependency scripts
+- [lpm trust](/docs/packages/trust) — inspect drift and manage scope trust
+- [lpm global](/docs/packages/global) — manage globally installed packages
+- [Security approvals](/docs/infra/security) — authorize security changes
