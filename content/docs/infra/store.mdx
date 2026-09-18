@@ -110,9 +110,13 @@ lpm store verify --deep
 
 Deep verification parses each `package.json`. It compares package names and versions with their store entries.
 
-If the current directory contains `lpm.lock`, deep verification compares its integrity values with the saved values. It also rehashes v3 file blobs.
+Deep verification reads the applicable project lockfile, including a workspace member's view. It compares integrity through installed links and exact dependency relationships. It also rehashes v3 file blobs.
 
-If `lpm.lock` is absent, LPM CLI skips the lockfile comparison. If the file is invalid or unreadable, verification fails.
+An unrelated store entry can share a package name and version but contain a different source. Verification does not compare that entry with another project's integrity.
+
+Lockfile comparison requires installed project links that resolve to store entries. Legacy installs usually copy package files, so their comparison can remain partial. Missing integrity markers also leave records unexamined. Unreadable markers report an error.
+
+If no applicable `lpm.lock` exists, LPM CLI skips the lockfile comparison. If an owning file is invalid or unreadable, verification fails.
 
 ### Refresh security caches
 
@@ -147,7 +151,7 @@ lpm cache prune          # preview removals
 lpm cache prune --apply  # apply the removal plan
 ```
 
-[`lpm cache prune`](/docs/packages/cache#prune) uses project references to retain required store entries. The preview does not remove data.
+[`lpm cache prune`](/docs/packages/cache#prune-unused-packages) uses project references to retain required store entries. The preview does not remove data.
 
 ## Verification levels
 
@@ -201,6 +205,12 @@ lpm store verify --deep --json
   "issues": [],
   "securityMismatches": 1,
   "securityReanalyzed": 0,
+  "lockfile_comparison": {
+    "status": "complete",
+    "packages": 12,
+    "compared_packages": 12,
+    "uncompared_packages": 0
+  },
   "cas": {
     "check_kind": "content_hash",
     "sources": 8,
@@ -231,11 +241,27 @@ lpm store verify --deep --json
 | `duplicated_entries` | Integer | Entries repeated across store versions or dependency graphs |
 | `corrupted` | Integer | Number of corruption or write errors in `issues` |
 | `issues` | String array | Error messages for failed verification work |
+| `lockfile_comparison` | Object | Deep verification only: lockfile comparison status and coverage |
 | `securityMismatches` | Integer | Missing or stale security caches found by deep verification |
 | `securityReanalyzed` | Integer | Security caches that `--fix` refreshed successfully |
 | `cas` | Object | v3 file-store verification results |
 
 `securityMismatches` and `securityReanalyzed` appear only during deep verification. A security mismatch alone does not set `success` to `false`.
+
+#### Lockfile comparison
+
+Deep JSON includes `lockfile_comparison`:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `complete`, `partial`, `not_found`, or `unreadable`. |
+| `packages` | Locked package records that contain integrity. |
+| `compared_packages` | Records whose stored integrity was compared with the lockfile. |
+| `uncompared_packages` | Records without a completed integrity comparison. |
+
+`complete` describes coverage, not a successful result. Integrity mismatches still set `success: false` and exit with status `1`.
+
+`partial` does not mean that the unexamined packages are corrupt. For example, a lockfile-only export can lack the installed links needed for comparison.
 
 #### v3 `cas` fields
 
@@ -300,7 +326,7 @@ lpm install
 
 The clean action removes package data, link entries, security caches, and native-build artifacts. It retains the outer `~/.lpm/store/` directory.
 
-The next install downloads or rebuilds the required packages. For normal cleanup, use the reference-aware [`lpm cache prune`](/docs/packages/cache#prune) command.
+The next install downloads or rebuilds the required packages. For normal cleanup, use the reference-aware [`lpm cache prune`](/docs/packages/cache#prune-unused-packages) command.
 
 If verification reports corruption, first run:
 
@@ -313,7 +339,7 @@ If the error remains, use `lpm store clean` for a complete reset.
 
 ## Concurrent operations
 
-Verification can run with other read-only store operations. If another command changes or removes store data, verification waits.
+Verification and installs can overlap. Both hold a shared store lock, so a complete store clean waits for them. Verification is not a snapshot of concurrent package changes.
 
 The clean action waits for installs and other store readers to finish. New store readers wait while a clean action is queued.
 
@@ -331,7 +357,7 @@ See the [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm cache prune`](/docs/packages/cache#prune) — preview or remove unreferenced store data
+- [`lpm cache prune`](/docs/packages/cache#prune-unused-packages) — preview or remove unreferenced store data
 - [Content-addressable store](/docs/packages/content-addressable-store) — understand the package storage model
 - [`lpm rebuild`](/docs/packages/rebuild#native-build-cache) — reuse or refresh native-build artifacts
 - [`lpm doctor`](/docs/infra/doctor) — inspect store health with other project checks
