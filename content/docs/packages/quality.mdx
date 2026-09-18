@@ -1,43 +1,192 @@
 ---
 title: lpm quality
-description: "Show the quality report for a package — score, tier, and per-check breakdown."
+description: "Read a package's Registry quality score, checks, and improvement details."
 ---
 
+`lpm quality` reads the stored quality report for a package on LPM.dev Registry.
+
 ```bash
-lpm quality <package>
+lpm quality [OPTIONS] <PACKAGE>
 ```
 
-Fetches the LPM.dev Registry quality report for an `@lpm.dev/*` package and prints it: a score out of 100, a tier label, and a per-check breakdown grouped by category (readme, license, types, tests, maintenance, etc.).
+Use it to inspect a published package's score and failed checks without an installation.
+It does not scan your working directory, run tests, or calculate a new report.
 
-**Scope: `@lpm.dev/*` packages only.** The quality endpoint belongs to LPM.dev Registry; npm-registry packages aren't covered. For broad quality-shaped signals on installed npm packages, [`lpm audit`](/docs/packages/audit) covers vulnerabilities + behavioral analysis.
+## Quickstart
 
-[`lpm publish`](/docs/packages/publish) runs the locally available part of the rubric when LPM.dev Registry is a target. Checks that require Registry analysis remain pending until upload; `lpm quality` returns the completed report for an already-published package without installing it.
+```bash
+lpm quality @lpm.dev/owner.widget
+```
 
-The LPM.dev Registry owns the final check list and point limits. Client-supplied scores, weights, and duplicate checks cannot add points. Checks without server evidence earn zero points. The final score can differ from local preflight.
+| Input | Meaning |
+| --- | --- |
+| `@lpm.dev/owner.widget` | Full LPM.dev Registry package name. |
+| `owner.widget` | Short form of the same name. |
 
-Approved skills add seven points. Three or more approved skills add another three points. Skills awaiting public security review do not earn these points, including during review retries. Private packages use static skill validation until public distribution activates.
+The command has one mode and no version selector. `package@version`, version ranges, and npm package names are not supported.
+
+LPM CLI supports npm and private registries for package installation.
+This command uses the LPM.dev Registry quality API. See [Registries](/docs/registries).
 
 ## Examples
 
 ```bash
-lpm quality @lpm.dev/owner.pkg
-lpm quality owner.pkg                                           # short form
-lpm quality @lpm.dev/owner.pkg --json | jq '.checks[] | select(.passed == false)'
+lpm quality owner.widget
+lpm quality owner.widget --json
+lpm quality owner.widget --json | jq '.checks[] | select(.passed == false)'
 ```
 
-## What's shown
+For a private package, sign in as an authorized publisher:
 
-- **Score** — points out of 100 (color-coded: green ≥80, yellow ≥50, red below)
-- **Tier** — human label: `excellent`, `good`, `fair`, or `needs-work`
-- **Ecosystem** — `js`, `swift`, etc.
-- **Checks** — per-category list with pass/fail icons, label, and points awarded
+```bash
+lpm login
+lpm quality @lpm.dev/owner.private-widget
+```
+
+See [lpm login](/docs/infra/login) for authentication.
+For an unattended report, provide an authorized token through the environment:
+
+```bash
+LPM_TOKEN="$REGISTRY_TOKEN" lpm quality owner.private-widget --json
+```
+
+### A task in `lpm.json`
+
+[`lpm.json`](/docs/reference/lpm-json) has no dedicated quality-report configuration.
+A named task can read the current report on each run:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "quality-report": {
+      "command": "lpm quality @lpm.dev/owner.widget",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run quality-report
+lpm run quality-report -- --json
+```
+
+The second command requests JSON for that run. The task does not create or update quality data.
+See [lpm run](/docs/dev/run).
+
+## Which report you receive
+
+Public reports allow anonymous access. Private reports require publisher access for the package.
+For private packages, unavailable access can appear as `not_found` to protect package names.
+
+The Registry selects its current consumer release for public readers.
+For authorized publishers of non-Free packages, it can select the current publisher release, including a release still under review.
+Free default reads use the consumer release even with publisher credentials.
+The response includes a publication date, but no package version identifier.
+
+A stored browser session can refresh after rejected access.
+Tokens supplied through `--token` or `LPM_TOKEN` do not refresh automatically.
+See [Authentication](/docs/infra/authentication).
+
+The report can change without a new publication.
+The Registry removes maintenance points after the selected release exceeds 90 whole days in age.
+
+## Read the score and checks
+
+The human report shows a score, tier, ecosystem, and a flat list of checks.
+Failed checks include their available points and any improvement detail.
+
+| Tier | Score |
+| --- | --- |
+| `excellent` | 90 or more |
+| `good` | 70–89 |
+| `fair` | 50–69 |
+| `needs-work` | Less than 50 |
+
+A score of zero is a valid report.
+A low score or failed check does not cause a nonzero exit status.
+
+The LPM.dev Registry owns the check definitions and point limits.
+Client-supplied scores, weights, and duplicate checks cannot add points. Checks without server evidence earn zero points.
+
+Approved skills add seven points. Three or more approved skills add another three points.
+Skills awaiting public security review do not earn these points, including during review retries.
+Private packages use static skill validation until public distribution activates.
+
+[lpm publish](/docs/packages/publish) runs the locally available checks before an upload to LPM.dev Registry.
+Checks that require Registry analysis remain pending until processing completes. The final score can differ from local preflight.
+
+## JSON output
+
+```bash
+lpm quality owner.widget --json
+```
+
+| Field | Meaning |
+| --- | --- |
+| `success` | The lookup succeeded. It does not imply a passing score or an available report. |
+| `name` | Package name returned by the Registry. |
+| `available` | Whether quality data exists for the selected release. |
+| `message` | Explanation when the Registry returns one, otherwise `null`. |
+| `score` / `maxScore` | Current points and maximum points, or `null` when absent. |
+| `tier` / `ecosystem` | Registry labels, or `null`. |
+| `categories` | Category totals such as `documentation`, `code`, `testing`, and `health`, or `null`. |
+| `published_at` | Publication timestamp for the selected release, or `null`. |
+| `checks` / `count` | Check array and its length. |
+
+Each check includes `id`, `category`, `label`, `passed`, `points`, `maxPoints`, and `detail`.
+Missing optional check fields appear as `null`.
+The CLI retains the existing `maxScore` and `maxPoints` spellings for compatibility.
+
+If no report exists, the command succeeds with `available: false`, a message, and an empty check array.
+A failed request returns `success: false` with `error` and `error_code`.
+
+### Require an available score in CI
+
+```bash
+set -o pipefail
+lpm quality owner.widget --json | jq -e '.success and .available and (.score >= 70)'
+```
+
+This example fails when the lookup fails, the report is unavailable, or the score is less than 70.
+The command itself has no minimum-score flag.
+For a local publication gate, see the `--min-score` option in [lpm publish](/docs/packages/publish).
+
+## Recovery
+
+| Result | Action |
+| --- | --- |
+| No quality data | Publish with a current LPM CLI version, or wait for Registry processing. Then request the report again. |
+| `not_found` for a private package | Verify the name and publisher access. Refresh an expired environment token or sign in again. |
+| npm package name rejected | Use [lpm info](/docs/packages/info) for metadata or [lpm audit](/docs/packages/audit) for installed-package security checks. |
+| Score decreased without a new release | Inspect maintenance checks and the publication date. |
+| Rate limit or temporary Registry error | Retry after the reported delay. |
+
+## Quality warnings during installation
+
+[lpm install](/docs/packages/install) can show optional quality warnings.
+These lookups use available credentials without refreshing a session.
+Missing reports and unavailable scores do not become zero-score warnings.
+A recorded score of zero remains a valid warning.
+Explicit `lpm quality` requests can still recover an expired session.
 
 ## Flags
 
-`lpm quality` takes no specific flags besides the [global flags](/docs/commands#global-flags). `--json` returns the full report including check IDs, descriptions, and remediation hints.
+This command has no command-specific flags.
+
+| Global flag | Effect |
+| --- | --- |
+| `--json` | Print a structured report or error. |
+| `--token <TOKEN>` | Override stored credentials for the request. |
+| `--registry <URL>` | Use another Registry base URL that implements the quality API. |
+| `--color <auto\|always\|never>` | Control terminal colors. |
+
+`LPM_TOKEN` and `LPM_REGISTRY_URL` provide the token and Registry defaults.
+Explicit flags override these environment values for one run. See [Global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm publish`](/docs/packages/publish) — local publish preparation, pending server checks, and the LPM.dev `--min-score` gate
-- [`lpm info`](/docs/packages/info) — package metadata
-- [`lpm audit`](/docs/packages/audit) — installed-package security audit (different system)
+- [lpm publish](/docs/packages/publish) — local quality checks and publication gates.
+- [lpm skills](/docs/packages/skills) — skill installation and author validation.
+- [lpm info](/docs/packages/info) — package metadata.
+- [lpm audit](/docs/packages/audit) — installed-package security checks.
