@@ -1,83 +1,179 @@
 ---
 title: lpm licenses
-description: "Inventory installed dependency licenses and fail CI on compliance policy."
+description: List declared dependency licenses and enforce license policies in CI.
 ---
 
+List the licenses declared by installed dependencies, or reject packages that violate a license policy.
+
 ```bash
-lpm licenses
-lpm licenses --json
-lpm licenses --fail-on copyleft
-lpm licenses --deny GPL-3.0 --deny AGPL-3.0
+lpm licenses [OPTIONS]
 ```
 
-`lpm licenses` lists the licenses declared by installed packages in the current `lpm.lock` graph. It reads the same installed package manifest metadata that [`lpm sbom`](/docs/packages/sbom) uses: `node_modules/` first, then the LPM CLI store when present.
+## Quickstart
 
-Use [`lpm query :copyleft`](/docs/packages/query) when you want selector-style security queries. Use `lpm licenses` when you need the exact license inventory and a CI compliance gate.
+```bash
+lpm install
+lpm licenses
+```
+
+Use the inventory for dependency reviews. Add a policy to stop CI when dependencies contain copyleft licenses, missing declarations, or denied declarations.
+
+LPM CLI supports npm, private registries, and the LPM.dev Registry. This command reads local files and makes no registry requests.
 
 ## Examples
 
 ```bash
-lpm licenses                                      # table output
-lpm licenses --json                               # structured inventory
-lpm licenses --fail-on copyleft                   # fail if any GPL-family license is present
-lpm licenses --fail-on copyleft,missing           # fail on copyleft or absent license metadata
-lpm licenses --deny GPL-3.0 --deny AGPL-3.0       # fail on exact denied expressions
+# Save a machine-readable inventory
+lpm licenses --json > licenses.json
+
+# Reject copyleft licenses and missing declarations
+lpm licenses --fail-on copyleft,missing
+
+# Reject specific declarations
+lpm licenses --deny GPL-3.0-only,AGPL-3.0-only
+
+# Write the full report and fail CI on policy violations
+lpm licenses --json --fail-on missing --deny GPL-3.0-only > licenses.json
 ```
 
-## Inventory source
+For a reusable policy, define an uncached task:
 
-`lpm licenses` is local-first and does not fetch registry metadata. Run [`lpm install`](/docs/packages/install) first so `lpm.lock`, `node_modules/`, and the store have the package manifests to inspect.
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:licenses": {
+      "command": "lpm licenses --fail-on copyleft,missing",
+      "cache": false
+    }
+  }
+}
+```
 
-The JSON output includes:
+```bash
+lpm run deps:licenses
+```
 
-- `root` — the current project's own license metadata
-- `packages` — installed dependency packages with `name`, `version`, `scope`, `licenses`, `license_expression`, `missing`, `copyleft`, and denied-license fields
-- `summary` — counts for `copyleft`, `missing`, and `denied`
-- `policy` — the active `--fail-on` / `--deny` gate and whether it failed
+There is no dedicated license configuration in `lpm.json`. The task's `command` holds the policy. `cache: false` checks the current installation each time.
 
-`scope` is derived from root reachability in `lpm.lock`, including `root-aliases` for npm alias declarations. Required paths win over optional paths, and optional paths win over excluded/dev-only paths, so a dev-only transitive package is marked `excluded` unless a production or optional root also reaches it.
+For a different policy on one run, run the command directly. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
 
-Policy applies to dependency packages. The root project license is included for context.
+## Inventory and project scope
 
-## Policy gates
+The command selects the applicable `lpm.lock` and project manifest. A nested directory uses the same project as its parent.
+
+Inside a workspace member, the inventory uses that member's dependencies. Dependencies used only by siblings do not appear.
+
+Installed manifests supply the license declarations. LPM CLI follows aliases and separate dependency instances through the installation.
+
+Missing or invalid required manifests stop the command. Packages omitted for platform compatibility, and dependencies reachable only through them, do not appear.
+
+| Scope | Meaning |
+| --- | --- |
+| `required` | Required through a production or peer dependency path |
+| `optional` | Required only through optional paths |
+| `excluded` | Required only through development paths |
+
+Required paths take precedence over optional paths. Optional paths take precedence over development paths.
+
+All listed dependency packages participate in policy checks, including development packages marked `excluded`. The root project's license appears in JSON for context only.
+
+The inventory records declarations. It does not inspect license-file contents or establish legal permission.
+
+## License declarations
+
+LPM CLI trims license text and removes empty or duplicate declarations. It accepts string declarations and legacy object or array forms.
+
+JSON retains individual declarations in `licenses`. The `license_expression` field joins multiple declarations with `AND`, with parentheses that preserve compound expressions.
+
+For example, separate `BSD-3-Clause` and `MIT OR Apache-2.0` declarations produce:
+
+```text
+BSD-3-Clause AND (MIT OR Apache-2.0)
+```
+
+## Policy checks
+
+### Copyleft licenses
 
 ```bash
 lpm licenses --fail-on copyleft
 ```
 
-`--fail-on copyleft` uses the same copyleft classifier as [`lpm audit`](/docs/packages/audit) and [`lpm query :copyleft`](/docs/packages/query). It catches GPL-family and other known reciprocal license identifiers inside SPDX-style expressions.
+The copyleft check recognizes GPL-family and other known reciprocal identifiers inside license expressions. It uses the same classification as [lpm audit](/docs/packages/audit).
+
+### Missing declarations
 
 ```bash
 lpm licenses --fail-on missing
 ```
 
-`--fail-on missing` fails when a package has no license declaration or only no-license markers such as `UNLICENSED`, `NONE`, `PROPRIETARY`, `NOASSERTION`, or `SEE LICENSE IN ...`.
+A package has missing license metadata when its declarations are empty or contain only these markers:
+
+- `NOASSERTION`
+- `UNLICENSED`
+- `NONE`
+- `PROPRIETARY`
+- `SEE LICENSE IN ...`
+
+Comparisons ignore case and surrounding whitespace. A license-file reference counts as missing because the command does not read that file.
+
+### Denied declarations
 
 ```bash
-lpm licenses --deny GPL-3.0
+lpm licenses --deny GPL-3.0-only
+lpm licenses --deny GPL-3.0-only --deny AGPL-3.0-only
+lpm licenses --deny 'MIT OR GPL-3.0-only'
 ```
 
-`--deny <LICENSE>` fails on exact declared license-expression matches, case-insensitive. Repeat it or pass comma-separated values:
+`--deny` compares each complete declaration after trimming whitespace and ignoring case. It does not search for individual identifiers inside an expression.
+
+For example, `--deny GPL-3.0-only` does not match `MIT OR GPL-3.0-only`. Deny the complete expression or use the copyleft policy.
+
+The check uses individual declarations in `licenses`. It does not compare the combined `license_expression` generated from several declarations.
+
+Repeat `--fail-on` or `--deny`, or separate values with commas. Any matching policy causes exit code `1`.
+
+## JSON and CI output
+
+Without `--json`, the command prints a dependency table. With `--json`, standard output contains one object:
+
+| Field | Contents |
+| --- | --- |
+| `success` | `false` when a license policy fails |
+| `root` | Project name, version, and declared licenses |
+| `packages` | Dependency identities, scopes, declarations, and policy results |
+| `count` | Number of dependency entries |
+| `summary` | Counts for copyleft, missing, and denied declarations |
+| `policy` | Active policies and their combined failure result |
+
+On a policy failure, the JSON report remains complete and the command exits `1`. File or manifest errors use the [JSON error format](/docs/reference/exit-codes).
+
+## Fix common problems
+
+If a lockfile or required manifest is missing, repair the installation:
 
 ```bash
-lpm licenses --deny GPL-3.0,AGPL-3.0
-lpm licenses --deny GPL-3.0 --deny AGPL-3.0
+lpm install
+lpm licenses --json
 ```
 
-When a policy fails, the command exits `1`. Under `--json`, stdout is still a single JSON object with `"success": false`, summary counts, and per-package denial details.
+If a policy fails, inspect `packages` and the summary counts. Use [lpm graph](/docs/packages/graph) to find the dependency path.
+
+For a release document that includes relationships and provenance, use [lpm sbom](/docs/packages/sbom).
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--fail-on <copyleft\|missing>` | Fail when matching packages are present. Repeatable and comma-separated. |
+| `--fail-on <copyleft\|missing>` | Fail on matching dependency packages. Repeatable and comma-separated. |
 | `--deny <LICENSE>` | Fail on an exact declared license expression. Repeatable and comma-separated. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See the [global flags](/docs/commands#global-flags) for `--json` and other shared options.
 
 ## See also
 
-- [`lpm sbom`](/docs/packages/sbom) — CycloneDX/SPDX export with license metadata
-- [`lpm query`](/docs/packages/query) — selector queries such as `:copyleft` and `:no-license`
-- [`lpm audit`](/docs/packages/audit) — vulnerability and behavioral audit
-- [Security & audit](/docs/packages/security-audit) — how the audit/query/license surfaces fit together
+- [lpm install](/docs/packages/install) — prepare installed manifests and the lockfile
+- [lpm sbom](/docs/packages/sbom) — export CycloneDX or SPDX
+- [lpm query](/docs/packages/query) — select packages with `:copyleft` or `:no-license`
+- [lpm audit](/docs/packages/audit) — inspect vulnerabilities and package behavior
+- [lpm graph](/docs/packages/graph) — find dependency paths

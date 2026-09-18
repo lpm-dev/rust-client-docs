@@ -1,200 +1,265 @@
 ---
 title: lpm query
-description: "CSS-like selector queries against installed packages and behavioral tags."
+description: Find dependencies by name, behavior, state, or relationship, and use selectors as CI checks.
 ---
 
+Find dependency instances that match a selector, or count behavioral tags across your dependency tree.
+
 ```bash
-lpm query <selector> [flags]
+lpm query [OPTIONS] [SELECTOR]
 ```
 
-Selector engine that targets behavioral tags, package state, and dependency relationships across the installed set. Pairs with [`lpm audit`](/docs/packages/audit) — `audit` is the broad report; `query` is the precision tool.
+## Quickstart
 
-Use it in CI to gate on specific risky combinations, in shells to grep through installed packages by behavior, or in agents to ask structured questions about the dep tree.
+```bash
+lpm query '#lodash'
+lpm query ':scripts:not(:built)'
+lpm query ':critical' --assert-none
+```
 
-For exact license inventory and compliance policy, use [`lpm licenses`](/docs/packages/licenses). `lpm query :copyleft` and `:no-license` are selector tags, not a full license report.
+Quote selectors so that your shell does not interpret `#`, `>`, `*`, or parentheses.
+
+| Mode | Effect |
+| --- | --- |
+| `lpm query '<selector>'` | List matching dependency instances. |
+| `lpm query --count` | Count tags across all dependencies. |
+| `lpm query '<selector>' --assert-none` | Exit with code `1` if any dependency matches. |
+| `lpm query '<selector>' --format mermaid` | Render matches and adjacent dependencies as a Mermaid graph. |
+
+LPM CLI supports npm, private registries, and the LPM.dev Registry. Query can inspect supported foreign lockfiles and installed packages.
 
 ## Examples
 
 ```bash
-lpm query :eval                                    # any package that uses eval()
-lpm query :network                                 # any package making outbound HTTP
-lpm query :info                                    # common capabilities and artifact signals
-lpm query :scripts:not(:built)                     # has lifecycle scripts but they haven't run
-lpm query ":root > :network"                       # direct deps that hit the network
-lpm query "#lodash"                                # find lodash in the tree
-lpm query :critical --assert-none                  # CI gate: fail if any critical-tagged pkg
-lpm query --count                                  # tag counts across all packages
-lpm query :eval --format mermaid > eval-graph.mmd  # subgraph diagram
+# Find an exact version, including build metadata
+lpm query '#example@1.0.0+build.1'
+
+# Find direct dependencies with network capabilities
+lpm query ':root > :network'
+
+# Match both tags
+lpm query ':eval:scripts'
+
+# Match either tag
+lpm query ':eval,:child-process'
+
+# Inspect full analysis details
+lpm query ':network' --json --query-verbose
+
+# Save a diagram for an LPM CLI-managed project
+lpm query ':eval' --format mermaid > eval-graph.mmd
 ```
+
+For a reusable check, define an uncached task:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:gate": {
+      "command": "lpm query ':critical' --assert-none",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run deps:gate
+```
+
+There is no dedicated query configuration in `lpm.json`. `command` holds the selector and options. `cache: false` runs the check each time.
+
+For a different one-run policy, invoke the command directly with another selector. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
 
 ## Selectors
 
-Each selector matches packages by **behavioral tag**, **state**, or **identity**. Tags are computed by the same static analysis pipeline that backs [`lpm audit`](/docs/packages/audit).
+| Syntax | Meaning |
+| --- | --- |
+| `*` | All dependency instances. |
+| `#name` | All instances of an exact package name. |
+| `#name@version` | An exact name and version. Scoped names are supported. |
+| `:a:b` | Both selectors match. |
+| `:a,:b` | Either selector matches. |
+| `:not(:a)` | The selector does not match. |
+| `#parent > #child` | The child is a direct dependency of the parent. LPM CLI lockfiles also include resolved peer edges. |
+| `:root > :a` | A direct dependency of the selected project matches `:a`. |
+| `:workspace-root > :a` | A direct dependency of the owning workspace root matches `:a`. |
+
+`>` follows dependency edges. It does not select every descendant.
 
 ### Behavioral tags
 
+These tags describe static analysis results. A capability such as filesystem or network access does not, by itself, establish malicious behavior.
+
 | Tag | Matches packages that |
 | --- | --- |
-| `:eval` | Use `eval`, `Function()`, or `vm.runInThisContext` |
-| `:network` | Make outbound HTTP / WS connections |
-| `:fs` | Touch the filesystem outside their own directory |
-| `:shell` | Spawn shells (`spawn`, `exec`, `execSync`) |
-| `:child-process` | Use `child_process` (any form) |
-| `:native` | Ship native modules (`.node`, `.wasm`) |
-| `:crypto` | Use cryptographic primitives |
-| `:dynamic-require` | Use dynamic `require()` (variable arg) |
-| `:env` | Read `process.env` |
-| `:ws` | Use WebSockets |
-| `:obfuscated` | Show signs of code obfuscation |
-| `:possible-obfuscation` | Show possible code obfuscation at moderate confidence |
-| `:high-entropy` | Contain high-entropy string blobs |
-| `:minified` | Ship minified-only source |
-| `:telemetry` | Make telemetry / analytics calls |
-| `:url-strings` | Contain URL string literals |
-| `:trivial` | Tiny — measured by AST node count |
-| `:protestware` | Match a curated list of known protest-license / sabotage packages |
-| `:credential-exfiltration` | Send credential-file contents, private-key material, or the complete process environment in a network payload |
-| `:encrypted-execution` | Decrypted bytes reach code evaluation or a file passed to a process launcher |
-| `:downloaded-execution` | A downloaded response reaches code evaluation or a file passed to a process launcher |
-| `:destructive-filesystem` | Recursively remove the home directory, a filesystem root, or current project contents |
+| `:eval` | Use supported evaluation or compilation APIs, including `eval`, `Function`, and Node `vm` APIs. |
+| `:network` | Use supported HTTP or WebSocket connection APIs. |
+| `:fs` | Use filesystem APIs. This does not establish access outside the package directory. |
+| `:shell` | Use supported shell execution APIs. |
+| `:child-process` | Use supported child-process APIs. |
+| `:native` | Contain native modules or WebAssembly files. |
+| `:crypto` | Use cryptographic APIs. |
+| `:dynamic-require` | Call `require()` with a dynamic argument. |
+| `:env` | Read `process.env`. |
+| `:ws` | Use WebSockets. |
+| `:obfuscated` | Show high-confidence obfuscation signals. |
+| `:possible-obfuscation` | Show moderate-confidence obfuscation signals. |
+| `:high-entropy` | Contain high-entropy string data. |
+| `:minified` | Contain minified-only source. |
+| `:telemetry` | Use recognized telemetry or analytics patterns. |
+| `:url-strings` | Contain URL string literals. |
+| `:trivial` | Contain very little source code. |
+| `:protestware` | Match known protestware package signals. |
+| `:credential-exfiltration` | Send credential contents, private-key material, or the complete process environment in a network payload. |
+| `:encrypted-execution` | Pass decrypted bytes to evaluation or to a file that a process launcher executes. |
+| `:downloaded-execution` | Pass downloaded bytes to evaluation or to a file that a process launcher executes. |
+| `:destructive-filesystem` | Recursively remove a home directory, filesystem root, or current project contents. |
 
-The `:eval` tag also covers aliases and supported Node `vm` evaluation or compilation APIs.
-
-### Dependency state
+### Manifest and state tags
 
 | Tag | Matches |
 | --- | --- |
-| `:git-dep` | Installed from a git URL |
-| `:http-dep` | Installed from an HTTP tarball URL |
-| `:wildcard-dep` | Declared with `*` or `latest` |
-| `:copyleft` | Copyleft license (GPL family) |
-| `:no-license` | No `license` field |
-| `:scripts` | Declares lifecycle scripts (`preinstall`/`postinstall`/etc.) |
-| `:built` | Lifecycle scripts have been run (the package is in the trust set + executed) |
-| `:vulnerable` | Listed in OSV / registry advisories |
-| `:deprecated` | Marked deprecated by the publisher |
+| `:git-dep` | A package declares a dependency with a git URL. |
+| `:http-dep` | A package declares a dependency with an insecure `http://` URL. |
+| `:wildcard-dep` | A package declares a dependency with `*`, `latest`, or an empty version. |
+| `:copyleft` | A license expression contains a recognized copyleft license, including GPL-family and MPL licenses. |
+| `:no-license` | A package has no usable license declaration. Private packages are exempt. |
+| `:scripts` | A package declares `preinstall`, `install`, `postinstall`, or `prepare`. |
+| `:built` | A regular `.lpm-built` marker exists in the selected package directory. |
+| `:vulnerable` | Advisory data identifies the installed name and version. |
+| `:deprecated` | Registry metadata marks the installed version as deprecated. |
+| `:lpm` | The name starts with `@lpm.dev/`. |
+| `:npm` | The name does not start with `@lpm.dev/`, including local and private-registry packages. |
 
-### Origin
+Dependency protocol tags describe declarations inside a package. They do not describe where that package itself came from.
 
-| Tag | Matches |
+`:no-license` also includes declarations such as `UNLICENSED`, `none`, `proprietary`, and `SEE LICENSE IN ...` for non-private packages.
+
+For exact license inventory and policy checks, use [lpm licenses](/docs/packages/licenses).
+
+A build marker does not prove current approval, a successful security review, or a vulnerability fix. Use [lpm trust](/docs/packages/trust) to inspect approval changes.
+
+### Severity selectors
+
+Severity selectors combine these tags with OR:
+
+| Selector | Tags |
 | --- | --- |
-| `:lpm` | `@lpm.dev/*` packages |
-| `:npm` | npm packages |
+| `:critical` | `:obfuscated`, `:protestware`, `:credential-exfiltration`, `:destructive-filesystem`. |
+| `:high` | `:eval`, `:child-process`, `:shell`, `:dynamic-require`, `:encrypted-execution`, `:downloaded-execution`, `:scripts`, `:vulnerable`. |
+| `:medium` | `:network`, `:git-dep`, `:http-dep`, `:wildcard-dep`, `:no-license`, `:native`. |
+| `:info` | `:fs`, `:crypto`, `:env`, `:ws`, `:possible-obfuscation`, `:high-entropy`, `:telemetry`, `:trivial`, `:copyleft`, `:minified`, `:url-strings`. |
 
-### Severity
+`:high` includes any reported vulnerability and any matching lifecycle-script declaration. It is not a vulnerability-severity threshold.
 
-Severity selectors are **aliases**. Each selector expands to an OR of the behavioral tags assigned to that level. Install summaries and audits use the same assignments.
+## Project and workspace scope
 
-Info tags are behavioral metadata, not confirmed vulnerabilities. They identify common capabilities and artifact traits that can be useful during investigation.
+With a lockfile, query selects the applicable project from the current directory, including nested directories. With an LPM CLI workspace lockfile, queries use the selected member's dependency tree.
 
-| Tag | Expands to |
+For other package managers, query uses the whole inventory from the discovered lockfile. It does not select a separate workspace-member tree.
+
+Without a lockfile, run query from the directory that contains `node_modules`.
+
+`:root` and `:workspace-root` are virtual anchors for `>`. They are not dependency result rows.
+
+```bash
+cd packages/web/src
+lpm query ':root > :scripts'
+lpm query ':workspace-root > :scripts'
+```
+
+With an LPM CLI workspace lockfile, the second command uses the owning root's exact dependency instances. It can inspect root dependencies outside the member's normal tree.
+
+Outside an LPM CLI workspace, both anchors use the selected project. For another package manager, this project is the discovered lockfile directory. If an LPM CLI workspace lockfile lacks a root projection, the workspace-root anchor has no children.
+
+Direct dependencies include optional and development dependencies. Query has no production-only, recursive, or workspace-filter flag.
+
+## CI checks and incomplete scans
+
+```bash
+# Fail when any critical tag matches
+lpm query ':critical' --assert-none
+
+# Save matching rows and retain the failing status
+lpm query ':eval:scripts' --assert-none --json > dependency-findings.json
+```
+
+Without `--assert-none`, a completed query exits with code `0`, even when packages match. With this flag, matches cause code `1`.
+
+Incomplete required analysis, unreadable script state, invalid selectors, and registry failures also produce a nonzero status. An empty match list cannot establish a clean result after those failures.
+
+Behavioral queries require readable package sources, valid package manifests, and complete analysis. Pure identity queries in compact JSON do not require script, build, or advisory state.
+
+If sources are missing, restore the installed tree with [lpm install](/docs/packages/install), then rerun the query. Unsupported source syntax or exceeded scan limits require separate review.
+
+For broader reports and severity policies, use [lpm audit](/docs/packages/audit).
+
+### Network requests
+
+Behavioral tags, scripts, and build markers use local files. These requests also need remote data:
+
+| Request | Remote data |
 | --- | --- |
-| `:critical` | `:obfuscated` OR `:protestware` OR `:credential-exfiltration` OR `:destructive-filesystem` |
-| `:high` | `:eval` OR `:child-process` OR `:shell` OR `:dynamic-require` OR `:encrypted-execution` OR `:downloaded-execution` OR `:scripts` OR `:vulnerable` |
-| `:medium` | `:network` OR `:git-dep` OR `:http-dep` OR `:wildcard-dep` OR `:no-license` OR `:native` |
-| `:info` | `:fs` OR `:crypto` OR `:env` OR `:ws` OR `:possible-obfuscation` OR `:high-entropy` OR `:telemetry` OR `:trivial` OR `:copyleft` OR `:minified` OR `:url-strings` |
+| `:vulnerable`, `:high`, or expressions that contain them | OSV advisories for non-`@lpm.dev` names, and LPM.dev Registry advisories for `@lpm.dev` names. |
+| `--count` | The same advisory lookups. |
+| `--json --query-verbose` | Advisory data for the detailed result. |
+| `:deprecated` | Version metadata from the current registry route, including `.npmrc` routes and credentials. |
 
-### Structural
+OSV requests include package names and versions from private registries and local sources when their names do not start with `@lpm.dev/`.
 
-| Tag | Matches |
-| --- | --- |
-| `:root` | The invocation project. Use `:root > <selector>` to match its direct dependency instances. |
-| `:workspace-root` | The owning workspace container. Use `:workspace-root > <selector>` to match its direct dependency instances. |
+Negating a selector still requires its data. For example, `:not(:vulnerable)` needs advisory lookups.
 
-When you run the command in a workspace member, `:workspace-root` still uses the owning container projection. It does not use a same-name instance from the member.
+## Output
 
-The behavior is the same from a nested directory inside that member. Outside a workspace, `:workspace-root` and `:root` use the same project.
-
-If the workspace lockfile has no root projection, `:workspace-root` matches no direct dependencies. It does not fall back to the current member.
-
-### Combinators
-
-| Combinator | Meaning |
-| --- | --- |
-| `:a:b` | AND — package matches both tags |
-| `:a, :b` | OR — package matches either tag |
-| `:not(:a)` | NOT — package doesn't match `:a` |
-| `#name` | Identity — match a specific package by name |
-| `:root > :child` | Direct-dep — `:child` is a direct dependency of `:root` |
-
-## CI gating
+### JSON and counts
 
 ```bash
-lpm query :critical --assert-none
+lpm query '#lodash' --json
+lpm query ':network' --json --query-verbose
+lpm query --count --json
 ```
 
-Exits non-zero if any package matches the selector. Use to fail the build on specific risky combinations:
+Selector JSON is one array, including when `--assert-none` fails. Each row contains `name`, `version`, and an optional `path`.
+
+Exact LPM CLI-managed instances also include `instanceId`. Same-name versions and separate instances remain separate rows.
+
+Detailed JSON adds `analysis`, `hasScripts`, `isBuilt`, and `isVulnerable`. A live `file:` or `link:` dependency can use its source directory as `path`.
+
+Count JSON is an object with tag counts and `total`. An empty inventory still returns this object with zero counts.
+
+`--count` cannot accompany a selector, `--assert-none`, `--format`, or `--query-verbose`.
+
+### Mermaid
 
 ```bash
-# fail on a vulnerable package that hasn't been patched
-lpm query ":vulnerable:not(:built)" --assert-none
-
-# fail on a transitively-pulled package that uses eval AND has lifecycle scripts
-lpm query ":eval:scripts" --assert-none
+lpm query ':eval' --format mermaid > eval-graph.mmd
+lpm query ':eval' --format mermaid --assert-none
 ```
 
-`--assert-none` is the canonical CI-gate flag. For broader gating with severity policies, [`lpm audit --fail-on`](/docs/packages/audit) is usually a better fit.
+Mermaid output requires an LPM CLI-managed lockfile. It includes matching instances and their adjacent dependency or peer nodes.
 
-## Counts and details
+Matched nodes receive a highlight. Exact instance labels include a short instance ID. `--assert-none` also applies to this output.
 
-```bash
-lpm query --count
-```
-
-Tabulates tag counts across every installed package, grouped by severity. Useful for high-level "how risky is my tree right now" surveys.
-
-```bash
-lpm query :network --query-verbose
-```
-
-Human list output includes a second `tags:` line for each matched package that carries behavioral tags. `--query-verbose` keeps the same human shape and includes the full analysis fields in JSON output.
-
-## Output formats
-
-```bash
-lpm query :eval --format list      # default — names, one per line
-lpm query :eval --format mermaid   # Mermaid subgraph diagram
-```
-
-| Format | Output |
-| --- | --- |
-| `list` (default) | Package names plus an indented `tags:` detail line when tags are present |
-| `mermaid` | Mermaid graph block showing exact package instances and dependency edges |
-
-For broader graph rendering (full tree, DOT, JSON, HTML), use [`lpm graph`](/docs/packages/graph).
-
-## Exact instances and paths
-
-```bash
-lpm --json query :eval
-```
-
-Each JSON result includes `name` and `version`. An exact LPM CLI-managed result also includes `instanceId`.
-
-The optional `path` value identifies the directory that the query analyzed. It points to the exact installed package materialization when that path is available.
-
-For a `file:` or `link:` dependency, `path` identifies the original live source directory. Foreign lockfile formats can omit `instanceId`.
-
-Results with the same `name` and `version` remain separate when their instance or path differs. Use `instanceId` as the row key when it exists.
-
-Mermaid output also keeps these instances separate. A node label includes the first 12 characters of its instance ID when exact identity is available.
+`--json` and `--format mermaid` cannot be combined. For a full graph, use [lpm graph](/docs/packages/graph).
 
 ## Flags
 
-| Flag | Effect |
+| Argument or flag | Effect |
 | --- | --- |
-| `<selector>` | Optional selector expression. Required unless `--count`. |
-| `--count` | Show tag counts across all packages, grouped by severity |
-| `--query-verbose` | Include full per-match analysis details in JSON output |
-| `--assert-none` | Exit non-zero if any package matches (CI gate) |
-| `--format <list\|mermaid>` | Output format (default `list`) |
+| `[SELECTOR]` | Selector expression. Required unless `--count` is present. |
+| `--count` | Count tags across all dependencies. |
+| `--query-verbose` | Include full analysis and state in JSON results. Global `--verbose` also enables this detail. |
+| `--assert-none` | Exit with code `1` when any package matches. |
+| `--format <list\|mermaid>` | Select the output format. Default: `list`. |
+| `--json` | Emit result rows or tag counts as JSON. |
 
-Plus the [global flags](/docs/commands#global-flags). `--json` emits `name`, `version`, optional `instanceId`, and optional `path` for each match.
-
-With `--query-verbose`, each match also includes `analysis`, `hasScripts`, `isBuilt`, and `isVulnerable`.
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm audit`](/docs/packages/audit) — broader report with vulnerability + behavior data
-- [`lpm graph`](/docs/packages/graph) — render the full dep tree
-- [Security audit](/docs/packages/security-audit) — design overview of the tag system
+- [lpm audit](/docs/packages/audit) — vulnerability and behavior reports.
+- [lpm graph](/docs/packages/graph) — complete dependency diagrams.
+- [lpm licenses](/docs/packages/licenses) — license inventory and policy checks.
+- [lpm rebuild](/docs/packages/rebuild) — execute approved dependency scripts.
+- [Security audit](/docs/packages/security-audit) — behavioral analysis and its limits.

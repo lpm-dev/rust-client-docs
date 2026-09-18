@@ -1,232 +1,227 @@
 ---
 title: lpm rebuild
-description: "Run or rerun lifecycle scripts for installed packages."
+description: Run approved dependency lifecycle scripts, retry failed builds, and reuse eligible native build outputs.
 ---
 
+Run install scripts for dependencies that are already installed. Use this command after approval, after a build failure, or when build inputs change.
+
 ```bash
-lpm rebuild [packages...]
+lpm rebuild [OPTIONS] [PACKAGES]...
 ```
 
-Bare default-policy `lpm install` downloads and links dependencies while blocking dependency lifecycle scripts. `lpm rebuild` is the manual and retry surface for those scripts: it selectively runs `preinstall`, `install`, and `postinstall` based on the active [script policy](/docs/packages/install#lifecycle-scripts) and the project's `trustedDependencies`. Installs that opt into allow, auto-build, or trusted-package builds use the same pipeline automatically.
+## Quickstart
 
-Matches `npm rebuild` / `pnpm rebuild` semantics.
+```bash
+# Install dependencies, then review blocked scripts
+lpm install
+lpm approve-scripts
+
+# Preview and run the approved builds
+lpm rebuild --dry-run
+lpm rebuild
+```
+
+[LPM CLI installs dependencies](/docs/packages/install#lifecycle-scripts) with dependency scripts blocked by default. [lpm approve-scripts](/docs/packages/approve-scripts) records approvals without executing scripts.
+
+| Mode | Selection |
+| --- | --- |
+| No package arguments | Packages permitted by the effective script policy |
+| Package names | All installed versions and instances of each selected name |
+| `--all` | Every installed package with executable install scripts |
+| `--dry-run` | Preview the selection without executing scripts |
+| `--deny-all` | Block all execution, including trusted packages |
+
+Explicit untrusted selections require signed authorization. `--all` and package names do not bypass that requirement.
+
+## Examples
+
+```bash
+# Rebuild selected dependencies
+lpm rebuild esbuild sharp
+
+# Retry approved packages, including completed builds
+lpm rebuild --force
+
+# Give each lifecycle phase up to ten minutes
+lpm rebuild --timeout 600
+
+# Require strict containment and deny outbound network access
+lpm rebuild --strict-sandbox
+
+# Emit a report for automation
+lpm rebuild --json
+```
+
+For a reusable build task, use an uncached command:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:rebuild": {
+      "command": "lpm rebuild --strict-sandbox",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run deps:rebuild
+```
+
+`lpm.json` has no dedicated rebuild fields. `command` holds the invocation. `cache: false` prevents the task runner from skipping the rebuild check.
+
+For a one-run preview, use `lpm rebuild --strict-sandbox --dry-run` directly. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
 
 ## What runs
 
-`lpm rebuild` executes exactly three phases, in order:
+The command requires a usable `lpm.lock` and installed package contents. In a workspace member, it uses that member's projected dependency graph.
+
+For each selected dependency, these phases run in order:
 
 1. `preinstall`
 2. `install`
 3. `postinstall`
 
-Other lifecycle names — `prepare`, `prepublishOnly`, `preuninstall`, `uninstall`, `postuninstall` — are **recognized** by LPM CLI for detection (a package declaring them shows up in [`lpm audit`](/docs/packages/audit) and the [`lpm approve-scripts`](/docs/packages/approve-scripts) review queue) but **never executed** by the install pipeline. Approving a package whose only declared script is `prepare` is harmless: nothing runs.
+A package with only `prepare`, publish scripts, or uninstall scripts is outside this queue. Root project lifecycle scripts are also outside this command.
 
-## Examples
+Dependencies build before their dependents. Up to four independent packages build concurrently.
 
-```bash
-lpm rebuild                                  # rebuild every trusted package
-lpm rebuild esbuild                          # rebuild a specific package
-lpm rebuild esbuild sharp                    # multiple
-lpm rebuild --dry-run                        # preview, run nothing
-lpm rebuild --force                          # re-run scripts even for already-built packages
-lpm rebuild --all                            # bypass trust policy — DANGEROUS
-lpm rebuild --policy=allow                   # allow every scripted package this run
-lpm rebuild --triage                         # tiered gate (greens auto, ambers/reds blocked)
-lpm rebuild --timeout 600                    # 10-minute per-script timeout
-```
+If one phase fails, later phases of that package do not run. Other selected packages continue. Any failed package makes the command exit nonzero.
 
-Human output reports each completed lifecycle phase as one compact row and keeps the script command body out of the transcript:
-
-```bash
-› Rebuilding lifecycle scripts for trusted packages
-  ✓ esbuild@0.25.1  postinstall
-  ✓ sharp@0.34.2    install
-
-✓ Completed 2 scripts
-  skipped: 1 blocked package
-  hint: run lpm approve-scripts
-
-✓ Done · rebuild finished in 1.04s
-```
-
-When you name packages explicitly, every requested package must be installed and must have an executable lifecycle script. A typo or an installed package with no `preinstall` / `install` / `postinstall` exits non-zero instead of silently succeeding as an empty rebuild.
+By default, each phase has a 300-second timeout. `--timeout` changes the limit for this invocation.
 
 ## Default selection
 
-With no arguments and no `--all`, `lpm rebuild` runs scripts for packages whose name appears in:
+The effective policy comes from the CLI, then `package.json > lpm > scriptPolicy`, then user configuration, then the `deny` default.
 
-- `package.json > lpm > trustedDependencies` (legacy array form), OR
-- `package.json > lpm > trustedDependencies` (rich-map form, with matching integrity + script hash), OR
-- A scope glob in `package.json > lpm > scripts.trustedScopes` (e.g. `@myorg/*`)
+The machine's authorized security policy can reject weaker requests.
 
-Manage strict package approvals with [`lpm approve-scripts`](/docs/packages/approve-scripts). Manage project scope trust with [`lpm trust lifecycle-scope`](/docs/packages/trust#lpm-trust-lifecycle-scope).
-
-## Policy override
-
-The CLI policy flags share semantics with [`lpm install`](/docs/packages/install#lifecycle-scripts) — they govern which scripted packages are eligible to run.
-
-| Flag | Behavior |
+| Policy | Eligible packages |
 | --- | --- |
-| `--policy=deny` (default) | Filter to `trustedDependencies` only |
-| `--policy=allow` / `--yolo` | Include every scripted package regardless of trust |
-| `--policy=triage` / `--triage` | Filter to trusted-only, but tiered greens are auto-promoted into the rebuild set |
+| `deny` | Packages with matching project approvals or authorized lifecycle scope trust |
+| `triage` | Trusted packages plus green scripts eligible for automatic execution |
+| `allow` | All packages with executable install scripts |
 
-`--all` overrides the filter under every policy.
+Local JavaScript delegates still require approval, even when their static classification is green.
 
-`--policy`, `--yolo`, and `--triage` are mutually exclusive.
+Manage individual approvals with [lpm approve-scripts](/docs/packages/approve-scripts). Manage scopes with [lpm trust lifecycle-scope](/docs/packages/trust#lpm-trust-lifecycle-scope).
 
-## Sandbox
+Rich approvals bind the package to its recorded integrity and script hash. Changed scripts can invalidate an approval. Legacy name-only approvals produce a migration warning.
 
-Lifecycle scripts run inside a **filesystem sandbox** by default — Seatbelt on macOS, landlock on Linux, AppContainer + Job Object on Windows. Three modes:
+`force-security-floor = true` suspends persistent package approvals. An authorized one-run policy override can still permit explicit execution.
 
-| Mode | Filesystem | Env | Outbound network | Project secret files | How to engage |
-| --- | --- | --- | --- | --- | --- |
-| **Default** | Write-containment to the package's own directory + anything in `package.json > lpm > scripts.sandboxWriteDirs` | Minimal environment plus approved `passEnv` names | Allowed | Denied unless explicitly approved (see [below](#project-secret-files)) | Nothing — this is the default |
-| **Strict** | Same as default | Same as default | **Denied** | Same as default | `--strict-sandbox` (or alias `--paranoid`), persistent via `[sandbox] mode = "strict"` in `~/.lpm/config.toml` / `./lpm.toml`, or env `LPM_STRICT_SANDBOX=1` |
-| **Disabled** | No containment | **Not scrubbed** — `LPM_TOKEN`, `NPM_TOKEN`, etc. all pass through | Allowed | **Readable** — every file in `project_dir` reachable | `--no-sandbox` (per-command, loud banner), or `lpm config sandbox --set none` (persistent) |
+### Explicit package names
 
 ```bash
-lpm rebuild --strict-sandbox     # filesystem + env + network containment for this run
-lpm rebuild --paranoid           # alias — same behavior
+lpm rebuild esbuild sharp --dry-run
 ```
 
-Strict network denial coverage is platform-asymmetric: macOS Seatbelt denies every socket family; Linux landlock denies TCP `connect(2)`/`bind(2)` and seccomp-bpf denies direct UDP / raw / AF_PACKET / AF_NETLINK sockets; Windows uses AppContainer + Windows Filtering Platform. On platforms where strict isn't fully implementable, the sandbox refuses to start unless the `allow_degraded` config is set.
+An exact package name takes precedence. A dot-suffix shorthand works only when it identifies one distinct package name.
+
+If multiple names match a shorthand, the command fails and lists the alternatives. Overlapping selectors select each installed instance once.
+
+Every requested name must have installed, executable install scripts. Missing names and scriptless packages fail, including when the entire queue is empty.
+
+### Authorization and non-interactive use
+
+Routine rebuilds of approved packages require no selection prompt:
+
+```bash
+lpm rebuild --json
+```
+
+To authorize all scripted packages for a limited period, start from a user-controlled terminal:
+
+```bash
+lpm security unlock scripts-allow --project . --ttl 10m
+lpm rebuild --all --json
+```
+
+For one named package, add `--package esbuild` to the unlock command, then run `lpm rebuild esbuild --json`.
+
+The unlock command requires user approval. The signed grant applies to that project and expires. It does not transfer to another machine.
+
+`--policy=allow` and `--yolo` request the same script-policy widening. Managed policy can reject it.
+
+Project capability changes require their own authorization. A script-policy grant does not authorize broader environment, file, or sandbox access.
+
+Dry runs retain policy and authorization checks. They skip execution, engine enforcement, and sandbox or native-cache preparation.
+
+## Build state and `--force`
+
+A successful generic build records its lifecycle script hash. The hash includes recognized local JavaScript delegates and their reachable local imports.
+
+An unchanged hash lets a later rebuild skip that package. Changed script commands or covered file contents make it eligible again.
+
+Old empty build markers require one authorized rebuild. Script hashes do not capture every external build input.
+
+If an input outside the recorded hash changes, force a rebuild:
+
+```bash
+lpm rebuild --force
+```
+
+`--force` skips completed-build checks. It does not grant execution permission or override `--deny-all`.
 
 ## Native build cache
 
-On macOS and Linux, strict rebuilds automatically reuse successful native
-dependency builds. The first eligible build publishes the completed package
-tree under `~/.lpm/store/v2/builds/<build-key>/`; an identical reinstall can
-restore that tree instead of rerunning `node-gyp`, `prebuild-install`,
-esbuild's installer, or sharp's installer. There is no cache flag to enable.
+Eligible native builds can reuse outputs from the shared store. A restored artifact avoids executing the lifecycle scripts again.
+
+Eligibility requires a recognized native installer, strict containment, denied outbound network access, and baseline lifecycle capabilities.
+
+Examples include `node-gyp`, `prebuild-install`, and supported esbuild or sharp installers. Wider project read/write grants or environment grants disable reuse.
+
+Native artifact reuse is available on macOS and Linux. Windows still executes builds through its normal sandbox.
+
+The cache key includes package integrity, dependency and peer identities, patches, script commands, runtime identity, platform, exposed environment, and discoverable toolchain state.
+
+A changed key invalidates the local native build state. Before a replacement native build, LPM CLI restores pristine package contents.
+
+Corrupt or incomplete artifacts count as misses. `--force` bypasses artifact lookup and replaces the eligible artifact after a successful build.
+
+### Reuse in CI
+
+Keep the store and workspace paths stable across runs. Absolute paths are visible build inputs, so moving a checkout can prevent reuse.
 
 ```bash
-lpm install
-lpm rebuild --strict-sandbox --all   # miss: build and publish
-
-rm -rf node_modules
-lpm install                          # pristine rematerialization
-lpm rebuild --strict-sandbox --all   # hit: restore the cached build
+lpm rebuild --strict-sandbox --json
 ```
 
-Cache lookup happens **after** normal trust and policy selection. A cached
-artifact never makes an untrusted package eligible to execute or restore.
+Toolchain checks use a validated metadata snapshot with a maximum lifetime of one hour. [lpm cache clean metadata](/docs/packages/cache) removes these snapshots.
 
-### Eligibility and isolation
+The fingerprint detects normal toolchain and package-manager changes. It does not hash every system header or library.
 
-An artifact is cacheable only when all of these are true:
+After a manual system-library change, use `lpm rebuild --strict-sandbox --force` to rebuild approved packages from pristine native inputs.
 
-- The package uses the v2 content-addressable store.
-- The lifecycle command belongs to a recognized native-build family:
-  `node-gyp`, `node-gyp-build`, `node-gyp-build-optional-packages`,
-  `prebuild-install`, `electron-rebuild`, `cmake-js`, esbuild's `install.js`,
-  or sharp's installer. Recognition is based on shell command position and
-  package identity; mentions in comments or unrelated arguments do not
-  qualify.
-- The effective sandbox posture is fully strict and outbound network access is
-  denied.
-- The project did not widen sandbox read/write paths or lifecycle
-  capabilities.
-- The host is macOS or Linux. Windows rebuilds still run normally, but native
-  artifact reuse stays disabled until the AppContainer backend has the same
-  cacheable input boundary.
+## Sandbox
 
-During an eligible miss, persistent writes are narrowed to the package tree;
-temporary writes use a stable private directory inside the locked graph entry,
-so its path is deterministic for equivalent builds. The dependency graph,
-system toolchain, and local Node header cache remain readable. User npm caches,
-project-wide write roots, and the broader default-sandbox write set are not
-part of the cacheable build.
+The default sandbox limits filesystem writes and filters the environment. Strict mode also denies outbound network access.
 
-If any eligibility check fails, LPM CLI runs the lifecycle command through the
-normal rebuild path and reports the package as bypassed in JSON metrics.
+```bash
+lpm rebuild --strict-sandbox
+```
 
-### Cache key and invalidation
+| Mode | Behavior |
+| --- | --- |
+| Default | Package write containment and a filtered environment, subject to configured policy |
+| `--strict-sandbox`, `--paranoid` | Strict containment, filtered environment, and outbound network denial |
+| `--sandbox-log` | macOS diagnostic mode that reports accesses without enforcing containment |
+| `--no-sandbox` | Full host filesystem, network, and environment access, including credentials |
 
-The build key includes:
+Weaker modes require signed authorization. `--no-sandbox` conflicts with strict and diagnostic modes.
 
-- package tarball integrity and v2 graph identity
-- canonical dependency edges, aliases, peer targets, source identities, and
-  patch fingerprints across the installed graph
-- ordered lifecycle phases and exact command bodies
-- OS, architecture, libc, and CPU-feature compatibility
-- Node version, modules ABI, N-API, V8 version, and runtime executable identity
-- strict sandbox posture and allowed-input policy
-- the complete environment exposed to the lifecycle script, including the
-  baseline variables and LPM CLI's effective `PATH`, `INIT_CWD`, `TMPDIR`, `TMP`,
-  and `TEMP` values
-- compiler, linker, SDK, CMake, Ninja, invoked build-executable, operating
-  system, dynamic-linker cache, and Node-header fingerprints when discoverable
-- compiler sysroot/search configuration, pkg-config databases, and
-  discoverable OS package-manager, Homebrew, macOS receipt, and Xcode state
-
-The complete host-toolchain fingerprint is persisted under
-`~/.lpm/cache/metadata/native-toolchains/v1/`. On later rebuilds, LPM CLI first
-validates compiler identities, package-database generations, pkg-config
-directories, SDK selection, Homebrew/macOS receipts, Rust toolchain selection,
-and the selected Node header cache. An unchanged snapshot avoids rerunning the
-compiler and package-manager probes. Changed, expired, oversized, or malformed
-state fails closed to the complete fingerprint pass; snapshots have a one-hour
-maximum lifetime and `lpm cache clean metadata` removes them. Project-visible
-executables are still fingerprinted for every key and are never executed by
-the host probe path.
-
-Because absolute lifecycle paths are observable inputs, reuse across separate
-checkouts requires those paths to match. This is normally true for repeated CI
-runs that restore the LPM CLI store into the same workspace path; a differently
-located checkout receives a different key rather than reusing an artifact that
-could contain the previous path. Changes to exposed baseline variables also
-change the build key. Undeclared variables, including `CFLAGS` and
-`GITHUB_RUN_ID`, do not reach dependency scripts and do not change the key.
-Adding a `passEnv` grant requires approval and disables native artifact reuse
-for that project, because the project has widened its lifecycle capabilities.
-
-The host fingerprint is conservative, not a claim that native builds are
-fully hermetic. It detects normal compiler, SDK, package-manager, header-cache,
-and pkg-config changes without hashing every readable byte under `/usr` or a
-macOS SDK on every lookup. An administrator can still replace an unmanaged
-system header or library in place without updating discoverable package state.
-After such a manual host mutation, use
-`lpm rebuild --strict-sandbox --all --force` to rebuild from pristine package
-contents; reference-aware cache pruning can remove the older artifact
-afterward.
-
-Changing any keyed input invalidates both the artifact and the package's local
-`.lpm-built` state. LPM CLI rematerializes the pristine package object before the
-new command runs, so stale outputs cannot leak into the replacement artifact.
-Corrupt or incomplete artifacts are treated as misses.
-
-`--force` always bypasses lookup, rebuilds from pristine source, and replaces
-the artifact for the resulting key.
-
-### Measured performance
-
-On macOS arm64 with Node 22.22.1 and the sharp `NativeToolchain` fixture (10
-release samples), a local hit completed in **59.07 ms median** versus a
-**173.10 ms** strict artifact miss: **2.93× faster** and **65.88% lower wall
-time**. Recreating a CI checkout at the same stable path while retaining the
-warm LPM CLI store completed in **58.49 ms median** (**2.96× faster**, **66.21%
-lower**). Warm host-key derivation took 15–24 ms. The first complete host
-fingerprint took 126 ms before its validated snapshot existed, so these
-steady-state numbers do not hide the cold security cost. Every scenario used
-the same strict sandbox, and the median retained artifact used 503,469 bytes.
-The benchmark and raw methodology live in the rust-client repository under
-`bench/scripts/native-build-cache-benchmark.mjs` and
-`bench/perf-results/native-build-cache-20260712-macos-arm64-native-toolchain.*`.
+A clean diagnostic run does not prove that a strict sandbox run will succeed.
 
 ### Project reads and environment variables
 
-The default `readProject: "narrow"` allows dependency directories, `package.json`,
-package-manager lockfiles, and root `tsconfig*.json` files. Other project source
-files require an explicit read grant. The package can read its own files,
-standard toolchains, caches, `.lpm`, `.husky`, and approved writable directories.
+By default, `readProject: "narrow"` permits dependency directories, package manifests, lockfiles, and root `tsconfig*.json` files.
 
-An approved `readProject: "full"` grants reads of the complete project tree,
-including secret files. It does not grant access to credentials outside the project.
+Builds also retain access to their package files and permitted toolchain, cache, and writable locations. Other project source files require a read grant.
 
-The baseline environment contains `PATH`, `HOME`, user names, locale and terminal
-settings, `CI`, and required Windows system variables. Other values require an
-explicit `passEnv` entry and script approval. For example:
+Approved `readProject: "full"` permits the entire project tree, including project secrets. It does not grant access to credentials outside the project.
+
+The baseline environment contains operating-system, user, locale, terminal, path, and CI values. Other names require `passEnv` and authorization:
 
 ```json title="package.json"
 {
@@ -239,154 +234,98 @@ explicit `passEnv` entry and script approval. For example:
 }
 ```
 
-```bash
-lpm approve-scripts my-dependency
-lpm rebuild my-dependency
-```
-
-Only the approved names reach the script. A similar name does not inherit approval.
-Reserved runtime variables such as `NODE_OPTIONS`, `LD_PRELOAD`, and
-`DYLD_INSERT_LIBRARIES` cannot use `passEnv`. LPM CLI also controls `INIT_CWD`,
-temporary-directory variables, and Git/npm configuration paths.
+Only approved names pass through. Similar names do not inherit access. See [project script configuration](/docs/reference/package-json-lpm#the-lpmscripts-block) for reserved variables and capability limits.
 
 ### Project secret files
 
-Narrow reads deny ordinary source directories and their secret files, including
-nested `.env` files and custom names such as `.env.preview`.
-Explicit read grants can allow individual files. Full project access also allows
-all project secrets.
+The sandbox protects conventional secret files, including nested `.env` files and custom names such as `.env.preview`.
 
-Additional protection covers conventional secrets inside readable project paths.
-On Linux, files already denied by the read policy need no mount namespace.
-Other protected files require a namespace overlay. If the host cannot create this
-overlay, LPM CLI refuses to run the script. Windows uses file access rules.
+Explicit `sandboxReadAllow` entries can grant access to individual files. The CLI combines them with user-level `script-read-allow` entries.
 
-The Linux and Windows secret scan captures existing files before the script starts.
-It has depth limits and excludes generated directories. It cannot protect a new
-secret placed inside an already readable directory after the scan.
+Read grants must name project files. Directories, symlinks, and paths outside the project are invalid. Missing files grant no current access.
 
-#### Opting specific files back in
+Changed read grants and `sandboxWriteDirs` require renewed authorization. Writable directories also permit reads.
 
-Some builds need a project secret, such as a database URL or CA bundle. These fields grant access to specific files:
+On Linux, protection of otherwise-readable secret files can require a namespace overlay. If that protection is unavailable, execution fails.
 
-```json title="package.json (per-project)"
-{
-  "lpm": {
-    "scripts": {
-      "sandboxReadAllow": [".env", "services/api/.env"]
-    }
-  }
-}
-```
-
-```toml title="~/.lpm/config.toml (per-user, applied to every project)"
-script-read-allow = [".env", ".npmrc"]
-```
-
-The CLI combines `sandboxReadAllow` with the user-level `script-read-allow` list.
-Each entry must name a file inside the project. Directories, symlinks, and paths
-outside the project are rejected. Missing files grant no current access.
-
-Both read grants and `sandboxWriteDirs` require script approval. Adding or changing
-a path requires another approval, including paths from user configuration.
-The approval prompt shows the resolved paths. Writable directories also permit reads.
-Built-in writable directories cannot be symlinks or Windows reparse points.
-
-An approved secret file remains readable. Linux needs no namespace overlay when
-all otherwise-readable secret files have explicit approval.
+Linux and Windows inspect existing secret files before execution. This protection cannot cover a new secret created inside an already-readable directory afterward.
 
 ### Timeouts, cancellation, and child processes
 
-Ctrl+C and SIGTERM cancel active dependency scripts. LPM CLI waits for cleanup
-before it returns an error. An interrupted script does not receive a successful
-build marker. The `--timeout` limit applies to each lifecycle phase.
+Ctrl+C and SIGTERM cancel active scripts. Interrupted builds do not receive successful build markers.
 
-Linux scripts cannot create a separate process group or session. LPM CLI terminates
-the group after success, failure, timeout, or cancellation. Windows uses a Job
-Object to contain and terminate descendants.
+Linux prevents sandboxed scripts from creating separate process groups. Windows uses a Job Object to contain descendants.
 
-**macOS limitation:** native scripts can detach or reparent child processes.
-Those descendants can survive completion, timeout, or cancellation. Their filesystem
-and network restrictions remain active, but cleanup cannot guarantee termination.
-LPM CLI preserves native build compatibility instead of blocking all child processes.
+On macOS, detached or reparented native child processes can survive completion or cancellation. Their filesystem and network restrictions remain active.
+
 For complete process-lifetime isolation, use a disposable virtual machine or container.
-
-`--no-sandbox` removes the Linux process-group restriction along with filesystem,
-network, and environment protection.
-
-### Disabling the sandbox
-
-```bash
-lpm rebuild --no-sandbox
-```
-
-A **single flag** drops both containment AND env scrubbing — scripts run with full host access including credential-bearing env (`LPM_TOKEN`, `NPM_TOKEN`, `GITHUB_TOKEN`). Reserve for debugging a sandbox false-positive that `sandboxWriteDirs` can't express.
-
-`--no-sandbox` is mutually exclusive with `--strict-sandbox`, `--paranoid`, and `--sandbox-log`. Persistent off-mode goes through `lpm config sandbox --set none` instead — the CLI flag is the per-command escape.
-
-### Diagnostic mode
-
-```bash
-lpm rebuild --sandbox-log
-```
-
-macOS-only. Rule triggers are **logged** via `sandboxd` but **not enforced**. View accesses via `log show --last 5m --predicate 'senderImagePath CONTAINS "Sandbox"'` and grep for the script's pid. **Not a safety signal** — a clean run under `--sandbox-log` does not mean the script would pass under the full sandbox; it only means the logged accesses were visible for review.
-
-On Linux and Windows, `--sandbox-log` errors at sandbox init (no native observe-only primitive) and points at `--no-sandbox` for the same debug case.
-
-## `--force` flag
-
-```bash
-lpm rebuild --force esbuild
-```
-
-By default, packages whose scripts have already run (and whose `script_hash` hasn't changed) are skipped. `--force` ignores that record and re-runs them. Useful after deleting `node_modules` if you want fresh `postinstall` work without a full reinstall.
 
 ## `--deny-all`
 
 ```bash
-lpm rebuild --deny-all
+lpm rebuild --deny-all --json
 ```
 
-Refuses to run **any** scripts, even trusted ones. Useful as a CI smoke test: "would my install want to execute scripts?" Or paired with `package.json > lpm > scripts.denyAll: true` for a project-wide kill switch.
+The flag and `package.json > lpm > scripts > denyAll: true` block every script, including trusted scripts.
+
+After normal CLI checks, this mode returns without inventory or execution. It is not a check of installed scripts or their approvals.
+
+`lpm.scripts.autoBuild` controls automatic builds during [lpm install](/docs/packages/install#lifecycle-scripts). It does not change manual rebuild selection.
 
 ## JSON output
 
-`lpm rebuild --json --dry-run` emits a dry-run envelope with `dry_run: true` and `packages[]`, including when the set is empty. A live `lpm rebuild --json` emits `success`, `built`, `failed`, and `build_cache`; an empty rebuild reports `success: true`, `built: 0`, `failed: 0` with zeroed cache counters.
+```bash
+lpm rebuild --dry-run --json
+lpm rebuild --json > rebuild.json
+```
 
-`build_cache` contains `eligible`, `hits`, `misses`, `bypassed`,
-`local_state_hits`, `scripts_avoided`, `restored_bytes`, and
-`lifecycle_ms_avoided`. Its `timings_ms` object breaks out fingerprint
-preparation, keying, lookup, restore, pristine rematerialization, and
-publication time. A `hit` means an artifact was restored; a
-`local_state_hit` means the already-materialized package's keyed build marker
-still matched and no restore was needed.
+Dry-run reports contain `success`, `dry_run`, `count`, and `packages`. Each package includes its name, version, scripts, and trust status.
 
-Errors such as a missing `lpm.lock`, a failing lifecycle script, or an explicitly requested package that is not rebuildable emit `success: false` in the top-level JSON error envelope and exit non-zero.
+Live reports contain `success`, `built`, `failed`, and `build_cache` metrics. Security posture fields appear when a security floor or suppression needs reporting.
+
+`built` counts packages whose scripts completed successfully in this invocation. Cache reuse has separate metrics.
+
+Script output goes to stderr. Stdout contains one JSON report, including when a script fails. Failed builds report `success: false` and exit `1`.
+
+During install auto-build, rebuild leaves the JSON report to [lpm install](/docs/packages/install).
+
+Pre-execution errors use the shared JSON error envelope. Deny-all results include `denied_all: true` and an empty successful report.
+
+## Fix common problems
+
+If the lockfile or installed contents are missing, run [lpm install](/docs/packages/install), then retry the preview.
+
+If an approval drifts, review the changed scripts with [lpm approve-scripts](/docs/packages/approve-scripts) before retrying.
+
+If authorization fails, use the project unlock command shown in the error from a user-controlled terminal.
+
+If a build fails, read its stderr output. Correct the missing tool, denied capability, or script error, then rerun the same selection.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--all` | Rebuild every scripted package (bypasses trust) |
-| `--dry-run` | Preview without executing scripts |
-| `--force` | Re-run scripts even for already-built packages |
-| `--timeout <SECS>` | Per-script timeout (default `300` = 5 min) |
-| `--deny-all` | Refuse to run any scripts |
-| `--policy <deny\|allow\|triage>` | Override the policy for this invocation |
-| `--yolo` | Alias for `--policy=allow` |
-| `--triage` | Alias for `--policy=triage` |
-| `--strict-sandbox` | Engage strict sandbox (filesystem + env + outbound network denial) |
-| `--paranoid` | Alias for `--strict-sandbox` |
-| `--no-sandbox` | Drop all containment for this run — also drops env scrubbing. Mutually exclusive with `--strict-sandbox` / `--paranoid` / `--sandbox-log` |
-| `--sandbox-log` | macOS only: observe-only sandbox |
-| `--no-engine-strict` | Use warning-only workspace-root engine checks (see [`lpm install`](/docs/packages/install#engines-enforcement)) |
+| `--all` | Select every scripted package, with authorization for untrusted execution. |
+| `--dry-run` | Preview without execution. Authorization still applies. |
+| `--force` | Rerun selected packages and bypass eligible native artifact lookup. |
+| `--timeout <TIMEOUT>` | Set the per-phase timeout in seconds. Default: `300`. |
+| `--deny-all` | Block all script execution. |
+| `--policy <deny\|allow\|triage>` | Override the script policy for this invocation. |
+| `--yolo` | Request `--policy=allow`. |
+| `--triage` | Request `--policy=triage`. |
+| `--strict-sandbox` | Require strict containment and outbound network denial. |
+| `--paranoid` | Request strict sandbox mode. |
+| `--no-sandbox` | Disable containment and environment filtering with authorization. |
+| `--sandbox-log` | Use macOS diagnostic sandbox mode. |
+| `--no-engine-strict` | Use warning-only engine checks. |
+| `--json` | Emit one JSON report and send script output to stderr. |
 
-Plus the [global flags](/docs/commands#global-flags).
+`--policy`, `--yolo`, and `--triage` are mutually exclusive. See the [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm install`](/docs/packages/install#lifecycle-scripts) — installs packages and can auto-run this build pipeline when policy permits
-- [`lpm approve-scripts`](/docs/packages/approve-scripts) — manage the trust allowlist
-- [`lpm trust`](/docs/packages/trust) — inspect drift in the allowlist
-- [`package.json` "lpm.scripts"](/docs/reference/package-json-lpm#the-lpmscripts-block) — capability and sandbox config
+- [lpm install](/docs/packages/install#lifecycle-scripts) — install dependencies and configure automatic builds
+- [lpm approve-scripts](/docs/packages/approve-scripts) — review and approve dependency scripts
+- [lpm trust](/docs/packages/trust) — inspect approval drift and manage scope trust
+- [Project script configuration](/docs/reference/package-json-lpm#the-lpmscripts-block) — sandbox and capability settings
+- [lpm cache](/docs/packages/cache) — inspect or remove cached data

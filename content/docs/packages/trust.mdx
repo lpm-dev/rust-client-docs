@@ -1,260 +1,290 @@
 ---
 title: lpm trust
-description: "Manage project lifecycle trust and release-age exclusions."
+description: Review project trust changes, remove stale approvals, and manage lifecycle scopes and release-age exclusions.
 ---
 
+Review and manage the security decisions stored in a project's `package.json`.
+
 ```bash
-lpm trust diff [--assert-none] [--json]
-lpm trust prune [--dry-run] [--yes] [--json]
-lpm trust lifecycle-scope add <SCOPE> [--json]
-lpm trust lifecycle-scope remove <SCOPE> [--json]
-lpm trust lifecycle-scope list [--json]
-lpm trust release-age-exclude add <SELECTOR> [--json]
-lpm trust release-age-exclude remove <SELECTOR> [--json]
-lpm trust release-age-exclude list [--json]
+lpm trust <COMMAND>
+lpm trust diff [OPTIONS]
+lpm trust prune [OPTIONS]
+lpm trust lifecycle-scope <COMMAND>
+lpm trust lifecycle-scope add <SCOPE> [OPTIONS]
+lpm trust lifecycle-scope remove <SCOPE> [OPTIONS]
+lpm trust lifecycle-scope list [OPTIONS]
+lpm trust release-age-exclude <COMMAND>
+lpm trust release-age-exclude add <SELECTOR> [OPTIONS]
+lpm trust release-age-exclude remove <SELECTOR> [OPTIONS]
+lpm trust release-age-exclude list [OPTIONS]
 ```
 
-`lpm trust` manages security decisions that belong to the current project. These decisions stay in `package.json` so that the project can share them.
+## Quickstart
 
-For lifecycle scripts, `lpm trust` manages project scope trust. It also inspects and cleans `trustedDependencies`.
+```bash
+# Review trust changes before installation updates the baseline
+lpm trust diff
 
-Use [`lpm approve-scripts`](/docs/packages/approve-scripts) for strict package approvals. These approvals include the version, integrity, script hash, and requested capabilities.
+# Preview approvals for packages no longer in the lockfile
+lpm trust prune --dry-run
+```
 
-For the release-age gate, `lpm trust` manages `minimumReleaseAgeExclude`. These selectors exempt selected packages from the project cooldown.
+| Command | Purpose |
+| --- | --- |
+| `diff` | Compare package approvals with the saved install snapshot |
+| `prune` | Remove approvals whose package names no longer appear in the dependency tree |
+| `lifecycle-scope` | Add, remove, or list lifecycle trust for an npm scope |
+| `release-age-exclude` | Add, remove, or list exceptions to the release-age cooldown |
 
-**Project trust only.** Global lifecycle trust uses `~/.lpm/global/trusted-dependencies.json`. Manage it with [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-vs-project).
+Use [lpm approve-scripts](/docs/packages/approve-scripts) for individual package approvals. Use [lpm rebuild](/docs/packages/rebuild) to run approved dependency scripts.
 
-User release-age exclusions use `~/.lpm/config.toml`. Manage them with [`lpm config release-age-exclude`](#user-release-age-exclusions).
+## Examples
 
-## Storage contract
+```bash
+# Fail CI when package approvals differ from the saved baseline
+lpm trust diff --assert-none --json
 
-LPM stores each exception or approval in one policy layer. A command does not copy a policy entry into another file.
+# Remove stale approvals without a prompt
+lpm trust prune --yes --json
 
-| Decision | Command | Persistent location |
-| --- | --- | --- |
-| Project release-age exclusion | `lpm trust release-age-exclude` | `package.json > lpm > minimumReleaseAgeExclude` |
-| Project lifecycle scope | `lpm trust lifecycle-scope` | `package.json > lpm > scripts > trustedScopes` |
-| Project package approval | `lpm approve-scripts` | `package.json > lpm > trustedDependencies` |
-| User release-age exclusion | `lpm config release-age-exclude` | `~/.lpm/config.toml > minimum-release-age-exclude` |
-| Global-install package approval | `lpm approve-scripts --global` | `~/.lpm/global/trusted-dependencies.json` |
-| One-run release-age exclusion | `lpm install --min-release-age-exclude` | None |
+# List project lifecycle scopes
+lpm trust lifecycle-scope list --json
 
-`lpm.lock` never stores release-age exclusions, lifecycle scopes, or lifecycle approvals. `lpm trust prune` reads the lockfile only to find stale project approvals.
+# Exclude one exact version from the cooldown
+lpm trust release-age-exclude add react@19.1.0 --json
 
-Each command writes one declared policy layer. It does not cascade through `package.json`, user configuration, global trust, or the lockfile.
+# Remove that exact exclusion
+lpm trust release-age-exclude remove react@19.1.0 --json
+```
 
-Project commands use the `package.json` in the current directory. In a workspace member, the member manifest receives the policy entry.
+For a reusable trust check, define an uncached task:
 
-The workspace root and sibling manifests stay unchanged. User and global commands continue to use their fixed locations under `~/.lpm`.
+```json title="lpm.json"
+{
+  "tasks": {
+    "deps:trust": {
+      "command": "lpm trust diff --assert-none",
+      "cache": false
+    }
+  }
+}
+```
 
-List commands read only their declared layer. They do not show the effective merged release-age list.
+```bash
+lpm run deps:trust
+```
 
-During an install, release-age exclusions merge in this order: CLI entries, project entries, then user entries. Duplicate selectors collapse.
+There is no dedicated trust configuration in `lpm.json`. The task's `command` holds the flags. `cache: false` checks the current files each time.
 
-An exact-version selector matches only that version. A scope wildcard matches every package in that scope.
+For an informational check on one run, use `lpm trust diff` directly. An explicit `lpm.json` task command takes precedence in [lpm run](/docs/dev/run).
 
-A lifecycle scope addition also requires local signed authorization under `~/.lpm/security`. This authorization approves the write and is not another trust list.
+## Project scope and storage
 
-Mutating policy commands use atomic file replacement. A duplicate addition does not rewrite a normalized destination file.
+These commands require a `package.json` in the current directory. Inside a workspace member, they use that member's manifest.
 
-## Subcommands
+| Decision | Persistent location |
+| --- | --- |
+| Project package approvals | `package.json > lpm > trustedDependencies` |
+| Project lifecycle scopes | `package.json > lpm > scripts > trustedScopes` |
+| Project release-age exclusions | `package.json > lpm > minimumReleaseAgeExclude` |
+| Saved trust baseline | `.lpm/trust-snapshot.json` |
 
-| Subcommand                  | What it does                                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------- |
-| [`diff`](#lpm-trust-diff)   | Show how the current `trustedDependencies` differs from the last install's snapshot |
-| [`prune`](#lpm-trust-prune) | Remove entries whose package is no longer in the resolved tree                      |
-| [`lifecycle-scope`](#lpm-trust-lifecycle-scope) | Add, remove, or list project lifecycle scope trust |
-| [`release-age-exclude`](#lpm-trust-release-age-exclude) | Add, remove, or list project release-age exclusions |
+Mutations preserve other manifest fields and use atomic file replacement. Project commands do not copy entries into user or global configuration.
 
-## Flag Reference
+The lockfile supplies dependency names for pruning. It does not store lifecycle approvals, lifecycle scopes, or release-age exclusions.
 
-| Command | Flag | Effect |
-| --- | --- | --- |
-| `lpm trust diff` | `--json` | Emit the diff envelope instead of human output. Same as global `--json` for this command. |
-| `lpm trust diff` | `--assert-none` | Exit non-zero if any added, removed, or changed entries are present. |
-| `lpm trust prune` | `-y`, `--yes` | Skip the confirmation prompt. Required on non-TTY / CI when pruning would write. |
-| `lpm trust prune` | `--dry-run` | Preview stale entries without writing `package.json`. |
-| `lpm trust prune` | `--json` | Emit the prune envelope instead of human output. Same as global `--json` for this command. |
-| `lpm trust lifecycle-scope` | `--json` | Emit the lifecycle scope envelope instead of human output. |
-| `lpm trust release-age-exclude` | `--json` | Emit the release-age exclusion envelope instead of human output. |
+Sharing `package.json` shares the declared policy. It does not transfer local signed authorization to another user or machine.
+
+## `lpm trust diff`
+
+```bash
+lpm trust diff
+lpm trust diff --assert-none --json
+```
+
+The command compares `lpm.trustedDependencies` with `.lpm/trust-snapshot.json`:
+
+| Change | Meaning |
+| --- | --- |
+| Added | A trust key exists only in the current manifest |
+| Removed | A trust key exists only in the saved snapshot |
+| Changed | The same key has a different `integrity` or `scriptHash` |
+
+Keys can include a package name, version, and artifact identifier. The comparison preserves each complete key.
+
+The diff does not compare capability approvals, provenance, lifecycle scopes, or release-age exclusions.
+
+If the snapshot is absent or unusable, the previous set is empty. Current approvals appear as additions and can fail `--assert-none`.
+
+If both sets are empty, the diff is empty. Plain `diff` reports changes without failing. `--assert-none` exits `1` when any change exists.
+
+The snapshot records the approval set used for the install. Later lifecycle-script edits stay visible in the next diff.
+
+LPM CLI saves the baseline after a successful install.
+
+A failed install, including failed dependency or root lifecycle scripts, preserves the previous snapshot. Snapshot writes are best effort.
+
+If a snapshot cannot be saved, the install can succeed with a warning. A later diff then uses the previous baseline, if available.
+
+### CI sequence
+
+Run the diff before [lpm install](/docs/packages/install) or [lpm ci](/docs/packages/install#frozen-lockfile-and-ci) updates the baseline:
+
+```yaml
+- run: lpm trust diff --assert-none --json
+- run: lpm ci
+- run: lpm trust prune --dry-run --json
+```
+
+A fresh checkout needs a saved baseline from a reviewed install for change detection. Treat that baseline as reviewed input.
+
+Installing first accepts the current approval set as the new baseline. A diff after that install cannot detect the earlier changes.
+
+The JSON report includes `added`, `removed`, `changed`, `diff_count`, `current_binding_count`, and `snapshot_captured_at`. Each change contains `key`, `previous`, and `current`.
+
+On assertion failure, the same report contains `success: false`, `assertion_failed: true`, and `error_code: "trust_diff_assert_none"`.
+
+## `lpm trust prune`
+
+```bash
+lpm trust prune --dry-run
+lpm trust prune --yes
+lpm trust prune --dry-run --json
+lpm trust prune --yes --json
+```
+
+Prune removes approval entries whose package names do not appear in the selected lockfile graph. It requires a usable lockfile.
+
+A different installed version does not make an entry stale. Moving a package between dependency sections does not make it stale either.
+
+For a workspace member, pruning uses that member's lockfile projection. It does not change sibling or root manifests.
+
+Interactive pruning asks before removal. For non-interactive mutation, pass `--yes`.
+
+JSON mode requires `--yes` or `--dry-run`, even when no entries are stale. `--dry-run` keeps the manifest unchanged.
+
+The JSON report includes `stale`, `stale_count`, `dry_run`, and `mutated`. `mutated` is false for previews and no-op results.
+
+A preview succeeds even when it finds stale entries. Input errors still fail. To fail CI on stale entries:
+
+```bash
+set -o pipefail
+lpm trust prune --dry-run --json | jq -e '.success and .stale_count == 0'
+```
 
 ## `lpm trust lifecycle-scope`
 
 ```bash
 lpm trust lifecycle-scope add '@company/*'
-lpm trust lifecycle-scope remove '@company/*'
 lpm trust lifecycle-scope list
+lpm trust lifecycle-scope remove '@company/*'
 ```
 
-A lifecycle scope trusts every package in one npm scope. The trust applies to all package versions and script contents.
+A lifecycle scope trusts all packages in one npm scope, across versions and script contents. Use it only for a scope you control.
 
-Use this command only when your organization controls the complete scope. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) for one package.
+The selector must be a lowercase npm scope wildcard, such as `@company/*`. Package names, versions, uppercase scopes, and nested patterns are invalid.
 
-The command accepts lowercase npm scope wildcards such as `@company/*`. It rejects package names, package versions, uppercase scopes, and nested patterns.
+An addition widens the security policy and requires local signed authorization. In an interactive terminal, LPM CLI requests native approval.
 
-`add` writes `package.json > lpm > scripts > trustedScopes`. It preserves all other fields in `package.json`.
-
-An addition widens the project security policy. In an interactive terminal, LPM CLI requests native user approval before it writes the scope.
-
-For an agent or JSON command, create a signed project unlock before you add the scope:
+For non-interactive use, first authorize the project from a user-controlled terminal:
 
 ```bash
 lpm security unlock trust-scope-widen --project . --ttl 10m
 lpm trust lifecycle-scope add '@company/*' --json
 ```
 
-The unlock is local to the project and user. The project scope list remains in `package.json` for the team.
+The unlock command itself requires user approval. JSON mode does not bypass authorization.
 
-The signed authorization remains under `~/.lpm/security`. LPM CLI does not write lifecycle scope trust to `lpm.lock`.
+Install and rebuild also require authorization for project scope trust. Other users must authorize the policy on their own machines.
 
-`remove` narrows the security policy and does not need an unlock. It removes the signed authorization for that scope.
+Removal needs no widening approval. It removes the matching scope and its signed authorization, and revokes `trust-scope-widen` from active project unlocks.
 
-It also revokes `trust-scope-widen` from each active temporary unlock for the project. Other scopes in the same unlock remain active.
+Other authorization scopes remain active. Adding the removed lifecycle scope again requires new authorization.
 
-As a result, a later `add` requires new authorization. Removal matches the complete scope selector.
-
-`list` shows the configured project scopes. It does not show strict package approvals or global lifecycle trust.
-
-The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, `normalized`, `count`, and `scopes`. The `add` and `remove` actions also contain `selector`.
-
-`changed` reports whether the requested scope changed. `normalized` reports whether the command repaired existing stored entries. `count` is the number of scopes.
+`list` shows only the project's lifecycle scopes. It does not include individual package approvals or global trust.
 
 ## `lpm trust release-age-exclude`
 
 ```bash
 lpm trust release-age-exclude add react
-lpm trust release-age-exclude add '@company/*'
 lpm trust release-age-exclude add react@19.1.0
-lpm trust release-age-exclude remove react@19.1.0
+lpm trust release-age-exclude add '@company/*'
 lpm trust release-age-exclude list
+lpm trust release-age-exclude remove react@19.1.0
 ```
 
-The command writes `package.json > lpm > minimumReleaseAgeExclude`. It preserves the other fields in `package.json`.
+An exclusion lets matching packages bypass the minimum release-age cooldown:
 
-The command accepts these selector types:
-
-| Selector | Effect |
+| Selector | Matches |
 | --- | --- |
-| `react` | Exclude all versions of `react`. |
-| `@company/*` | Exclude all packages in the `@company` scope. |
-| `react@19.1.0` | Exclude only version `19.1.0` of `react`. |
+| `react` | All versions of one package |
+| `react@19.1.0` | One exact semantic version |
+| `@company/*` | All packages in one scope |
 
-Version selectors must contain one exact semantic version. Ranges such as `react@^19` are invalid.
+Version ranges are invalid. Removal matches the complete selector, so removing `react@19.1.0` leaves a separate `react` entry intact.
 
-`add` is idempotent. If the selector exists in a normalized list, the command does not rewrite `package.json`.
+A duplicate addition preserves a normalized manifest without rewriting it. If stored entries need normalization, the command repairs them.
 
-If stored entries need normalization, the command repairs the list. It returns `changed: false` and `normalized: true` when the selector stays unchanged.
+`list` shows only project exclusions. During install, CLI, project, and user exclusions combine and duplicate selectors collapse.
 
-`remove` matches the complete selector. For example, removal of `react@19.1.0` does not remove the `react` selector.
+For a one-run exception, use:
 
-`list` shows only the project list. It does not include the user list or one-run CLI exclusions.
-
-The JSON envelope contains `success`, `schema_version`, `command`, `scope`, `action`, `changed`, `normalized`, `count`, and `exclusions`. The `add` and `remove` actions also contain `selector`.
-
-`changed` reports whether the requested selector changed. `normalized` reports whether the command repaired existing stored entries. `count` is the number of exclusions.
+```bash
+lpm install --min-release-age-exclude react@19.1.0
+```
 
 ### User release-age exclusions
 
-Use `lpm config` to apply an exclusion to all installs for the current user:
+For user-level exclusions, use [lpm config](/docs/infra/config):
 
 ```bash
 lpm config release-age-exclude add '@company/*'
-lpm config release-age-exclude remove '@company/*'
 lpm config release-age-exclude list
+lpm config release-age-exclude remove '@company/*'
 ```
 
-The user command writes `~/.lpm/config.toml > minimum-release-age-exclude`. Project and user lists merge during an install.
+These commands use `~/.lpm/config.toml > minimum-release-age-exclude`.
 
-## `lpm trust diff`
+## List and mutation reports
+
+Lifecycle-scope and release-age-exclude JSON reports include `success`, `schema_version`, `command`, `scope`, `action`, `changed`, `normalized`, and `count`.
+
+Lifecycle reports use `scopes`. Release-age reports use `exclusions`. Add and remove reports also include `selector`.
+
+`changed` indicates a selector change. `normalized` indicates a repair to the stored list. Both can differ in the same report.
+
+## Fix common problems
+
+If the command cannot find `package.json`, run it from the intended project or workspace member.
+
+If prune cannot read the lockfile, repair the installation before pruning:
 
 ```bash
-lpm trust diff
-lpm trust diff --assert-none
-lpm trust diff --json
-lpm trust diff --assert-none --json
+lpm install
+lpm trust prune --dry-run
 ```
 
-Read-only. Compares the current `package.json > lpm > trustedDependencies` against the snapshot LPM CLI took on the last `lpm install`. Surfaces three classes of change:
+If a trust assertion fails, review the listed keys and their manifest changes before the next install.
 
-- **Additions** — entries that weren't there last install. Potential silent PR poisoning vector ("someone added `evil-package` to the trust list — was that reviewed?")
-- **Removals** — entries that were there but are now gone. Usually intentional cleanup, but worth a glance.
-- **Same-key binding changes** — same `name@version` key, but a different `integrity` or `scriptHash`. Indicates the package contents changed without a version bump (re-publish, tampering).
+If scope authorization fails, use the unlock command shown in the error from a user-controlled terminal.
 
-The snapshot lives at `<project>/.lpm/trust-snapshot.json`, written by every successful `lpm install`. If the project has never been installed with LPM CLI, `diff` reports `"no prior snapshot"` and exits cleanly — there's no baseline to compare against yet.
+## Flags
 
-`trust diff` is informational by default — it prints whatever it found. For a built-in CI gate, use `--assert-none`:
+| Command | Flag | Effect |
+| --- | --- | --- |
+| `diff` | `--assert-none` | Exit `1` if any trust change exists. |
+| `prune` | `-y`, `--yes` | Confirm removal without a prompt. |
+| `prune` | `--dry-run` | Preview stale entries without mutation. |
+| All leaf commands | `--json` | Emit one JSON report instead of human output. |
 
-```bash
-lpm trust diff --assert-none
-```
-
-That exits non-zero when any `added`, `removed`, or `changed` entry is present.
-
-If you still want machine-readable output for bots or logs, `--json` works with the same gate:
-
-```bash
-lpm trust diff --json --assert-none
-```
-
-The JSON envelope: `success`, `schema_version`, `command`, `assertion_failed`, `diff_count`, `snapshot_captured_at`, `current_binding_count`, `added[]`, `removed[]`, `changed[]`. Each entry carries `key` (e.g., `esbuild@0.25.1`), `previous`, and `current` (the integrity / scriptHash before and after). When `--assert-none` fails in JSON mode, LPM CLI emits this same single diff envelope with `success: false`, `error_code: "trust_diff_assert_none"`, and exits non-zero.
-
-| Flag            | Effect                                         |
-| --------------- | ---------------------------------------------- |
-| `--json`        | Machine-readable output for CI gating via `jq` |
-| `--assert-none` | Exit non-zero if any diff entries are present  |
-
-## `lpm trust prune`
-
-```bash
-lpm trust prune                   # interactive — prompts before writing
-lpm trust prune --dry-run         # preview, don't write
-lpm trust prune -y                # skip the prompt (required on non-TTY / CI)
-lpm trust prune --json
-```
-
-Removes `trustedDependencies` entries whose package isn't in the resolved tree anymore. "No longer in the tree" means: `lpm.lock` has zero entries with this name (regardless of version). Per-version drift on a name that's still installed is **not** considered stale — that's drift, handled by the install-time gate, not by prune.
-
-Entries become stale when:
-
-- A dep was removed from `package.json` but its trust entry stayed
-- A dep was renamed (the old name's pin is now orphaned)
-- A dep was moved (e.g., from `dependencies` to `optionalDependencies` and never reinstalled)
-
-`lpm trust prune` reads `lpm.lock` to determine what's installed. **If the lockfile is missing**, the command exits with `no lpm.lock found — run \`lpm install\` before pruning trust entries` — refusing to prune from an empty installed-set (which would mark everything stale).
-
-The interactive prompt confirms the removal list before writing. In CI / non-TTY contexts, `-y` is required — without it, prune errors with `lpm trust prune needs a TTY for confirmation. Pass \`--yes\` to ...`.
-
-`--dry-run` runs the analysis normally but doesn't touch `package.json`.
-
-The JSON envelope: `success`, `schema_version`, `command`, `dry_run`, `mutated` (the actual final state — `false` on `--dry-run` or no-op), `stale_count`, `stale[]` (the keys removed).
-
-| Flag          | Effect                                             |
-| ------------- | -------------------------------------------------- |
-| `-y`, `--yes` | Skip the confirmation prompt (required on non-TTY) |
-| `--dry-run`   | Preview without writing                            |
-| `--json`      | Machine-readable output                            |
-
-## CI usage
-
-```yaml
-- run: lpm install --offline
-- run: lpm trust diff --assert-none
-- run: lpm trust prune --dry-run --json # informational — would prune anything?
-```
-
-`trust diff --assert-none` is the built-in drift gate: fail the build if `trustedDependencies` changed since the last reviewed install. Add `--json` if you also want structured output in CI logs.
-
-`prune --dry-run` is for hygiene reports only — it always exits zero. Gate it the same way if you want to fail on stale entries:
-
-```bash
-lpm trust prune --dry-run --json | jq -e '.stale_count == 0'
-```
+See the [global flags](/docs/commands#global-flags) for other shared options.
 
 ## See also
 
-- [`lpm approve-scripts`](/docs/packages/approve-scripts) — add entries to the trust list
-- [`lpm rebuild`](/docs/packages/rebuild) — runs dependency scripts for trusted packages
-- [`package.json` "lpm.scripts"](/docs/reference/package-json-lpm#the-lpmscripts-block) — project lifecycle settings
-- [`package.json` "lpm.trustedDependencies"](/docs/reference/package-json-lpm#trusteddependencies) — the file format
-- [`package.json` "lpm.minimumReleaseAgeExclude"](/docs/reference/package-json-lpm#minimumreleaseageexclude) — project release-age exclusions
-- [`config.toml`](/docs/reference/config-toml) — user release-age exclusions
+- [lpm approve-scripts](/docs/packages/approve-scripts) — approve individual dependency scripts
+- [lpm rebuild](/docs/packages/rebuild) — run approved scripts
+- [lpm install](/docs/packages/install) — install dependencies and update the trust baseline
+- [Project script configuration](/docs/reference/package-json-lpm#the-lpmscripts-block) — lifecycle settings
+- [Package approvals](/docs/reference/package-json-lpm#trusteddependencies) — approval format
+- [Project release-age exclusions](/docs/reference/package-json-lpm#minimumreleaseageexclude) — cooldown exceptions
+- [User configuration](/docs/reference/config-toml) — user-level policy
