@@ -1,394 +1,257 @@
 ---
 title: Security & audit
-description: "Defense in depth — script policy, behavioral analysis, OSV, provenance, typosquatting, the triage gate."
+description: Understand dependency script approval, source analysis, vulnerability checks, and security policies for CI.
 ---
 
-LPM CLI's security model is **layered**. No single check is the answer; instead, several independent gates each catch a different class of threat. This page is the conceptual overview — what each layer does, how they compose, and where to dig deeper.
+LPM CLI separates permission to run dependency scripts from source analysis, vulnerability reports, and publisher checks. Each check answers a different question.
 
-The CLI surfaces are [`lpm audit`](/docs/packages/audit) (broad report), [`lpm query`](/docs/packages/query) (precision selectors), [`lpm approve-scripts`](/docs/packages/approve-scripts) (script trust), and [`lpm trust`](/docs/packages/trust) (drift inspection). All of them read from the same underlying analysis pipeline.
+These controls work with npm, LPM.dev Registry, and private registries. Only `@lpm.dev/*` packages always use LPM.dev Registry.
 
-## The five layers
+```bash
+# Install dependencies, then inspect blocked scripts
+lpm install
+lpm approve-scripts --list
 
-| Layer                     | What it catches                                         | Where it runs                                          |
-| ------------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| **Lifecycle script gate** | Postinstall script supply-chain attacks                 | At install time, blocks until approval                 |
-| **Behavioral analysis**   | Risky API usage, obfuscation, telemetry, license issues | During install when enabled, or during an explicit audit |
-| **Vulnerability data**    | Known CVEs from OSV.dev + registry advisories           | At `lpm audit` time                                    |
-| **Publisher trust + cooldown** | Recently-published direct versions, registry-signature failures, trust downgrades, or publisher-identity drift | At install time and via `lpm audit signatures` |
-| **Triage**                | Tiered automation for the script gate                   | At install time, per-package                           |
+# Fail on High and Critical vulnerabilities
+lpm audit --level high --fail-on vuln
+```
 
-Each layer is independent — a package can pass one and fail another. Most attacks in the wild trip more than one.
+## What happens by default
 
-## Layer 1: Lifecycle script gate (default-deny)
-
-Bare `lpm install` runs the root project's install lifecycle, including `prepare`. Dependency package lifecycle scripts (`preinstall`, `install`, `postinstall`) do **not** run by default. To execute dependency scripts, you either:
-
-- **Approve them explicitly** via [`lpm approve-scripts`](/docs/packages/approve-scripts) — the package gets recorded in `package.json > lpm > trustedDependencies` (project) or `~/.lpm/global/trusted-dependencies.json` (`--global`) with its integrity + script hash.
-- **Opt out per-invocation** with `lpm install --policy=allow` (or `--yolo`) — runs everything, no gate. Works on `lpm install -g` too.
-- **Opt out persistently** with `package.json > lpm > scriptPolicy: "allow"` or `~/.lpm/config.toml > script-policy = "allow"`. The user-config tier applies to both project and global installs.
-
-Approvals are **strict**: bound to `{name, version, integrity, scriptHash}`. A republished version with different bytes invalidates the approval and re-opens the package for review. This is what makes the deny-by-default model usable across long-running projects — trust is for a specific build, not a name.
-
-The dependency lifecycle phases that actually run during `lpm install`'s build pipeline are `preinstall`, `install`, `postinstall`. The broader BLOCKED set (which detection scans for) also includes `preuninstall`, `uninstall`, `postuninstall`, `prepare`, and `prepublishOnly` — dependency packages that declare any of these get flagged even if the current dependency pipeline doesn't execute them.
-
-## Layer 2: Behavioral analysis
-
-Install-time source analysis is off by default. When enabled, LPM CLI analyzes package source as extracted bytes enter the store. Results are cached in a schema-versioned `.lpm-security.json` next to the package files. Cache identity includes package source and integrity, so the same `name@version` from different registries does not share findings.
-
-Use `lpm config source-analysis` to manage install-time analysis. The disabled setting skips source scans during extraction and the post-install summary, plus analysis-cache writes. Existing caches remain on disk. The summary does not use those caches for local findings. Registry enrichment and firewall checks retain their separate settings.
-
-Disabling a previously approved source-analysis setting requires security approval. [`lpm audit`](/docs/packages/audit) still scans installed source when it cannot use a cache. After analysis is re-enabled, the next install backfills any missing, malformed, or outdated store cache from the already-extracted bytes without downloading the tarball again.
-
-Three groups of tags — source behavior (what the code does), supply-chain signals (what the artifact looks like), and manifest declarations (what `package.json` declares):
-
-**Source tags** — what the source code does:
-
-| Tag                | Detects                                            |
-| ------------------ | -------------------------------------------------- |
-| `:eval`            | Use `eval`, `Function()`, or `vm.runInThisContext` |
-| `:network`         | Make outbound HTTP / WS connections                |
-| `:fs`              | Use filesystem APIs   |
-| `:shell`           | Spawn shells (`spawn`, `exec`, `execSync`)         |
-| `:child-process`   | Use `child_process` (any form)                     |
-| `:native`          | Ship native modules (`.node`, `.wasm`)             |
-| `:crypto`          | Use cryptographic primitives                       |
-| `:dynamic-require` | Use dynamic `require()` (variable arg)             |
-| `:env`             | Read `process.env`                                 |
-| `:ws`              | Use WebSockets                                     |
-
-**Supply-chain tags** — what the artifact looks like:
-
-| Tag                     | Detects                                                           |
-| ----------------------- | ----------------------------------------------------------------- |
-| `:obfuscated`           | Show signs of code obfuscation                                    |
-| `:possible-obfuscation` | Show possible code obfuscation at moderate confidence             |
-| `:high-entropy`         | Contain high-entropy string blobs                                 |
-| `:minified`             | Ship minified-only source                                         |
-| `:telemetry`            | Make telemetry / analytics calls                                  |
-| `:url-strings`          | Contain URL string literals                                       |
-| `:trivial`              | Tiny — measured by AST node count                                 |
-| `:protestware`          | Match a curated list of known protest-license / sabotage packages |
-| `:credential-exfiltration` | Send credential-file contents, private-key material, or the complete process environment in a network payload |
-| `:encrypted-execution` | Decrypted bytes reach code evaluation or a file passed to a process launcher |
-| `:downloaded-execution` | A downloaded response reaches code evaluation or a file passed to a process launcher |
-| `:destructive-filesystem` | Recursively remove the home directory, a filesystem root, or current project contents |
-
-**Manifest tags** — what the `package.json` declares:
-
-| Tag             | Detects                            |
-| --------------- | ---------------------------------- |
-| `:git-dep`      | Declare a dependency with a git URL |
-| `:http-dep`     | Declare a dependency with an insecure HTTP URL |
-| `:wildcard-dep` | Declare a dependency with `*`, `latest`, or an empty version |
-| `:copyleft`     | Declare a license expression with a recognized copyleft license |
-| `:no-license`   | Have no usable license declaration, except private packages |
-
-Plus state tags driven by other layers (`:scripts`, `:built`, `:vulnerable`, `:deprecated`, `:lpm`, `:npm`, `:critical`/`:high`/`:medium`/`:info`).
-
-Install, audit, and query use one severity policy for these tags:
-
-| Severity | Behavioral tags |
+| Control | Default behavior |
 | --- | --- |
-| Critical | `:obfuscated`, `:protestware`, `:credential-exfiltration`, `:destructive-filesystem` |
-| High | `:eval`, `:child-process`, `:shell`, `:dynamic-require`, `:encrypted-execution`, `:downloaded-execution` |
-| Medium | `:network`, `:native`, `:git-dep`, `:http-dep`, `:wildcard-dep`, `:no-license` |
-| Info | `:fs`, `:crypto`, `:env`, `:ws`, `:possible-obfuscation`, `:high-entropy`, `:telemetry`, `:trivial`, `:copyleft`, `:minified`, `:url-strings` |
+| Root-project lifecycle | Bare [lpm install](/docs/packages/install) runs the project's install lifecycle, including `prepare`. |
+| Dependency lifecycle | Scripts require approval. The relevant phases are `preinstall`, `install`, and `postinstall`. |
+| Script sandbox | Approved scripts run with filesystem restrictions and a filtered environment. Outbound network access is allowed. |
+| Install-time source analysis | Off. Enable it separately to inspect package source during installation. |
+| Automatic audit | Off. An enabled audit after installation reports findings without turning them into an install failure. |
+| Advisor | Off. Triage can use an optional advisor to review scripts. |
+| Release cooldown, signature checks, trust policy, typosquat guard, LPM Firewall | Opt-in controls with separate configuration. |
 
-Info tags are behavioral metadata. They describe common capabilities or artifact traits, not confirmed vulnerabilities. LPM CLI detects and caches them during installation.
+A successful install does not mean that an audit passed. Use [lpm audit](/docs/packages/audit) as an explicit CI gate.
 
-Normal install output hides Info tags. Use `lpm --verbose install`, `lpm audit`, or `lpm query :info` to inspect them. Verbose install hints contain the selectors for the signals that were found.
+## Review and run dependency scripts
 
-### What Critical means
+```bash
+# Inspect one package before saving an approval
+lpm approve-scripts esbuild --dry-run
+lpm approve-scripts esbuild
 
-The local source scanner assigns Critical to high-confidence obfuscation, protestware, credential exfiltration, and broad filesystem deletion. Obfuscation uses these confidence bands:
+# Run approved scripts
+lpm rebuild
+```
 
-| Confidence | Result |
+[lpm approve-scripts](/docs/packages/approve-scripts) saves trust. [lpm rebuild](/docs/packages/rebuild) runs eligible scripts.
+
+New artifact approvals bind the package name, version, integrity, and lifecycle script hash. The hash includes recognized local JavaScript delegates and reachable imports.
+
+A changed artifact needs another review. Legacy name approvals and [trusted scopes](/docs/packages/trust#lpm-trust-lifecycle-scope) also exist, with broader coverage.
+
+The approval queue includes blocked dependency `preinstall`, `install`, and `postinstall` scripts. Other phases, such as dependency `prepare`, do not enter this queue.
+
+### Choose a script policy
+
+| Policy | Eligible dependency scripts |
 | --- | --- |
-| `≤ 0.3` | No obfuscation tag |
-| `> 0.3` and `≤ 0.7` | `:possible-obfuscation` (Info) |
-| `> 0.7` | `:obfuscated` (Critical) |
+| `deny` | Explicitly trusted packages only. This is the default. |
+| `triage` | Explicitly trusted packages, recognized safe commands, and packages approved by the advisor for this install. |
+| `allow` | All dependency lifecycle scripts. |
 
-The protestware detector targets sabotage patterns. Examples include deliberate infinite loops and locale or network-interface checks near process exits.
-
-Behavioral tags report code patterns and package capabilities. They do not prove user intent or malicious execution.
-
-The `:credential-exfiltration` finding traces supported secret flows into upload calls. See [detection coverage](/docs/packages/audit#credential-exfiltration) for its limits.
-
-For example, `:env` and `:network` are independent signals. Their presence does not prove that a package sends environment variables to a remote host.
-
-A shell command such as `rm -rf` matches `:shell` and `:child-process`. These High signals do not become Critical from the command text alone.
-
-When `lpm audit` or audit-after-install reports a known vulnerability or LPM.dev Registry security finding, it uses the published severity. A Critical advisory or Registry finding remains Critical.
-
-The secret scanner is separate. Critical hardcoded-secret findings appear only when you run `lpm audit --secrets`.
-
-### Coverage and limits
-
-Source analysis covers JavaScript and TypeScript without executing package code. An API capability does not prove malicious intent or execution.
-
-Full file analysis stops at 4 MiB. Larger files receive samples. Each package has a 50 MiB scan budget and a 5,000-file limit.
-
-Missing files, unreadable inputs, unsupported syntax, and exceeded limits prevent a clean audit. See [source coverage](/docs/packages/audit#source-coverage) for recovery steps and JSON fields.
-
-Local analyses can be cached. Scanner rule changes invalidate older cached results.
-
-### Querying the tags
+Policy precedence is CLI flags, project `lpm.scriptPolicy`, user `script-policy`, then the default.
 
 ```bash
-lpm audit                         # broad report — all tags grouped
-lpm query :eval                   # one tag
-lpm query :scripts:not(:built)    # combinator: scripted but never built
-lpm query :critical --assert-none # CI gate: fail if any critical-tagged package
+lpm install --triage --advisor=none
+lpm config scripts --set deny
 ```
 
-[`lpm query`](/docs/packages/query) is the precision tool — exposes the same data the audit pipeline produces, with combinators for ad-hoc gates.
+Eligibility does not itself run a script. Installation uses auto-build, configured auto-build, or an all-trusted package set to decide when to run eligible scripts.
 
-## Layer 3: Vulnerability data (OSV)
+The `allow` policy also requests automatic execution. Project `lpm.scripts.denyAll` suppresses dependency execution even if approvals exist.
 
-`lpm audit` cross-references every installed package against [OSV.dev](https://osv.dev) (for npm packages) and any LPM.dev Registry-side advisories (for `@lpm.dev` packages). Findings are surfaced inline with the behavioral report. Severity ladder: `critical` > `high` > `moderate` (alias `medium`) > `info` (alias `low`).
+Weaker policies can require [security approval](/docs/infra/security). An unattended flag cannot bypass the approved security floor.
+
+### Understand triage labels
+
+Green, Amber, and Red describe static script classifications. They are separate from saved trust.
+
+- **Green:** The command matches a recognized pattern. A local delegated file still needs review before automatic execution.
+- **Amber:** The script needs explicit approval or an advisor decision.
+- **Red:** Triage does not approve it automatically. A package with any Red phase is excluded from advisor review.
+
+A matching repository URL can affect the displayed label. It does not approve delegated code. Explicit package or scope trust can authorize scripts with any label.
+
+## Keep sandbox policy separate
+
+| Sandbox mode | Effect on eligible scripts |
+| --- | --- |
+| `default` | Filesystem restrictions, filtered environment, outbound network allowed. |
+| `strict` | The same restrictions, with outbound network denied. |
+| `none` | No script containment or inherited-environment filtering. |
+
+Sandbox mode controls how an eligible script runs. It does not grant script approval.
+
+An approved `allow-degraded` setting can continue without full isolation when platform support is unavailable. This can include missing network isolation in strict mode.
 
 ```bash
-lpm audit                       # all findings
-lpm audit --level high          # filter findings and the failure decision
-lpm audit --fail-on vuln        # CI: fail on confirmed vulns only (not behavior)
+lpm rebuild --strict-sandbox
 ```
 
-The vulnerability check requires network access. OSV requests run on each invocation. Local source analysis can use cached results.
+Platform restrictions and permitted paths differ. See [sandbox configuration](/docs/reference/lpm-toml#sandbox) and the [script configuration](/docs/reference/package-json-lpm#the-lpmscripts-block).
 
-OSV receives names and versions outside `@lpm.dev/*`, including private-registry packages. See [inventory and network requests](/docs/packages/audit#inventory-and-network-requests).
-
-## Layer 4: Provenance + cooldown
-
-Install-time and audit-time gates that catch attacks against the publisher identity and registry metadata itself. They apply to both `lpm install` and `lpm install -g` unless noted.
-
-**Minimum release age** — The release cooldown is off by default. Enable it with `lpm config release-age --set 1d`. When enabled, project installs check direct dependencies by default. Strict mode also checks transitive dependencies and lockfile replays.
-
-For ranges, the resolver skips new candidates and selects the newest mature candidate that satisfies the range. An exact pin fails during its cooldown.
-
-`lpm install -g`, `lpm dlx`, `lpm upgrade`, and `lpm outdated` apply the policy to the selected package version.
-
-Configure the duration with `--min-release-age`, `minimumReleaseAge`, or `minimum-release-age-secs`. Configure strict mode with `minimumReleaseAgePolicy` or `release-age-policy`.
-
-Use `--allow-new` to bypass the cooldown for one install. Use `--min-release-age-exclude <SELECTOR>` to exempt a package name, exact version, or `@scope/*`.
-
-Use [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age-exclude) for project selectors. Use [`lpm config release-age-exclude`](/docs/infra/config#exclude-selected-packages-from-the-release-cooldown) for user selectors.
-
-CLI, project, and user lists merge. Global installs do not use the project list. They use the CLI, user, and default layers.
-
-**Registry signatures** — npm packages can carry detached registry signatures in `dist.signatures`. Run [`lpm audit signatures`](/docs/packages/audit#registry-signatures) to verify the installed tree on demand. Install-time verification is disabled by default; enable it with:
+## Inspect source behavior
 
 ```bash
-lpm config signatures --set true
+lpm config source-analysis --set true
+lpm --verbose install
+lpm audit
+lpm query ':eval:scripts'
 ```
 
-or for one process:
+Install-time source analysis inspects package code without running it. The install summary reports findings from the installed files and separately configured Registry enrichment.
+
+Registry enrichment uses matching installed-version metadata. Missing or mismatched versions do not inherit findings from `latest`.
+
+The summary is informational. `--no-security-summary` skips the post-install source scan, Registry enrichment, and report. It does not change script policy or explicit audits.
+
+Behavioral tags describe capabilities and source patterns. Network access alone does not prove data theft. Environment access alone does not prove secret exposure.
+
+[lpm audit](/docs/packages/audit) combines source findings with vulnerability and Registry reports. [lpm query](/docs/packages/query) selects packages from its own inventory and analysis.
+
+[lpm trust](/docs/packages/trust) inspects saved approvals and trust changes. These commands have different inventories and failure rules.
+
+Local source analysis does not upload package source. Full analysis covers files up to 4 MiB. Larger files receive samples.
+
+Each package has a 50 MiB scan budget and a 5,000-file limit. Missing inputs, unsupported syntax, or exceeded limits prevent a clean audit.
+
+See [source coverage](/docs/packages/audit#source-coverage) for report fields and recovery. Disabling install-time analysis does not disable explicit audits.
+
+<a id="layer-4-provenance--cooldown" />
+
+## Check vulnerabilities and publisher evidence
 
 ```bash
-LPM_VERIFY_REGISTRY_SIGNATURES=1 lpm install
+# Known vulnerabilities
+lpm audit --fail-on vuln
+
+# Hardcoded credentials are a separate scan
+lpm audit --secrets --fail-on secrets
+
+# npm-compatible registry signatures
+lpm audit signatures
 ```
 
-When enabled on install, LPM CLI verifies registry signatures after resolution and before the install commits. A missing signature, missing integrity hash, missing signing key, expired key, or invalid signature fails the install for npm registry packages. `@lpm.dev/*` packages and non-registry sources are skipped by this specific check and still pass through the other layers.
+Vulnerability requests send package names and versions outside `@lpm.dev/*` to OSV, including names from private registries.
 
-**Trust policy** — optional no-downgrade policy for npm trust evidence:
+LPM.dev Registry supplies findings for its own packages. See [audit network requests](/docs/packages/audit#inventory-and-network-requests) before use with confidential inventories.
+
+| Optional control | Purpose | Configure |
+| --- | --- | --- |
+| Release cooldown | Avoid recently published versions. Strict mode also covers transitive dependencies and lockfile replay. | [Release age](/docs/infra/config#increase-the-release-cooldown) |
+| Registry signatures | Check npm-compatible registry signatures and artifact integrity. Missing required evidence fails installation. | [Signature checks](/docs/packages/audit#registry-signatures) |
+| Trust policy | Reject weaker publisher evidence or loss of verified artifact provenance. | [Install trust policy](/docs/packages/install#registry-signatures-and-trust-policy) |
+| Provenance drift | Compare publisher identity with a saved approval. Changed or missing evidence can require another review. | [Script approvals](/docs/packages/approve-scripts) |
+| Typosquat guard | Detect suspicious new direct dependency names without a network request. | [Typosquat policy](/docs/reference/lpm-toml#typosquat-policy) |
+| LPM Firewall | Check selected public npm versions against package verdicts. `monitor` warns and `enforce` blocks according to policy. | [Firewall for npm](/docs/guides/firewall) |
+
+These controls have separate scopes. Registry signature checks skip `@lpm.dev/*` and non-registry sources. LPM Firewall does not replace your npm registry.
+
+<a id="optional-llm-advisor" />
+
+## Use an optional advisor
 
 ```bash
-lpm config trust-policy --set no-downgrade
+lpm install --triage --auto-build --advisor=ollama
+
+# Change the local Ollama model for this invocation
+LPM_TRIAGE_OLLAMA_MODEL=llama3.2 lpm install --triage --advisor=ollama
+
+# Keep triage but disable the advisor for one invocation
+lpm install --triage --advisor=none
 ```
 
-When enabled, LPM CLI enforces two history floors. During resolution, it refuses a release whose npm trusted-publisher or staged-publish evidence is weaker than an earlier published release; ranges can select an older acceptable version, while an exact downgraded pin fails. After selection, verified lockfile history adds an artifact-level floor: once any locked version has artifact-bound Sigstore evidence, a later selected version must also verify. An absent attestation, unavailable attestation, invalid bundle, frozen lockfile without matching evidence, or disabled/skipped verifier fails instead of allowing provenance to disappear. This artifact-level rule takes precedence over `verify=warn`, `verify=off`, per-package verification skips, and best-effort availability; disable `trust-policy` itself if you intentionally want to permit a downgrade. Registry attestation pointers alone count toward neither floor. The default remains `off`.
+Supported providers are `none`, `claude-cli`, `codex`, and `ollama`. Precedence is `--advisor`, project `lpm.triageAdvisor`, user `triage-advisor`, then `none`.
 
-**Provenance drift** — when a previously-approved package is re-resolved, LPM CLI compares the candidate version's Sigstore provenance against the snapshot captured at approval time:
+The advisor reviews every phase that needs automatic approval, including recognized delegated scripts. All reviewed phases must approve before the package qualifies.
 
-```text
-(now,      approved)
-(Some(n),  Some(a))   if n == a   → pass
-(Some(_),  Some(_))               → drift! identity changed
-(None,     Some(_))               → drift! provenance dropped
-(Some(_),  None)                  → OK — present now, wasn't at approval
-(None,     None)                  → never had it; layers 1/2/4 decide
-```
+A missing provider or failed preflight produces a warning. A failed individual classification withholds approval. Installation can continue with scripts blocked.
 
-A drift event blocks the install. Re-approve via [`lpm approve-scripts`](/docs/packages/approve-scripts) (or `lpm approve-scripts --global`) to capture the new identity, or opt out per-package with `--ignore-provenance-drift <pkg>` / blanket-waive with `--ignore-provenance-drift-all`. The reference snapshot lives in `package.json > lpm > trustedDependencies > <pkg>@<ver> > provenanceAtApproval` for project trust and in `~/.lpm/global/trusted-dependencies.json` for global trust.
+### Data sent to the provider
 
-The verifier binds the signed in-toto subject to the exact npm package URL (`pkg:npm/<name>@<version>`) and the package tarball's SHA-512 integrity. It also verifies the Sigstore certificate chain, transparency-log inclusion, publisher/workflow identity, and bundle digest. Registry metadata that merely points at an attestation is not proof.
+The prompt contains package coordinates, lifecycle commands, the repository URL when present, and referenced script text.
 
-Attestation URLs must be HTTPS and match the package registry origin. Redirects are checked at every hop and cannot change origin or downgrade HTTPS. The provenance cache stores the original bundle bytes, not a writable “verified” result; every cache hit reruns cryptographic verification and artifact binding. A malformed or locally modified cache entry is discarded and fetched again.
+Referenced-file context is limited to one level and 32 KiB per file. This context is narrower than the complete script hash.
 
-Verified evidence is written sparsely to `lpm.lock`, including the publisher/workflow snapshot, subject purl and SHA-512, transparency-log identity/index/time, and bundle SHA-256. Frozen and offline installs validate that evidence against the locked package name, version, source, and integrity before replay. The lockfile contains derived evidence rather than the original Sigstore bundle, so frozen replay cannot independently re-prove the publisher and transparency-log claims after a malicious lockfile edit. Treat `lpm.lock` as trusted, reviewable project input; online cache hits are different because the cache retains the original bundle and reruns verification.
+`claude-cli` and `codex` use their configured services. Ollama uses the local server. Select a provider that matches your source-disclosure requirements.
 
-To broaden or tighten verification explicitly:
+<a id="verdict-cache" />
+
+### Cached decisions and temporary approvals
+
+The execution approval lasts for the current install. It does not write a persistent package trust entry.
+
+Advisor verdicts are cached separately for 30 days by default. The cache includes reviewed content, the complete script hash, prompt template, and provider identity.
+
+Ollama's configured model and endpoint also identify its cache. Changing the model selects a new cache entry.
+
+The provider binary version is part of the identity. It does not guarantee an unchanged remote model or unchanged model weights under an existing name.
 
 ```bash
-lpm config sigstore --set scope=all
-lpm config sigstore --set availability=strict
+# Request a fresh decision without reading or writing the verdict cache
+LPM_L4_CACHE=0 lpm install --triage --advisor=ollama
 ```
 
-`scope=all` checks every resolved package; the default `scope=approved` limits checks to packages with an approved provenance identity. `availability=strict` requires an attestation; the default `best-effort` preserves missing/temporarily unavailable attestations as absence or unknown without blocking. A present bundle that fails verification is still rejected by the default `verify=deny` posture.
+`LPM_L4_CACHE_PATH` changes the cache location. `LPM_L4_CACHE_TTL_SECS` changes the expiry period.
 
-`--allow-new`, registry signatures, trust-policy, and `--ignore-provenance-drift[-all]` are independent. `--allow-new` only skips the cooldown; signature verification and drift still apply unless their own controls are disabled or waived.
+An approved package stays in the review queue if its scripts do not run, such as when `denyAll` suppresses auto-build.
 
-The cooldown threshold also gates the Layer 5 [identity widening](#layer-5-triage) — a recent-publish package whose script body matches an identity-Green shape still stays Amber until the publish age clears the cooldown. The two axes are independently bypassable: `--allow-new` skips the cooldown halt, `--policy=allow` skips the script-tier review.
-
-## Layer 5: Triage
-
-The tiered gate that lets some scripted packages auto-approve. Active under `script-policy: "triage"` (or `lpm install --triage` / `--policy=triage`).
-
-| Tier      | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Green** | A curated catalog of shape patterns (`node-gyp rebuild`, `tsc`, `prisma generate`, `husky install`, etc.) plus identity-matched delegating installers — a `node install.js` / `node postinstall.js` / `node scripts/install.js` body (+ `.cjs`/`.mjs` variants) Greens when the package's `repository` URL or a `bin` entry plainly names the package. Auto-approves and runs in the [filesystem sandbox](/docs/reference/package-json-lpm#the-lpmscripts-block). |
-| **Amber** | Doesn't fit a green pattern, doesn't match a red. Defers to layers 2/3/4 (trust manifest, provenance + cooldown, optional LLM advisor). Network binary downloaders (`puppeteer install`, `playwright install`, `cypress install`) live here by design.                                                                                                                                                                                                            |
-| **Red**   | Hand-curated blocklist (pipe-to-shell, base64-decode-to-execute, nested package-manager installs, etc.). **Blocks unconditionally**. Never reaches the advisor.                                                                                                                                                                                                                                                                                                   |
-
-Worst-wins reducer across phases — a package whose `preinstall` is green but `postinstall` is red is classified as red.
-
-Identity widening is shape-keyed, not name-keyed: there is no per-package allowlist. The classifier looks at the script body's structure (exactly `node <reserved>.{js,cjs,mjs}`), reads the manifest's `repository` URL and `bin` entries, and matches by the package's base name (case-insensitive, with `.git` suffixes stripped). Generic / too-short base names (anything ≤ 2 chars, plus `js`, `lib`, `core`, `node`, `src`, `util`, `utils`) carry no identity payload and never widen.
-
-**Cooldown defense-in-depth.** Identity widening refuses to fire when the configured [minimum release age](#layer-4-provenance--cooldown) is above zero AND the package's publish age is below the threshold (or unknown). This classifier gate is separate from the direct/root install halt — `lpm install --allow-new <pkg>` bypasses the cooldown halt but a recent-publish package whose identity matches still stays Amber and surfaces in the script-tier review. To opt out of both, set `minimum-release-age` to `0` (universally disabling cooldown also disables the defense-in-depth check) or use `--policy=allow`.
-
-The sandbox itself is Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Scripts can read the project, write to their own package directory, and write to anything declared in `package.json > lpm > scripts.sandboxWriteDirs`. Anything else is denied. Capability-widening (extra env vars, full project read, looser rlimits) requires explicit approval.
-
-## Putting it together — `script-policy` × `sandbox-mode`
-
-The two axes are **independent**. `script-policy` decides whether a script runs; `sandbox-mode` decides what it can do once running. Every combination is valid and configured through separate precedence chains.
-
-| script-policy                                         | sandbox-mode | What happens to a scripted package                                                                                                                                                            |
-| ----------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`deny`](#layer-1-lifecycle-script-gate-default-deny) | `default`    | Script blocked at the script-policy gate. After [`lpm approve-scripts`](/docs/packages/approve-scripts): runs with filesystem + env containment, outbound network allowed.                    |
-| `deny`                                                | `strict`     | Same gate. After approval: runs with containment **+ outbound network denied**.                                                                                                               |
-| `deny`                                                | `none`       | Same gate. After approval: runs unsandboxed (full host access including credential env).                                                                                                      |
-| [`triage`](#layer-5-triage)                           | `default`    | L1-L3 tier decides per package. Greens auto-run with containment + network allowed. Ambers go to the [`lpm approve-scripts`](/docs/packages/approve-scripts) queue. Reds blocked permanently. |
-| `triage`                                              | `strict`     | Same tiering. Whatever runs runs with containment **+ outbound network denied**.                                                                                                              |
-| `triage`                                              | `none`       | Same tiering. Whatever runs runs unsandboxed.                                                                                                                                                 |
-| `allow`                                               | `default`    | Every script runs with containment + network allowed.                                                                                                                                         |
-| `allow`                                               | `strict`     | Every script runs with containment **+ outbound network denied**. Trust-the-lockfile + deny-install-time-network shape.                                                                       |
-| `allow`                                               | `none`       | Every script runs unsandboxed — equivalent to `npm install`.                                                                                                                                  |
-
-Each axis is configured independently:
-
-- **`script-policy`** — `package.json > lpm > scriptPolicy` (project), `~/.lpm/config.toml > script-policy` (user), CLI flag (`--policy=<v>` / `--yolo` / `--triage`), or the [`lpm config scripts`](/docs/infra/config#setup-wizards) wizard.
-- **`sandbox-mode`** — `./lpm.toml > [sandbox] mode` (project) or `~/.lpm/config.toml > [sandbox] mode` (user), CLI flag (`--strict-sandbox` / `--paranoid` / `--no-sandbox`), `LPM_STRICT_SANDBOX=1` env, or the [`lpm config sandbox`](/docs/infra/config#setup-wizards) wizard.
-
-[`lpm approve-scripts`](/docs/packages/approve-scripts) grants permission to **run** — it never escalates the sandbox. An approved script under `sandbox-mode = strict` still runs without network access; an approved script under `sandbox-mode = none` runs with full host access.
-
-### Optional LLM advisor
-
-Layer 5 includes an opt-in advisor that uplifts Amber packages to AutoRun for the current install only. Configure via `triage-advisor`:
-
-| Value              | Provider                                                                         |
-| ------------------ | -------------------------------------------------------------------------------- |
-| `"none"` (default) | No advisor — portable layers 1-4 only.                                           |
-| `"claude-cli"`     | [Claude CLI](https://github.com/anthropics/claude-code) — local subprocess call. |
-| `"codex"`          | OpenAI [Codex CLI](https://github.com/openai/codex) — local subprocess call.     |
-| `"ollama"`         | Ollama-served local model — local HTTP call.                                     |
-
-```toml title="~/.lpm/config.toml"
-script-policy   = "triage"
-triage-advisor  = "claude-cli"
-```
-
-```json title="package.json"
-{ "lpm": { "scriptPolicy": "triage", "triageAdvisor": "claude-cli" } }
-```
-
-The two keys are **independent**. `script-policy: "triage"` with `triage-advisor: "none"` is the portable L1-4 baseline. `script-policy: "deny"` with any advisor setting still blocks unconditionally — the advisor never runs outside `triage`.
-
-Precedence for `triage-advisor` (highest first): `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default `"none"`.
-
-**Properties:**
-
-- **Ephemeral.** Approvals never write to disk as trust state. A second `lpm install` invokes the advisor again — the verdict is non-deterministic and LPM CLI does not pretend otherwise. Strict bindings via [`lpm approve-scripts`](/docs/packages/approve-scripts) exist for the "approve once, remember forever" use case.
-- **Source-aware identity.** Approvals key on `(name, version, integrity)` so a registry copy of a package can never inherit approval from a workspace copy of the same coordinates.
-- **Degrade-and-warn.** Missing binary, timeout, unparseable response → install continues with one stderr warning. Never fails on the advisor itself.
-- **Prompt-injection defense.** Untrusted script body is fenced with a per-call random nonce; the verdict parser strict-matches `Approve` and loose-matches only the safe-default verdicts.
-- **Worst-of-phases per package.** Approve only if every amber phase classified Approve; one Manual or Abstain blocks the whole package.
-
-### Prompt context
-
-The advisor sees a fixed template — role framing, verdict-format reminder, and a structured context block:
-
-| Field              | Source                                                                             | Notes                                                                                                                                                                                                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Package`          | `name@version`                                                                     | Always present.                                                                                                                                                                                                                                                              |
-| `Repository:`      | `package.json > repository` (URL or shorthand)                                     | Emitted only when the manifest carries a non-empty value. Treated as untrusted hint — pairs with the body's actual behaviour, never approves on URL alone.                                                                                                                   |
-| `Lifecycle phase`  | `preinstall` / `install` / `postinstall`                                           | Always present.                                                                                                                                                                                                                                                              |
-| `Script body`      | The phase's exact `package.json` value                                             | Fenced with `<<UNTRUSTED-SCRIPT-BEGIN-{nonce}>>` markers using a per-call random nonce.                                                                                                                                                                                      |
-| `Referenced files` | Files the body delegates to (e.g. `install.js` when the body is `node install.js`) | Each file fenced with its own per-file nonce. Caps: depth 1 (no recursive `require` following), ≤ 32 KB per file (truncated with explicit marker), safe-relative paths only (no `..`, abs paths, env-var expansion), text-only (binary files fall back to no-context Amber). |
-
-### Verdict cache
-
-Advisor verdicts are persisted at `$LPM_HOME/cache/l4-verdicts.json`. The next install of the same `(name, version)` with byte-identical script bodies skips the advisor round-trip and replays the cached verdict.
-
-The cache key folds in the script identity, the prompt template hash, the provider slug, and the model version. Any of those changing produces a different key and the next invocation re-classifies — there is no manual invalidation step. Cached verdicts expire after 30 days by default. Hits return the cached `Approve` / `Manual` / `Abstain` value verbatim; the cache does not promote anything.
-
-Tunables (env vars):
-
-- `LPM_L4_CACHE=0` — disable the cache entirely. Useful for measurement runs where the comparison must include the round-trip cost.
-- `LPM_L4_CACHE_PATH=<path>` — override the cache file location.
-- `LPM_L4_CACHE_TTL_SECS=<n>` — override the 30-day default TTL.
-
-Set up interactively:
+## Apply a CI policy
 
 ```bash
-lpm config scripts                 # pick deny / triage / allow
-lpm config triage                  # pick none / claude-cli / codex / ollama
+lpm install --frozen-lockfile
+lpm audit --level high --fail-on vuln
+lpm audit --secrets --fail-on secrets
+lpm query ':credential-exfiltration' --assert-none
 ```
 
-Both wizards accept `--set <value>` for non-interactive use.
+These checks do not prompt. The audit exits unsuccessfully for policy failures or incomplete scans. Query assertions fail when the selector matches packages.
 
-## Typosquatting
+For a reusable check, define an uncached task:
 
-The typosquat guard is off by default. Enable it with `lpm config typosquat --set on`. Then `lpm install` and `lpm add` check new direct dependency names against popular npm packages. The detector covers edit-distance typos, adjacent transpositions (`axois` → `axios`), delimiter variants (`crossenv` → `cross-env`). Flag-shaped package names after `--` remain invalid even when the guard is off.
-
-The check fires only when a suspicious direct package name is newly entering the project. Existing lockfile replays, including `CI=true` frozen installs, do not fail because the name was already reviewed into `lpm.lock`. Interactive terminals can switch to the suggested package or write a committed `lpm.toml` allow-list entry; `--json`, CI, non-TTY, and `--yes` runs fail closed with `error_code: "typosquat_suspected"`.
-
-Operates entirely offline. See [`lpm.toml` typosquat policy](/docs/reference/lpm-toml#typosquat-policy) for intentional exceptions.
-
-## npm firewall verdicts
-
-LPM Firewall is an opt-in verdict check at `firewall.lpm.dev` for selected public npm package versions. It does not proxy npm metadata or tarballs: LPM CLI still fetches from the normal npm registry path, then batches selected `(name, version)` checks with LPM Firewall before tarballs are allowed through.
-
-LPM Firewall is an LPM.dev Registry Pro/Org feature. Active `monitor` and `enforce` modes send LPM.dev Registry auth, so run `lpm login` first. Entitlement failures are warnings in `monitor` mode and blocking failures in `enforce` mode.
-
-Configure it globally:
+```json title="lpm.json"
+{
+  "tasks": {
+    "security:audit": {
+      "command": "lpm audit --level high --fail-on vuln",
+      "cache": false
+    }
+  }
+}
+```
 
 ```bash
-lpm config firewall --set monitor  # show what would block and continue
-lpm config firewall --set enforce  # block malicious verdicts
+lpm run security:audit
 ```
 
-`off` is the default. `monitor` is useful while evaluating coverage; `enforce` is the blocking mode. The legacy string `report` is still accepted as an alias for `monitor`. Once monitor or enforce mode is part of the approved machine posture, disabling or downshifting it is a guarded weakening through [`lpm security`](/docs/infra/security).
+`lpm.json` has no dedicated security policy block. The task contains the command and flags. `cache: false` requests a current report each time.
 
-LPM Firewall also carries policy metadata for configurable enforcement. Recommended enforcement blocks trusted public malicious advisories and LPM Firewall AI-confirmed malware; it warns for LPM Firewall AI-agent control-surface policy, critical vulnerabilities, and static-only suspicious signals. See the [Firewall for npm guide](/docs/guides/firewall) for the full policy profile.
+## Recover from a blocked operation
 
-## Skill content (LPM.dev Registry only)
-
-Packages on LPM.dev Registry that ship [agent skills](/docs/reference/ai-agent-skills) get a separate LLM security scan against the skill content at publish time. Consumers receive attested skill markdown — drift in the skill body invalidates the attestation.
-
-This layer doesn't exist for non-LPM.dev Registry packages today (no per-tarball skills declaration yet).
-
-## CI integration
-
-The recommended CI gate stack:
-
-```yaml
-- run: lpm install --offline --strict-integrity
-- run: lpm audit signatures
-- run: lpm trust diff --assert-none
-- run: lpm audit --fail-on vuln # confirmed vulns
-- run: lpm audit --secrets --fail-on secrets # hardcoded credentials
-- run: lpm licenses --fail-on copyleft --deny GPL-3.0 # license policy
-- run: lpm query ":vulnerable:not(:built)" --assert-none
-- run: lpm query ":eval:scripts" --assert-none # eval + scripts is a yellow flag
-```
-
-`lpm audit --fail-on` covers the broad-strokes gate; `lpm audit signatures` checks npm registry signatures; [`lpm licenses`](/docs/packages/licenses) gates license compliance; `lpm query --assert-none` covers your project's specific concerns; `lpm trust diff --assert-none` gates reviewed script-trust drift directly. Together they're cheap and they catch most real classes of supply-chain trouble.
+| Result | Action |
+| --- | --- |
+| Dependency scripts are blocked | Inspect [lpm approve-scripts --list](/docs/packages/approve-scripts), review the package, then use [lpm rebuild](/docs/packages/rebuild). |
+| Approval no longer matches | Inspect the changed artifact and save a new approval only after review. |
+| `security_approval_required` | Inspect [lpm security status](/docs/infra/security). Use the suggested scoped unlock only for an intended exception. |
+| Advisor unavailable or uncertain | Keep scripts blocked or review them explicitly. |
+| Incomplete source scan | Read the [coverage report](/docs/packages/audit#source-coverage) and restore missing inputs or inspect unsupported files. |
+| Known vulnerability | Preview [lpm audit fix --dry-run](/docs/packages/audit#fixing-vulnerabilities), then review the proposed updates. |
 
 ## See also
 
-- [`lpm audit`](/docs/packages/audit) — broad report CLI
-- [`lpm query`](/docs/packages/query) — precision selectors
-- [`lpm licenses`](/docs/packages/licenses) — license inventory and policy gates
-- [`lpm approve-scripts`](/docs/packages/approve-scripts) — script-trust workflow
-- [`lpm trust`](/docs/packages/trust) — drift inspection
-- [`lpm install --policy`](/docs/packages/install#lifecycle-scripts) — script policy override
-- [`package.json` "lpm.scripts"](/docs/reference/package-json-lpm#the-lpmscripts-block) — capability + sandbox config
+- [lpm install](/docs/packages/install) — install policy and lifecycle controls
+- [lpm audit](/docs/packages/audit) — findings, coverage, and failure policies
+- [lpm approve-scripts](/docs/packages/approve-scripts) — review exact artifacts
+- [lpm rebuild](/docs/packages/rebuild) — run eligible dependency scripts
+- [lpm trust](/docs/packages/trust) — inspect approvals and drift
+- [lpm query](/docs/packages/query) — select packages and assert policy
+- [lpm licenses](/docs/packages/licenses) — license inventory and CI gates
+- [lpm security](/docs/infra/security) — machine security approvals
