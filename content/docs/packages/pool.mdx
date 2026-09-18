@@ -1,36 +1,98 @@
 ---
 title: lpm pool
-description: "Show your Pool revenue stats with per-package weighted downloads."
+description: "Show your current Pool earnings estimate and per-package weighted downloads."
 ---
 
+`lpm pool` shows the current monthly Pool earnings estimate for your LPM.dev Registry account.
+
 ```bash
+lpm pool [OPTIONS]
+```
+
+The report includes your personal packages and packages from organizations where you are an owner or administrator.
+It has one mode: the current billing period. There are no package, organization, or historical-period filters.
+
+LPM CLI supports npm and private registries, but this command uses the LPM.dev Registry Pool account API.
+See [Registries](/docs/registries).
+
+## Quickstart
+
+Sign in with a browser session, then request the report:
+
+```bash
+lpm login
 lpm pool
 ```
 
-Prints your Pool revenue stats for the current billing period — total weighted downloads, estimated earnings, and a per-package breakdown. Requires an authenticated LPM.dev Registry session (`lpm login` first).
+See [lpm login](/docs/infra/login) for authentication.
+A standalone registry token from CI or `.npmrc` cannot access this account API.
+The command does not require a project, install packages, change distribution modes, or start payouts.
 
-## Example
+## Examples
 
-```text
-$ lpm pool
-
-  Pool Revenue Stats
-
-  billing period         2026-05
-  weighted downloads     142,830
-  estimated earnings     $18.42
-
-  packages (3):
-    @lpm.dev/acme.toolkit       (84,210 downloads)
-    @lpm.dev/acme.cli           (51,003 downloads)
-    @lpm.dev/acme.icons         (7,617  downloads)
+```bash
+lpm pool                                         # current account estimate
+lpm pool --json                                   # structured report
+lpm pool --json | jq '.estimatedEarningsCents'     # estimated cents
+lpm pool --json | jq '.packages[] | {name, weightedDownloads}'
 ```
 
-The current period shows an estimate. Final revenue uses completed installs and the recorded payments for that billing period.
+For an unattended command, provide an existing session access token through the environment:
+
+```bash
+LPM_TOKEN="$POOL_SESSION_TOKEN" lpm pool --json
+```
+
+Environment tokens do not refresh automatically. A stored browser session can refresh during the request.
+See [Authentication](/docs/infra/authentication).
+
+### A task in `lpm.json`
+
+[`lpm.json`](/docs/reference/lpm-json) has no dedicated Pool configuration.
+A named task can request a fresh report:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "pool-report": {
+      "command": "lpm pool --json",
+      "cache": false
+    }
+  }
+}
+```
+
+```bash
+lpm run pool-report
+```
+
+The task uses the same account credentials as a direct command.
+It does not enable Pool distribution. See [lpm publish](/docs/packages/publish) for publication and distribution modes.
+
+## Read the report
+
+```text
+  Pool Revenue Stats
+
+  billing period       2026-09
+  weighted downloads   1,234.85
+  estimated earnings   $18.42
+
+  packages (2):
+    @lpm.dev/acme.toolkit   (1,234.7 downloads)
+    @lpm.dev/acme.icons     (0.15 downloads)
+```
+
+Weighted downloads can contain decimals. They represent eligible install observations after weighting, rather than raw download requests.
+The Registry orders packages by estimated earnings.
+
+The current report is an estimate, not a payout balance.
+It uses active subscriptions and the standard Pool price. Final settlement uses actual payments, discounts, credits, and refunds.
+Unused subscriber contributions can also produce earnings for packages with no weighted downloads.
 
 ## How weighting works
 
-The LPM.dev Registry calculates Pool revenue. Each subscriber's paid author share goes to the eligible packages that subscriber installed during the billing period.
+The LPM.dev Registry calculates Pool revenue. For subscribers with eligible installs, each subscriber's author share goes to those packages during the billing period.
 
 After a successful install, LPM CLI reports the resolved dependency graph. This includes installed versions, overrides, optional dependencies, peer dependencies, and canonical alias targets. A failed download or extraction does not create Pool credit.
 
@@ -61,7 +123,7 @@ The LPM.dev Registry applies these rules:
 - Publisher access does not create credit, including personal packages and packages owned by the subscriber's organizations.
 - Optional packages omitted on the current platform and dependencies absent from the installed graph receive no credit.
 
-For example, `a` from Alice depends on `b` from Bob, which depends on `c` from Bob. The base weights are `1`, `0.7`, and `0.49`. The same-owner rule reduces `c` to `0.147`, before other eligibility rules and rounding.
+For example, `a` from Alice depends on `b` from Bob, which depends on `c` from Bob. The base weights are `1`, `0.7`, and `0.49`. The same-owner rule reduces `c` to `0.147`, which rounds to `0.15` before accumulation.
 
 Unmanaged clients do not report a completed dependency graph. Their authenticated Pool downloads count as direct observations for the fetched packages only.
 
@@ -69,7 +131,7 @@ Older LPM CLI versions that report only package roots can still complete install
 
 During a registry rollback, LPM CLI retries the report with package roots if the older registry explicitly rejects graph reports. Roots can follow npm bridges. Each request contains at most 200 roots. Installs complete after the registry accepts those reports. LPM CLI warns that dependency credit can be incomplete. Permission errors and other validation errors still stop the command.
 
-## Payments and refunds
+## Final payments and refunds
 
 The author share is 80% of the paid Pool amount, excluding tax. Discounts reduce that amount. A $6 discounted payment contributes $4.80 to author revenue.
 
@@ -79,11 +141,17 @@ For a historical refund, calculation first deducts eligible unpaid carry for eac
 
 ## Recover an unconfirmed install report
 
-If LPM CLI reports `pool_attribution_unconfirmed`, retry the same install command. LPM CLI can reuse cached packages and retry the report without duplicate credit.
+If LPM CLI reports `pool_attribution_unconfirmed`, retry the same [lpm install](/docs/packages/install) command. LPM CLI can reuse cached packages and retry the report without duplicate credit.
 
 Full graph reports have limits of 10,000 graph nodes, 50,000 edges, and 1,000 `@lpm.dev/*` package instances. LPM CLI includes only paths relevant to `@lpm.dev/*` packages. An oversized or incomplete graph returns an error instead of partial credit. Older clients can send up to 200 roots per report.
 
-## `--json` output
+## JSON output
+
+The CLI retains the Registry field names, including their camelCase spelling:
+
+```bash
+lpm pool --json
+```
 
 ```json
 {
@@ -110,16 +178,38 @@ Full graph reports have limits of 10,000 graph nodes, 50,000 edges, and 1,000 `@
 | `billingPeriod` | ISO month (`YYYY-MM`) the stats cover |
 | `totalWeightedDownloads` | Sum across all your pool packages |
 | `estimatedEarningsCents` | Accruing total in cents (`/100` for dollars) |
-| `packages[].installCount` | Unique subscriber observations before weighting |
-| `packages[].weightedDownloads` | Post-weighting count that determines share |
-| `packages[].sharePercentage` | Your share of this package within the pool, in percent |
+| `packages[].installCount` | Subscriber observations that contribute positive weight |
+| `packages[].weightedDownloads` | Weighted observations, including fractional values |
+| `packages[].sharePercentage` | This package's share of the total estimated Pool distribution, as a percentage |
 | `packages[].estimatedEarningsCents` | Per-package accrual in cents |
 
-Any field can be absent (server omits null entries). Treat the envelope as forward-compatible — additional fields may appear in future releases.
+Missing optional values appear as `null`. The `packages` array defaults to `[]` when the Registry omits it.
+Each package requires `name`. `success: true` means that the request succeeded, including an empty report.
+Additional fields can appear in future releases.
+
+## Recovery
+
+| Result | Action |
+| --- | --- |
+| Authentication error or rejected environment token | Run [lpm login](/docs/infra/login), or replace the expired session token. |
+| Registry token rejected with `403` | Use a browser session. A standalone CI or `.npmrc` token has no account access. |
+| An organization package is absent | Verify that your role in that organization is owner or administrator. |
+| Earnings differ from a payout | Compare the same billing period. The current estimate does not use the final payment and refund ledger. |
+| Rate limit or temporary Registry error | Retry after the reported delay. |
 
 ## Flags
 
-`lpm pool` takes no specific flags besides the global flags. `--json` switches the output to the structured envelope above.
+This command has no command-specific flags.
+
+| Global flag | Effect |
+| --- | --- |
+| `--json` | Print a structured report or error. |
+| `--token <TOKEN>` | Override stored credentials. The server still requires a session access token. |
+| `--registry <URL>` | Use another Registry base URL that implements the Pool account API. |
+| `--color <auto\|always\|never>` | Control terminal colors. |
+
+`LPM_TOKEN` and `LPM_REGISTRY_URL` provide the token and Registry defaults.
+Explicit flags override these environment values for one run. See [Global flags](/docs/commands#global-flags).
 
 ## See also
 
