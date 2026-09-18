@@ -3,6 +3,11 @@ import config from "../../next.config.mjs";
 
 describe("documentation redirects", () => {
   it.each([
+    ["/docs/packages/free-distribution", "/docs/packages/package-distribution"],
+    [
+      "/docs/packages/free-distribution.mdx",
+      "/docs/packages/package-distribution.mdx",
+    ],
     ["/docs/infra/dependency-graph", "/docs/packages/dependency-graph"],
     ["/docs/infra/dependency-graph.mdx", "/docs/packages/dependency-graph.mdx"],
   ])("permanently redirects %s to %s", async (source, destination) => {

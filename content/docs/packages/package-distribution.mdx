@@ -1,0 +1,176 @@
+---
+title: LPM.dev package distribution
+description: Choose Private, Free, Pool, or Marketplace distribution and understand publication review, access, and retention.
+---
+
+LPM.dev Registry distribution controls who can discover and install a package. New packages start Private. The publisher explicitly selects Free, Pool, or Marketplace.
+
+Distribution is separate from the package format and software license. The same modes apply to dependency packages, source packages, and Swift packages.
+
+## Compare the modes
+
+| Mode | Discovery | Who can install | Publisher requirements |
+| --- | --- | --- | --- |
+| **Private** | Publisher and authorized organization members | Authorized users with credentials | Account limits apply. |
+| **Free** | Approved releases are public | Anyone, without login, subscription, or purchase | Paid personal Pro coverage or eligible organization coverage. |
+| **Pool** | Approved releases are public | Publisher access or personal or organization Pool access | Opt in to Pool and complete publication review. |
+| **Marketplace** | Approved releases are public | Publisher access or an applicable purchase or license | Active pricing and a valid connected payment account for activation and checkout. |
+
+Organization Pool access can use an assigned member seat. A public listing does not give install access to a Pool or Marketplace package.
+
+Free packages generate no Pool revenue. Pool and Marketplace use their own subscription or purchase rules.
+
+## Install a package
+
+```bash
+# Install an available Free dependency without a login
+lpm install @lpm.dev/owner.free-package
+
+# Sign in before installing a protected package
+lpm login
+lpm install @lpm.dev/owner.team-package
+
+# Copy a source package into a chosen directory
+lpm add @lpm.dev/owner.ui-kit --path ./src/vendor/ui-kit
+```
+
+Use [lpm install](/docs/packages/install) for dependencies, including native Swift packages. Use [lpm add](/docs/packages/add) to copy source files.
+
+An authenticated account still needs access to each protected dependency. A project can contain packages from different distribution modes.
+
+LPM CLI also works with npm and private registries through `.npmrc`. These four distribution modes apply only to packages hosted on LPM.dev Registry.
+
+## Publish, then choose a mode
+
+```bash
+# Upload a release under the package's current distribution rules
+lpm publish --wait
+```
+
+1. Publish the first release with [lpm publish](/docs/packages/publish).
+2. Open the package's dashboard settings on [LPM.dev Registry](https://lpm.dev).
+3. Select Private, Free, Pool, or Marketplace.
+4. Complete the requirements for the selected mode.
+
+The personal package owner can change distribution. For organization packages, an owner or administrator can change it. Maintainers can publish releases.
+
+**Free, Pool, and Marketplace are permanent choices.** A package cannot switch between these modes or return to Private.
+
+Locked packages cannot be deleted. They can be archived. Marketplace archival also stops new purchases.
+
+Hobby accounts allow two Private packages. Pro and organization plans allow unlimited Private packages. Organization billing restrictions can block publication and Private-package access.
+
+### Publication configuration
+
+`lpm.json` can select publication targets and package names:
+
+```json title="lpm.json"
+{
+  "publish": {
+    "lpm": {
+      "name": "@lpm.dev/owner.widget"
+    }
+  }
+}
+```
+
+There is no distribution field in `lpm.json` and no distribution flag for [lpm publish](/docs/packages/publish). Select the mode in the dashboard.
+
+`publish.npm.access` controls npm-compatible publication. It does not select an LPM.dev Registry mode.
+
+`package.json > private: true` blocks publication entirely. It does not select Private distribution.
+
+## Review and release availability
+
+Free, Pool, and Marketplace releases require publication review. An uploaded release can remain pending, held, or rejected before consumers can install it.
+
+When you activate a mode, only the latest eligible release enters activation review. Earlier private releases stay private and remain absent from public metadata.
+
+Future releases enter review individually, including lower-version backports. For example, after public `2.0.0`, a new `1.5.0` can enter review. Earlier private `1.0.0` stays private.
+
+[lpm publish --wait](/docs/packages/publish) waits for the uploaded release under its current distribution rules. It does not choose or activate a mode.
+
+A held or rejected upload does not replace a previously available release. Quarantine and artifact removal can make an existing release unavailable.
+
+### Dependency restrictions
+
+Public distribution cannot rely on Private or unknown LPM.dev Registry packages.
+
+| Target mode | LPM.dev Registry dependency rules |
+| --- | --- |
+| **Free** | Identified dependencies must have available Free releases. |
+| **Pool** | Free and Pool dependencies are allowed. Marketplace dependencies are rejected, including peers and development dependencies. |
+| **Marketplace** | Free and Pool dependencies are allowed. Marketplace dependencies have the additional rules below. |
+
+Checks include npm alias targets, optional dependencies, source-configuration branches, and stored Swift declarations, including alternate manifests.
+
+For Marketplace dependencies:
+
+- An unbundled runtime dependency is rejected, even if the publisher owns it or holds a commercial license.
+- A peer dependency can require a separate purchase by the consumer.
+- A verified bundle requires a commercial license, unless the publisher owns the dependency.
+- A dependency used only for development requires a commercial license, unless the publisher owns it.
+
+Optional, source, and Swift dependencies use the runtime rule. A peer declaration or bundled copy cannot exempt a separate runtime declaration.
+
+Bundle approval requires evidence from the published archive. A dependency name in a bundle list does not prove that the archive contains that dependency.
+
+Pool and Marketplace checks use the release's stored declarations. Free admission also checks dependency-graph and archive evidence, including nested bundles.
+
+Dependency rights are checked again before public availability. A change during review can hold the release or cancel activation.
+
+## Credentials and private history
+
+An available Free release needs no login. A stale token does not block public metadata or downloads.
+
+If an exact version is unavailable publicly, LPM CLI can refresh a stored publisher login to recover access to private history.
+
+Successful public installs do not refresh the login. A version range can select a public release even if the publisher has a newer private release.
+
+To request private history, use an exact version with an authorized login:
+
+```bash
+lpm login
+lpm install @lpm.dev/owner.widget@1.0.0
+```
+
+Each install checks current release availability, including when package files are cached. Cached files do not restore access to a quarantined or removed release.
+
+## Free publication coverage and retention
+
+Free publication requires paid Pro coverage for a personal package, or eligible coverage from the owning organization. An unpaid trial does not qualify.
+
+Free distribution is separate from the Hobby account plan. Consumers do not need paid coverage to install an available Free release.
+
+When publisher coverage ends, existing Free releases remain downloadable. LPM.dev Registry automatically deprecates the package after 30 days and schedules hosted-file removal after 365 days.
+
+The clock starts when paid coverage ends, including the end of a paid period after cancellation. Renewal before removal clears the automatic schedule.
+
+Author deprecation and security restrictions remain separate. Renewal after removal does not restore the files.
+
+Removal preserves package identities and version records. Names cannot be reused.
+
+Security rescans continue after paid coverage ends. Quarantine applies to known affected releases, including nested bundles. Corrected package contents require a new version.
+
+## Resolve publication or access errors
+
+| Result | Action |
+| --- | --- |
+| A protected install is denied | Sign in with an authorized account. Check organization membership, Pool access, or the applicable Marketplace license. |
+| A release is pending or held | Inspect its publication status in the dashboard. Use [lpm publish --wait](/docs/packages/publish) for unattended availability checks. |
+| A dependency blocks distribution | Select dependencies compatible with the target mode. For Marketplace, review peer, bundle, and commercial-license requirements. |
+| A bundle lacks verification evidence | Publish a new version containing the required dependency files. Review the reported package identity and archive path. |
+| Free publication lacks coverage | Restore eligible paid coverage for the package owner. |
+| A private historical version is missing from public results | Request that exact version with publisher access. |
+| A release is quarantined | Publish corrected contents under a new version. |
+| Free hosting retention removed the package files | The package identity remains reserved and cannot receive new releases. Restore eligible coverage and publish under a new package identity. |
+
+## See also
+
+- [lpm publish](/docs/packages/publish) — upload releases and wait for availability
+- [lpm install](/docs/packages/install) — install dependencies
+- [lpm add](/docs/packages/add) — copy source packages
+- [lpm pool](/docs/packages/pool) — inspect Pool revenue
+- [lpm info](/docs/packages/info) — inspect available package metadata
+- [Swift Package Registry](/docs/packages/swift-package-registry) — native Swift access and publication
+- [Registry configuration](/docs/registries) — npm, private registries, and LPM.dev Registry routing
