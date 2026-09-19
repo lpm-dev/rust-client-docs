@@ -1,261 +1,234 @@
 ---
 title: lpm ports
-description: "Inspect local TCP ports, stop listening processes, and clear saved dev-port overrides."
+description: "Inspect local TCP listeners, stop processes, and reset saved development-port assignments."
 ---
 
-`lpm ports` shows the service ports from the current project and reports whether each port is available.
-
-It can also show visible TCP listeners, stop a process, or clear saved port overrides.
+`lpm ports` shows project service ports and helps you find the process behind a port conflict.
 
 ```bash
 lpm ports [action] [target]
 ```
 
+| Action | Purpose |
+| --- | --- |
+| `list` | Show project service assignments or project listeners. This is the default. |
+| `all` | Show all visible TCP listeners. |
+| `inspect <port>` | Inspect one port. A bare number is an alias. |
+| `kill <port>` | Stop the process that owns one port. |
+| `kill <start-end>` | Stop processes in an inclusive port range. |
+| `kill --pid <PID>` | Stop a specified process. |
+| `reset` | Clear saved assignments for the current project. |
+
 ## Quickstart with `lpm.json`
 
-Define the development services and their preferred ports:
+Declare preferred service ports:
 
 ```json title="lpm.json"
 {
   "$schema": "https://cli.lpm.dev/schemas/lpm.json",
   "services": {
-    "web": {
-      "command": "vite",
-      "port": 5173
-    },
-    "api": {
-      "command": "node api.js",
-      "port": 4000
-    }
+    "web": { "command": "vite", "port": 5173 },
+    "api": { "command": "node api.js", "port": 4000 }
   }
 }
 ```
 
-Show the declared ports and their current status:
-
 ```bash
 lpm ports
-```
-
-The table shows each service, its declared port, and whether that port is ready or listening.
-
-Start the project. Then run `lpm ports` from another terminal:
-
-```bash
-# Terminal 1
 lpm dev
-
-# Terminal 2
-lpm ports
 ```
 
-An explicit `port` remains the listed value. If `lpm dev` remaps the service, this table does not show the saved replacement.
-
-Use the startup output or `lpm ports all` to find the active replacement port. Use `lpm ports reset` to clear saved replacements.
-
-### Show the assigned port for a host-only service
-
-If a service uses a managed hostname, you can omit its port:
-
-```json title="lpm.json"
-{
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
-  "proxy": {
-    "port": 9443,
-    "httpRedirect": false
-  },
-  "services": {
-    "web": {
-      "command": "vite",
-      "host": "web.localhost"
-    }
-  }
-}
-```
-
-Start the project. Then show the saved assignment from another terminal:
+[`lpm dev`](/docs/dev/dev) can assign replacement ports after conflicts. From another terminal, inspect the assignments:
 
 ```bash
-# Terminal 1
-lpm dev
-
-# Terminal 2
-lpm ports
+lpm ports --json
 ```
 
-The host-only service appears after `lpm dev` saves its assigned port.
+A saved assignment takes precedence over the declared `port`. Without a saved assignment, the command shows the declared port.
 
-A service without `port` or `host` does not appear. A service with only `readyPort` also does not appear.
+These values are preferred assignments, not proof that a service is running. Each row reports whether its port is free or in use.
 
 ## Examples
 
 ```bash
-lpm ports                   # show ports for the current project
-lpm ports list              # same as lpm ports
-lpm ports all               # show all visible TCP listeners
-lpm ports --all             # same as lpm ports all
-lpm ports 3000              # inspect port 3000
-lpm ports inspect 3000      # same as lpm ports 3000
-lpm ports kill 3000         # stop the process on port 3000
-lpm ports kill 3000-3010    # stop processes in an inclusive range
-lpm ports kill --pid 48213  # stop a known PID
-lpm ports reset             # clear saved overrides for this project
+lpm ports
+lpm ports all
+lpm ports 5173
+lpm ports inspect 5173 --json
+lpm ports kill 5173
+lpm ports kill 3000-3010 --yes --json
+lpm ports kill --pid 48213
+lpm ports reset --json
 ```
 
-## Choose an action
+## Saved assignments and hostnames
 
-| Goal | Command |
-| --- | --- |
-| Show ports for the current project | `lpm ports` |
-| Show all visible TCP listeners | `lpm ports all` |
-| Inspect one port | `lpm ports inspect 3000` |
-| Stop the process on one port | `lpm ports kill 3000` |
-| Stop processes in a port range | `lpm ports kill 3000-3010` |
-| Stop a known PID | `lpm ports kill --pid 48213` |
-| Clear saved port overrides | `lpm ports reset` |
+A hostname service can omit its port:
 
-`list`, `all`, and `inspect` are read-only. A bare number inspects a port, so `lpm ports 3000` equals `lpm ports inspect 3000`.
+```json title="lpm.json"
+{
+  "proxy": {
+    "host": "app.localhost",
+    "port": 9443,
+    "httpRedirect": false
+  },
+  "services": {
+    "web": { "command": "vite", "primary": true }
+  }
+}
+```
+
+```bash
+lpm dev
+```
+
+After development startup saves an assignment, `lpm ports` includes that service. This applies to `proxy.host` and `services.<name>.host` workflows.
+
+A saved assignment remains visible if you remove the hostname configuration. Use `reset` to clear it.
+
+Without a saved assignment or a declared `port`, a service has no row. `readyPort` alone does not supply a listed port.
+
+Without HTTPS, [`lpm dev --port <PORT>`](/docs/dev/dev) overrides the primary application port for one run. With HTTPS, it selects the HTTPS frontend port.
+
+The override need not replace the saved assignment. Read startup output or inspect active listeners for the running port.
+
+The listed service port is the application port. It is separate from the HTTPS listener configured by [`lpm proxy`](/docs/infra/proxy).
 
 ## Project scope
 
-Run `lpm ports` from the directory that contains `lpm.json`. The command reads `lpm.json` only from the current directory.
+Run the command from the directory that contains `lpm.json`. LPM CLI reads that file only from the current directory.
 
-If `lpm.json` declares services, the command uses the service-port rules from the quickstart above.
+If the configuration contains services, `list` shows their declared or saved assignments in service-name order.
 
-Without declared services, LPM CLI shows visible listeners from processes whose current directory is inside the command directory.
+Without configured services, `list` shows visible listeners associated with the current project directory. Operating-system access can limit the available project information.
 
-Use `lpm ports all` to remove the project scope and show all visible TCP listeners.
-
-## Recipes
-
-### Restore a declared port after a conflict
-
-Inspect the port before you stop its process. Make sure that the listener is the process that you want to stop.
+To inspect listeners across projects:
 
 ```bash
-lpm ports inspect 3000
-lpm ports kill 3000
+lpm ports all
+# Equivalent:
+lpm ports --all
+```
+
+Port inspection and process termination are not restricted to the current project's services.
+
+## Resolve a port conflict
+
+Inspect the owner before deciding to stop its process:
+
+```bash
+lpm ports inspect 5173
+```
+
+If that process is no longer needed:
+
+```bash
+lpm ports kill 5173
 lpm ports reset
 lpm dev
 ```
 
-`lpm ports reset` clears only the saved overrides for the current project. It does not edit `lpm.json` or stop processes.
+A single-port kill does not request consent. It requests termination of the entire process, including its other listeners.
 
-The next `lpm dev` tries the declared ports again. If a declared port remains unavailable, LPM CLI assigns another port.
+On Unix, LPM CLI sends `SIGTERM`. Success confirms the request, without waiting for the process to exit.
 
-### Find a development server from this project
+If the port is already free, the command succeeds without stopping anything. If the owner changes during validation, LPM CLI refuses to stop the replacement owner.
 
-Show the ports for the current project. Then inspect the port that you want to identify.
-
-```bash
-lpm ports
-lpm ports inspect 5173
-```
-
-If the first command shows an unexpected port, inspect that port before you stop or reset anything.
-
-For a remapped declared service, use `lpm ports all` and the `lpm dev` startup output.
-
-### Clean a range of development ports
-
-Review all visible listeners. Then stop the matching processes in the selected range.
+### Stop a range
 
 ```bash
 lpm ports all
 lpm ports kill 3000-3010
 ```
 
-The range is inclusive. If the range contains matching listeners, LPM CLI groups them by PID and asks for confirmation.
+Ranges are inclusive and must be ascending. Ports are integers from `0` to `65535`.
 
-For CI or another non-interactive environment, pass `--yes`:
+If listeners match, the command groups ports by PID and requests consent. A matching process can also own ports outside the range.
 
-```bash
-lpm ports kill 3000-3010 --yes
-```
-
-> CAUTION: A range kill stops entire processes. A matched process can also own listeners outside the selected range.
-
-### Stop a known PID
-
-If you already know the PID, use `--pid`:
-
-```bash
-lpm ports kill --pid 48213
-```
-
-> CAUTION: `--pid` stops the specified process. The process does not have to own a TCP port.
-
-## Output
-
-### Project service output
-
-For declared services, the terminal table shows the service, port, and status. A listening status also includes the available process owner.
-
-Use JSON to get the service name, port, and `free` or `in_use` status:
-
-```bash
-lpm ports --json
-```
-
-### Listener output
-
-Listener commands show the port, process, PID, project, framework, and status:
-
-```bash
-lpm ports inspect 3000
-lpm ports all
-```
-
-Use JSON for more available process details:
-
-```bash
-lpm ports inspect 3000 --json
-lpm ports all --json
-```
-
-JSON can also include the address, command, current directory, project directory, and uptime. Available values depend on operating-system access.
-
-## Kill behavior and safety
-
-`lpm ports kill <port>` does not ask for confirmation. If you do not know the owner, inspect the port before you stop it.
-
-Before a port kill, LPM CLI finds the PID. It then makes sure that the same PID still owns the target port.
-
-If the owner changes, the command exits without stopping the new owner. The command also refuses to stop protected system PIDs or itself.
-
-If a range matches processes, LPM CLI groups the ports by PID and asks for confirmation. Pass `--yes` to skip the prompt.
-
-In JSON and other non-interactive runs, a matching range fails without `--yes`:
+For scripts and JSON output, give explicit consent:
 
 ```bash
 lpm ports kill 3000-3010 --yes --json
 ```
 
-A bare numeric kill target is always a port. Use `--pid` to stop an explicit PID.
+An empty range result succeeds without consent. Process identities and ownership are checked again before termination.
+
+### Stop a known PID
+
+```bash
+lpm ports kill --pid 48213
+```
+
+This action does not request consent. The process does not have to own a TCP listener.
+
+A numeric positional target always means a port. Use `--pid` for a process ID, without a positional target.
+
+LPM CLI refuses to stop protected system PIDs or itself. Permission failures return an error.
+
+## Reset saved assignments
+
+```bash
+lpm ports reset --json
+```
+
+Reset clears only the current project's entries from the saved port state. It preserves other projects and coordinates with development startup.
+
+It does not edit `lpm.json` or stop processes. On the next start, [`lpm dev`](/docs/dev/dev) tries the declared ports again.
+
+If a declared port is still unavailable, LPM CLI can assign another port.
+
+Missing saved state is a successful no-op. Malformed TOML, an unreadable state file, or a failed write returns an error.
+
+If reset fails, inspect the reported state file and permissions, correct the problem, and retry.
+
+## JSON output
+
+```bash
+lpm ports --json
+lpm ports all --json
+lpm ports inspect 5173 --json
+lpm ports reset --json
+```
+
+| Output | Main fields |
+| --- | --- |
+| Service assignments | `ports` contains `service`, `port`, and `status` (`free` or `in_use`). |
+| Listener lists | `scope` is `project` or `all`. `ports` contains visible listener details. |
+| Port inspection | `port`, `status`, and `listeners` describe the selected port. |
+| Reset | `reset: true` confirms that reset completed. |
+
+Listener details can include the address, PID, process, command, project directory, framework, and uptime. Unavailable details can be `null`.
+
+Errors return `success: false`. Successful responses return `success: true`.
+
+## Platform support
+
+| Platform | Available information |
+| --- | --- |
+| Linux | TCP listeners and accessible process details, including the process directory. |
+| macOS and BSD | Listener and process details available through system tools. |
+| Windows | Network and process information, including available image paths and uptime. |
+
+Windows does not expose another process's current directory through a stable public API. Generic processes can therefore lack project information.
+
+Port and range termination requires operating-system support that binds termination to a captured process identity. Unsupported BSD systems, older Linux kernels, and macOS releases without that support return an error.
+
+System permissions can limit results on every platform.
 
 ## Flags
 
 | Flag | Applies to | Effect |
 | --- | --- | --- |
-| `--all` | `list` | Show all visible TCP listeners. This flag equals `lpm ports all`. |
-| `--yes`, `-y` | Range `kill` | Skip the interactive confirmation. |
-| `--pid <PID>` | `kill` | Stop the specified PID. |
-| `--json` | All actions | Write machine-readable output to stdout. This is a [global flag](/docs/commands#global-flags). |
+| `--all` | `list` | Show listeners across projects. Cannot accompany another action. |
+| `-y`, `--yes` | Range `kill` | Skip the consent prompt. |
+| `--pid <PID>` | `kill` | Stop a PID. Cannot accompany a positional target. |
+| `--json` | All actions | Print machine-readable output. |
 
-## Platform support
-
-LPM CLI uses the listener table from each supported operating system. System permissions can limit the visible processes and available details.
-
-| Platform | Source | Available details |
-| --- | --- | --- |
-| Linux | System TCP tables | Project data requires access to the current directory of the process. |
-| macOS and BSD | System process tools | Project data requires access to the current directory of the process. |
-| Windows | System network and process APIs | JSON can include the image path and uptime. Generic processes do not include project data. |
-
-Windows does not expose the current directory of another process through a stable public API. Generic processes cannot include that project information.
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm dev`](/docs/dev/dev) — run multiple services from `lpm.json`
-- [`lpm.json`](/docs/reference/lpm-json#services) — configure development services and ports
-- [Port management](/docs/infra/port-management) — learn how port assignments and reservations work
+- [`lpm dev`](/docs/dev/dev) — start services and assign application ports
+- [`lpm proxy`](/docs/infra/proxy) — inspect HTTPS listeners and hostname routes
+- [`lpm.json`](/docs/reference/lpm-json#servicesname) — configure service ports
+- [Port management](/docs/infra/port-management) — assignments and reservations
