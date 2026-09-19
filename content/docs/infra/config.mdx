@@ -3,15 +3,22 @@ title: lpm config
 description: "Manage user-level defaults for installs, security controls, package scripts, and LPM.dev Registry features."
 ---
 
-Use `lpm config` to view or change user-level defaults for LPM CLI.
+Use `lpm config` to inspect active settings or save defaults for every project you use with LPM CLI.
 
 ```bash
+lpm config [ACTION] [KEY] [VALUE] [--set <VALUE>] [--json]
+
 lpm config
-lpm config get <key>
-lpm config set <key> <value>
-lpm config <delete|unset> <key>
-lpm config <list|ls>
-lpm config <setting> [--set <VALUE>]
+lpm config get <KEY>
+lpm config set <KEY> <VALUE>
+lpm config delete <KEY>
+lpm config unset <KEY>
+lpm config list
+lpm config ls
+lpm config <SETTING> [--set <VALUE>]
+lpm config release-age-exclude [list]
+lpm config release-age-exclude add <SELECTOR>
+lpm config release-age-exclude remove <SELECTOR>
 ```
 
 The command stores its changes in [`~/.lpm/config.toml`](/docs/reference/config-toml).
@@ -37,24 +44,39 @@ lpm config list
 | Command | Purpose | Use it when |
 | --- | --- | --- |
 | `lpm config` | Open the guided editor | You want to review settings interactively |
-| `lpm config get <key>` | Print one saved top-level value | You know the configuration key |
+| `lpm config get <key>` | Print one saved value, including a dotted path | You know the configuration key |
 | `lpm config set <key> <value>` | Save one top-level value | The key is a scalar or a supported nested alias |
-| `lpm config delete <key>` | Remove one top-level value | You want the built-in or project value again |
+| `lpm config delete <key>` | Remove one saved value or nested field | You want the built-in or project value again |
 | `lpm config unset <key>` | Alias for `delete` | You prefer the `unset` name |
 | `lpm config list` | Print all effective values and their sources | You want to inspect the active configuration |
 | `lpm config ls` | Alias for `list` | You want a shorter command |
 | `lpm config <setting>` | Open one focused editor | You want value selection and validation |
 | `lpm config <setting> --set <VALUE>` | Save a focused value without its menu | You use a script or already know the value |
 
-`get` shows one value saved in `~/.lpm/config.toml`. It does not calculate defaults or overrides.
+`get` reads a saved value from `~/.lpm/config.toml`. It does not calculate defaults or overrides. Use a dotted path for a nested field:
+
+```bash
+lpm config get sandbox.mode
+lpm config get policy.extensions.local-feed.command
+```
+
+Explicit `get` returns the saved value, including secrets. The `list` and `set` output redact recognized secret values and credential arguments.
 
 `list` resolves all known configuration keys. It includes built-in defaults, project configuration, user configuration, environment variables, and active security floors. It uses the current directory and process environment. It does not include flags from other commands.
 
 Human output groups related keys and shows the effective value and source in separate columns. Named policy extensions add entries such as `policy.extensions.<name>.mode`. Unknown keys saved in `~/.lpm/config.toml` remain visible in the **Additional saved values** group.
 
+## Project configuration
+
+`lpm config` does not write `lpm.json`. It changes user defaults in `~/.lpm/config.toml`.
+
+Project configuration uses the file defined by each feature. For example, save policy uses `lpm.toml`, and linker configuration can use `package.json > lpm`.
+
+Read the related feature page before you add a project override. Precedence is not the same for every key.
+
 ## Focused settings
 
-Omit `--set` to select a value in an interactive terminal. Use `--set` in scripts and non-interactive shells.
+Omit `--set` to select a value in an interactive terminal. JSON mode and non-interactive shells require `--set`.
 
 | Setting | Accepted values | Purpose |
 | --- | --- | --- |
@@ -80,6 +102,8 @@ The `lpm-dev` editor manages `lpm-skills` and `lpm-insights` together. It does n
 
 The interactive `triage` editor lists the advisor providers that it detects. Cloud advisors receive lifecycle script text, while Ollama keeps the text local.
 
+If the triage editor offers to change script policy, it saves that change with the advisor choice. Cancellation leaves both saved values unchanged.
+
 ## Common generic keys
 
 Use `lpm config set` for scalar user defaults and the supported nested aliases.
@@ -97,7 +121,11 @@ Use `lpm config set` for scalar user defaults and the supported nested aliases.
 
 See the [complete key reference](/docs/reference/config-toml#known-keys) for arrays, nested tables, policy extensions, and all precedence rules.
 
-The generic `set` action stores most values as TOML strings. The readers for known Boolean and integer keys accept these strings.
+The generic `set` action validates known scalar keys before it writes the file. It stores most values as TOML strings.
+
+For `save-exact`, use `true`, `false`, `1`, `0`, `yes`, or `no`. Other Boolean keys also accept `on`, `off`, `enabled`, and `disabled`. Use lowercase values.
+
+Unknown top-level keys remain available for custom configuration. Empty keys, dotted setters, and scalar writes to known array settings fail without changing the file.
 
 The generic action also accepts these validated aliases for nested settings:
 
@@ -111,11 +139,11 @@ These aliases update one field in the related TOML table. They keep the other fi
 
 Use the focused `sandbox`, `sigstore`, and `firewall` commands in new scripts. The focused forms make the nested field clear.
 
-The generic action rejects `policy`, `tunnel`, and dotted keys such as `sandbox.mode`. It does not change the file after this error. Edit `~/.lpm/config.toml` directly when you must change an unsupported nested value.
+The generic action rejects `policy`, `tunnel`, and every dotted key, including `sandbox.mode`. It does not change the file after this error. Edit `~/.lpm/config.toml` directly when you must change an unsupported nested value.
 
 The generic action also rejects `minimum-release-age-exclude` because this key requires an array. Use `lpm config release-age-exclude add <selector>` instead.
 
-If another key requires an array or nested table, edit the file directly. For example, `script-read-allow` requires a TOML array.
+If another key requires an array or nested table, edit the file directly. For example, `script-read-allow` and `max-sandbox-write-roots` require TOML arrays.
 
 ## Recipes
 
@@ -159,7 +187,7 @@ Run four workspace members at the same time:
 lpm config set workspace-concurrency 4
 ```
 
-This value applies to workspace mode for `lpm run`, `lpm test`, and `lpm bench`.
+This value applies to workspace mode for [`lpm run`](/docs/dev/run), [`lpm test`](/docs/dev/test), and [`lpm bench`](/docs/dev/bench).
 
 ### Enable the audit summary after installs
 
@@ -229,6 +257,8 @@ lpm config release-age --set default
 
 Add a user exclusion that applies to all projects on this computer:
 
+A new exclusion requires security approval, even when the cooldown is off. Run this recipe in an interactive terminal.
+
 ```bash
 lpm config release-age-exclude add react
 lpm config release-age-exclude add '@company/*'
@@ -277,17 +307,7 @@ lpm config lpm-insights --set false
 
 Disabling package skills keeps existing `.lpm/skills/` files. Disabling insights does not disable local source analysis or explicit audits.
 
-## Project configuration
-
-`lpm config` does not write `lpm.json`. It changes user defaults in `~/.lpm/config.toml`.
-
-Project configuration uses the file defined by each feature. For example, save policy uses `lpm.toml`, and linker configuration can use `package.json > lpm`.
-
-Read the related feature page before you add a project override. Precedence is not the same for every key.
-
 ## Security-sensitive changes
-
-CAUTION: Do not weaken a security control unless the weaker value is required. A user setting can affect every project on the computer.
 
 LPM CLI guards changes that weaken an approved security setting. Guarded controls include:
 
@@ -303,9 +323,11 @@ In an interactive terminal, LPM CLI requests approval before it saves a weaker v
 
 In JSON mode, CI, or a non-interactive shell, the command fails with `security_approval_required`.
 
-A managed policy can prohibit the change. In this case, the command fails with `security_floor`.
+A managed policy or `force-security-floor` can prohibit the change. In this case, the command fails with `security_floor`.
 
-Use [`lpm security status`](/docs/infra/security#status) to inspect the active security floor and temporary approvals.
+Deleting a nested field follows the same checks as changing it. For example, deleting `sandbox.mode` cannot remove a forced strict sandbox setting.
+
+Use [`lpm security status`](/docs/infra/security#status-output) to inspect the active security floor and temporary approvals.
 
 ## JSON output
 
@@ -315,6 +337,7 @@ Use `--json` with explicit actions or focused setters:
 lpm config list --json
 lpm config get save-prefix --json
 lpm config integrity --set tree --json
+lpm config set workspace-concurrency 4 --json
 ```
 
 `list --json` returns one ordered entry for each effective key. The following shortened example shows the envelope and entry fields:
@@ -340,6 +363,8 @@ lpm config integrity --set tree --json
   ]
 }
 ```
+
+An active project `scripts-allow` or `scripts-triage` unlock can authorize a weaker project script policy. Its source includes `temporary project unlock`.
 
 The real `count` is the number of objects in `entries`. Named policy extensions and unknown saved keys can increase this number.
 
@@ -373,10 +398,11 @@ The bare guided editor and `lpm config lpm-dev` do not support JSON mode.
 
 ## Reset or recover the configuration
 
-Remove a simple top-level user value to use the next source in its precedence chain:
+Remove a saved user value to use the next source in its precedence chain:
 
 ```bash
 lpm config delete save-prefix
+lpm config delete sandbox.mode
 ```
 
 For a focused setting, use its focused command to select the documented default:
@@ -402,10 +428,13 @@ The default path is `~/.lpm/config.toml`. On Windows, the path is `%USERPROFILE%
 
 The [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) environment variable changes the root directory. LPM CLI creates the file when it saves the first value.
 
-## Flags
+## Arguments and flags
 
-| Flag | Purpose |
+| Argument or flag | Purpose |
 | --- | --- |
+| `[ACTION]` | Select a generic action, focused editor, or exclusion command; omit for the guided editor |
+| `[KEY]` | Select the saved key for a generic action, or the exclusion operation |
+| `[VALUE]` | Supply a scalar value or exclusion selector |
 | `--set <VALUE>` | Save a value through a focused setting without its menu |
 | `--json` | Print structured output for an explicit action or focused setter |
 
