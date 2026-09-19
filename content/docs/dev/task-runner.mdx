@@ -3,7 +3,10 @@ title: Task runner
 description: "Parallel, cached, watchable, workspace-aware execution for package.json scripts."
 ---
 
-The task runner is what powers [`lpm run`](/docs/dev/run) and the `services` orchestration in [`lpm dev`](/docs/dev/dev). It reads scripts from `package.json` (and per-task config from `lpm.json > tasks`), builds a topological execution graph, runs tasks in parallel where the graph allows, caches results when configured, and re-executes on file changes when `--watch` is set.
+The task runner powers [`lpm run`](/docs/dev/run). It runs package scripts and commands from `lpm.json > tasks` in dependency order.
+Optional flags enable parallel tasks and file watching. Each task can also enable caching.
+
+[`lpm dev`](/docs/dev/dev) uses separate service orchestration for development servers, readiness checks, and restarts.
 
 This page covers the design — what the cache key includes, how `--affected` is computed, how parallelism interacts with task dependencies, and where state lives. For the CLI surface, see [`lpm run`](/docs/dev/run).
 
@@ -17,7 +20,6 @@ This page covers the design — what the cache key includes, how `--affected` is
                                    [.bin/ PATH injection]
                                    [pre/post hooks]
                                    [env file loading]
-                                   [readiness checks]
 ```
 
 The runner is built as a DAG over tasks. Each task's `dependsOn` edges become predecessors; the executor processes tasks level by level, running independent tasks concurrently within each level.
@@ -91,9 +93,12 @@ Caching is opt-in per task:
 `cache: true` requires `outputs` to know what to cache. Without `outputs`, the
 runner disables caching because it has nothing to record.
 
-All `inputs` and `outputs` values must be valid, project-relative globs. LPM
+All `inputs` and `outputs` values must be valid, project-relative globs. LPM CLI
 rejects invalid syntax, absolute paths, and parent traversal before it starts
 the task.
+
+`*` matches within one path component. `**` spans directories. Braces are literal characters, so use separate patterns for alternatives.
+The same patterns control watch inputs and output exclusions. Use `dist/**` to exclude a generated tree and its root directory from watch events.
 
 ### Cache key
 
@@ -138,16 +143,16 @@ If you omit `cacheEnv`, all inherited values remain cache inputs. An empty list 
 Project-loaded environment values always remain cache inputs. `cacheEnv` does not change the task's environment or bypass remote-upload secret checks.
 
 A local dependency identity includes its cache key and each reachable
-dependency identity. LPM also validates each declared dependency output before
-a cache hit or cache publication. If an output changes, LPM does not use or
+dependency identity. LPM CLI also validates each declared dependency output before
+a cache hit or cache publication. If an output changes, LPM CLI does not use or
 publish the downstream cache entry.
 
-LPM canonicalizes `package.json` before it hashes the manifest. Changes to
+LPM CLI canonicalizes `package.json` before it hashes the manifest. Changes to
 scripts, module settings, dependencies, peer metadata, overrides, resolutions,
-catalogs, engine and platform selectors, and LPM controls invalidate the cache.
+catalogs, engine and platform selectors, and LPM CLI controls invalidate the cache.
 
-LPM always hashes `lpm.lock`. If the text lockfile is absent, LPM hashes
-`lpm.lockb` instead. When these ecosystem lockfiles exist, LPM also hashes
+LPM CLI always hashes `lpm.lock`. If the text lockfile is absent, LPM CLI hashes
+`lpm.lockb` instead. When these ecosystem lockfiles exist, LPM CLI also hashes
 them:
 
 - `package-lock.json`
@@ -158,14 +163,14 @@ them:
 - `bun.lockb`
 - `deno.lock`
 
-For workspace task runs, LPM also hashes the root `package.json`, `lpm.json`,
+For workspace task runs, LPM CLI also hashes the root `package.json`, `lpm.json`,
 and `pnpm-workspace.yaml` files. The root lockfiles use the same rules as the
 member lockfiles.
 
 Each `^task` identity includes its command, arguments, environment, runtime,
 inputs, configuration, manifest, lockfiles, and upstream task identities. An
 upstream identity change invalidates the cache of each reachable downstream
-task. If LPM cannot calculate an upstream identity safely, it disables caching
+task. If LPM CLI cannot calculate an upstream identity safely, it disables caching
 for the dependent workspace member.
 
 ### Cache layout
@@ -189,18 +194,18 @@ On hit:
 6. Replay `stdout.log` and `stderr.log` to the current process.
 7. Exit successfully.
 
-LPM treats an incomplete or corrupt local entry as a cache miss. It runs the
+LPM CLI treats an incomplete or corrupt local entry as a cache miss. It runs the
 task and replaces the bad entry. Concurrent writers for one key publish one
 complete entry.
 
-LPM writes a recovery journal before it replaces an output. If a process stops
+LPM CLI writes a recovery journal before it replaces an output. If a process stops
 during restore, the next restore rolls back the incomplete operation first. If
-an immediate rollback fails, LPM keeps the recovery files and reports their
+an immediate rollback fails, LPM CLI keeps the recovery files and reports their
 path.
 
 The restore rejects output paths that use an existing symlink or junction.
 The cache cannot write through that link to a location outside the project.
-When LPM creates an archive, it also rejects symlink and junction outputs.
+When LPM CLI creates an archive, it also rejects symlink and junction outputs.
 This rule prevents a restored output from changing its file type.
 
 The replay shows the same logs as a real `lpm run build`. The runner's
@@ -242,9 +247,8 @@ lpm run -p lint test typecheck
 
 `-p` / `--parallel` runs scripts concurrently — the runner enforces `dependsOn` edges but otherwise lets independent tasks proceed in parallel. Output is buffered per-task by default; `--stream` prefixes live output instead.
 
-`--no-bail` continues independent tasks after a failure. It does not run a
-workspace member if that member's explicit `^task` dependency fails. Without
-this flag, the first failure stops the run.
+`--no-bail` continues independent tasks after a failure. A failed explicit `^task` prerequisite still prevents its dependent task from running.
+Without this flag, a failure stops later batches. Tasks that already started finish.
 
 Workspace fan-out is separate from per-package task parallelism. `lpm run`, `lpm test`, and `lpm bench` accept `--workspace-concurrency <N>` in workspace mode to cap how many selected members run at once within a topological level. The persistent chain is CLI flag, then `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then available host parallelism.
 
@@ -311,14 +315,23 @@ Use `--test-pattern <glob>` to mark matching changed files as test-only. The dir
 ## Watch mode
 
 ```bash
-lpm run dev --watch
+lpm run build --watch
+lpm run verify --watch --parallel --stream
 ```
 
-The runner sets up a file watcher over the task's effective inputs (same globs as the cache key) and re-runs on change. Pairs nicely with `--filter` for "rebuild only the affected member" loops during development.
+Watch mode runs one requested task and its prerequisites, then waits for changes. Each run finishes before the next starts.
+Changes during a run schedule a later run. Watch mode bypasses the task cache.
+
+The watch scope includes each scheduled task's inputs and excludes declared outputs, `.git`, `node_modules`, and `.lpm`.
+Changes to `package.json` or `lpm.json` update the task graph and watch scope. Runtime-pin changes require a new watch session.
+
+`--watch` cannot be combined with workspace selection, multiple requested task names, or `--json`.
+For development servers, use [`lpm dev`](/docs/dev/dev) or the framework's watch mode.
 
 ## PATH injection
 
-Every script runs with `node_modules/.bin/` prepended to `PATH`, so locally-installed binaries (`tsc`, `vitest`, etc.) resolve. Pre and post hooks (npm convention — `prebuild`, `postbuild`) run automatically when the corresponding scripts exist.
+The runner adds project and workspace executables from `node_modules/.bin` to `PATH`.
+Package scripts also run their `pre<name>` and `post<name>` hooks. Explicit task commands do not use package hooks.
 
 ## Env loading
 
