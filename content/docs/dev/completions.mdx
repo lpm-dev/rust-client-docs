@@ -1,55 +1,149 @@
 ---
 title: lpm completions
-description: "Generate a shell completion script for bash, zsh, fish, PowerShell, or elvish."
+description: "Generate and load shell completions for Bash, Zsh, Fish, PowerShell, or Elvish."
 ---
 
+Generate a completion script for command names, flags, and supported argument values.
+
 ```bash
-lpm completions <shell>
+lpm completions <SHELL>
 ```
 
-Emits a clap-driven completion script for the given shell to stdout. Pipe the output into your shell's completion-load path and `lpm <TAB>` will start completing subcommands, flags, and value-enums.
+## Quickstart
 
-The script is generated from the live CLI definition, so it stays in sync with the binary at every release — no separately maintained completion files to drift out of date.
-
-## Supported shells
-
-| Shell | Argument | Typical install path |
-| --- | --- | --- |
-| Bash | `bash` | `/etc/bash_completion.d/lpm` (system) or `~/.local/share/bash-completion/completions/lpm` (user) |
-| Zsh | `zsh` | A directory in `$fpath`, e.g. `${fpath[1]}/_lpm` or `~/.zfunc/_lpm` |
-| Fish | `fish` | `~/.config/fish/completions/lpm.fish` |
-| PowerShell | `powershell` | Sourced from `$PROFILE` via `Invoke-Expression` |
-| Elvish | `elvish` | Source from `~/.config/elvish/rc.elv` |
-
-## Examples
+For the current Bash session:
 
 ```bash
-# Zsh — point fpath at a user dir, generate, restart the shell
-mkdir -p ~/.zfunc && lpm completions zsh > ~/.zfunc/_lpm
-echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
-echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
+source <(lpm completions bash)
+```
 
-# Bash (system-wide, requires sudo)
-lpm completions bash | sudo tee /etc/bash_completion.d/lpm > /dev/null
+Type `lpm `, then press Tab. Use the recipes below to save completions for later sessions.
 
-# Bash (per-user)
+| Shell | `<SHELL>` | Load method |
+| --- | --- | --- |
+| Bash | `bash` | Source the generated script. |
+| Zsh | `zsh` | Save `_lpm` in a directory on `fpath`, then initialize completions. |
+| Fish | `fish` | Save the script in the Fish completions directory. |
+| PowerShell | `powershell` | Evaluate the script, or load a separate `.ps1` file. |
+| Elvish | `elvish` | Evaluate the script from `rc.elv`. |
+
+This command needs no project, registry connection, or `lpm.json` configuration. It writes the script to standard output without an interactive prompt.
+
+## Shell recipes
+
+### Bash
+
+Save and load the script:
+
+```bash
 mkdir -p ~/.local/share/bash-completion/completions
 lpm completions bash > ~/.local/share/bash-completion/completions/lpm
-
-# Fish
-lpm completions fish > ~/.config/fish/completions/lpm.fish
-
-# PowerShell — append to your profile
-lpm completions powershell | Out-String | Invoke-Expression
-# Or, persistently:
-lpm completions powershell >> $PROFILE
+source ~/.local/share/bash-completion/completions/lpm
 ```
 
-## Flags
+To load it in later interactive sessions, add this line to `~/.bashrc`:
 
-`lpm completions` takes the target shell as a positional argument and otherwise has no specific flags. The [global flags](/docs/commands#global-flags) (`--json`, `--verbose`, etc.) do not affect the generated script.
+```bash
+source ~/.local/share/bash-completion/completions/lpm
+```
+
+If your terminal starts a login shell, make sure that its Bash profile loads `~/.bashrc`.
+
+### Zsh
+
+Save the script:
+
+```bash
+mkdir -p ~/.zfunc
+lpm completions zsh > ~/.zfunc/_lpm
+```
+
+Add the directory before your existing `compinit` call in `~/.zshrc`:
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit
+compinit
+```
+
+If your shell framework already calls `compinit`, add only the `fpath` line before the framework loads. Then start a new shell.
+
+### Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
+lpm completions fish > ~/.config/fish/completions/lpm.fish
+source ~/.config/fish/completions/lpm.fish
+```
+
+If you set `XDG_CONFIG_HOME`, replace `~/.config` with that directory. Fish loads saved completions in later sessions.
+
+### PowerShell
+
+For the current session:
+
+```powershell
+lpm completions powershell | Out-String | Invoke-Expression
+```
+
+To save the script beside your profile:
+
+```powershell
+$profileDir = Split-Path -Parent $PROFILE
+New-Item -ItemType Directory -Force $profileDir | Out-Null
+lpm completions powershell | Set-Content -Encoding utf8 (Join-Path $profileDir 'lpm-completions.ps1')
+```
+
+Add this line to `$PROFILE`:
+
+```powershell
+. (Join-Path (Split-Path -Parent $PROFILE) 'lpm-completions.ps1')
+```
+
+The generated script contains `using namespace` declarations. Keep it in a separate file so those declarations precede other statements.
+
+### Elvish
+
+Add this line to `~/.config/elvish/rc.elv`:
+
+```text title="~/.config/elvish/rc.elv"
+eval (lpm completions elvish | slurp)
+```
+
+This recipe generates completions when the shell starts. Run the same line to load them in the current session.
+
+## Refresh and troubleshoot
+
+Saved scripts describe the LPM CLI version that generated them. After an update, repeat the generation command and reload the script or restart your shell.
+
+Dynamic recipes regenerate completions each time they run. They require `lpm` on `PATH` during shell startup.
+
+If Tab does not show LPM CLI candidates, make sure that the script loaded in the current shell. For Zsh, also verify the `fpath` order.
+
+The scripts include public commands and flags. They omit hidden internal commands and options.
+
+Bash and Zsh also complete enumerated argument values. Fish completes enumerated option values. PowerShell and Elvish primarily complete commands and flags.
+
+Completion scripts do not query registries for package names or read project scripts for suggestions.
+
+## Output and flags
+
+```bash
+lpm completions bash > lpm-completions.bash
+```
+
+| Argument or flag | Effect |
+| --- | --- |
+| `<SHELL>` | Required. `bash`, `zsh`, `fish`, `powershell`, or `elvish`. |
+| `--json` | Keep the raw completion script. No JSON envelope. |
+| `--verbose` | Leave the generated script unchanged. |
+
+Successful generation exits `0`. An invalid shell exits `2`. Other output failures return a nonzero status. A closed output pipe exits quietly.
+
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm self-update`](/docs/infra/self-update) — keep the binary current so completions reflect the latest commands
-- [Installation](/docs/installation) — get LPM CLI installed before generating completions
+- [Installation](/docs/installation) — install LPM CLI and configure `PATH`.
+- [`lpm self-update`](/docs/infra/self-update) — update LPM CLI before regenerating saved scripts.
+- [Commands](/docs/commands) — browse the command reference.
