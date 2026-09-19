@@ -1,104 +1,175 @@
 ---
 title: lpm lint
-description: "Lint the project with Oxlint — lazy-downloaded, no npx round-trip."
+description: Find JavaScript and TypeScript code errors with managed Oxlint.
 ---
 
-```bash
-lpm lint [-- args...]
-```
-
-Runs [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) — a fast Rust-based linter — across the project. The binary is downloaded the first time you run `lpm lint`, cached under `~/.lpm/cache/`, and reused thereafter.
-
-Faster than `npx oxlint` (`3 ms` vs `273 ms` on the [reference fixture](https://github.com/lpm-dev/rust-client#benchmarks)) because there's no per-invocation `npx` resolution overhead.
-
-## Examples
+`lpm lint` runs [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) in the current directory or selected workspace members.
 
 ```bash
-lpm lint                       # lint the whole project
-lpm lint src/                  # lint a directory
-lpm lint -- --fix              # auto-fix where Oxlint can
-lpm lint -- --rules typescript # forward Oxlint flags
-lpm lint --all                 # workspace: lint every member
-lpm lint --filter web          # workspace: lint one member
-lpm lint --filter './apps/*'   # workspace: lint a path glob
-lpm lint --affected            # workspace: only members affected vs main
-lpm lint --affected --base develop
+lpm lint [OPTIONS] [ARGS]...
 ```
 
-## Pinning a version
+## Quickstart
 
-By default, `lpm lint` uses the version baked into LPM CLI's plugin registry. Override per-project in `lpm.json`:
+```bash
+lpm lint
+lpm lint src/
+lpm lint -- --fix
+```
+
+LPM CLI downloads and checks the managed Oxlint binary on first use. Later runs reuse that installation.
+
+The command uses Oxlint rules and configuration. To run a `package.json` script named `lint`, use [`lpm run lint`](/docs/dev/run).
+
+## Configuration
+
+Put rules in `.oxlintrc.json` or `.oxlintrc.jsonc`. Pass a different file with Oxlint's `--config` option:
+
+```bash
+lpm lint -- --config .oxlintrc.jsonc src/
+lpm lint -- --init
+```
+
+The managed native binary supports JSON and JSONC configuration. JavaScript and TypeScript configuration files require Oxlint's Node.js entry point.
+
+Pin the managed binary in `lpm.json`:
 
 ```json title="lpm.json"
 {
   "tools": {
-    "oxlint": "1.57.0"
+    "oxlint": "1.79.0"
   }
 }
 ```
 
-Run `lpm plugin update oxlint` to pull the latest release into the cache.
+The pin selects an exact version. A workspace member inherits the root pin unless its own `lpm.json` overrides it.
+
+Without a pin, LPM CLI selects its bundled version or a newer version previously installed by [`lpm plugin update oxlint`](/docs/dev/plugin). Normal lint runs do not check for newer releases.
+
+An update does not change a project pin. Edit or remove `tools.oxlint` to change that selection. There is no command-line version override.
+
+Invalid configuration stops a single-package run. In a workspace, invalid root configuration stops all members. Invalid member configuration fails that member while others continue.
+
+The command does not use `tasks.lint` or `env.lint` from `lpm.json`.
+
+## Examples
+
+### Fix supported errors
+
+```bash
+lpm lint -- --fix src/
+```
+
+Oxlint controls which fixes it applies. Review the changed files before committing them.
+
+### Fail CI on warnings
+
+```bash
+lpm lint -- --deny-warnings
+lpm lint --filter web --fail-if-no-match -- --deny-warnings
+```
+
+These commands need no prompt. A missing managed binary still requires a network download.
+
+### Select rules or inspect options
+
+```bash
+lpm lint -- -D correctness src/
+lpm lint -- --rules
+lpm lint -- --help
+```
+
+Put LPM CLI flags before the forwarded arguments. Use `--` to pass flags that must reach Oxlint unchanged.
+
+Type-aware linting requires Oxlint's separate `tsgolint` helper. LPM CLI's managed Oxlint installation does not include that helper.
 
 ## Workspaces
 
 ```bash
-lpm lint --all                            # every member
-lpm lint --filter web                     # exact name
-lpm lint --filter '@scope/*'              # glob
-lpm lint --filter './apps/*'              # path glob
-lpm lint --filter web --filter api        # union
-lpm lint --filter-prod ...shared          # prod graph closure
-lpm lint --filter '!web-tests'            # exclusion
-lpm lint --affected                       # only members touched since the base ref
-lpm lint --affected --base main           # change the base (default: main)
-lpm lint --filter web --fail-if-no-match  # exit non-zero on typo'd filter
+lpm lint --all
+lpm lint --filter web --filter api
+lpm lint --filter './apps/*'
+lpm lint --filter-prod '...shared'
+lpm lint --affected --base origin/main
 ```
 
-Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. The Oxlint binary is resolved once at the workspace root before fan-out, so the homogeneous-version case never races on cold-cache install.
+Selected dependencies run before their dependents. Independent members can run concurrently, up to the host CPU count. Each process uses its member directory.
 
-Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+LPM CLI prepares requested tool versions before starting member processes. Members with the same requested pin share a prepared binary.
 
-`--all` and `--affected` are mutually exclusive; filters compose with `--affected` (the affected set is unioned with the filter result). `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
+Members can override the root version without changing other members.
+
+`--all` conflicts with `--filter`, `--filter-prod`, and `--affected`. Filters and `--affected` combine their selections.
+
+An empty selection succeeds without running Oxlint. Add `--fail-if-no-match` when a selected member must exist. With `--affected`, this flag also fails when nothing changed.
+
+See [workspace filters](/docs/packages/workspaces#filter-grammar) for dependency closures, exclusions, path patterns, and Git references.
+
+## JSON and exit codes
+
+```bash
+lpm lint --json -- --deny-warnings
+lpm lint --all --json
+```
+
+Both modes emit one JSON object. Each member has a name, result, exit code, and duration. Failed members also include captured diagnostics.
+
+```json
+{
+  "success": false,
+  "packages": 1,
+  "succeeded": 0,
+  "failed": 1,
+  "duration_ms": 18,
+  "members": [
+    {
+      "name": "web",
+      "success": false,
+      "exit_code": 1,
+      "duration_ms": 17,
+      "stdout": "lint diagnostics"
+    }
+  ]
+}
+```
+
+A launch failure has `exit_code: null` and an `error` message. Errors before member execution can use the [standard error object](/docs/reference/exit-codes).
+
+LPM CLI retains at most 10 MiB per output stream, with a truncation marker for longer diagnostics. Successful members omit captured output.
+
+Single-package runs preserve Oxlint's exit code. Workspace runs exit `1` if any member fails. On Unix, interruption stops active tool descendants and exits `130` for SIGINT or `143` for SIGTERM.
+
+## Cache and recovery
+
+Managed binaries normally live under `~/.lpm/plugins/oxlint/<version>/<platform>/`. `LPM_HOME` changes the base directory.
+
+If a cached binary fails its integrity check, LPM CLI downloads and checks it again. To force a fresh installation:
+
+```bash
+LPM_FORCE_TOOL_INSTALL=1 lpm lint
+```
+
+If configuration parsing fails, correct `lpm.json` before retrying. If a download fails, check network access and the requested version.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--all` | Run in every workspace member |
-| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
-| `--filter-prod <expr>` | Select workspace members with production-only dependency closures |
-| `--affected` | Run only in members affected by changes vs `--base` |
-| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions |
-| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
+| `--all` | Run in every workspace member. Conflicts with filters and `--affected`. |
+| `--filter <FILTER>` | Select members with a repeatable workspace filter. |
+| `--filter-prod <FILTER_PROD>` | Select members with production-only dependency closures. |
+| `--affected` | Select changed members and their affected dependents. |
+| `--base <BASE>` | Git base for `--affected`. Default: `main`. |
+| `--changed-files-ignore-pattern <PATTERN>` | Ignore matching changed paths. Repeatable. |
+| `--test-pattern <PATTERN>` | Treat matching changes as tests when calculating dependent selection. Repeatable. |
+| `--fail-if-no-match` | Fail when the workspace selection is empty. |
+| `[ARGS]...` | Arguments forwarded to Oxlint. Use `--` to separate them from LPM CLI flags. |
 
-Anything after `--` (or trailing) is forwarded to Oxlint.
-
-Plus the [global flags](/docs/commands#global-flags).
-
-## `--json` in workspace mode
-
-Single-package mode (`lpm lint`) preserves Oxlint's stdout — LPM CLI does not wrap it. Workspace mode (`--all` / `--filter` / `--affected`) emits a single LPM CLI envelope on stdout, with each member's stdout/stderr captured per-member and surfaced inside the envelope only on failure:
-
-```json
-{
-  "success": false,
-  "packages": 5, "succeeded": 4, "failed": 1,
-  "duration_ms": 12340,
-  "members": [
-    { "name": "web", "success": true,  "exit_code": 0, "duration_ms": 2100 },
-    { "name": "api", "success": false, "exit_code": 1, "duration_ms": 800,
-      "stdout": "...", "stderr": "..." }
-  ]
-}
-```
-
-Spawn / config / plugin failures surface as `exit_code: null` paired with an `error` string, distinguishing "ran and exited non-zero" from "couldn't even launch."
+See [global flags](/docs/commands#global-flags) for `--json` and other shared options.
 
 ## See also
 
-- [`lpm fmt`](/docs/dev/fmt) — Biome formatter, same lazy-download mechanism
-- [`lpm check`](/docs/dev/check) — TypeScript type-check
-- [`lpm plugin`](/docs/dev/plugin) — manage tool versions and updates
-- [Built-in tools](/docs/dev/builtin-tools) — how the plugin system works
+- [`lpm fmt`](/docs/dev/fmt) — format source files.
+- [`lpm check`](/docs/dev/check) — check TypeScript types.
+- [`lpm plugin`](/docs/dev/plugin) — inspect and update managed tools.
+- [Built-in tools](/docs/dev/builtin-tools) — tool selection and installation.
