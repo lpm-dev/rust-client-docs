@@ -1,152 +1,124 @@
 ---
-title: Test & bench auto-detection
-description: "How lpm test and lpm bench pick the right runner — vitest, jest, or mocha."
+title: Test and bench runners
+description: "Understand runner selection, project configuration, and results from test and benchmark commands."
 ---
 
-[`lpm test`](/docs/dev/test) and [`lpm bench`](/docs/dev/bench) both work the same way: scan your installed deps, pick a runner, exec it, forward arguments verbatim. No config, no per-runner subcommand, no `lpm test --vitest` flag.
-
-This page documents the detection rules, what gets executed, and what's NOT in the auto-detection set today.
-
-## Detection order
-
-For [`lpm test`](/docs/dev/test):
-
-1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest run`
-2. **`jest`** in `dependencies` or `devDependencies` → runs `jest`
-3. **`mocha`** in `dependencies` or `devDependencies` → runs `mocha`
-4. **`scripts.test` in `package.json`** → runs the user-defined script via the platform shell (`sh -c` on Unix, `cmd /C` on Windows)
-5. **None of the above** → error: "no test runner found. Install vitest/jest/mocha or add a 'test' script to package.json"
-
-First match wins — vitest beats jest, jest beats mocha, and any installed runner takes precedence over `scripts.test`. The script fallback only fires for projects with no recognized runner installed.
-
-For [`lpm bench`](/docs/dev/bench):
-
-1. **`vitest`** in `dependencies` or `devDependencies` → runs `vitest bench`
-2. **`scripts.bench` in `package.json`** → runs the user-defined script via the platform shell (`sh -c` on Unix, `cmd /C` on Windows)
-3. **None of the above** → error: "no benchmark runner found. Install vitest or add a 'bench' script to package.json"
-
-Vitest is the only auto-detected bench runner today. For other frameworks (mitata, tinybench standalone, hyperfine), define a `bench` script in `package.json` — `lpm bench` runs it directly via the script fallback above.
-
-## Argument forwarding
-
-Anything after the command (or after `--`) is forwarded verbatim to the runner:
-
-```bash
-lpm test                              # → vitest run (or jest, or mocha)
-lpm test src/utils.test.ts            # → vitest run src/utils.test.ts
-lpm test -- --reporter=verbose        # → vitest run --reporter=verbose
-lpm test -- --coverage --watch        # → vitest --coverage --watch     (see Watch mode)
-
-lpm bench
-lpm bench src/parser.bench.ts         # → vitest bench src/parser.bench.ts
-lpm bench -- --reporter=json
-```
-
-`--` is optional but useful for arguments that look like LPM CLI flags (otherwise clap might try to interpret them).
-
-## Watch mode
-
-Vitest's `run` subcommand forces single-pass execution — passing `--watch` after `run` is silently dropped. To make `lpm test --watch` actually enter watch mode, LPM CLI rewrites the base command from `vitest run` to `vitest` whenever the forwarded args contain `--watch` (or the `-w` short form).
-
-```bash
-lpm test --watch                      # → vitest --watch
-lpm test -- -w src/utils.test.ts      # → vitest -w src/utils.test.ts
-```
-
-Other runners are unaffected:
-
-- `jest` and `mocha` accept `--watch` natively against their bare command, so the rewrite is vitest-specific.
-- `lpm bench --watch` works as-is — vitest's `bench` subcommand respects `--watch` directly.
-
-If your project's `package.json` has a custom `"test"` script (the [scripts.test fallback](#why-no-per-runner-subcommand)), LPM CLI forwards `--watch` to that script verbatim without rewriting; the watch contract is whatever your script defines.
-
-## Why no per-runner subcommand
-
-Other PMs ship `pnpm test` / `npm test` shortcuts that effectively `npm run test`. LPM CLI's `lpm test` is **not** a script alias — it prefers the runner over the script:
-
-| Command | Behavior |
-| --- | --- |
-| [`lpm run test`](/docs/dev/run) | Runs the `test` script from `package.json` (whatever you wrote there) |
-| `lpm test` | Auto-detects vitest / jest / mocha and runs it directly. Falls back to `scripts.test` only when no runner is installed. |
-
-Why this shape: `lpm test` works in projects that don't have a `test` script — newly-bootstrapped repos, monorepo members where the test config is implicit, etc. If your `test` script does setup or env-injection beyond what the runner does on its own, reach for `lpm run test` explicitly so the script always wins; with `lpm test`, the installed runner wins over your script.
-
-## Subprocess passthrough
-
-Both commands forward the runner's exit code:
+[lpm test](/docs/dev/test) and [lpm bench](/docs/dev/bench) choose a runner from the package manifest.
+Each selected workspace member can use a different runner.
 
 ```bash
 lpm test
-echo "exit: $?"      # whatever vitest / jest / mocha exited with
+lpm bench
+lpm test --filter web -- --coverage
 ```
 
-Vitest exits 1 on failed tests; LPM CLI exits 1. Vitest exits 0; LPM CLI exits 0. No mangling. CI gates work the way you expect.
+## Runner selection
 
-## `--json` mode
+LPM CLI reads `dependencies` and `devDependencies` in `package.json`.
+Declaration order does not change runner priority.
 
-Neither command emits a wrapping JSON envelope. The runner's own stdout (whatever shape it has) IS the result. This preserves the "single JSON result" contract — if you piped `lpm test --json` into a parser expecting LPM CLI's JSON shape, you'd get the runner's output instead, which is what you actually want for test results.
+| Command | Priority |
+| --- | --- |
+| [lpm test](/docs/dev/test) | Vitest, Jest, Mocha, then `scripts.test` |
+| [lpm bench](/docs/dev/bench) | Vitest, then `scripts.bench` |
 
-## Runtime
+A declared runner takes priority over the package script.
+Detection does not install the runner.
+If its executable is missing, run [lpm install](/docs/packages/install).
+LPM CLI searches local executables within the current project or workspace.
 
-Tests run with whatever managed runtimes [the runtime detection](/docs/dev/node-version-pinning) picks. So:
+For an explicit package script, use [lpm run](/docs/dev/run):
+
+```bash
+lpm run test
+lpm run bench
+```
+
+Use package scripts for other runners, such as `node --test` or `bun test`.
+A declared Vitest, Jest, or Mocha dependency can still take priority for the dedicated test command.
+
+## Project configuration
+
+The commands have no dedicated `test` or `bench` section in `lpm.json`.
+They use project environment configuration and managed runtime pins.
 
 ```json title="lpm.json"
-{ "runtime": { "node": ">=22.0.0" } }
+{
+  "runtime": { "node": "22" },
+  "env": { "test": ".env.test", "bench": ".env.bench" }
+}
 ```
 
-Then `lpm test` runs vitest on Node 22, regardless of your system Node. Auto-installs the version if missing (unless `LPM_NO_AUTO_INSTALL=true`).
+For package-script fallback, `tasks.<name>.env` takes priority over `env.<name>`.
+If `tasks.<name>.command` exists, the package script remains the command.
+Pre-hooks and post-hooks run in sequence with npm lifecycle variables.
+A failed phase stops later phases.
+Extra arguments apply to the main script.
 
-## Workspaces
+Direct runners use the default project environment.
+Both paths apply environment schemas and managed runtimes.
+The dedicated commands do not use task caching or task dependencies.
+See [lpm run](/docs/dev/run) for those workflows.
 
-`lpm test` and `lpm bench` accept `--all`, `--filter`, `--filter-prod`, `--affected`, `--base`, `--changed-files-ignore-pattern`, `--test-pattern`, `--fail-if-no-match`, and `--workspace-concurrency` — same grammar as [`lpm run`](/docs/dev/run) and the lint/fmt/check tools.
+Workspace members inherit root runtime pins and can override each runtime locally.
+Engine checks use the Node executable on the execution PATH.
+See [managed runtimes](/docs/dev/node-version-pinning) for automatic downloads and fallback behavior.
+
+## Arguments and watch mode
+
+Put runner arguments after `--`:
 
 ```bash
-lpm test --all
-lpm test --filter web --filter api
-lpm test --filter-prod ...shared
-lpm test --filter './apps/*' --fail-if-no-match
-lpm bench --affected --base develop --test-pattern '**/*.test.js' --workspace-concurrency 2
+lpm test -- --coverage
+lpm test -- --all
+lpm test --filter web -- --watch
+lpm bench --filter web -- --watch
 ```
 
-Detection runs per member, so a workspace can mix runners (vitest in one member, jest in another) and each gets the right command. A member with no installed runner becomes a per-member detection failure in the JSON envelope rather than aborting the run.
+Vitest tests run once by default.
+For an explicit watch request, LPM CLI removes the default `run` argument.
+Use `--watch=false` to disable Vitest watch mode.
+Vitest treats `--watch=off` and `--watch=0` as enabled.
 
-`--all` is mutually exclusive with filters and `--affected`. Filters compose with `--affected`.
+Jest's `-w <N>` controls worker count.
+Its `--watch` and `--watchAll` flags request watch mode.
+Mocha receives its own watch arguments directly.
+A package script controls its own runner behavior.
 
-`--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level.
+A workspace watch request can select exactly one member.
+LPM CLI rejects watch requests that select multiple members.
+For an empty selection, an explicit long watch flag reports that there is nothing to watch.
 
-### Forwarding the same flag names to the runner
+## Results and cleanup
 
-Bun's `bun test --filter` and a few other runner flags share names with the LPM CLI workspace flags. To forward them to the runner instead of having LPM CLI claim them, put them after `--`:
+Human mode streams child output to the terminal.
+JSON mode closes stdin and emits one result after completion:
 
 ```bash
-lpm test -- --filter pattern        # → bun test --filter pattern (or vitest, jest)
-lpm test -- --all                   # → runner --all (e.g. jest's git-mode flag)
-lpm test --filter web -- --filter pattern   # workspace + runner filter compose
+lpm --json test
+lpm --json bench --all
 ```
 
-Anything after `--` is forwarded verbatim regardless of name.
+The result contains member status, exit codes, and elapsed time.
+Failed members include captured output or a launch error.
+Successful members omit captured output.
+Each captured stream has a 10 MiB limit.
 
-### Watch mode in workspaces
+Single-package runs preserve the runner or hook exit code.
+If any selected member fails, workspace runs exit with `1`.
+Their member results retain the individual exit codes.
+Preparation failures use the global error object or a member error with `exit_code: null`.
 
-`--watch` interaction with workspace selectors is gated by selection size, not by whether a workspace flag was used at all:
+On Unix, stop signals trigger child cleanup before LPM CLI exits.
+A daemon that detaches and outlives its parent manages its own shutdown.
+SIGINT produces status `130`, and SIGTERM produces `143`.
+In JSON mode, bounded output remains available in the failure result.
 
-| Selection resolves to | `--watch` behavior |
-| --- | --- |
-| Exactly one member | Hands off to single-package mode against that member's directory. The vitest `run` → bare `vitest` rewrite documented above kicks in. |
-| Two or more members | Rejected with the actual count, to prevent N parallel watchers. |
-| Zero members | Rejected with "nothing to watch." |
-
-```bash
-lpm test --filter web --watch             # ✓ exactly one member matches
-lpm test --all --watch                    # ✗ rejected: N watchers
-lpm bench --filter '@scope/*' --watch     # ✓ if exactly one member matches; ✗ otherwise
-```
-
-If you want to watch a member from outside the workspace selection grammar, `cd <member> && lpm test --watch` works the same as the one-member-filter handoff.
+See the command pages for complete workspace selectors, concurrency, and recovery examples.
 
 ## See also
 
-- [`lpm test`](/docs/dev/test) — CLI command reference
-- [`lpm bench`](/docs/dev/bench) — bench equivalent
-- [`lpm run`](/docs/dev/run) — for workspace `--filter` / `--affected`
-- [Managed runtimes](/docs/dev/node-version-pinning) — which Node and Bun binaries tests see on `PATH`
+- [lpm test](/docs/dev/test) — test examples and flags
+- [lpm bench](/docs/dev/bench) — benchmark examples and flags
+- [lpm run](/docs/dev/run) — package scripts and configured tasks
+- [Workspaces](/docs/packages/workspaces) — filters and dependency selection
