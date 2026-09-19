@@ -8,71 +8,67 @@ Optional flags enable parallel tasks and file watching. Each task can also enabl
 
 [`lpm dev`](/docs/dev/dev) uses separate service orchestration for development servers, readiness checks, and restarts.
 
-This page covers the design — what the cache key includes, how `--affected` is computed, how parallelism interacts with task dependencies, and where state lives. For the CLI surface, see [`lpm run`](/docs/dev/run).
+## Quickstart
 
-## Execution model
+Define tasks in `lpm.json`, then run the final task:
 
-```text
-[scripts] ──┐
-            ├─→ [task graph DAG] ─→ [parallel executor] ─→ [stdout / cache]
-[lpm.json] ─┘                            │
-                                         ↓
-                                   [.bin/ PATH injection]
-                                   [pre/post hooks]
-                                   [env file loading]
-```
-
-The runner is built as a DAG over tasks. Each task's `dependsOn` edges become predecessors; the executor processes tasks level by level, running independent tasks concurrently within each level.
-
-## Task definition
-
-A task can come from two places:
-
-```json title="package.json (the npm-shaped path)"
-{
-  "scripts": {
-    "build": "tsup",
-    "test": "vitest run"
-  }
-}
-```
-
-```json title="lpm.json (the cached + DAG-aware path)"
+```json title="lpm.json"
 {
   "tasks": {
+    "check": { "command": "tsc --noEmit" },
     "build": {
       "command": "tsup",
-      "dependsOn": ["^build"],
-      "cache": true,
-      "outputs": ["dist/**"],
-      "inputs": ["src/**", "package.json"]
-    }
+      "dependsOn": ["check"]
+    },
+    "verify": { "dependsOn": ["check", "build"] }
   }
 }
 ```
 
-`lpm.json > tasks.<name>` overrides `package.json > scripts.<name>`. The `command` field is optional — when absent, the runner falls back to the package.json script.
+```bash
+lpm run verify
+lpm run verify --parallel
+lpm run verify --json --no-cache
+```
 
-For full per-task field reference, see [`lpm.json` tasks](/docs/reference/lpm-json#tasksname).
+The runner completes prerequisites before dependent tasks. It runs each reachable task once per invocation.
+A task with only `dependsOn` groups its prerequisites without a separate command.
 
-## `dependsOn` semantics
+A task's `command` overrides the matching `package.json` script. Without `command`, the runner uses that script.
+Package scripts run their `pre<name>` and `post<name>` hooks. Explicit task commands do not use package hooks.
+Forwarded arguments also reach prerequisite commands, so use flags that those commands accept.
 
-Two flavors of dependency:
+For all fields, see [task configuration](/docs/reference/lpm-json#tasksname).
 
-| Form       | Meaning                                                                                                           |
-| ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| `"build"`  | Same-package dependency. Wait for _this_ package's `build` task to finish first.                                  |
-| `"^build"` | Upstream-workspace dependency. Wait for `build` to finish in **every workspace member that this one depends on**. |
+## Dependencies
 
-With `workspace:*`, `^build` means: "build this package after each internal dependency finishes its `build` task."
+| Form | Meaning |
+| --- | --- |
+| `"check"` | Run a prerequisite in the same project. |
+| `"^build"` | Run a prerequisite in upstream workspace members. Requires workspace selection. |
 
-LPM CLI expands `^task` recursively. If you filter one application, its
-required upstream tasks still run through the complete workspace dependency
-chain. Each upstream workspace member must define the requested task.
+The complete task graph must be valid before any task starts.
+Missing requested tasks, missing prerequisites, cycles, and malformed dependencies such as `^` or `^^build` stop execution.
+This preflight also applies to parallel and watch modes.
 
-Before LPM CLI starts a task process, it checks the complete expanded graph.
-The command stops for a missing task, a cycle, `^`, or `^^task`. No task process
-starts after one of these graph errors.
+For workspace prerequisites, select workspace members explicitly:
+
+```json title="packages/app/lpm.json"
+{
+  "tasks": {
+    "build": { "dependsOn": ["^build"] }
+  }
+}
+```
+
+```bash
+lpm run build --filter app
+lpm run build --all
+```
+
+The runner expands upstream tasks through the complete workspace dependency chain.
+Each required member must define the requested task. A filtered application still runs its upstream prerequisites.
+Without workspace selection, a reachable `^task` dependency produces an error instead of skipping that prerequisite.
 
 ## Caching
 
@@ -97,6 +93,11 @@ All `inputs` and `outputs` values must be valid, project-relative globs. LPM CLI
 rejects invalid syntax, absolute paths, and parent traversal before it starts
 the task.
 
+Omitted or empty `inputs` uses default source and configuration patterns.
+These include `src`, `lib`, `app`, `pages`, `components`, `scripts`, `bin`, and common root JavaScript and TypeScript files.
+The defaults also include package and task configuration, TypeScript configuration, and common tool configuration filenames.
+They do not include `test`, `tests`, `public`, or `assets` directories. Declare those paths when they affect the result.
+
 `*` matches within one path component. `**` spans directories. Braces are literal characters, so use separate patterns for alternatives.
 The same patterns control watch inputs and output exclusions. Use `dist/**` to exclude a generated tree and its root directory from watch events.
 
@@ -118,9 +119,9 @@ The cache key is a SHA-256 hash of:
 - The workspace-root configuration and lockfiles during workspace task runs
 - The task identity of each reachable `^task` dependency
 
-Any change to any of those flips the key. Same key = cache hit.
+A changed input produces a different cache key. A matching key permits reuse after the cached result passes validation.
 
-To reuse output across machines or CI jobs, declare the inherited variables that affect a task:
+Use `cacheEnv` to select inherited variables that affect a task:
 
 ```json title="lpm.json"
 {
@@ -135,12 +136,19 @@ To reuse output across machines or CI jobs, declare the inherited variables that
 }
 ```
 
-With this configuration, changes to `LPM_HOME`, `CI`, or `GITHUB_RUN_ID` do not change the cache key.
+Excluded inherited values, such as `CI` or `GITHUB_RUN_ID`, do not directly affect the key.
+Runtime selection and project paths still affect it.
 If your build uses `CI` to change behavior, include `CI`. Include every inherited variable that can affect the result.
 Names are exact and case-sensitive. Wildcards are not supported.
 
-If you omit `cacheEnv`, all inherited values remain cache inputs. An empty list excludes all inherited values from the key.
-Project-loaded environment values always remain cache inputs. `cacheEnv` does not change the task's environment or bypass remote-upload secret checks.
+Without `cacheEnv`, inherited values that survive credential and runtime-hook filtering remain cache inputs.
+An empty list excludes those inherited values. CLI-provided script context, including absolute project paths, still affects the key.
+Project-loaded values always remain cache inputs. `cacheEnv` changes neither the task environment nor remote-upload secret checks.
+Executable paths and file metadata also affect runtime identity. Matching source and `cacheEnv` do not guarantee cache reuse across checkout paths or machines.
+
+An ordinary prerequisite without a usable cache identity disables caching for its dependents.
+For example, an uncached `check` prerequisite prevents a dependent `build` task from reusing a cached result.
+Use caching only for tasks with reproducible declared outputs.
 
 A local dependency identity includes its cache key and each reachable
 dependency identity. LPM CLI also validates each declared dependency output before
@@ -217,7 +225,7 @@ The replay shows the same logs as a real `lpm run build`. The runner's
 lpm run build --no-cache       # bypass for one invocation
 ```
 
-Or remove the `cache: true` from `lpm.json` to disable persistently.
+To disable task caching persistently, remove `cache: true` from its configuration.
 
 ### Remote cache
 
@@ -239,56 +247,41 @@ lpm cache status --json        # local usage + hosted cache status
 
 See [`lpm cache`](/docs/packages/cache).
 
-## Parallelism
+## Parallelism and failures
 
 ```bash
-lpm run -p lint test typecheck
+lpm run lint test check --parallel
+lpm run lint test check --parallel --stream --no-bail
+lpm run build --all --workspace-concurrency 2
 ```
 
-`-p` / `--parallel` runs scripts concurrently — the runner enforces `dependsOn` edges but otherwise lets independent tasks proceed in parallel. Output is buffered per-task by default; `--stream` prefixes live output instead.
+`--parallel` runs independent tasks in host-sized batches within each dependency level.
+The next level starts after the current level finishes. Output is buffered per task unless you pass `--stream` for prefixed live output.
 
-`--no-bail` continues independent tasks after a failure. A failed explicit `^task` prerequisite still prevents its dependent task from running.
-Without this flag, a failure stops later batches. Tasks that already started finish.
+Without `--no-bail`, a failed task stops later batches. Already-started tasks finish before the CLI exits, including after worker preparation errors.
+With `--no-bail`, independent tasks continue. A failed prerequisite still blocks its dependents.
 
-Workspace fan-out is separate from per-package task parallelism. `lpm run`, `lpm test`, and `lpm bench` accept `--workspace-concurrency <N>` in workspace mode to cap how many selected members run at once within a topological level. The persistent chain is CLI flag, then `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then available host parallelism.
+Workspace concurrency limits active members. It is separate from parallel tasks within a member.
+The limit uses the CLI flag, then `lpm.toml > [workspace].concurrency`, then `~/.lpm/config.toml > workspace-concurrency`, then host parallelism.
 
-## Workspaces
-
-Workspace-aware commands accept `--filter`, `--filter-prod`, `--all`, and `--affected`. The set today:
-
-| Command                        | `--all` | `--filter` | `--filter-prod` | `--affected` |
-| ------------------------------ | ------- | ---------- | --------------- | ------------ |
-| [`lpm run`](/docs/dev/run)     | ✓       | ✓          | ✓               | ✓            |
-| [`lpm lint`](/docs/dev/lint)   | ✓       | ✓          | ✓               | ✓            |
-| [`lpm fmt`](/docs/dev/fmt)     | ✓       | ✓          | ✓               | ✓            |
-| [`lpm check`](/docs/dev/check) | ✓       | ✓          | ✓               | ✓            |
-| [`lpm test`](/docs/dev/test)   | ✓       | ✓          | ✓               | ✓            |
-| [`lpm bench`](/docs/dev/bench) | ✓       | ✓          | ✓               | ✓            |
-
-`lpm test` and `lpm bench` claim the same flag names from any underlying runner that uses them (notably bun's `--filter`); to forward those to the runner instead of LPM CLI, prefix with `--` — see [Test & bench runners](/docs/dev/test-bench-runners#forwarding-the-same-flag-names-to-the-runner).
-
-Across workspace-aware commands, `--all` is the broad selector and is mutually exclusive with filters and `--affected`. Filters may compose with `--affected`.
-
-The runner walks the workspace graph and selects matching members in topological order:
+## Workspace selection
 
 ```bash
-lpm run build --all                         # every member, deps-first
-lpm run test --filter web                   # one member
-lpm run test --filter './apps/*'            # path glob
-lpm run test --filter '@scope/*{./apps/web}' # combined name + exact path
-lpm run test --filter web --filter api      # union
-lpm run test --filter-prod ...shared        # prod graph closure
-lpm run test --filter '!web-tests'          # exclusion
-lpm run test --filter './apps/*' --workspace-concurrency 2
-
-lpm lint --filter './apps/*' --fail-if-no-match
-lpm fmt --filter '@scope/*' --check
-lpm check --affected --base develop
+lpm run build --all
+lpm run test --filter web --filter api
+lpm run test --filter './apps/*'
+lpm run test --filter-prod ...shared
+lpm run test --filter '!web-tests'
+lpm run test --filter './apps/*' --fail-if-no-match
 ```
 
-`lpm lint`, `lpm fmt`, and `lpm check` add `--fail-if-no-match` for CI pipelines that want to catch typo'd filters early. They don't expose `--parallel` or `--no-bail` — workspace fan-out is parallel by default within each topological level. The run continues across all levels even if individual members fail; the overall command exits non-zero after aggregation when any member failed.
+`--all` selects every member and conflicts with filters and `--affected`.
+Filters can combine with `--affected`. `--filter-prod` uses production dependency edges for dependency expansion.
+`--fail-if-no-match` makes an empty selection fail, which helps detect mistakes in CI.
 
-Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+See [workspace filters](/docs/packages/workspaces#filter-grammar) for names, paths, Git references, and dependency expansion.
+[lpm test](/docs/dev/test), [lpm bench](/docs/dev/bench), and the built-in tools have their own workspace execution rules.
+For forwarded runner flags, see [arguments and watch mode](/docs/dev/test-bench-runners#arguments-and-watch-mode).
 
 ## `--affected`
 
@@ -299,18 +292,20 @@ lpm run test --affected --changed-files-ignore-pattern '**/README.md'
 lpm run test --affected --test-pattern '**/*.test.js'
 ```
 
-Computed by:
+Affected selection compares tracked working-tree files directly with the base ref, which defaults to `main`.
+It includes staged and unstaged tracked changes. Untracked files are excluded.
+It does not use a merge-base comparison.
 
-1. `git diff --name-only $base...HEAD` against the base ref.
-2. Map each changed file to a workspace member (with proper directory boundary checks — `packages/api-client/x.ts` does **not** match the member at `packages/api`).
-3. Root-level changes (files outside any member, e.g. workspace `package.json`, `tsconfig.json`) are treated as affecting **every** member.
-4. Expand the directly-changed set through dep edges to include transitive dependents.
+Changed files select their owning workspace members. Changes outside every member select all members.
+The runner also selects transitive dependents of changed members.
+For directly changed members without dependent expansion, use a Git-ref filter such as `--filter '[origin/main]'`.
 
-That last step is what gives you "the API package changed, so the web package that imports it also runs." Use `--filter '[origin/main]'` (the git-ref filter atom) for the directly-changed-only set without the dependents expansion — see [Workspaces](/docs/packages/workspaces#filter-grammar).
+Use `--changed-files-ignore-pattern <glob>` to exclude matching changes.
+Persist the patterns in `lpm.toml > [workspace].changed-files-ignore-pattern`.
 
-Use `--changed-files-ignore-pattern <glob>` to drop noise paths from the git diff before this mapping step. The same setting can be persisted as `lpm.toml > [workspace].changed-files-ignore-pattern`.
-
-Use `--test-pattern <glob>` to mark matching changed files as test-only. The directly changed package still runs, but dependents are not added when a package only changed in test files. Persist defaults as `lpm.toml > [workspace].test-pattern`.
+Use `--test-pattern <glob>` to classify matching changes as tests.
+If a member has only test changes, that member runs without dependent expansion.
+Persist defaults in `lpm.toml > [workspace].test-pattern`.
 
 ## Watch mode
 
@@ -328,44 +323,36 @@ Changes to `package.json` or `lpm.json` update the task graph and watch scope. R
 `--watch` cannot be combined with workspace selection, multiple requested task names, or `--json`.
 For development servers, use [`lpm dev`](/docs/dev/dev) or the framework's watch mode.
 
-## PATH injection
+## Runtime and environment
 
-The runner adds project and workspace executables from `node_modules/.bin` to `PATH`.
-Package scripts also run their `pre<name>` and `post<name>` hooks. Explicit task commands do not use package hooks.
+The runner adds project and ancestor `node_modules/.bin` directories to `PATH`.
+Managed runtimes follow the applicable project pins. See [runtime selection](/docs/dev/node-version-pinning) for precedence and fallback behavior.
 
-## Env loading
+Environment selection uses `--env`, then `tasks.<name>.env`, then the matching `env.<name>` map.
+Files load before local secrets. Schema defaults fill missing values, and invalid required values stop startup.
+`--no-env-check` skips checks and defaults for one invocation.
+Existing environment files and configured paths must remain inside the project.
 
-Before each task starts, the runner:
+```bash
+lpm run build --env=production
+lpm run build --no-env-check
+```
 
-1. Selects the environment: `--env` first, then `tasks.<name>.env`, then `env.<name>`, then the default files.
-2. Loads the resolved file(s).
-3. Validates against `lpm.json > envSchema` (skip with `--no-env-check`).
-4. Injects into the script's environment.
+See [local secrets](/docs/dev/lpm-vault) and [lpm env](/docs/dev/env) for selection, fallback, imports, and validation.
 
-CLI override: `--env=<mode>` forces a specific mode for one invocation, regardless of the `lpm.json` mappings.
+## Common recovery steps
 
-Existing environment files must resolve inside the project directory. The runner rejects configured paths and symlinks that resolve outside the project.
+| Problem | Action |
+| --- | --- |
+| A requested task does not exist. | Define a package script or an `lpm.json` task before you retry. |
+| A local run reports a workspace prerequisite. | Use `--filter` or `--all` from the workspace. |
+| A cache entry never appears. | Check `cache`, declared outputs, and whether prerequisites have usable cache identities. |
+| A changed file does not invalidate the cache. | Add its path to the task's input patterns. |
+| Different checkout paths miss the cache. | Account for absolute script paths and executable identity in the cache key. |
+| Watch reruns after generated output changes. | Declare the generated paths in `outputs`. |
 
-## Multi-service orchestration
-
-When `lpm.json > services` is non-empty, [`lpm dev`](/docs/dev/dev) starts each service via the runner and waits for readiness:
-
-- Ownership-verified listener on each managed service port
-- Optional additional TCP poll on `readyPort`
-- Optional additional HTTP poll on `readyUrl`
-- `readyTimeout` seconds before failure
-
-Services with `dependsOn` start in topological order. A readiness failure stops the initial startup. Dependent services do not start.
-
-Each service receives the root managed runtimes, except for runtimes that it selects in its own `cwd`.
-
-Shutdown stops the complete tracked service process trees.
-
-The resolved primary endpoint receives LPM CLI-owned HTTPS, tunnel, and LAN frontends plus the browser-open.
-
-One service is the implicit primary service. A multi-service configuration must mark one service as `primary: true` to use these features.
-
-See [`lpm dev`](/docs/dev/dev) and [`lpm.json` services](/docs/reference/lpm-json#servicesname).
+For long-running development servers, readiness checks, and restarts, use [lpm dev](/docs/dev/dev).
+Task watch mode expects each run to finish.
 
 ## See also
 
