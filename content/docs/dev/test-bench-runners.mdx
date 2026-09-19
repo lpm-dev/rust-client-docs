@@ -4,7 +4,7 @@ description: "Understand runner selection, project configuration, and results fr
 ---
 
 [lpm test](/docs/dev/test) and [lpm bench](/docs/dev/bench) choose a runner from the package manifest.
-Each selected workspace member can use a different runner.
+Each selected workspace member can use a different runner. The dedicated commands provide a common interface for local use and CI.
 
 ```bash
 lpm test
@@ -12,10 +12,24 @@ lpm bench
 lpm test --filter web -- --coverage
 ```
 
+## Quickstart
+
+Install the runner declared by the project before its first use:
+
+```bash
+lpm install
+lpm test -- --coverage
+lpm bench --json
+```
+
+Vitest runs once by default. A package script controls its own runner behavior.
+For prerequisite tasks or cached output, use [lpm run](/docs/dev/run).
+
 ## Runner selection
 
 LPM CLI reads `dependencies` and `devDependencies` in `package.json`.
 Declaration order does not change runner priority.
+Each member needs its own runner declaration. A dependency declared only at the workspace root does not select that runner for a member.
 
 | Command | Priority |
 | --- | --- |
@@ -73,7 +87,13 @@ lpm test -- --coverage
 lpm test -- --all
 lpm test --filter web -- --watch
 lpm bench --filter web -- --watch
+lpm test --filter web -- -uw
+lpm test --all -- -- --watch
 ```
+
+The first `--` separates LPM CLI flags from runner arguments.
+A second `--` belongs to the runner. Tokens after it do not select watch mode.
+Vitest short-option bundles such as `-uw` also request watch mode.
 
 Vitest tests use `vitest run`. Benchmarks use `vitest bench --run`.
 Both commands run once by default, including in an interactive terminal.
@@ -89,6 +109,18 @@ A package script controls its own runner behavior.
 A workspace watch request can select exactly one member.
 LPM CLI rejects watch requests that select multiple members.
 For an empty selection, an explicit long watch flag reports that there is nothing to watch.
+
+## Workspace execution
+
+```bash
+lpm test --all --workspace-concurrency 2 --json
+lpm bench --filter './packages/*' --fail-if-no-match --json
+```
+
+Workspace members start when their selected dependencies finish.
+The scheduler fills available slots as members finish. It does not wait for unrelated members at the same dependency depth.
+The concurrency limit bounds active members. Failed members produce a nonzero result after the selected work completes.
+Task prerequisites and task caching do not apply to these dedicated commands.
 
 ## Results and cleanup
 
@@ -106,8 +138,9 @@ Successful members omit captured output.
 Each captured stream has a 10 MiB limit.
 
 Single-package runs preserve the runner or hook exit code.
-If any selected member fails, workspace runs exit with `1`.
-Their member results retain the individual exit codes.
+If any selected member fails in a finite workspace run, the command exits with `1`.
+Workspace member results retain the individual exit codes.
+A watched selection of one member uses single-package execution and preserves the runner exit code.
 Preparation failures use the global error object or a member error with `exit_code: null`.
 
 On Unix, stop signals trigger child cleanup before LPM CLI exits.
@@ -115,7 +148,17 @@ A daemon that detaches and outlives its parent manages its own shutdown.
 SIGINT produces status `130`, and SIGTERM produces `143`.
 In JSON mode, bounded output remains available in the failure result.
 
-See the command pages for complete workspace selectors, concurrency, and recovery examples.
+## Common recovery steps
+
+| Problem | Action |
+| --- | --- |
+| The wrong runner starts. | Check each member's dependency declarations or use an explicit package script through `lpm run`. |
+| A detected executable is absent. | Run `lpm install` in the project. |
+| A watch request selects multiple members. | Narrow the selection to one member. |
+| Test-specific environment values are absent. | Use package-script fallback with `tasks.test.env`, or run the script explicitly through `lpm run`. |
+| A command needs prerequisites or caching. | Configure `lpm.json` tasks and use `lpm run`. |
+
+See the command pages for complete workspace selectors and flags.
 
 ## See also
 
