@@ -1,95 +1,195 @@
 ---
 title: lpm bench
-description: "Auto-detect and run the project's benchmark runner."
+description: "Run project benchmarks with Vitest or a package script, including selected workspace members."
 ---
 
+Use `lpm bench` to measure code performance with the benchmark runner declared by your project.
+
 ```bash
-lpm bench [-- args...]
+lpm bench [OPTIONS] [ARGS]...
 ```
 
-Detects whether the project uses `vitest bench` and runs it, forwarding any trailing arguments verbatim.
-
-## Examples
+## Quickstart
 
 ```bash
+lpm install -D vitest
 lpm bench
 lpm bench src/parser.bench.ts
-lpm bench -- --reporter=verbose
 ```
 
-## Detection
+| Mode | Command |
+| --- | --- |
+| Run the current package once | `lpm bench` |
+| Run every workspace member | `lpm bench --all` |
+| Run selected members | `lpm bench --filter parser` |
+| Watch one member | `lpm bench --filter parser -- --watch` |
+| Get a JSON result | `lpm --json bench` |
 
-If `vitest` is in `dependencies` or `devDependencies`, `lpm bench` runs `vitest bench` with whatever args you pass. Otherwise, if `package.json` has a `bench` script, `lpm bench` runs that script via the shell. The script fallback is only consulted when vitest is not declared. Use it for non-vitest benchmark frameworks (mitata, tinybench standalone, hyperfine).
+## Runner selection
 
-## Argument forwarding
+If `vitest` appears in `dependencies` or `devDependencies`, LPM CLI runs `vitest bench --run`.
+Otherwise, it runs the `bench` script from `package.json`.
+A declared Vitest dependency takes priority over the script.
 
-Anything after the command (or after `--`) is forwarded to the runner:
+Detection does not install a runner.
+If the selected executable is missing, run [lpm install](/docs/packages/install).
+For explicit package-script execution, use [lpm run bench](/docs/dev/run).
+
+## Project configuration
+
+`lpm.json` has no dedicated `bench` section.
+Project environment configuration and managed runtime pins still apply.
+
+```json title="lpm.json"
+{
+  "runtime": { "node": "22" },
+  "env": { "bench": ".env.bench" }
+}
+```
+
+For package-script fallback, `tasks.bench.env` takes priority over `env.bench`.
+The script uses `prebench` and `postbench` hooks and npm lifecycle variables.
+A failed phase stops later phases.
+Extra arguments apply to the main script.
+
+Direct Vitest execution uses the default project environment.
+Both paths apply environment schemas and managed runtime selection.
+Workspace members inherit root runtime pins and can override each runtime locally.
+A strict `engines.node` mismatch stops the run before the benchmark starts.
+
+The dedicated command does not use task commands, task caching, or task dependencies.
+Use [lpm run](/docs/dev/run) for those workflows.
+See [managed runtimes](/docs/dev/node-version-pinning) for automatic downloads and fallback behavior.
+
+## Write a benchmark
+
+```ts title="src/parser.bench.ts"
+import { bench, describe } from 'vitest';
+
+const input = '{"name":"example","count":100}';
+
+describe('parse configuration', () => {
+  bench('JSON.parse', () => {
+    JSON.parse(input);
+  });
+});
+```
 
 ```bash
-lpm bench -- --reporter=json --outputFile=bench.json
+lpm bench src/parser.bench.ts
 ```
+
+For another framework, define a package script:
+
+```json title="package.json"
+{
+  "scripts": {
+    "bench": "node benchmarks/parser.mjs"
+  }
+}
+```
+
+```bash
+lpm run bench
+```
+
+If Vitest is absent from the manifest, [lpm bench](/docs/dev/bench) also uses this script.
+The script controls its own benchmark behavior and must exit for a finite CI run.
+
+## Watch and CI
+
+Vitest benchmarks run once by default, including in an interactive terminal.
+An explicit watch request removes the default `--run` argument.
+
+```bash
+lpm bench -- --watch
+lpm bench --filter parser -- --watch
+lpm --json bench --all
+```
+
+A workspace watch request can select exactly one member.
+LPM CLI rejects requests that select multiple members.
+An explicit long watch flag with an empty selection reports that there is nothing to watch.
+
+Use `--watch=false` to disable Vitest watch mode.
+Vitest treats values such as `--watch=off` and `--watch=0` as enabled.
+
+Put benchmark options after `--`:
+
+```bash
+lpm bench -- --reporter=json --outputFile=bench-results.json
+```
+
+The runner writes its own report file.
+Global `--json` controls the LPM CLI result envelope.
 
 ## Workspaces
 
 ```bash
-lpm bench --all                            # every member
-lpm bench --filter web                     # exact name
-lpm bench --filter '@scope/*'              # glob
-lpm bench --filter-prod ...shared          # prod graph closure
-lpm bench --affected --base develop
-lpm bench --filter './packages/*' --workspace-concurrency 2
+lpm bench --all
+lpm bench --filter '@scope/*'
+lpm bench --filter parser --filter serializer
+lpm bench --filter-prod ...shared
+lpm bench --affected --base origin/main
+lpm bench --filter parser --fail-if-no-match
+lpm bench --all --workspace-concurrency 1
 ```
 
-Detection runs per member. A workspace member with no installed bench runner and no `scripts.bench` becomes a per-member detection failure in the JSON envelope rather than aborting the whole run. `--all` is mutually exclusive with filters and `--affected`.
+Detection runs separately for each selected member.
+Members run in dependency order. Independent members can run together.
+A failed member does not stop the remaining selected members.
 
-`--filter` and `--filter-prod` compose with `--affected` the same way as [`lpm test`](/docs/dev/test): the affected set is unioned with the filter result. `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
+`--all` cannot combine with filters or `--affected`.
+Filters and `--affected` combine as a union.
+`--filter-prod` excludes development edges from dependency closures.
 
-`--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level.
+Concurrency uses the CLI flag, then root `lpm.toml` `[workspace].concurrency`, then global `workspace-concurrency`, then available parallelism.
+This limit does not control the benchmark runner's own workers.
+For measurements that require an idle machine, run one member at a time.
+See [workspace filters](/docs/packages/workspaces#filter-grammar).
 
-### Forwarding runner flags with the same names
+## Output and recovery
 
-The workspace flags (`--all`, `--filter`, `--filter-prod`, `--affected`, `--base`, `--fail-if-no-match`, `--workspace-concurrency`) are claimed by LPM CLI. To pass any of them through to the bench runner itself, put them after `--`:
+Human mode streams benchmark output to the terminal.
+With `--json`, single-package and workspace runs emit one result after completion.
+Failed members include captured output or a launch error.
+Successful members omit captured output.
+Each captured stream has a 10 MiB limit, and JSON mode closes stdin.
 
-```bash
-lpm bench -- --filter pattern             # forwards --filter to vitest bench
-lpm bench --filter web -- --reporter=json # workspace + forwarded args
-```
+A single-package run preserves the runner or hook exit code.
+If any selected member fails, a workspace run exits with status `1`.
+Each failed member retains its own exit code.
+A launch or configuration failure has `exit_code: null` and an `error` message.
+Failures before member preparation use the global error object.
 
-### Watch with a workspace selector
+On Unix, stop signals trigger child cleanup before LPM CLI exits.
+SIGINT produces status `130`, and SIGTERM produces `143`.
+A daemon that detaches and outlives its parent manages its own shutdown.
 
-Same gating as `lpm test`: watch is allowed when the selection resolves to exactly one member, rejected when it resolves to two or more (would start N watchers) or zero (nothing to watch).
-
-```bash
-lpm bench --filter web --watch            # ✓ one member, one watcher
-lpm bench --all --watch                   # ✗ rejected: N watchers
-lpm bench --filter typo --watch           # ✗ rejected: nothing to watch
-```
-
-When the filter resolves to exactly one member, `lpm bench` runs against that member's directory as if you'd `cd`-ed in.
+If no runner exists, install Vitest or define a `bench` script.
+If a workspace filter matches no members, add `--fail-if-no-match` to catch the mismatch in CI.
+See [test and bench runners](/docs/dev/test-bench-runners) for shared environment, runtime, and cleanup behavior.
 
 ## Flags
 
-| Flag                 | Effect                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------- |
-| `--all`              | Run in every workspace member                                                                           |
-| `--filter <expr>`    | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable) |
-| `--filter-prod <expr>` | Select workspace members with production-only dependency closures                                      |
-| `--affected`         | Run only in members affected by changes vs `--base`                                                     |
-| `--base <REF>`       | Git base ref for `--affected` (default: `main`)                                                         |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions          |
-| `--fail-if-no-match` | Exit non-zero if no member matches the filter set                                                       |
-| `--workspace-concurrency <N>` | Limit concurrent workspace members for `--all`, `--filter`, or `--affected` runs             |
+| Flag | Effect |
+| --- | --- |
+| `--all` | Select every workspace member |
+| `--filter <FILTER>` | Select members with the workspace filter grammar. Repeat to combine selections |
+| `--filter-prod <FILTER_PROD>` | Select members with production dependency closures |
+| `--affected` | Select members affected by Git changes |
+| `--base <BASE>` | Set the Git base for `--affected`. Default: `main` |
+| `--changed-files-ignore-pattern <CHANGED_FILES_IGNORE_PATTERN>` | Ignore matching changed paths during Git-based selection |
+| `--test-pattern <TEST_PATTERN>` | Treat matching changed paths as test-only during affected selection |
+| `--fail-if-no-match` | If no workspace member matches, fail |
+| `--workspace-concurrency <N>` | Limit concurrent workspace members |
 
-Anything after `--` (or trailing) is forwarded to the bench runner.
-
-Plus the [global flags](/docs/commands#global-flags).
-
-## `--json` in workspace mode
-
-Both single-package and workspace runs emit one LPM CLI envelope with `--json`. Failed members include bounded captured output or a launch error. Successful members omit their captured output. See [test and bench runners](/docs/dev/test-bench-runners) for environment, runtime, hook, and cleanup behavior.
+Runner flags belong after `--`.
+See [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm test`](/docs/dev/test) — same auto-detection, for tests
-- [Test & bench runners](/docs/dev/test-bench-runners) — how detection works
+- [lpm test](/docs/dev/test) — test runners and coverage
+- [lpm run](/docs/dev/run) — package scripts and configured tasks
+- [Test and bench runners](/docs/dev/test-bench-runners) — shared execution behavior
+- [Workspaces](/docs/packages/workspaces) — filters and dependency selection
