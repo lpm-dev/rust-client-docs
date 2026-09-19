@@ -1,19 +1,52 @@
 ---
 title: lpm cert
-description: "Manage certificates for trusted local HTTPS with LPM CLI."
+description: "Create, inspect, and rotate certificates for trusted local HTTPS."
 ---
 
-`lpm cert` manages the local certificate authority (CA) and project certificates that LPM CLI uses for local HTTPS.
-
-For daily development, enable HTTPS in `lpm.json` and run [`lpm dev`](/docs/dev/dev). Use `lpm cert` for manual setup and maintenance.
+`lpm cert` manages the local certificate authority (CA) and project certificates for local HTTPS.
 
 ```bash
-lpm cert <action> [flags]
+lpm cert <ACTION> [--host <HOST>] [--project <PROJECT>] [--keep-old-trusted <DAYS>] [--fail-on-missing] [--dry-run] [--json]
 ```
 
-## Quickstart with `lpm.json`
+Use this command for machine setup, certificate files for another tool, or certificate recovery. For daily development, use [`lpm dev`](/docs/dev/dev).
 
-Add `https: true` to the `lpm.json` file next to `package.json`:
+| Action | Purpose |
+| --- | --- |
+| `status` | Show CA trust, expiry, project certificate validity, and permission problems. |
+| `trust` | Create the root CA if necessary and install its certificate in the trust store. |
+| `generate` | Create or renew the certificate for the current project. |
+| `uninstall` | Remove the active root CA from the trust store. Keep its files. |
+| `rotate` | Replace the root CA and reissue known project certificates. |
+| `reconcile` | Recover interrupted rotation and remove expired grace entries or stale files. |
+
+## Quickstart
+
+Run these commands from your project directory:
+
+```bash
+lpm cert trust
+lpm cert generate
+lpm cert status
+```
+
+`generate` writes `.lpm/certs/cert.pem` and `.lpm/certs/key.pem` in the current project. Keep certificates and private keys out of version control.
+
+## Examples
+
+```bash
+lpm cert generate --host app.localhost --host api.app.localhost
+lpm cert status --json
+lpm cert rotate --project ../web --project ../api --fail-on-missing
+lpm cert rotate --keep-old-trusted 14
+lpm cert reconcile --dry-run --json
+lpm cert reconcile
+lpm cert uninstall
+```
+
+## Use HTTPS from `lpm.json`
+
+For automatic certificate setup, enable HTTPS next to `package.json`:
 
 ```json title="lpm.json"
 {
@@ -22,44 +55,31 @@ Add `https: true` to the `lpm.json` file next to `package.json`:
 }
 ```
 
-Start the project:
-
 ```bash
 lpm dev
 ```
 
-LPM CLI creates a project certificate and serves the local site through trusted HTTPS. Your application continues to use plain HTTP behind LPM CLI.
+LPM CLI prepares the certificate and serves HTTPS in front of your application. The application can continue to serve plain HTTP.
 
-On first use, an interactive terminal asks before it installs the local CA. You approve this step only once on each machine.
-
-Use these commands to override the project configuration for one run:
-
-```bash
-lpm dev --no-https        # disable HTTPS for this run
-lpm dev --https           # enable HTTPS for this run
-lpm dev --https --yes     # approve CA installation without a prompt
-```
-
-If the CA is not trusted in a non-interactive shell, pass `--yes`:
+If the CA is not trusted, an interactive run asks for consent. In a non-interactive run, approve trust installation explicitly:
 
 ```bash
 lpm dev --yes
 ```
 
-You can also install the CA during machine setup. Then the development run does not require trust consent:
+For a one-run override:
 
 ```bash
-lpm cert trust
-lpm dev
+lpm dev --no-https
+lpm dev --https --yes
 ```
 
-## Use a project hostname
+`--yes` approves LPM CLI consent. Operating-system authentication can still be necessary. For unattended development runs, install trust during machine setup with `lpm cert trust`.
 
-Use `proxy.host` for one service with a friendly hostname:
+### Use a project hostname
 
 ```json title="lpm.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
   "proxy": {
     "host": "app.localhost",
     "port": 9443,
@@ -72,21 +92,33 @@ Use `proxy.host` for one service with a friendly hostname:
 lpm dev
 ```
 
-LPM CLI prepares the certificate and registers the route. Open the URL that `lpm dev` prints.
+The hostname enables certificate setup and route registration. For multiple services, use distinct `services.<name>.host` values.
 
-If a project has multiple services, use `services.<name>.host`. Each service must have a different hostname.
+LPM CLI skips hosts-file edits for names below `.localhost`. Name resolution depends on your browser and operating system.
 
-The `localhost` name and names below `.localhost` do not need a hosts-file entry. Other local names can require a managed hosts-file entry.
+See [`lpm proxy`](/docs/infra/proxy) for listener configuration and [`lpm hosts`](/docs/infra/hosts) for other local names.
 
-See [`lpm proxy`](/docs/infra/proxy) for proxy ports, multiple services, and hosts-file behavior.
+## Generate certificate files
 
-## Permit more DNS names
+```bash
+lpm cert generate
+lpm cert generate --host app.localhost --host api.app.localhost
+```
 
-The `cert` block controls which DNS subtrees a project certificate can cover:
+The default names are `localhost`, `127.0.0.1`, and `::1`. Repeat `--host` for additional Subject Alternative Names (SANs).
+
+`generate` reads the `cert` configuration in `lpm.json`. It does not import names from `proxy.host` or `services.<name>.host`. Pass those names with `--host` for manual generation.
+
+A valid certificate is reused if it covers the requested names. Generation repairs unusable material and renews certificates with 30 days or less remaining.
+
+`generate` can create files before the root CA is trusted. It does not install trust. Browsers require `lpm cert trust` before they accept the certificates.
+
+### Permit more DNS names
+
+The `cert` configuration controls additional DNS subtrees that a project certificate can cover:
 
 ```json title="lpm.json"
 {
-  "https": true,
   "cert": {
     "extraPermittedDns": ["myapp.internal"],
     "allowPublicDns": false
@@ -94,21 +126,15 @@ The `cert` block controls which DNS subtrees a project certificate can cover:
 }
 ```
 
-`extraPermittedDns` does not add a browser hostname or a proxy route. It only permits LPM CLI to issue project certificates below that DNS subtree.
+```bash
+lpm cert generate --host api.myapp.internal
+```
 
-Add the actual browser hostname with `proxy.host`, `services.<name>.host`, or `lpm cert generate --host`.
+`extraPermittedDns` permits names. It does not add SANs or proxy routes.
 
-Each entry must be a bare, multi-label hostname. Do not include a scheme, port, path, wildcard, or leading dot.
+Each entry must be a bare, multi-label hostname. Schemes, ports, paths, wildcards, and leading dots are invalid.
 
-By default, LPM CLI accepts these local suffixes:
-
-- `.local`
-- `.test`
-- `.localhost`
-- `.internal`
-- `.home.arpa`
-
-Public DNS names require an explicit opt-in:
+The accepted local suffixes are `.local`, `.test`, `.localhost`, `.internal`, and `.home.arpa`. Public DNS names require explicit permission:
 
 ```json title="lpm.json"
 {
@@ -119,188 +145,137 @@ Public DNS names require an explicit opt-in:
 }
 ```
 
-> CAUTION: Enable `allowPublicDns` only for DNS names that you control. This field increases the authority of your local CA.
+> Enable `allowPublicDns` only for names that you control. This configuration permits your local certificates to cover those public names.
 
-## Examples
-
-```bash
-lpm dev                                      # use https from lpm.json
-lpm cert status                              # show CA and project status
-lpm cert trust                               # install the local CA
-lpm cert generate                            # create the project certificate
-lpm cert generate --host api.app.local       # add a browser hostname
-lpm cert rotate --keep-old-trusted 14        # rotate with a 14-day grace period
-lpm cert rotate --project ../other-app       # include another project
-lpm cert reconcile --dry-run                 # preview rotation cleanup
-lpm cert uninstall                           # remove the CA from the trust store
-```
-
-## Manual certificate commands
-
-| Goal | Command |
-| --- | --- |
-| Show the root CA and current project | `lpm cert status` |
-| Create and trust the root CA | `lpm cert trust` |
-| Remove the root CA from the trust store | `lpm cert uninstall` |
-| Create or renew the current project certificate | `lpm cert generate` |
-| Replace the root CA and reissue project certificates | `lpm cert rotate` |
-| Finish interrupted rotation or remove expired grace entries | `lpm cert reconcile` |
-
-### Show certificate status
-
-Run the command from the project directory:
+## Inspect and repair certificates
 
 ```bash
 lpm cert status
-```
-
-The output shows the root CA status and the current project certificate. It includes trust, expiry, hostnames, renewal status, and unsafe file permissions.
-
-When fewer than 30 days remain, project certificate renewal starts. When fewer than 60 days remain, root CA warnings start.
-
-Use JSON output in scripts:
-
-```bash
 lpm cert status --json
 ```
 
-The JSON output includes CA data, project data, renewal status, and permission problems.
+`status` inspects the current project. It does not renew certificates or recover interrupted writes.
 
-### Repair unsafe permissions
+The output includes root trust, expiry, SANs, renewal status, and permission problems. It checks that the project key matches its certificate and that the certificate chains to the active root.
 
-On Unix systems, certificate directories must use mode `0700`. Private key files must use mode `0600`.
+JSON includes `project.valid` and `project.error`. An absent project certificate has `valid: false` and `error: null`. An unusable certificate has a reason in `error`.
 
-LPM CLI refuses to sign certificates with a group-readable or world-readable CA private key. Run `status` to get the exact repair command:
+`success: true` means the inspection completed. It does not mean HTTPS is ready.
+
+If the project key or certificate is unusable, regenerate it with the required names:
 
 ```bash
-lpm cert status
+lpm cert generate --host app.localhost
 ```
 
-Run the printed `chmod` command. Then repeat the command that failed.
-
-### Trust the root CA
-
-Install the local CA before a non-interactive run. You can also install it before an interactive `lpm dev` run:
+If the root is not trusted:
 
 ```bash
 lpm cert trust
 ```
 
-If the root CA does not exist, the command creates it. It stores the CA files in `~/.lpm/certs/` and installs the certificate into the system trust store.
+### Repair unsafe permissions
 
-You usually run this command once on each development machine.
+On Unix systems, certificate directories use mode `0700`. Private key files use mode `0600`.
+
+LPM CLI refuses to sign with a group-readable or world-readable CA private key. `status` prints a repair command for permission problems.
+
+Run the printed command, then retry the failed operation.
+
+## Trust stores and file locations
+
+The root CA files default to `~/.lpm/certs/`. `LPM_HOME` changes the LPM CLI state directory. Project certificates remain under `<project>/.lpm/certs/`.
+
+| Platform | Trust behavior |
+| --- | --- |
+| macOS | Uses the user login Keychain without `sudo`. |
+| Linux | Uses a supported `update-ca-certificates` or `update-ca-trust` installation. Uses `sudo` unless already root. |
+| Windows | Uses elevated `certutil` for the machine Root store. |
+| Other systems | Requires manual CA installation. |
+
+Trust checks and removal identify the certificate by fingerprint, not only its name.
 
 ### Remove CA trust
-
-Remove the CA from the system trust store:
 
 ```bash
 lpm cert uninstall
 ```
 
-This command keeps the CA files in `~/.lpm/certs/`. You can trust the same CA again with `lpm cert trust`.
+The command keeps the root CA files. The on-disk certificate must exist so LPM CLI can identify the trust entry to remove.
 
-The on-disk CA certificate must exist during removal. LPM CLI uses its fingerprint to remove the correct trusted certificate.
-
-### Generate a project certificate
-
-If another local tool needs the project certificate files, use `generate`:
+To trust the same CA again:
 
 ```bash
 lpm cert trust
-lpm cert generate
 ```
 
-Run `generate` from the project directory. It reads the project `lpm.json` and writes these files:
+## Rotate the root CA
 
-```text
-<project>/.lpm/certs/cert.pem
-<project>/.lpm/certs/key.pem
-```
-
-Do not commit these certificate and private key files.
-
-The default certificate names are `localhost`, `127.0.0.1`, and `::1`.
-
-Add more Subject Alternative Names (SANs) by repeating `--host`:
-
-```bash
-lpm cert generate --host app.local --host api.app.local
-```
-
-`generate` does not install an untrusted CA. If the CA is not trusted, run `lpm cert trust` first.
-
-### Rotate the root CA
-
-If `status` reports that the root CA is near expiry, rotate it. If its private key is exposed, rotate the root CA immediately.
+Root CA warnings start with fewer than 60 days remaining. Rotate before expiry or after a private-key exposure:
 
 ```bash
 lpm cert rotate
 ```
 
-Rotation changes the trust identity and reissues known project certificates. Active projects can fail certificate checks during the change.
+Rotation reissues certificates for recorded projects. Repeat `--project` to include more directories:
 
-Use a grace period to keep the old root trusted during a migration:
+```bash
+lpm cert rotate --project ../web --project ../api --fail-on-missing
+```
+
+By default, rotation skips directories that no longer exist. `--fail-on-missing` makes a missing directory an error.
+
+Hard rotation refuses to proceed while known local TLS consumers remain active. Stop those development or proxy sessions before rotation.
+
+### Keep old trust during a transition
 
 ```bash
 lpm cert rotate --keep-old-trusted 14
 ```
 
-The grace period can be at most 90 days. After the period expires, run `lpm cert reconcile` to remove the old trust entry.
+The accepted range is 0–90 days. A positive grace period keeps the old root trusted and permits active TLS consumers during rotation.
 
-Add project directories that LPM CLI must reissue:
+Restart those consumers so they load the new certificate chain. After the grace period expires, run `lpm cert reconcile` to remove old trust.
 
-```bash
-lpm cert rotate --project ../web --project ../api
-```
+A grace period keeps the old identity trusted. Use hard rotation after a private-key exposure.
 
-By default, rotation skips project directories that no longer exist. If each project must be present, use `--fail-on-missing`:
+## Repair interrupted rotation
 
-```bash
-lpm cert rotate --project ../web --fail-on-missing
-```
-
-### Repair interrupted rotation
-
-Preview certificate cleanup before you change files or trust entries:
+Preview cleanup:
 
 ```bash
-lpm cert reconcile --dry-run
+lpm cert reconcile --dry-run --json
 ```
 
-Apply the cleanup:
+The preview preserves certificate material, trust entries, audit records, and pending recovery state. It can create a synchronization lock.
+
+If an interrupted certificate transaction needs recovery, JSON reports `pending_recovery: true`. Other cleanup results remain empty until recovery completes.
+
+Stop active local TLS consumers, then apply recovery and cleanup:
 
 ```bash
 lpm cert reconcile
 ```
 
-Use `reconcile` after an interrupted rotation or after a trust grace period expires. It also removes stale files from unfinished rotation work.
-
-## Platform trust stores
-
-| Platform | Trust behavior |
-| --- | --- |
-| macOS | Installs the CA in the user login Keychain. It does not use `sudo`. |
-| Linux | Copies the CA to `/usr/local/share/ca-certificates/` and runs `sudo update-ca-certificates`. |
-| Windows | Uses `certutil` to install the CA in the Root store. Windows can request elevation. |
-| Other systems | Requires manual CA installation. |
-
-LPM CLI identifies trusted certificates by fingerprint. It does not rely only on the certificate name.
+Repeat the preview after recovery to inspect the remaining work. Reconciliation also removes expired grace entries and eligible staging files older than 24 hours.
 
 ## Flags
 
 | Flag | Action | Purpose |
 | --- | --- | --- |
-| `--host <NAME>` | `generate` | Add a SAN to the project certificate. Repeat the flag for more names. |
-| `--project <DIR>` | `rotate` | Reissue a certificate for another project directory. Repeat the flag for more projects. |
-| `--keep-old-trusted <DAYS>` | `rotate` | Keep the old root trusted for up to 90 days. |
-| `--fail-on-missing` | `rotate` | Fail instead of skipping a missing project directory. |
-| `--dry-run` | `reconcile` | Report cleanup without changing files or trust entries. |
-| `--json` | All actions | Print machine-readable output. This is a [global flag](/docs/commands#global-flags). |
+| `--host <HOST>` | `generate` | Add a SAN. Repeat for more names. |
+| `--project <PROJECT>` | `rotate` | Include another project directory. Repeat for more projects. |
+| `--keep-old-trusted <DAYS>` | `rotate` | Defer old-root removal for 0–90 days. |
+| `--fail-on-missing` | `rotate` | Fail if a recorded or explicit project directory is missing. |
+| `--dry-run` | `reconcile` | Preview without certificate or trust mutations. |
+| `--json` | All actions | Print machine-readable output. |
+
+Flags for another action cause an error before certificate changes. See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm dev`](/docs/dev/dev) — run the project with local HTTPS
-- [`lpm proxy`](/docs/infra/proxy) — route friendly local hostnames
-- [Local HTTPS](/docs/infra/local-https) — certificate model and file locations
-- [`lpm.json`](/docs/reference/lpm-json#cert) — HTTPS and certificate configuration
+- [`lpm dev`](/docs/dev/dev) — automatic local HTTPS
+- [`lpm proxy`](/docs/infra/proxy) — hostname routes and listeners
+- [`lpm hosts`](/docs/infra/hosts) — managed hosts-file entries
+- [Local HTTPS](/docs/infra/local-https) — certificate model
+- [`lpm.json`](/docs/reference/lpm-json#cert) — certificate configuration
