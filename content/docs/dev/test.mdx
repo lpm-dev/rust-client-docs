@@ -1,129 +1,201 @@
 ---
 title: lpm test
-description: "Auto-detect and run the project's test runner — vitest, jest, or mocha."
+description: "Run project tests with Vitest, Jest, Mocha, or a package script, including selected workspace members."
 ---
 
-```bash
-lpm test [-- args...]
-```
-
-Detects which test runner is installed in the project (vitest → jest → mocha) and runs it, forwarding any trailing arguments verbatim. No config; no per-runner subcommand.
-
-## Examples
+Use `lpm test` to run the test runner declared by your project.
 
 ```bash
-lpm test                              # run the whole suite (single-pass)
-lpm test src/utils.test.ts            # run one file
-lpm test --watch                      # vitest: enter watch mode (see below)
-lpm test -- -w                        # short form, same effect
-lpm test -- --reporter=verbose
+lpm test [OPTIONS] [ARGS]...
 ```
 
-## Detection order
-
-1. `vitest` (in `dependencies` or `devDependencies`)
-2. `jest`
-3. `mocha`
-4. `scripts.test` in `package.json` (only consulted when no runner above is installed)
-
-Whichever is found first wins. If none of the runners is installed and no `test` script exists, `lpm test` reports it.
-
-## Argument forwarding
-
-Anything after the command (or after `--`) is forwarded to the runner:
+## Quickstart
 
 ```bash
-lpm test -- --coverage --reporter=html
-# vitest: vitest run --coverage --reporter=html
-# jest:   jest       --coverage --reporter=html
+lpm install -D vitest
+lpm test
+lpm test -- --watch
 ```
 
-The vitest base command is `vitest run` (single-pass), except in [Watch mode](#watch-mode) below.
+| Mode | Command |
+| --- | --- |
+| Run the current package | `lpm test` |
+| Run every workspace member | `lpm test --all` |
+| Run selected members | `lpm test --filter web` |
+| Run affected members | `lpm test --affected --base main` |
+| Get a JSON result | `lpm --json test` |
+
+## Runner selection
+
+LPM CLI reads `dependencies` and `devDependencies` in the package manifest.
+It checks these runners in order:
+
+1. Vitest: `vitest run`.
+2. Jest: `jest`.
+3. Mocha: `mocha`.
+4. The `test` script in `package.json`.
+
+A declared runner takes priority over the package script.
+If the selected runner has no installed executable, run [lpm install](/docs/packages/install).
+Detection does not download a runner automatically.
+
+To select the package script directly, use [lpm run test](/docs/dev/run).
+The dedicated test command does not use task commands, task caching, or task dependencies from `lpm.json`.
+
+## Project configuration
+
+`lpm.json` has no dedicated `test` section.
+Runtime pins and project environment configuration still apply.
+
+```json title="lpm.json"
+{
+  "runtime": {
+    "node": "22"
+  },
+  "env": {
+    "test": ".env.test"
+  }
+}
+```
+
+For package-script fallback, `tasks.test.env` selects the environment first.
+If that field is absent, `env.test` selects the environment file.
+A task environment can apply even though `tasks.test.command` does not replace the package script.
+The script also uses its `pretest` and `posttest` hooks and npm lifecycle variables.
+A failed hook stops the later phases.
+Forwarded arguments apply to the main script.
+
+Both execution paths load the project environment and enforce its environment schema.
+The command has no dedicated `--env` option.
+See [environment files](/docs/dev/env) and [lpm run](/docs/dev/run) for named script environments.
+
+LPM CLI prepares configured Node and Bun versions before the test run.
+Workspace members inherit root runtime pins and can override each runtime locally.
+It checks `engines.node` against the Node executable on the test PATH.
+A strict engine mismatch stops the run.
+
+If a configured runtime cannot be installed, LPM CLI warns and uses the first matching executable on PATH.
+Use [lpm use](/docs/dev/use) to install the required version.
+See [managed runtimes](/docs/dev/node-version-pinning) for runtime selection and automatic downloads.
+
+## Coverage and CI
+
+```bash
+lpm install -D vitest @vitest/coverage-v8
+lpm test -- --coverage
+lpm --json test --all
+```
+
+Vitest runs once by default.
+Jest and Mocha receive their arguments directly.
+A package script controls its own test behavior.
+For CI, use a script that exits after its test run.
+
+Put runner options after `--` to keep them separate from LPM CLI options.
+For example, Jest's `--all` belongs after the delimiter:
+
+```bash
+lpm test -- --all
+lpm test --filter web -- --reporter=verbose
+```
 
 ## Watch mode
 
-`lpm test --watch` (or `-w`) enters watch mode. For vitest specifically, LPM CLI rewrites the base command from `vitest run` to `vitest` so the `--watch` flag is honored — `vitest run` would silently force single-pass and drop the flag. jest and mocha accept `--watch` natively against their bare command, so the rewrite is vitest-only.
-
 ```bash
-lpm test --watch                # vitest: → vitest --watch
-                                # jest:   → jest --watch
-                                # mocha:  → mocha --watch
+lpm test -- --watch
+lpm test --filter web -- --watch
 ```
 
-See [Test & bench runners](/docs/dev/test-bench-runners#watch-mode) for the full rewrite rules.
+For Vitest watch mode, LPM CLI removes the default `run` argument.
+Jest and Mocha receive their watch options directly.
+Jest's `-w <N>` sets its worker count. It does not request watch mode.
 
-## Workspaces
+A workspace selection can watch exactly one member.
+LPM CLI rejects a watch request that selects no members or multiple members.
+Jest's `--watchAll` also requests watch mode.
 
-```bash
-lpm test --all                            # every member
-lpm test --filter web                     # exact name
-lpm test --filter '@scope/*'              # glob
-lpm test --filter './apps/*'              # path glob
-lpm test --filter web --filter api        # union
-lpm test --filter-prod ...shared          # prod graph closure
-lpm test --affected                       # only members touched since main
-lpm test --affected --base develop
-lpm test --filter web --fail-if-no-match  # exit non-zero on typo'd filter
-lpm test --filter '@scope/*' --workspace-concurrency 2
-```
+On Unix, Ctrl+C or a stop signal stops active runners and their tracked descendants.
+A daemon that detaches and outlives its parent manages its own shutdown.
+LPM CLI gives child cleanup handlers time to run before it forces termination.
+A stopped run does not start later hooks.
 
-Detection runs per member, so a workspace can mix runners (one member uses vitest, another uses jest) and each gets the right command. A member with no installed runner and no `scripts.test` becomes a per-member detection failure in the JSON envelope rather than aborting the whole run.
+For disabled Vitest watch mode, use `--watch=false`.
+Values such as `--watch=off` and `--watch=0` enable watch mode in Vitest.
 
-`--all` is mutually exclusive with filters and `--affected`. `--filter` and `--filter-prod` compose with `--affected` (the affected set is unioned with the filter result). `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
-
-`--workspace-concurrency <N>` caps how many selected workspace members run at once within each topological level.
-
-### Forwarding runner flags with the same names
-
-The workspace flags (`--all`, `--filter`, `--filter-prod`, `--affected`, `--base`, `--fail-if-no-match`, `--workspace-concurrency`) are claimed by LPM CLI. To pass any of them through to the underlying runner (e.g. bun's `--filter`, jest's `--all`), put them after `--`:
+## Workspace selection
 
 ```bash
-lpm test -- --filter pattern              # forwards --filter to bun/vitest/etc
-lpm test -- --all                         # forwards --all to the runner
-lpm test --filter web -- --reporter=verbose  # workspace + forwarded args
+lpm test --all
+lpm test --filter '@scope/*'
+lpm test --filter './apps/*'
+lpm test --filter web --filter api
+lpm test --filter-prod ...shared
+lpm test --affected --base origin/main
+lpm test --filter web --fail-if-no-match
+lpm test --all --workspace-concurrency 2
 ```
 
-Anything after `--` is forwarded verbatim regardless of name.
+Detection runs separately for each selected member.
+A workspace can use different runners in different members.
+The command reports a missing runner as a member failure.
 
-### Watch with a workspace selector
+`--all` cannot combine with filters or `--affected`.
+Filters and `--affected` combine as a union.
+`--filter-prod` excludes development edges from dependency closures.
 
-`lpm test --all --watch` would start one watcher per workspace member — almost always a mistake. So watch mode is gated by selection size:
+Members run in dependency order. Independent members can run together.
+A failed member does not stop the remaining selected members.
+`--workspace-concurrency` limits the number of selected members that run at once.
+The limit uses the CLI flag, then root `lpm.toml` `[workspace].concurrency`, then global `workspace-concurrency`, then available parallelism.
+This limit does not control each runner's internal workers.
+See [workspace filters](/docs/packages/workspaces#filter-grammar).
+
+## JSON output and failures
 
 ```bash
-lpm test --filter web --watch             # ✓ one member, one watcher (hands off
-                                          #   to single-package mode in web/)
-lpm test --all --watch                    # ✗ rejected: would start N watchers
-lpm test --filter '@scope/*' --watch      # ✓ allowed only if exactly one member matches
-                                          # ✗ rejected with the actual count if more
-lpm test --filter typo --watch            # ✗ rejected: nothing to watch
+lpm --json test
+lpm --json test --filter web
 ```
 
-When the filter resolves to exactly one member, `lpm test` runs against that member's directory as if you'd `cd`-ed in — the existing vitest `run` → bare `vitest` rewrite kicks in, so `--watch` is honored.
+Both single-package and workspace runs emit one JSON result.
+The result includes each member's status.
+Failed members include captured output or a launch error.
+Successful members do not include their captured output.
+
+A single-package run preserves the runner or hook exit code.
+If any selected member fails, a workspace run exits with status `1`.
+Each failed member retains its own exit code.
+On Unix, interrupted runs exit with `130` for SIGINT or `143` for SIGTERM.
+
+A launch or configuration failure has `exit_code: null` and an `error` message.
+Failures before member preparation use the global error object.
+Captured output has a 10 MiB limit per stream.
+JSON mode closes stdin and emits its result after completion.
+
+If a child leaves output pipes open, LPM CLI bounds the final drain and cleans up the owned process groups.
+Background services from a package pre-hook remain available through the main script and post-hook.
+In JSON mode, cleanup occurs after the script sequence.
 
 ## Flags
 
-| Flag                 | Effect                                                                                                |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| `--all`              | Run in every workspace member                                                                         |
-| `--filter <expr>`    | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable) |
-| `--filter-prod <expr>` | Select workspace members with production-only dependency closures                                    |
-| `--affected`         | Run only in members affected by changes vs `--base`                                                   |
-| `--base <REF>`       | Git base ref for `--affected` (default: `main`)                                                       |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions        |
-| `--fail-if-no-match` | Exit non-zero if no member matches the filter set                                                     |
-| `--workspace-concurrency <N>` | Limit concurrent workspace members for `--all`, `--filter`, or `--affected` runs           |
+| Flag | Effect |
+| --- | --- |
+| `--all` | Select every workspace member |
+| `--filter <FILTER>` | Select members with the workspace filter grammar. Repeat to combine selections |
+| `--filter-prod <FILTER_PROD>` | Select members with production dependency closures |
+| `--affected` | Select members affected by Git changes |
+| `--base <BASE>` | Set the Git base for `--affected`. Default: `main` |
+| `--changed-files-ignore-pattern <CHANGED_FILES_IGNORE_PATTERN>` | Ignore matching changed paths during Git-based selection |
+| `--test-pattern <TEST_PATTERN>` | Treat matching changed paths as test-only during affected selection |
+| `--fail-if-no-match` | If no workspace member matches, fail |
+| `--workspace-concurrency <N>` | Limit concurrent workspace members |
 
-Anything after `--` (or trailing) is forwarded to the runner.
-
-Plus the [global flags](/docs/commands#global-flags).
-
-## `--json` in workspace mode
-
-Single-package mode (`lpm test`) preserves the runner's stdout — LPM CLI does not wrap it. Workspace mode emits a single LPM CLI envelope on stdout; per-member stdout/stderr is captured and surfaced inside the envelope only on failure. See [`lpm lint`](/docs/dev/lint#json-in-workspace-mode) for the exact envelope shape. Per-member detection failures (no runner installed) appear as `exit_code: null` paired with an `error` string.
+Runner flags belong after `--`.
+See [global flags](/docs/commands#global-flags).
 
 ## See also
 
-- [`lpm bench`](/docs/dev/bench) — same auto-detection, for benchmarks
-- [`lpm run test`](/docs/dev/run) — run the `test` script from `package.json` instead
-- [Test & bench runners](/docs/dev/test-bench-runners) — how detection works
+- [lpm run](/docs/dev/run) — package scripts and configured tasks
+- [lpm bench](/docs/dev/bench) — benchmark runners
+- [Test and bench runners](/docs/dev/test-bench-runners) — shared runner behavior
+- [Workspaces](/docs/packages/workspaces) — dependency graphs and selection
