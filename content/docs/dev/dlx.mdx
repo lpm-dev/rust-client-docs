@@ -1,90 +1,196 @@
 ---
-title: lpx / lpm dlx
-description: "Run a package binary without installing it into the project."
+title: lpm dlx
+description: "Run a package tool from a temporary cache without adding it to your project."
 ---
 
-```bash
-lpx [--refresh] [--allow-new] [--min-release-age=<dur>] [--min-release-age-exclude <selector>] <package> [-- args...]
-lpm dlx [--refresh] [--allow-new] [--min-release-age=<dur>] [--min-release-age-exclude <selector>] <package> [-- args...]
-```
-
-Fetches a package's binary, caches it under `~/.lpm/cache/dlx/`, and runs it without touching your project's `package.json` or `node_modules`. The LPM CLI equivalent of `npx`, `pnpm dlx`, and `bunx`.
-
-`lpx` is the short form for `lpm dlx`; both run the same command.
-
-## Examples
+Use `lpm dlx` for a package tool that you do not need as a project dependency. `lpx` runs the same command.
 
 ```bash
-lpx cowsay "hello"
-lpx dlx cowsay "hello"
-lpx create-next-app@latest my-app
-lpx prettier --check .
-lpx http-server -p 8080
-lpx --refresh create-next-app   # bypass the dlx cache
-lpx --min-release-age=0 create-next-app@latest
-lpx --min-release-age-exclude create-next-app create-next-app@latest
+lpm dlx [OPTIONS] <PACKAGE> [ARGS]...
+lpx [OPTIONS] <PACKAGE> [ARGS]...
 ```
 
-## How it works
-
-1. Resolve the spec. If the package already exists in the caller project's `lpm.lock` and the locked version satisfies the requested spec, `lpx` uses that exact version first. Otherwise it resolves against the appropriate registry. `lpx` calls into the full install pipeline, so routing follows the same rules as [`lpm install`](/docs/packages/install): `@lpm.dev/*` packages go to LPM.dev Registry, `.npmrc`-declared scopes go to the registry that scope points at, and everything else goes to `registry.npmjs.org`.
-2. Materialize the package into a cache directory under `~/.lpm/cache/dlx/`. Lockfile-selected entries are keyed by resolved `name@version` plus integrity; registry-resolved entries keep the requested spec as their cache key. Every run prints the resolved `name@version`, integrity, and source before executing the binary.
-3. Read the installed package's `bin` metadata and choose the default executable. If the package exposes exactly one bin, LPM CLI uses it. If it exposes multiple bins, LPM CLI prefers the one matching the package's short name (`eslint` for `eslint`, `foo` for `@scope/foo`). If there is still no unambiguous default, `lpx` errors instead of guessing.
-
-`lpx <pkg>@<version>` pins the requested version. `lpx <pkg>` prefers the project lockfile when available, then reuses the dlx cache while the cache entry is fresh and auditable. Once the TTL expires, the next run reinstalls against the current resolution of that spec and reports that it is refreshing the expired cache entry.
-
-## Cache TTL
-
-dlx cache entries live for **24 hours** from install or explicit refresh. After that, the next invocation reinstalls so you don't keep running an old binary forever. Within the TTL window, repeat invocations are essentially free — the cache entry already has `node_modules/.bin/` populated and the binary spawns directly.
-
-Cache hits do **not** extend the TTL. A frequently used dlx entry is still revalidated after 24 hours.
-
-`--refresh` forces an immediate reinstall regardless of the TTL.
-
-## Trust model
-
-Dependency lifecycle scripts under `lpx` go through the same install policy chain as [`lpm install`](/docs/packages/install): release-age cooldown for the requested package, provenance checks, script policy, trusted dependencies, and sandbox policy are all evaluated by the install pipeline. `lpx` also carries the caller project's `package.json > lpm` policy into the temporary install root.
-
-The package binary itself still runs as a third-party command in your project directory. LPM CLI strips common secret-bearing env vars and runtime-hijack env vars before spawn, but you should still treat `lpx <pkg>` as running arbitrary code from that package.
-
-## Argument forwarding
-
-Anything after the package name is forwarded to the binary:
+## Quickstart
 
 ```bash
-lpx prettier --write src/
-# runs: prettier --write src/
+lpm dlx cowsay@1.6.0 -- "hello"
+lpx create-next-app@latest -- my-app
+lpm dlx prettier -- --check src
 ```
 
-## Cache management
+The command installs the package in a cache, then runs its default executable from the current directory.
+It does not add a dependency to the project's `package.json` or `node_modules`.
+The package tool can create or change files in that directory.
 
-The dlx cache lives at `~/.lpm/cache/dlx/`. Manage it with [`lpm cache`](/docs/packages/cache):
+| Task | Command |
+| --- | --- |
+| Run a temporary tool | `lpm dlx <PACKAGE>` |
+| Run an exact version | `lpm dlx <PACKAGE>@<VERSION>` |
+| Refresh a cached selection | `lpm dlx --refresh <PACKAGE>` |
+| Run an installed project tool | [lpm exec](/docs/dev/exec) |
+
+## Configuration
+
+`lpm.json` has no dedicated `dlx` configuration.
+Ordinary `dlx` does not load project dotenv files, project secrets, or environment schemas.
+It does not prepare the runtime pins from `lpm.json`.
+Before each run, LPM CLI checks installed dependency engine requirements against Node on the tool's execution PATH.
+This PATH includes the caller's local binaries.
+For a tool that needs that project environment, install it and use [lpm exec](/docs/dev/exec).
+
+Package installation follows the caller's registry configuration and applicable security policy.
+For example, this `package.json` requires a release age of two days:
+
+```json title="package.json"
+{
+  "name": "my-project",
+  "lpm": {
+    "minimumReleaseAge": 172800
+  }
+}
+```
 
 ```bash
-lpm cache clean dlx     # drop only the dlx cache
-lpm cache path dlx      # print the cache root
+lpm dlx create-next-app@latest -- my-app
 ```
 
-Bypass the cache for one invocation with `--refresh`:
+The same policy applies from a subdirectory of the project.
+The tool still runs from the directory where you started the command.
+
+## Registry and version selection
+
+LPM CLI supports npm, private registries configured through `.npmrc`, and LPM.dev Registry.
+Only `@lpm.dev/*` packages always use LPM.dev Registry.
+See [registry configuration](/docs/registries).
 
 ```bash
-lpx --refresh create-next-app
+lpm dlx cowsay@1.6.0 -- "exact version"
+lpm dlx cowsay@latest -- "registry tag"
+lpm dlx cowsay -- "project selection or registry"
 ```
+
+A bare package name can reuse that package's direct selection from the project lockfile.
+If the locked version satisfies a requested range, LPM CLI can reuse the direct selection.
+An explicit registry tag, such as `latest` or `next`, resolves that tag.
+
+A lockfile selection carries its package version, source, and recorded integrity.
+The installed artifact must match that selection before dependency scripts or the package command can run.
+The command reports the actual selected version, integrity, and selection source.
+
+## Cache and refresh
+
+The default cache is `~/.lpm/cache/dlx/`. `LPM_HOME` changes the root.
+Entries remain fresh for 24 hours after a successful installation or refresh.
+Cache hits do not extend this period.
+Automatic cleanup scans stale entries at most once per hour, while the cache is idle.
+
+Cache reuse must match the caller's registry and installation policy.
+Changed policy or routing requires a new validation before the command can run.
+Security approval checks still apply on a cache hit.
+If policy or authorization changes while the command waits for the cache, the command stops. Run it again after review.
+Custom TLS configuration, external policy programs, and advisor configuration require a fresh installation on each run.
+
+```bash
+lpm dlx --refresh create-next-app@latest -- my-app
+```
+
+`--refresh` resolves the requested selection again and prepares a replacement installation.
+A project lockfile selection remains pinned to its recorded identity.
+If refresh fails, the command fails and preserves the previous cache entry without extending its lifetime.
+It does not run the previous executable after that failure.
+
+Concurrent commands retain the installation that they use.
+A replacement waits until active execution releases the entry.
+[lpm cache prune --apply](/docs/packages/cache) waits until the tool finishes and preserves packages in registered cache entries.
+
+```bash
+lpm cache path dlx
+lpm cache clean dlx
+```
+
+See [lpm cache](/docs/packages/cache) for cache inspection and cleanup.
+
+## Executable selection
+
+LPM CLI reads the installed package's `bin` metadata and ignores invalid executable names.
+
+- If the package has one executable, the command uses it.
+- If it has several executables, the command prefers the package's short name.
+- If no unambiguous default exists, the command stops with an error.
+
+For example, the short name of `@scope/tool` is `tool`.
+If the package exposes only one executable, its name can differ from the package name.
+
+To select a different executable explicitly, install the package and use [lpm exec](/docs/dev/exec).
+
+## Installation policy and command permissions
+
+Installation uses the applicable release-age, integrity, provenance, and package policy checks from [lpm install](/docs/packages/install).
+The executable then runs with your user's filesystem and process permissions.
+The executable is not isolated from the current project's files.
+
+LPM CLI removes inherited credential variables and protected runtime hooks before it starts an ordinary package tool.
+This environment filtering does not prevent the tool from reading accessible files or making network requests.
+
+### Release-age overrides
+
+```bash
+lpm dlx --min-release-age=3d create-next-app@latest -- my-app
+lpm dlx --min-release-age-exclude create-next-app create-next-app@latest -- my-app
+lpm dlx --allow-new create-next-app@latest -- my-app
+```
+
+`--allow-new` bypasses the cooldown for this invocation.
+`--min-release-age=0` also requests a cooldown bypass.
+Overrides that weaken policy require interactive approval, as with [lpm install](/docs/packages/install).
+CI, `--json`, and non-interactive runs cannot approve these overrides.
+
+## Arguments and CI
+
+```bash
+lpm dlx prettier@3.6.2 -- --check src
+lpm dlx tool -- --refresh --json
+lpm --json dlx tool@1.0.0 -- --json
+```
+
+Put LPM CLI options before the package or before `--`.
+Put child options after `--` to separate names that both programs recognize.
+The child's exit status determines whether execution succeeds.
+The tool controls its output and any prompts.
+
+For CI, pin a version and pass the tool's own non-interactive options.
+A child `--json` flag controls the child's output.
+The global `--json` flag keeps installation output off stdout, including output from dependency scripts.
+LPM CLI does not wrap successful child output in a result object.
+
+On Ctrl+C or a stop signal, LPM CLI stops the tool before it releases the cache entry.
+
+## Troubleshooting
+
+| Problem | Recovery |
+| --- | --- |
+| Package has no default executable | Install the package, then select its executable with [lpm exec](/docs/dev/exec) |
+| Package declares a missing executable | Use a release with a valid executable or report the package error |
+| Node does not satisfy a dependency | Put a compatible Node version on PATH, then run the command again |
+| Registry rejects authentication | Check the caller's `.npmrc` and registry credentials |
+| Release is too recent | Wait for the cooldown or request an authorized override |
+| Artifact differs from the project lockfile | Review the registry and lockfile selection before updating the lockfile |
+| Refresh fails | Correct the reported installation error, then run `--refresh` again |
+| Tool needs project runtime or environment configuration | Use [lpm exec](/docs/dev/exec) after installing the tool in the project |
 
 ## Flags
 
-| Flag        | Effect                                         |
-| ----------- | ---------------------------------------------- |
-| `--refresh` | Force a fresh download, ignoring the dlx cache |
-| `--allow-new` | Bypass the minimum-release-age cooldown for this run, subject to the same security approval boundary as install |
-| `--min-release-age=<DUR>` | Override the cooldown window for this run (`<N>h`, `<N>d`, `<N>m`, or seconds; `0` disables), subject to the same security approval boundary as install |
-| `--min-release-age-exclude <SELECTOR>` | Exempt a package name, exact version, or `@scope/*` for this run. Repeat the flag for more selectors. |
-
-Plus the [global flags](/docs/commands#global-flags).
+| Flag | Effect |
+| --- | --- |
+| `--refresh` | Refresh the requested package selection and cached installation |
+| `--allow-new` | Request a cooldown bypass for this invocation |
+| `--min-release-age <DUR>` | Set the cooldown in seconds, minutes (`m`), hours (`h`), or days (`d`) |
+| `--min-release-age-exclude <SELECTOR>` | Exempt a package name, exact version, or `@scope/*`. Repeat for more selectors |
 
 ## See also
 
-- [`lpm exec`](/docs/dev/exec) — run a project-local binary
-- [`lpm <file>`](/docs/dev/exec) — run a JS/TS source file directly
-- [`lpm install -g`](/docs/packages/install) — keep a CLI around permanently instead
-- [`lpm cache`](/docs/packages/cache) — manage the dlx cache
+- [lpm exec](/docs/dev/exec) — installed tools and source files
+- [lpm install](/docs/packages/install) — project dependencies
+- [lpm global](/docs/packages/global) — persistent global tools
+- [lpm cache](/docs/packages/cache) — cache inspection and cleanup
+- [Security audit](/docs/packages/security-audit) — package checks and execution policy
