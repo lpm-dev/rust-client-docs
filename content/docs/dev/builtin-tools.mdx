@@ -5,15 +5,37 @@ description: "Understand how LPM CLI selects, downloads, verifies, and caches de
 
 LPM CLI manages some development tools globally. Other commands use dependencies from your project.
 
-| Command | Tool | Version owner |
-| --- | --- | --- |
-| [`lpm lint`](/docs/dev/lint) | Oxlint | LPM CLI, with optional project pins. |
-| [`lpm fmt`](/docs/dev/fmt) | Biome | LPM CLI, with optional project pins. |
-| [`lpm bundle`](/docs/dev/bundle) | Rolldown | LPM CLI, with optional project pins. |
-| [`lpm pack`](/docs/dev/pack) | tsdown | Your project's dependency. |
-| [`lpm check`](/docs/dev/check) | TypeScript, or managed tsgo | Your TypeScript dependency, or the bundled tsgo version. |
+| Command | Tool | Version owner | Runtime |
+| --- | --- | --- | --- |
+| [`lpm lint`](/docs/dev/lint) | Oxlint | LPM CLI, with optional project pins. | Native executable. |
+| [`lpm fmt`](/docs/dev/fmt) | Biome | LPM CLI, with optional project pins. | Native executable. |
+| [`lpm bundle`](/docs/dev/bundle) | Rolldown | LPM CLI, with optional project pins. | Node. |
+| [`lpm pack`](/docs/dev/pack) | tsdown | Your project's dependency. | Node. |
+| [`lpm check`](/docs/dev/check) | TypeScript by default | Project TypeScript, then system `tsc`. | Node. |
+| [`lpm check --engine=tsgo`](/docs/dev/check) | Managed tsgo | The bundled tsgo version. | Native executable. |
 
 Managed tools download on first use. Later runs reuse complete, verified installations for the current platform.
+
+## Quickstart
+
+```bash
+lpm lint
+lpm fmt --check
+lpm bundle --entry src/index.ts --out-dir dist
+lpm check --engine=tsgo
+```
+
+For project TypeScript and tsdown:
+
+```bash
+lpm install -D typescript tsdown
+lpm check
+lpm pack --entry src/index.ts
+```
+
+Commands that need Node reuse a matching installed managed runtime or the inherited `PATH`.
+They do not download Node automatically. Use [lpm use](/docs/dev/use) to install the required runtime first.
+A missing TypeScript compiler does not automatically select tsgo. Use `--engine=tsgo` explicitly.
 
 ## Version selection
 
@@ -109,7 +131,7 @@ To remove a cached installation, use [`lpm plugin remove`](/docs/dev/plugin):
 
 ```bash
 lpm plugin remove rolldown
-lpm bundle src/index.ts --outdir dist
+lpm bundle --entry src/index.ts --out-dir dist
 ```
 
 The next invocation downloads the selected version again. Removal does not edit `lpm.json`.
@@ -119,7 +141,7 @@ The next invocation downloads the selected version again. Removal does not edit 
 ```bash
 lpm lint --json
 lpm fmt --check --json
-lpm bundle src/index.ts --outdir dist --json
+lpm bundle --entry src/index.ts --out-dir dist --json
 ```
 
 Cache both `~/.lpm/plugins/` and `~/.lpm/engines/` between CI runs. The first invocation needs network access unless the selected installation is already cached.
@@ -136,6 +158,17 @@ Install other tools as project dependencies and run a package script:
 
 ```bash
 lpm install -D eslint
+```
+
+Add a package script and the tool's required configuration:
+
+```json title="package.json"
+{
+  "scripts": { "lint": "eslint ." }
+}
+```
+
+```bash
 lpm run lint
 ```
 
