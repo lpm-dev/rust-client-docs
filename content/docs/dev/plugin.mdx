@@ -1,63 +1,181 @@
 ---
 title: lpm plugin
-description: "Manage built-in tool plugins — list, check, update, and remove lazy-downloaded tools."
+description: "List, update, and remove the managed tools used by lint, fmt, and bundle."
 ---
 
-```bash
-lpm plugin <action> [name]
-```
-
-Manages the lazy-downloaded tools that back [`lpm lint`](/docs/dev/lint) (Oxlint), [`lpm fmt`](/docs/dev/fmt) (Biome), and [`lpm bundle`](/docs/dev/bundle) (Rolldown). Oxlint and Biome are single-binary plugins cached under `~/.lpm/plugins/{name}/{version}/{platform}/`. Rolldown is user-facing as a plugin, but its verified npm package layout is stored under `~/.lpm/engines/rolldown/{version}/{platform}/`.
-
-## Examples
+Manage the shared tool installations that power [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), and [`lpm bundle`](/docs/dev/bundle).
 
 ```bash
-lpm plugin list                # show installed managed plugins
-lpm plugin outdated            # check upstream for newer managed plugin versions
-lpm plugin update              # update every installed managed plugin
-lpm plugin update oxlint       # update one plugin
-lpm plugin update rolldown     # update Rolldown's verified package graph
-lpm plugin remove biome        # delete cached binaries for one plugin
+lpm plugin <ACTION> [NAME]
 ```
 
-## Available plugins
+## Quickstart
 
-| Plugin | Backs | Notes |
+```bash
+lpm plugin list
+lpm plugin outdated
+lpm plugin update oxlint
+```
+
+| Action | Aliases | Purpose |
 | --- | --- | --- |
-| `oxlint` | [`lpm lint`](/docs/dev/lint) | Distributed as `.tar.gz` archives by `oxc-project/oxc` |
-| `biome` | [`lpm fmt`](/docs/dev/fmt) | Distributed as direct binaries by `biomejs/biome` |
-| `rolldown` | [`lpm bundle`](/docs/dev/bundle) | Distributed as a verified npm package graph |
+| `list` | `ls` | Show cached versions and the locally selected default. No network request. |
+| `outdated` | — | Compare local defaults with upstream releases. |
+| `update [name]` | `upgrade` | Install and approve one tool, or update all installed tools. |
+| `remove <name>[@version]` | `rm`, `uninstall` | Remove one cached version or all versions of a tool. |
 
-`tsdown` is project-owned: [`lpm pack`](/docs/dev/pack) uses the repo's local `tsdown` dependency and `lpm plugin update tsdown` does not update it. `lpm check` is also not a plugin — it shells out to project-local `tsc` unless `--engine tsgo` is selected.
+`list` and `outdated` do not accept a name. Updates and removals require no interactive confirmation.
 
-## Pinning per-project
+## Managed tools
+
+| Name | Command | Distribution |
+| --- | --- | --- |
+| `oxlint` | [`lpm lint`](/docs/dev/lint) | A native executable from GitHub Releases. |
+| `biome` | [`lpm fmt`](/docs/dev/fmt) | A native executable from GitHub Releases. |
+| `rolldown` | [`lpm bundle`](/docs/dev/bundle) | Verified npm packages, including the platform binding. |
+
+The first tool invocation downloads its selected version. Multiple versions can coexist in the shared cache.
+
+`tsdown` belongs to your project. Use [`lpm upgrade`](/docs/packages/upgrade) to update it for [`lpm pack`](/docs/dev/pack).
+
+[`lpm check`](/docs/dev/check) uses project TypeScript or managed tsgo. Neither compiler appears in this command's managed-tool list.
+
+## Project pins
+
+Use `lpm.json` to select exact tool versions:
 
 ```json title="lpm.json"
 {
   "tools": {
-    "oxlint": "1.57.0",
-    "biome": "2.4.8",
-    "rolldown": "1.1.3"
+    "oxlint": "1.79.0",
+    "biome": "2.5.9",
+    "rolldown": "1.2.4"
   }
 }
 ```
 
-For Oxlint and Biome, a pinned version downloads on first use and verifies against the upstream `<asset_url>.sha256` sidecar. For Rolldown, the pinned version must already be an approved managed plugin version from `lpm plugin update rolldown`; otherwise `lpm bundle` fails with a clear repair command. Normal `lpm lint`, `lpm fmt`, and `lpm bundle` runs do not check upstream for newer versions.
+The tool commands read these pins. `lpm plugin update` updates the shared default and leaves project pins unchanged.
 
-See [Built-in tools — Checksum verification](/docs/dev/builtin-tools#checksum-verification) for the full verification pipeline.
+Workspace members inherit root pins unless they define their own. Normal tool runs do not check upstream for newer versions.
 
-## Subcommands
+Oxlint and Biome can download a pinned release after checksum verification. Rolldown accepts its bundled version or a version previously approved on this platform.
 
-| Subcommand | Aliases | Effect |
-| --- | --- | --- |
-| `list` | `ls` | Print installed managed plugins and the latest locally approved version |
-| `outdated` | — | Check upstream and print current vs latest for Oxlint, Biome, and Rolldown; notes that tsdown is project-owned |
-| `update` | `upgrade` | Pull the latest release for one plugin (or installed plugins if no name given); human output shows the download and verification phases before the final updated version |
-| `remove` | `rm`, `uninstall` | Delete cached binaries for one plugin |
+To use another approved Rolldown version, copy its exact version from the update output:
 
-Plus the [global flags](/docs/commands#global-flags) — `--json` returns a structured listing.
+```bash
+lpm plugin update rolldown
+lpm plugin list --json
+```
+
+An update approves the current upstream version. It does not approve an arbitrary older pin. Remove an unavailable pin to use the selected default.
+
+The management command has no project pin override or one-run opt-out. See [built-in tools](/docs/dev/builtin-tools) for default selection and verification.
+
+## Recipes
+
+### Update installed tools
+
+```bash
+lpm plugin outdated
+lpm plugin update
+```
+
+An unnamed update skips tools with no complete installation. To install a specific tool before its first use, name it:
+
+```bash
+lpm plugin update biome
+```
+
+The new version becomes the shared default only after installation and verification succeed. Existing project pins still take precedence.
+
+Updates run one tool at a time. If one update fails, earlier successful updates remain installed.
+
+### Remove cached versions
+
+```bash
+lpm plugin remove oxlint@1.57.0
+lpm plugin remove biome
+lpm plugin remove rolldown@1.0.2
+```
+
+Removal covers every cached platform for the selected version or tool. Removing an absent version succeeds without changes.
+
+Removal leaves project pins and the approved default unchanged. The next tool invocation can download that version again.
+
+### Prepare a CI cache
+
+```bash
+lpm plugin update oxlint --json
+lpm plugin update biome --json
+lpm plugin update rolldown --json
+lpm plugin list --json
+```
+
+Cache `~/.lpm/plugins/` and `~/.lpm/engines/` between CI runs. `LPM_HOME` changes the parent directory for both caches.
+
+For pinned projects, run the relevant tool once with the project configuration before you need an offline run.
+
+### Recover from a damaged installation
+
+```bash
+lpm plugin remove biome
+lpm fmt --check
+```
+
+Oxlint and Biome also support a fresh download without first removing the previous installation:
+
+```bash
+LPM_FORCE_TOOL_INSTALL=1 lpm lint
+LPM_FORCE_TOOL_INSTALL=1 lpm fmt --check
+```
+
+A failed replacement keeps the previous installation. Invalid cached files never bypass verification.
+
+## Verification and failures
+
+Oxlint and Biome use a bundled SHA-256 checksum, an upstream checksum sidecar, or the exact GitHub release asset digest. A checksum mismatch stops installation.
+
+Rolldown verifies npm integrity for every downloaded package. Cached tools require matching verification metadata before reuse.
+
+If upstream discovery fails, Oxlint and Biome updates can reuse the locally selected version. Read the warning before treating that result as an upstream update.
+
+If GitHub rate limits a request, provide `GITHUB_TOKEN` or `GH_TOKEN`. These tokens apply to the GitHub API.
+
+If a Rolldown pin is unavailable, remove the pin or select a version that this platform already approved.
+
+## JSON and exit codes
+
+```bash
+lpm plugin list --json
+lpm plugin outdated --json
+lpm plugin update oxlint --json
+lpm plugin remove oxlint@1.57.0 --json
+```
+
+Listings include `success`, `plugins`, and `count`. Each row includes installed versions, the selected default, update status, and any discovery error.
+
+`outdated` also includes `outdated_count` and the project-owned `tsdown` entry. An upstream lookup failure appears in that tool's row. Inspect each row's `error` field even when the command succeeds.
+
+A named update returns `plugin` and `version`. An unnamed update returns `updated` and `count`.
+
+A version-specific removal returns a boolean `removed`. A whole-tool removal returns the number of removed installed versions.
+
+Successful operations exit `0`. Invalid input and failed installations return a nonzero status and the standard JSON error object.
+
+## Flags
+
+| Argument or flag | Effect |
+| --- | --- |
+| `<ACTION>` | `list`, `outdated`, `update`, or `remove`. |
+| `[NAME]` | Optional for `update`. Required for `remove`, with optional `@version`. |
+| `--json` | Return structured output. |
+
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt) — the user-facing commands plugins back
-- [Built-in tools](/docs/dev/builtin-tools) — design overview, security model, cache layout
+- [Built-in tools](/docs/dev/builtin-tools) — version selection, caches, and verification.
+- [`lpm lint`](/docs/dev/lint) — run Oxlint.
+- [`lpm fmt`](/docs/dev/fmt) — run Biome.
+- [`lpm bundle`](/docs/dev/bundle) — run Rolldown.
+- [`lpm upgrade`](/docs/packages/upgrade) — update project dependencies.
