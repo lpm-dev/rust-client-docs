@@ -1,150 +1,205 @@
 ---
 title: Managed runtimes
-description: "How LPM CLI detects, installs, and exposes managed Node.js and Bun runtimes."
+description: Select Node.js and Bun versions for project commands, workspace members, and development services.
 ---
 
-LPM CLI manages project runtimes itself. It detects the versions your project asks for, downloads missing installs on demand, stores them under `~/.lpm/runtimes/`, and prepends the right `bin/` directories to `PATH` for every script you run.
+A runtime pin selects the Node.js or Bun version that project commands use. LPM CLI stores managed installations outside the project and reuses them.
 
-Node and Bun are supported managed runtimes. Deno is still unsupported.
+Use pins for consistent local development and CI. Use `package.json > engines.node` to require compatibility with the Node executable that actually runs.
 
-## Detection Order
-
-When [`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), [`lpm <file>` / `lpm exec`](/docs/dev/exec), [`lpm test`](/docs/dev/test), or [`lpm bench`](/docs/dev/bench) starts, LPM CLI resolves managed runtime pins in deterministic order: Node first, then Bun.
-
-### Node
-
-| Priority   | Source                    | Format                                                 |
-| ---------- | ------------------------- | ------------------------------------------------------ |
-| 1          | `lpm.json > runtime.node` | Semver: `">=22.0.0"`, `"22.5.0"`, `"22"`               |
-| 2          | `.nvmrc`                  | Plain version: `22.5.0`, `lts/iron`, `v22`             |
-| 3          | `.node-version`           | Plain version                                          |
-| (fallback) | None of the above         | Use the first Node on the constructed script `PATH` — no managed runtime |
-
-Named LTS selectors such as `lts/iron` keep their codename. `lts` and `lts/*` select the latest LTS release.
-
-`.nvmrc` lives in this list intentionally — projects migrating from `nvm` get Node pinning for free without writing `lpm.json`. New projects should prefer `lpm.json > runtime.node` because it sits next to the rest of the LPM CLI config.
-
-### Bun
-
-| Priority   | Source                    | Format                                                        |
-| ---------- | ------------------------- | ------------------------------------------------------------- |
-| 1          | `lpm.json > runtime.bun`  | Exact, `latest`, `v1.3.14`, `bun-v1.3.14`, prefix, or range    |
-| (fallback) | No `runtime.bun` declared | Do not prepend managed Bun                                    |
-
-`package.json > engines.bun` is recognized as a compatibility warning, but LPM CLI does not enforce it and does not use it as a managed-runtime pin. Use `lpm.json > runtime.bun` when scripts need Bun available.
-
-## Auto-Install
-
-If a runtime selector is not already installed, LPM CLI downloads it before running the script unless auto-install is disabled:
+## Quickstart
 
 ```bash
+lpm use node@22
+lpm use bun@1.3.14
+lpm run start
+```
+
+[lpm use](/docs/dev/use) installs the selected version and records the pin in `lpm.json`.
+For configuration without an immediate download:
+
+```json title="lpm.json"
+{
+  "runtime": {
+    "node": "22.12.0",
+    "bun": "1.3.14"
+  }
+}
+```
+
+A Bun pin makes `bun` available. It does not change package-script execution to `bun run`.
+Node.js and Bun are the supported managed runtimes.
+
+## Detection order
+
+| Runtime | Selection order |
+| --- | --- |
+| Node.js | `lpm.json > runtime.node`, then `.nvmrc`, then `.node-version`. |
+| Bun | `lpm.json > runtime.bun`. |
+
+The first available selector wins. Without a selector, the command uses the first matching executable on its constructed `PATH`.
+Configuration read errors stop detection.
+
+Node selectors support exact versions, prefixes, ranges, `latest`, `lts`, `lts/*`, and named channels such as `lts/iron`.
+Named LTS selectors retain their codename. `lts` and `lts/*` select the latest matching LTS release.
+Bun supports exact versions, prefixes, ranges, and `latest`, including version prefixes such as `bun-v1.3.14`.
+
+```bash
+lpm use pin node@lts/iron
+lpm use pin 'node@>=22 <23'
+lpm use pin bun@latest
+```
+
+Pin-only Node commands preserve channel selectors. An explicit installation resolves the selector and records the installed version.
+Invalid or contradictory selectors are rejected by [lpm use](/docs/dev/use).
+
+## Automatic installation and fallback
+
+[lpm dev](/docs/dev/dev), [lpm run](/docs/dev/run), [lpm exec](/docs/dev/exec), [lpm test](/docs/dev/test), and [lpm bench](/docs/dev/bench) prepare managed runtimes.
+They prefer matching installed versions before they request a download.
+
+For Node `latest`, installed-only selection chooses the newest installed version.
+LTS selection uses the cached release index to classify installed versions. Ordinary runs can reuse stale classification data without a network request.
+An explicit `lpm use node@<selector>` can refresh release discovery instead.
+
+```bash
+LPM_NO_AUTO_INSTALL=1 lpm run start
 LPM_NO_AUTO_INSTALL=true lpm dev
 ```
 
-`LPM_NO_AUTO_INSTALL=true` applies to Node and Bun selectors. When auto-install is off and a managed runtime is missing, LPM CLI warns and leaves the system `PATH` in place for that runtime. It has no effect on `package.json > engines.node`, because an engine constraint never triggers installation.
+These values disable automatic downloads for both runtimes. They do not disable installed runtime selection.
+If selection or installation fails, automatic preparation warns and leaves the inherited runtime path available.
+A pin alone does not guarantee that a command stops when its requested runtime is unavailable.
+Node engine constraints still apply to the executable that the command resolves.
 
-Node releases come from `https://nodejs.org/dist/index.json`, cached for 1 hour at `~/.lpm/runtimes/index-cache.json`. Downloads are SHA-256 verified against the matching `SHASUMS256.txt` entry.
+[lpm bundle](/docs/dev/bundle), [lpm pack](/docs/dev/pack), and [lpm check](/docs/dev/check) reuse installed runtimes.
+They do not automatically download Node. Prepare the required version with [lpm use](/docs/dev/use) first.
+Their installed-only Node lookup also supports cached channels and preserves range operators.
+Root install scripts use the same installed Node selection without an automatic runtime download.
 
-Bun releases come from the GitHub releases API for `oven-sh/bun`, cached for 1 hour at `~/.lpm/runtimes/bun-index-cache.json`. Downloads use Bun's platform asset names such as `darwin-aarch64`, `linux-x64-musl`, `linux-x64-baseline`, and `windows-x64`. Downloads are SHA-256 verified against GitHub asset digests and/or `SHASUMS256.txt`; when both are present, both must verify.
+## Workspaces and services
 
-## Storage Layout
+Workspace members inherit root pins for runtimes that they do not select locally.
+A local Node selector replaces root Node without removing an inherited Bun selector, and vice versa.
+Development services apply the same rule from each service's `cwd`.
+
+```json title="packages/legacy/lpm.json"
+{
+  "runtime": { "node": "20" }
+}
+```
+
+```bash
+lpm run test --filter legacy
+lpm test --all
+```
+
+The selected member uses its local Node version. Other selected members use their own selectors or inherited root pins.
+See [workspaces](/docs/packages/workspaces) and [development services](/docs/dev/dev) for execution rules.
+
+## Script PATH order
+
+Package scripts normally receive:
+
+1. Project and ancestor `node_modules/.bin` directories, nearest first.
+2. The selected managed Node directory.
+3. The selected managed Bun directory.
+4. The inherited `PATH`.
+
+Ancestor script lookup stops at the workspace boundary, or at the filesystem root outside a workspace.
+Built-in tool lookup stays within its project or workspace boundary.
+A local `.bin/node` can take precedence over managed Node. Engine checks use the executable on the actual execution path.
+
+Existing `nvm` or `fnm` shell configuration can coexist with managed runtimes.
+A managed pin takes precedence over inherited shell paths, after project executable directories.
+If both `.nvmrc` and `lpm.json > runtime.node` exist, the `lpm.json` selector wins.
+
+## Node engine constraints
+
+`engines.node` is a compatibility constraint. It never selects or downloads a managed runtime.
+
+```json title="package.json"
+{
+  "engines": { "node": ">=22 <23" }
+}
+```
+
+The runner checks the Node executable on the constructed path against the applicable root and member constraints.
+Workspace members without a requested task do not need runtime preparation.
+For development services, runtime checks finish before the service set starts.
+
+Engine checks stop incompatible runs by default. Set `package.json > lpm > engineStrict: false` or `~/.lpm/config.toml > engine-strict = false` for warnings only.
+Install-time checks also apply to dependency Node constraints. Required mismatches stop installation, while incompatible optional-only packages are skipped.
+See [lpm install](/docs/packages/install) for install-time controls.
+
+`engines.bun` can produce a compatibility warning, but it is neither an enforced engine constraint nor a managed Bun pin.
+
+## Supported hosts
+
+Managed downloads recognize macOS, Linux, and Windows on x64 or ARM64. The selected release must provide a matching platform asset.
+Bun selects musl assets on musl Linux and baseline x64 assets on processors without AVX2.
+Node downloads use the standard upstream distributions.
+
+## Storage and reuse
 
 ```text
 ~/.lpm/runtimes/
-├── node/
-│   └── 22.12.0/
-│       └── bin/
-│           ├── node
-│           ├── npm
-│           └── npx
-├── bun/
-│   └── 1.3.14/
-│       └── bin/
-│           └── bun
-├── index-cache.json
-└── bun-index-cache.json
+  node/<version>/bin/node   # macOS and Linux
+  node/<version>/node.exe   # Windows
+  bun/<version>/bin/bun
+  index-cache.json
+  bun-index-cache.json
 ```
 
-Each version is installed once and reused by every project on the machine. `LPM_HOME=<path>` moves the entire LPM CLI root, including `runtimes/`, which is useful for hermetic CI.
+Windows Bun uses `bun.exe` in its `bin` directory.
+`LPM_HOME` replaces `~/.lpm`. Installations are shared by projects that use the same LPM CLI home.
+Concurrent requests for one version share an installation lock. Only a complete directory becomes available for reuse.
 
-Concurrent projects can request the same missing runtime. LPM CLI serializes that version's installation. It publishes only a complete runtime directory.
-
-Other projects then reuse that installation.
-
-## Script PATH Order
-
-When a script runs, LPM CLI builds `PATH` from:
-
-1. Project-local `node_modules/.bin/`
-2. Managed Node `bin/`, if a Node pin resolves to an installed version
-3. Managed Bun `bin/`, if `runtime.bun` resolves to an installed version
-4. The inherited `PATH`
-
-This means locally-installed CLIs win over managed runtime tools, and managed Node wins over managed Bun when both provide a command with the same name.
-
-`runtime.bun` only exposes `bun` to scripts. It does **not** switch LPM CLI script execution to `bun run`.
-
-For workspace runs and multi-service dev sessions, each member or service resolves selectors from its directory. A local selector replaces the same root runtime.
-
-The member or service inherits each unselected root runtime. For example, a service can inherit root Node and select its own Bun version.
-
-## Node Engine Enforcement
-
-The workspace root's `engines.node` is a compatibility constraint, never a runtime selector. LPM CLI first applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`. It then constructs the same `PATH` scripts receive—project and workspace `node_modules/.bin` directories, the selected managed runtime, then inherited `PATH`—and validates the first Node resolved from it against `engines.node`.
-
-For workspace runs, LPM CLI resolves the local Node selector for each runnable member. It validates the first Node on that member's script `PATH`.
-
-The validation uses the root and member constraints. Members without the requested task are skipped without runtime preparation.
-
-For multi-service dev sessions, LPM CLI applies the same rule to each service `cwd`. Runtime validation finishes before LPM CLI starts the service set.
-
-An engine range never selects another installed managed runtime, downloads Node, or prepends a different Node to `PATH`. This preserves externally selected runtimes in CI matrices. If no Node is available, the engine check fails with the declared constraint and an explicit `lpm use node@<version>` hint. `package.json > lpm > engineStrict: false` and `~/.lpm/config.toml > engine-strict = false` retain warning-only behavior.
-
-Root constraints gate `lpm run`, `lpm install`, `lpm rebuild`, and `lpm add`. Selected dependencies' `engines.node` ranges are install-time enforcement only: required mismatches abort, optional-only incompatible packages are skipped, and the ranges are persisted for lockfile replay.
-
-```text
-$ lpm install
-Error: lpm::engine_mismatch
-  × node version 18.20.4 does not satisfy required >=22.0.0 (from package.json
-  │ > engines.node (compared against script PATH))
-```
-
-Resolution: select a matching managed runtime (`lpm use node@22`), provide a compatible Node on `PATH`, or relax the constraint.
-
-`engines.bun` is not enforced in this first Bun runtime pass. Put the desired Bun version in `lpm.json > runtime.bun` to manage Bun availability.
-
-## `lpm use`
+Reuse checks the expected executable's shape and permissions. It does not recheck the downloaded content hash on every command.
+If an installed runtime is damaged, remove it and install it again:
 
 ```bash
-lpm use node@22                 # install the latest 22.x, pin in lpm.json
-lpm use node@lts                # install latest Node LTS
-lpm use bun@1.3.14              # install + pin Bun
-lpm use bun@latest              # install + pin latest Bun
-lpm use --list bun              # list installed Bun versions
-lpm use remove bun@1.3          # remove all installed 1.3.x Bun runtimes
+lpm use remove node@22.12.0
+lpm use node@22.12.0
+lpm use list
 ```
 
-`lpm use <runtime>@<spec>` writes the resolved version into `lpm.json > runtime.<runtime>`.
-During a fresh install, the human output shows the resolved version, downloaded size, SHA-256 verification, extraction/linking, final runtime, and PATH hint.
+Removal leaves project pins unchanged. It can affect other projects that use the same installation.
 
-`lpm use <runtime>@<spec> --pin` skips the download step. If the spec already matches an installed runtime, LPM CLI writes that exact installed version; otherwise it records the requested spec unchanged so a later `lpm dev` / `lpm run` can resolve or auto-install it.
+## Download verification
 
-`lpm use remove <runtime>@<spec>` deletes installed managed runtimes matching the spec without changing `lpm.json`. If the project still pins a matching runtime, LPM CLI warns because later commands can auto-install it again.
+Node release discovery uses `https://nodejs.org/dist/index.json` with a one-hour cache.
+Downloads use SHA-256 from the exact archive entry in `SHASUMS256.txt`. Conflicting duplicate entries stop installation.
 
-## Compatibility With `nvm` / `fnm`
+`LPM_NODE_DIST_BASE_URL` changes the archive and checksum location. It does not change release-index discovery.
+Node verification trusts HTTPS and the selected distribution source. LPM CLI does not verify the detached GPG signature.
 
-LPM CLI's Node management is independent. If you have `nvm` or `fnm` installed:
+Bun discovery uses the `oven-sh/bun` GitHub release API with a one-hour cache.
+Downloads use the GitHub asset digest, `SHASUMS256.txt`, or both. If both are present, both must agree with the downloaded bytes.
+Conflicting checksum entries also stop Bun installation.
 
-- They modify `PATH` in your shell, affecting `node` lookup outside LPM CLI.
-- LPM CLI's Node detection respects `.nvmrc`, so a project pinned via `nvm` works under LPM CLI without converting.
-- When LPM CLI runs a script with a managed Node pin, LPM CLI's runtime takes precedence over whatever `nvm` set in the shell.
+## CI and recovery
 
-You do not have to remove `nvm` to adopt LPM CLI. If a project has both `.nvmrc` and `lpm.json > runtime.node`, the `lpm.json` value wins.
+```bash
+lpm use node@22.12.0 --json
+LPM_NO_AUTO_INSTALL=1 lpm run test --json
+```
 
-## See Also
+Cache the runtime directory between compatible CI jobs. Preinstall exact versions before offline runs.
+LTS reuse also needs cached release metadata. An exact version avoids that channel lookup.
 
-- [`lpm use`](/docs/dev/use) — install + pin command
-- [`lpm.json` runtime](/docs/reference/lpm-json#runtime) — config field reference
-- [Environment variables](/docs/reference/env-vars#install-pipeline) — `LPM_NO_AUTO_INSTALL`
-- [`lpm dev`](/docs/dev/dev) — picks up runtime pins automatically
-- [`lpm doctor`](/docs/infra/doctor) — checks managed runtime state
+| Problem | Action |
+| --- | --- |
+| The wrong Node version runs. | Check local `.bin/node`, project pins, workspace inheritance, and inherited `PATH`. |
+| A pin cannot download. | Correct connectivity or install the required version before the command. |
+| An LTS pin misses an installed version. | Refresh release discovery with `lpm use node@<selector>`, or pin the exact version. |
+| Node fails an engine check. | Select a version that satisfies both project and workspace constraints. |
+| A runtime directory is incomplete or damaged. | Remove that version and reinstall it. |
+
+## See also
+
+- [lpm use](/docs/dev/use)
+- [Runtime configuration](/docs/reference/lpm-json#runtime)
+- [Built-in tools](/docs/dev/builtin-tools)
+- [lpm doctor](/docs/infra/doctor)
+- [Environment variables](/docs/reference/env-vars)
