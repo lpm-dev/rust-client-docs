@@ -1,98 +1,171 @@
 ---
 title: lpm fmt
-description: "Format the project with Biome — lazy-downloaded, with --check mode for CI."
+description: Format source files with managed Biome, or check formatting in CI without changing files.
 ---
 
-```bash
-lpm fmt [path...]              # format and write
-lpm fmt --check [path...]      # check only, exit 1 if unformatted
-```
-
-Runs [Biome](https://biomejs.dev) `format` across the project. The binary is downloaded the first time you run `lpm fmt`, cached under `~/.lpm/cache/`, and reused thereafter.
-
-Faster than `npx biome` (`3 ms` vs `340 ms` on the [reference fixture](https://github.com/lpm-dev/rust-client#benchmarks)) because there's no per-invocation `npx` resolution overhead.
-
-## Examples
+`lpm fmt` runs [Biome](https://biomejs.dev/formatter/) in the current directory or selected workspace members.
 
 ```bash
-lpm fmt                       # format the whole project, write changes
-lpm fmt src/                  # format one directory
-lpm fmt --check               # check without writing — CI mode
-lpm fmt --check src/          # check one directory
-lpm fmt --all                 # workspace: format every member
-lpm fmt --filter web          # workspace: format one member
-lpm fmt --filter './apps/*'   # workspace: path glob
-lpm fmt --affected            # workspace: only members affected vs main
+lpm fmt [OPTIONS] [ARGS]...
 ```
 
-## Default vs `--check`
+## Quickstart
 
-| Mode | What happens |
-| --- | --- |
-| `lpm fmt` (default) | Runs `biome format <path> --write` — actually formats files |
-| `lpm fmt --check` | Runs `biome format <path>` (no `--write`) — exits non-zero if any file is unformatted, useful in CI |
+```bash
+lpm fmt
+lpm fmt src/
+lpm fmt --check
+```
 
-Without an explicit path argument, both modes operate on `.` (the project root).
+The default mode writes formatting changes. `--check` reports formatting errors without changing source files. Watch mode reports errors after each change.
 
-## Pinning a version
+LPM CLI downloads and checks the managed Biome binary on first use. Later runs reuse that installation.
 
-By default, `lpm fmt` uses the version baked into LPM CLI's plugin registry. Override per-project in `lpm.json`:
+To run a `package.json` script named `fmt`, use [`lpm run fmt`](/docs/dev/run).
 
-```json title="lpm.json"
+## Configuration
+
+Put formatting rules in `biome.json` or `biome.jsonc`. Biome discovers configuration from the working directory.
+
+```json title="biome.json"
 {
-  "tools": {
-    "biome": "2.4.8"
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2
   }
 }
 ```
 
-A member inherits the workspace root pin unless its own `lpm.json` overrides it. Malformed configuration fails the affected member. Invalid root configuration stops the workspace run.
+Pin the managed binary in `lpm.json`:
 
-Run [`lpm plugin update biome`](/docs/dev/plugin) to pull the latest release into the cache.
+```json title="lpm.json"
+{
+  "tools": {
+    "biome": "2.5.9"
+  }
+}
+```
+
+Runs from a subdirectory still use the project pin. A member inherits the workspace root pin unless its own `lpm.json` overrides it.
+
+Without a pin, LPM CLI selects its bundled version or a newer version previously installed by [`lpm plugin update biome`](/docs/dev/plugin). Normal formatting runs do not check for newer releases.
+
+Plugin updates do not change project pins. Edit or remove `tools.biome` to change that selection. There is no command-line version override.
+
+Invalid `lpm.json` stops a single-package run. Invalid root `lpm.json` stops a workspace run. Invalid member `lpm.json` fails that member while others continue.
+
+The command does not use `tasks.fmt` or `env.fmt` from `lpm.json`.
+
+## Examples
+
+### Format selected files
+
+```bash
+lpm fmt src/ tests/
+lpm fmt -- --indent-style=space src/
+lpm fmt -- --config-path ./config/biome.json src/
+```
+
+Without paths, Biome uses the current directory. Put LPM CLI flags before the forwarded arguments. Use `--` to pass Biome options unchanged.
+
+### Check formatting in CI
+
+```bash
+lpm fmt --check
+lpm fmt --check --filter web --fail-if-no-match
+lpm fmt --check --all --json
+```
+
+These commands need no prompt. A missing managed binary still requires a network download.
+
+`--check` rejects forwarded `--write` and `--fix` options before running Biome.
+
+### Watch formatting errors
+
+```bash
+lpm fmt -- --watch
+lpm fmt --filter web -- --watch
+```
+
+Watch mode checks formatting without writing changes. It requires exactly one selected member in workspace mode.
+
+Watch mode rejects `--json`, `--write`, and `--fix`. Biome's `--watch` flag does not accept a value such as `false`.
+
+### Inspect Biome options
+
+```bash
+lpm fmt -- --help
+```
 
 ## Workspaces
 
 ```bash
-lpm fmt --all                              # every member
-lpm fmt --filter web                       # exact name
-lpm fmt --filter '@scope/*'                # glob
-lpm fmt --filter './apps/*' --check        # path glob, CI mode
-lpm fmt --filter-prod ...shared            # prod graph closure
-lpm fmt --affected --base develop          # affected vs a non-main branch
-lpm fmt --filter web --fail-if-no-match    # exit non-zero on typo'd filter
+lpm fmt --all
+lpm fmt --check --filter web --filter api
+lpm fmt --check --filter './apps/*'
+lpm fmt --check --filter-prod '...shared'
+lpm fmt --check --affected --base origin/main
 ```
 
-Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. The Biome binary is resolved once at the workspace root before fan-out, so the homogeneous-version case never races on cold-cache install.
+Selected dependencies run before their dependents. Independent members can run concurrently, up to the host CPU count. Each process uses its member directory.
 
-Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
+LPM CLI prepares requested tool versions before starting member processes. Members with the same requested pin share a prepared binary.
 
-`--all` and `--affected` are mutually exclusive; filters compose with `--affected` (the affected set is unioned with the filter result). `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
+`--all` conflicts with `--filter`, `--filter-prod`, and `--affected`. Filters and `--affected` combine their selections.
+
+An empty selection succeeds without running Biome. Add `--fail-if-no-match` when a selected member must exist. Watch mode always rejects an empty selection.
+
+See [workspace filters](/docs/packages/workspaces#filter-grammar) for dependency closures, exclusions, path patterns, and Git references.
+
+## JSON and exit codes
+
+```bash
+lpm fmt --check --json
+lpm fmt --check --all --json
+```
+
+Both modes emit one JSON object with member results, exit codes, and durations. Failed members include captured diagnostics. Successful members omit captured output.
+
+A launch failure has `exit_code: null` and an `error` message. Errors before member execution can use the [standard error object](/docs/reference/exit-codes).
+
+See the [`lpm lint` JSON example](/docs/dev/lint#json-and-exit-codes) for the envelope shape.
+
+LPM CLI retains at most 10 MiB per output stream, with a truncation marker for longer diagnostics.
+
+Single-package runs preserve Biome's exit code. Workspace runs exit `1` if any member fails. On Unix, interruption stops active tool descendants and exits `130` for SIGINT or `143` for SIGTERM.
+
+## Cache and recovery
+
+Managed binaries normally live under `~/.lpm/plugins/biome/<version>/<platform>/`. `LPM_HOME` changes the base directory.
+
+If a cached binary fails its integrity check, LPM CLI downloads and checks it again. To force a fresh installation:
+
+```bash
+LPM_FORCE_TOOL_INSTALL=1 lpm fmt --check
+```
+
+If configuration parsing fails, correct the reported configuration file before retrying. If files are unexpectedly excluded, inspect Biome's ignore and include rules.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--check` | Check only, don't write — exits non-zero on unformatted files |
-| `--all` | Run in every workspace member |
-| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
-| `--filter-prod <expr>` | Select workspace members with production-only dependency closures |
-| `--affected` | Run only in members affected by changes vs `--base` |
-| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions |
-| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
+| `--check` | Check formatting without changing source files. |
+| `--all` | Run in every workspace member. Conflicts with filters and `--affected`. |
+| `--filter <FILTER>` | Select members with a repeatable workspace filter. |
+| `--filter-prod <FILTER_PROD>` | Select members with production-only dependency closures. |
+| `--affected` | Select changed members and their affected dependents. |
+| `--base <BASE>` | Git base for `--affected`. Default: `main`. |
+| `--changed-files-ignore-pattern <PATTERN>` | Ignore matching changed paths. Repeatable. |
+| `--test-pattern <PATTERN>` | Treat matching changes as tests when calculating dependent selection. Repeatable. |
+| `--fail-if-no-match` | Fail when the workspace selection is empty. |
+| `[ARGS]...` | Arguments forwarded to `biome format`. Use `--` to separate them from LPM CLI flags. |
 
-Anything after `--` (or trailing path) is forwarded to Biome.
-
-Plus the [global flags](/docs/commands#global-flags).
-
-## `--json` in workspace mode
-
-Single-package mode (`lpm fmt`) preserves Biome's stdout — LPM CLI does not wrap it. Workspace mode emits a single LPM CLI envelope on stdout; per-member stdout/stderr is captured and surfaced inside the envelope only on failure. See [`lpm lint`](/docs/dev/lint#json-and-exit-codes) for the exact envelope shape.
+See [global flags](/docs/commands#global-flags) for `--json` and other shared options.
 
 ## See also
 
-- [`lpm lint`](/docs/dev/lint) — Oxlint, same lazy-download mechanism
-- [`lpm check`](/docs/dev/check) — TypeScript type-check
-- [`lpm plugin`](/docs/dev/plugin) — manage tool versions and updates
-- [Built-in tools](/docs/dev/builtin-tools) — how the plugin system works
+- [`lpm lint`](/docs/dev/lint) — find JavaScript and TypeScript code errors.
+- [`lpm check`](/docs/dev/check) — check TypeScript types.
+- [`lpm plugin`](/docs/dev/plugin) — inspect and update managed tools.
+- [Built-in tools](/docs/dev/builtin-tools) — tool selection and installation.
