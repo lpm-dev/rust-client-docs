@@ -1,95 +1,192 @@
 ---
 title: lpm use
-description: "Install, pin, list, and remove managed Node.js and Bun runtimes."
+description: "Install, pin, list, and remove managed Node.js and Bun versions for your project."
 ---
 
-```bash
-lpm use <runtime>@<version>      # install + pin
-lpm use --list [runtime]         # list installed versions
-lpm use remove <runtime>@<spec>  # remove installed versions matching a spec
-```
-
-Installs and pins managed runtimes under `~/.lpm/runtimes/`. Supported runtimes are `node` and `bun`.
-
-After `lpm use node@22`, scripts run with the pinned Node version via PATH injection. After `lpm use bun@1.3.14`, scripts can call `bun` from the managed Bun install. `runtime.bun` does **not** make LPM CLI execute scripts through `bun run`; `lpm run` still uses LPM CLI's runner and exposes Bun on `PATH`.
-
-For project environment variables and secrets management, see [`lpm env`](/docs/dev/env).
-
-## Installing Node
+Select the Node.js or Bun version that your project needs. LPM CLI stores managed runtimes once and shares them across projects on the same machine.
 
 ```bash
-lpm use node@22                # install + pin Node 22 (resolves to latest 22.x)
-lpm use node@lts               # install + pin the latest LTS
-lpm use node@22.12.0           # install + pin an exact version
-lpm use node@22 --pin          # already installed — pin the concrete version, no download
+lpm use [OPTIONS] [ARGS]...
+
+lpm use [install|i] <runtime>@<spec>
+lpm use pin <runtime>@<spec>
+lpm use [list|ls] [runtime]
+lpm use [remove|rm|uninstall] <runtime>@<spec>
 ```
 
-Versions land under `~/.lpm/runtimes/node/`. `lpm use node@22` resolves the spec, downloads the build for your platform if missing, then writes the pin to `lpm.json`:
+## Quickstart
+
+```bash
+lpm use node@22
+lpm run dev
+```
+
+The first command installs the highest matching Node release and writes its exact version to `lpm.json`. Project scripts then receive that runtime on `PATH`.
+
+| Mode | Effect |
+| --- | --- |
+| `<runtime>@<spec>` or `install <runtime>@<spec>` | Install the selected version, then pin it in the project. |
+| `pin <runtime>@<spec>` or `<runtime>@<spec> --pin` | Write the pin without a download. |
+| `list [runtime]` or `--list [runtime]` | List complete installed versions, newest first. Node is the default. |
+| `remove <runtime>@<spec>` or `<runtime>@<spec> --remove` | Remove every installed version that matches the selector. |
+
+Supported runtimes are `node` and `bun`. A bare version such as `lpm use 22` selects Node. With no arguments, the command lists installed Node versions.
+
+These modes are non-interactive. Use `--json` for automation.
+
+## Project configuration
 
 ```json title="lpm.json"
-{ "runtime": { "node": "22.12.0" } }
+{
+  "runtime": {
+    "node": "22.12.0",
+    "bun": "1.3.14"
+  }
+}
 ```
 
-When `lpm.json > runtime.node` is absent, detection falls back through `.nvmrc`, then `.node-version`. `package.json > engines.node` validates the resulting managed or `PATH` runtime but never selects or installs one. See [Managed runtimes](/docs/dev/node-version-pinning) for the full ladder.
+[`lpm run`](/docs/dev/run), [`lpm dev`](/docs/dev/dev), and other runtime-aware commands read these pins. They install missing versions automatically unless automatic installation is off.
 
-## Installing Bun
+For Node, `runtime.node` takes precedence over `.nvmrc`, then `.node-version`. Bun reads `runtime.bun` only.
+
+`package.json > engines.node` checks compatibility. It does not select or install a runtime. `engines.bun` produces a compatibility warning.
+
+A Bun pin adds Bun to `PATH`. It does not change the script runner to `bun run`.
+
+To change a project pin:
 
 ```bash
-lpm use bun@1.3.14             # install + pin an exact Bun version
-lpm use bun@latest             # install + pin the latest Bun release
-lpm use bun@1.3 --pin          # pin a matching installed 1.3.x version
+lpm use node@22.12.0
+lpm use bun@1.3.14
 ```
 
-Versions land under `~/.lpm/runtimes/bun/`. `lpm use bun@1.3.14` writes:
+LPM CLI uses the nearest directory with `package.json`, or the current directory if none exists. It preserves unrelated configuration fields and leaves `.nvmrc` and `.node-version` unchanged.
 
-```json title="lpm.json"
-{ "runtime": { "bun": "1.3.14" } }
-```
-
-Bun specs accept exact versions, `v1.3.14`, `bun-v1.3.14`, `latest`, major/minor prefixes, and semver ranges. Bun does not have an LTS channel, so `bun@lts` is rejected.
-
-`runtime.bun` is read only from `lpm.json`. `package.json > engines.bun` is surfaced as a compatibility warning but is not enforced.
-
-## Listing Installed Versions
+To disable automatic downloads for one run:
 
 ```bash
-lpm use --list                 # list installed Node versions
-lpm use --list node            # same
-lpm use --list bun             # list installed Bun versions
+LPM_NO_AUTO_INSTALL=1 lpm run dev
 ```
 
-With `--json`, the envelope includes the selected runtime:
+If a selected runtime is missing, LPM CLI warns and leaves the inherited `PATH` available. This setting does not disable an explicit installation through this command.
 
-```json
-{ "success": true, "runtime": "bun", "versions": ["1.3.14"] }
-```
+See [Managed runtimes](/docs/dev/node-version-pinning) for workspace inheritance, `PATH` order, and supported hosts.
 
-## Removing Installed Versions
+## Version selectors
+
+Quote selectors that contain spaces or shell operators:
 
 ```bash
-lpm use remove node@20         # remove all installed 20.x Node runtimes
-lpm use remove bun@1.3         # remove all installed 1.3.x Bun runtimes
-lpm use remove bun@1.3.14      # remove one exact Bun runtime
+lpm use node@22
+lpm use node@lts
+lpm use node@lts/iron
+lpm use 'node@>=22 <23'
+lpm use 'node@20 || 22'
+lpm use bun@latest
+lpm use 'bun@~1.3.0'
 ```
 
-Removal matches the local managed runtime set only. Exact versions remove one installed runtime. Prefixes and semver ranges remove every installed version that satisfies the spec.
+| Selector | Meaning |
+| --- | --- |
+| `22.12.0`, `v22.12.0`, `=22.12.0` | Exact version. |
+| `22`, `22.12`, `22.x`, `22.X`, `22.*` | Highest matching major or minor version. |
+| `^22`, `~22.12`, `>=22 <23` | Semantic version range. |
+| `20 - 22`, `20 || 22` | Hyphen range or alternatives. |
+| `latest` | Latest stable release. |
+| `lts`, `lts/*` | Latest Node LTS release. |
+| `lts/iron` | Latest Node release with that LTS codename. |
 
-`lpm use remove` accepts explicit versions, prefixes, and semver ranges. It does not accept `node@lts`, `node@latest`, `bun@lts`, or `bun@latest` because removal must be deterministic against the local install set.
+Bun also accepts the `bun-v` prefix, such as `bun@bun-v1.3.14`. Bun has no LTS channel.
 
-Removing a managed runtime does **not** rewrite `lpm.json`. If the project still pins a matching runtime, LPM CLI warns because the next `lpm run` / `lpm dev` / `lpm install` path that needs that pin can auto-install it again.
+Invalid selectors and contradictory ranges fail before the project pin changes. A valid selector with no matching release also fails during installation.
 
-## Flags
+An exact installed version needs no release lookup. Other install selectors use release metadata, which LPM CLI caches for one hour.
 
-| Flag       | Effect                                                                                                                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `--list`   | List installed versions for the runtime                                                                                       |
-| `--pin`    | Pin only. Exactizes to an installed version when one already matches; otherwise stores the requested spec without downloading |
-| `--remove` | Remove installed managed runtimes matching a spec. `lpm use remove bun@1.3` is the preferred explicit command form.           |
+Automatic runs prefer matching installed versions. They can reuse installed Node LTS versions from older cached metadata without a download.
 
-Plus the [global flags](/docs/commands#global-flags).
+## Pin without a download
 
-## See Also
+```bash
+lpm use pin node@22
+lpm use pin bun@1.3
+lpm use pin node@22.12.0 --json
+```
 
-- [`lpm env`](/docs/dev/env) — project environment variables and secrets
-- [`lpm dev`](/docs/dev/dev) — picks up runtime pins automatically
-- [Managed runtimes](/docs/dev/node-version-pinning) — how pins propagate to scripts
+If an installed version matches, the command pins the highest match. Otherwise, it stores the valid selector and warns that the runtime is missing.
+
+Node channel selectors such as `lts` remain selectors during pin-only use. Bun `latest` selects the highest installed Bun version if one exists.
+
+Pin-only use can prepare `lpm.json` in an offline environment. A later runtime-aware command can download the missing runtime.
+
+## List and remove versions
+
+```bash
+lpm use list node
+lpm use list bun --json
+lpm use remove node@20
+lpm use remove 'bun@>=1.2 <1.3'
+```
+
+Listing omits incomplete directories and invalid runtime executables. Removal uses the local installed set and waits for an active installation of the same version.
+
+Channel selectors such as `latest` and `lts/iron` are not removal selectors. Use an exact version, prefix, wildcard, or range.
+
+Removal does not change `lpm.json`. If the project pin matches a removed version, the command warns that a later run can install it again.
+
+A remaining Node channel pin also produces a warning. Channel selection depends on release metadata.
+
+To replace an old pin before removal:
+
+```bash
+lpm use node@22
+lpm use remove node@20
+```
+
+## Downloads and recovery
+
+LPM CLI downloads Node from its distribution service and Bun from its GitHub releases. Package registry settings do not change these runtime sources.
+
+Downloads require matching SHA-256 checksums. LPM CLI checks the expected executable before it publishes an installation. A failed download does not create a complete installed version.
+
+Runtimes live under `~/.lpm/runtimes/node/` and `~/.lpm/runtimes/bun/`. `LPM_HOME` changes the storage root.
+
+If an installation is incomplete or its executable is invalid, repeat the exact installation:
+
+```bash
+lpm use node@22.12.0
+lpm use bun@1.3.14
+```
+
+If installation succeeds but the project configuration cannot be written, the runtime remains installed. Correct the configuration or its permissions, then pin it:
+
+```bash
+lpm use pin node@22.12.0
+```
+
+## JSON output and flags
+
+```bash
+lpm use node@22.12.0 --json
+lpm use --list bun --json
+lpm use remove bun@1.3.14 --json
+```
+
+Install output reports the runtime, exact version, installation status, and pin status. Pin output reports whether that version is installed. List output contains `runtime` and `versions`.
+
+If installation succeeds but pinning fails, JSON reports `status: "installed_not_pinned"` and the command exits with a nonzero status.
+
+| Flag | Effect |
+| --- | --- |
+| `--list` | List installed versions. Defaults to Node. |
+| `--pin` | Write a project pin without downloading a runtime. |
+| `--remove` | Remove matching installed versions. |
+| `--json` | Write structured results and errors to standard output. |
+
+`--list`, `--pin`, and `--remove` conflict with each other. See [global flags](/docs/commands#global-flags) for shared options.
+
+## See also
+
+- [Managed runtimes](/docs/dev/node-version-pinning) — runtime detection, automatic installation, and script `PATH`.
+- [`lpm run`](/docs/dev/run) — run project scripts with the selected runtimes.
+- [`lpm dev`](/docs/dev/dev) — start development services.
+- [`lpm env`](/docs/dev/env) — manage project environment variables and secrets.
