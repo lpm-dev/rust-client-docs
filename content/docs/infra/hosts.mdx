@@ -1,21 +1,21 @@
 ---
 title: lpm hosts
-description: "Manage local hostnames with lpm.json and remove stale LPM CLI hosts-file entries."
+description: "Remove managed hosts-file entries and configure local development hostnames with lpm.json."
 ---
 
-LPM CLI manages system hosts-file entries for local hostnames that you define in `lpm.json`.
-
-[`lpm dev`](/docs/dev/dev) adds and removes these entries during a development session. Use `lpm hosts clean` only to remove stale entries.
+`lpm hosts` removes the hosts-file blocks that LPM CLI creates for local development hostnames.
 
 ```bash
-lpm hosts [action] [flags]
+lpm hosts [ACTION] [--yes] [--json]
 ```
 
-The only action is `clean`. A bare `lpm hosts` command equals `lpm hosts clean`.
+`clean` is the only action and the default. It removes **all** managed blocks, including blocks for active projects.
+
+Use [`lpm dev`](/docs/dev/dev) to add hostnames from `lpm.json`. Use `clean` after an interrupted session leaves entries behind.
 
 ## Quickstart with `lpm.json`
 
-Add a local hostname to the `proxy` block:
+Configure a hostname and an HTTPS port that does not require administrator privileges:
 
 ```json title="lpm.json"
 {
@@ -28,42 +28,46 @@ Add a local hostname to the `proxy` block:
 }
 ```
 
-Start the project:
-
 ```bash
 lpm dev
 ```
 
-Before the hosts file changes, LPM CLI shows the file, backup, and hostname. Then it asks for your consent.
+[`lpm dev`](/docs/dev/dev) shows the hosts-file path, backup destination, and hostnames before it requests consent. With permission to write the file, it maps `app.test` to `127.0.0.1`.
 
-After approval and successful file access, LPM CLI adds a project block that maps `app.test` to `127.0.0.1`:
+Open `https://app.test:9443`. LPM CLI removes the session's managed block during normal shutdown.
 
-```text
-# >>> lpm:project-... >>>
-127.0.0.1 app.test
-# <<< lpm:project-... <<<
+To approve the change without a consent prompt:
+
+```bash
+lpm dev --yes
 ```
 
-At normal development-session exit, LPM CLI removes this block. It preserves entries that it does not manage.
+`--yes` gives consent. It does not grant permission to edit the system file.
 
-For multiple services, add a `host` to each service:
+## Examples
+
+```bash
+lpm hosts
+lpm hosts clean
+lpm hosts clean --yes --json
+lpm dev --yes
+```
+
+Stop active development sessions before cleanup. Cleanup removes their hostname mappings too.
+
+## Configure multiple hostnames
+
+Use `services.<name>.host` for individual services:
 
 ```json title="lpm.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
   "proxy": {
     "port": 9443,
     "httpRedirect": false
   },
   "services": {
-    "web": {
-      "command": "vite",
-      "host": "web.test"
-    },
-    "api": {
-      "command": "node api.js",
-      "host": "api.test"
-    }
+    "web": { "command": "vite", "host": "web.test" },
+    "api": { "command": "node api.js", "host": "api.test" }
   }
 }
 ```
@@ -72,17 +76,16 @@ For multiple services, add a `host` to each service:
 lpm dev
 ```
 
-LPM CLI adds both hostnames to one block for the project.
+The session adds both hostnames to one managed block. Separate sessions have separate blocks. Normal shutdown removes only the session's own block.
 
-See [`lpm proxy`](/docs/infra/proxy) for route and listener configuration.
+`proxy.host` selects the sole service or the unique service with `primary: true`. See [`lpm proxy`](/docs/infra/proxy) for route configuration.
 
-## Avoid hosts-file changes
+### Avoid hosts-file edits
 
-If you do not want a system hosts-file entry, use `localhost` or a name below `.localhost`:
+Use a name below `.localhost`:
 
 ```json title="lpm.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
   "proxy": {
     "host": "app.localhost",
     "port": 9443,
@@ -91,137 +94,107 @@ If you do not want a system hosts-file entry, use `localhost` or a name below `.
 }
 ```
 
-The operating system resolves `localhost` and `*.localhost` without a managed entry.
+LPM CLI skips hosts-file edits for these names. Resolution depends on your browser and operating system.
 
-Other configured hostnames require an entry. Common local suffixes include `.test`, `.local`, `.internal`, and `.home.arpa`.
+Other configured hostnames require entries. Common local suffixes include `.test`, `.local`, `.internal`, and `.home.arpa`.
 
-## Non-interactive development
+The command has no hostname override. Change `lpm.json` to select hostnames or avoid edits for a development session.
 
-Use `--yes` to approve the hosts-file change without a prompt:
-
-```bash
-lpm dev --yes
-```
-
-The `--yes` flag approves the change, but it does not grant file permission.
-
-In a non-interactive shell, the process must already have permission to write the hosts file. Automatic elevation requires an interactive terminal.
-
-If a CI environment cannot change the system hosts file, use a `.localhost` name.
-
-## Examples
-
-```bash
-lpm dev                          # manage entries from lpm.json
-lpm dev --yes                    # approve changes without a prompt
-lpm hosts clean                  # remove stale LPM CLI blocks
-lpm hosts clean --yes            # clean without a prompt
-lpm hosts clean --yes --json     # clean and write JSON output
-```
-
-## Remove stale entries
-
-A crash or forced process stop can leave a managed block in the hosts file. Remove all stale LPM CLI blocks with:
+## Remove managed blocks
 
 ```bash
 lpm hosts clean
 ```
 
-The command shows the hosts-file path, backup path, and number of blocks. It asks for consent before it changes the file.
+The command shows the hosts-file path, backup destination, and block count. After consent, it checks the current count under a file lock.
 
-> CAUTION: Stop active `lpm dev` sessions before you run `lpm hosts clean`. The command removes LPM CLI blocks for all projects.
+If the count changed, cleanup stops without editing the hosts file. Run the command again to review the new count.
 
-The command removes only complete blocks with LPM CLI markers. It preserves normal hosts-file entries and blocks from other tools.
+Cleanup preserves entries outside managed blocks. It does not restore an older hosts file.
 
-If the hosts file has no LPM CLI blocks, the command exits successfully without a change.
+If no managed blocks exist, the command succeeds without a consent prompt or a new backup.
 
-### Clean without a prompt
-
-Use `--yes` in a script or another non-interactive environment:
-
-```bash
-lpm hosts clean --yes
-```
-
-The process must already have permission to change the hosts file in a non-interactive environment.
-
-### Use JSON output
-
-Combine `--json` with `--yes` for a non-interactive script:
+### Non-interactive cleanup
 
 ```bash
 lpm hosts clean --yes --json
 ```
 
-The output contains these fields:
+The process must already have permission to edit the file. Automatic elevation requires an interactive terminal.
 
-| Field | Meaning |
+`--json` does not give consent. Include `--yes` in scripts.
+
+| JSON field | Meaning |
 | --- | --- |
-| `success` | The command completed without an error. |
-| `cleaned` | The command changed the hosts file. |
-| `removedBlocks` | Number of complete LPM CLI blocks that the command removed. |
-| `hostsFile` | Path to the hosts file. |
-| `backupPath` | Path to the saved backup. |
+| `success` | Cleanup completed successfully. |
+| `cleaned` | The hosts file changed. |
+| `removedBlocks` | Number of managed blocks removed. |
+| `hostsFile` | Target hosts-file path. |
+| `backupPath` | Configured backup destination. A no-op need not create this file. |
 
-The `--json` flag does not approve cleanup. If the command cannot show an interactive prompt, add `--yes`.
+## Backups
 
-## Backup behavior
+Before the first change, LPM CLI saves the current file to `~/.lpm/hosts.bak`. With `LPM_HOME`, the destination is `$LPM_HOME/hosts.bak`.
 
-Before the first hosts-file change, LPM CLI copies the file to:
+An existing regular backup is preserved, including one created concurrently. Backup creation rejects symbolic links and other non-regular destinations.
 
-```text
-~/.lpm/hosts.bak
-```
+The backup can predate later manual edits. Review it before any manual restoration. Replacing the current hosts file can remove newer entries from other tools.
 
-LPM CLI does not replace an existing backup. As a result, the backup can be older than later manual hosts-file changes.
+Neither normal session shutdown nor `lpm hosts clean` restores the backup automatically.
 
-> CAUTION: Do not automatically replace the current hosts file with this backup. The replacement can remove changes that you made later.
+## Permissions and file selection
 
-`lpm hosts clean` does not restore the backup. It removes only complete LPM CLI-managed blocks from the current hosts file.
-
-## Permissions and elevation
-
-| Platform | Hosts file | Elevation behavior |
+| Platform | System hosts file | Interactive elevation |
 | --- | --- | --- |
-| Linux and macOS | `/etc/hosts` | LPM CLI uses `sudo` after a direct-access failure in an interactive terminal. |
-| Windows | `C:\Windows\System32\drivers\etc\hosts` | In an interactive terminal, LPM CLI requests Administrator access through UAC. |
+| Linux and macOS | `/etc/hosts` | `sudo` after a direct-access failure. |
+| Windows | `System32\drivers\etc\hosts` under the Windows directory | Administrator access through UAC. |
 
-Consent occurs before elevation. If you cancel elevation, LPM CLI leaves the hosts file unchanged.
+Consent comes before elevation. If authorization fails, cleanup returns an error.
 
-Do not run the complete development command with elevated access only to avoid the consent prompt. Use `--yes` for consent.
+Use `--yes` for consent instead of running the complete development command with elevated access.
 
-## Repair an incomplete block
+`LPM_HOSTS_FILE` selects another hosts file and disables automatic elevation. For example, use a temporary fixture to inspect cleanup behavior:
 
-`lpm hosts clean` refuses to change a hosts file that contains an unterminated LPM CLI block. This behavior protects unrelated entries from accidental removal.
-
-If this error occurs, open the system hosts file with elevated access. Find the opening marker that does not have a matching closing marker:
-
-```text
-# >>> lpm:project-... >>>
+```bash
+LPM_HOSTS_FILE=./hosts.fixture lpm hosts clean --yes --json
 ```
 
-Review the lines below the marker. Then add the matching closing marker, or remove the incomplete block manually:
+This variable does not change the operating system's hostname lookup. `lpm.json` does not select the hosts-file path or backup destination.
+
+## Repair malformed blocks
+
+LPM CLI refuses to remove an incomplete or nested managed block. It leaves the hosts file unchanged.
+
+A complete block has matching markers:
 
 ```text
-# <<< lpm:project-... <<<
+# >>> lpm:project-example >>>
+127.0.0.1 app.test
+# <<< lpm:project-example <<<
 ```
 
-After you repair the markers, run cleanup again:
+If a block is malformed, open the hosts file with permission to edit it. Review the enclosed entries before repairing or removing the markers.
+
+Preserve unrelated entries. Then run cleanup again:
 
 ```bash
 lpm hosts clean
 ```
 
+If the error reports a changed block count, stop active development sessions and retry. If it reports file access, resolve the reported permission failure.
+
 ## Flags
 
-| Flag | Purpose |
+| Flag | Effect |
 | --- | --- |
-| `-y`, `--yes` | Approve removal without an interactive prompt. |
-| `--json` | Write machine-readable output. This is a [global flag](/docs/commands#global-flags). |
+| `-y`, `--yes` | Approve cleanup without a consent prompt. |
+| `--json` | Print machine-readable output. |
+
+See [global flags](/docs/commands#global-flags) for shared options.
 
 ## See also
 
-- [`lpm dev`](/docs/dev/dev) — manage local hostnames during development
-- [`lpm proxy`](/docs/infra/proxy) — route local hostnames to development services
-- [`lpm cert`](/docs/infra/cert) — manage certificates for local HTTPS
-- [`lpm.json`](/docs/reference/lpm-json#proxy) — configure proxy and service hostnames
+- [`lpm dev`](/docs/dev/dev) — start services and manage session hostnames
+- [`lpm proxy`](/docs/infra/proxy) — route local hostnames to services
+- [`lpm cert`](/docs/infra/cert) — prepare local HTTPS certificates
+- [`lpm.json`](/docs/reference/lpm-json#proxy) — configure hostnames and listeners
