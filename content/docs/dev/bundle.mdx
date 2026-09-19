@@ -1,170 +1,208 @@
 ---
 title: lpm bundle
-description: "Bundle the project with Rolldown through an LPM CLI-managed plugin."
+description: "Bundle JavaScript and TypeScript with managed Rolldown, per-project pins, and workspace selection."
 ---
 
+Bundle an application or a script with [Rolldown](https://rolldown.rs). LPM CLI manages the bundler and can run it across selected workspace members.
+
 ```bash
-lpm bundle [--entry <path>] [--out-dir <dir>] [--config <file>] [-- args...]
+lpm bundle [OPTIONS] [ARGS]...
 ```
 
-Runs [Rolldown](https://rolldown.rs) through an LPM CLI-owned command surface. Common bundle flags are exposed directly, and anything after `--` is forwarded to Rolldown unchanged.
-
-`--entry` maps to Rolldown's `--input`, and `--out-dir` maps to Rolldown's `--dir`. If you omit both, Rolldown falls back to its config file or upstream defaults.
-
-## Examples
+## Quickstart
 
 ```bash
-lpm bundle --entry src/index.js --out-dir dist
+lpm bundle --entry src/index.ts --out-dir dist --format esm --platform browser
+```
+
+LPM CLI downloads its approved Rolldown version and checks its integrity on first use. A project-local Rolldown installation is unnecessary.
+
+The command supports a single build, workspace builds, and watch mode. Use [`lpm pack`](/docs/dev/pack) for library builds with tsdown.
+
+## Project configuration
+
+Pin an approved Rolldown version and a Node runtime in `lpm.json`:
+
+```json title="lpm.json"
+{
+  "tools": {
+    "rolldown": "1.2.4"
+  },
+  "runtime": {
+    "node": "22"
+  }
+}
+```
+
+`tools.rolldown` selects an exact version. The version must match the bundled baseline or an approved version from [`lpm plugin update`](/docs/dev/plugin).
+
+Without a pin, LPM CLI selects its bundled baseline or a newer approved version. A workspace member inherits the root pin unless its own `lpm.json` overrides it. Invocations from nested directories retain the project pin.
+
+There is no command flag to override or skip `tools.rolldown`. Bundle inputs and output options belong in CLI arguments or a Rolldown configuration file.
+
+### Node selection
+
+Rolldown needs Node. The bundled Rolldown 1.2.4 requires Node `^20.19.0 || >=22.12.0`.
+
+```bash
+lpm use node@22
+lpm bundle --entry src/index.ts --out-dir dist
+```
+
+The bundle command uses an installed managed runtime selected by `lpm.json`, `.nvmrc`, or `.node-version`. It does not download a missing runtime. [`lpm use`](/docs/dev/use) installs the runtime.
+
+A member inherits the workspace root's Node selection unless it selects its own Node version. A Bun-only member selection retains the inherited Node selection.
+
+Executable lookup uses local `node_modules/.bin` directories, then the selected managed runtimes, then the inherited `PATH`. Automatic local lookup stops at the project or workspace root.
+
+If the selected Node version is unavailable, lookup falls back to the inherited `PATH`. An unavailable member selection does not use the root's managed Node selection.
+
+## Recipes
+
+### Build for Node
+
+```bash
+lpm bundle --entry src/cli.ts --out-dir dist --format esm --platform node
+```
+
+### Minify a browser bundle
+
+```bash
+lpm bundle --entry src/index.ts --out-dir dist --platform browser --minify --sourcemap
+```
+
+### Use a Rolldown configuration file
+
+```js title="rolldown.config.mjs"
+export default {
+  input: 'src/index.ts',
+  output: {
+    dir: 'dist',
+    format: 'esm',
+  },
+};
+```
+
+```bash
 lpm bundle --config rolldown.config.mjs
-lpm bundle --entry src/index.js --format esm --platform browser --minify --sourcemap
-lpm bundle -- --watch
+lpm bundle --config rolldown.config.mjs --minify
+```
+
+CLI options override the corresponding configuration values. Relative paths use the current directory, or each selected member's directory in workspace mode.
+
+To ask Rolldown to discover its configuration file in that directory:
+
+```bash
+lpm bundle -- --config
+```
+
+Rolldown checks `rolldown.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, and `.cts`, in that order. Bare `lpm bundle` shows Rolldown help.
+
+### Watch one project
+
+```bash
+lpm bundle --entry src/index.ts --out-dir dist -- --watch
+lpm bundle --filter web --config rolldown.config.mjs -- --watch
+```
+
+Watch mode requires an output directory or file. In workspace mode, it requires exactly one selected member. It rejects `--json`.
+
+Forwarded `--watch=false` and `-w=false` run a finite build. A `watch` object in a Rolldown configuration file does not enable watch mode by itself.
+
+### Run in CI
+
+```bash
+lpm bundle --filter web --fail-if-no-match --config rolldown.config.mjs --json
+```
+
+The command requires no interactive input. Prepare the approved engine and Node runtime before a run without network access.
+
+### Forward other Rolldown options
+
+```bash
+lpm bundle --entry src/index.ts --out-dir dist -- --external react --external react-dom
+lpm bundle -- --help
+```
+
+Arguments after `--` go to Rolldown unchanged. `--entry` maps to `--input`, and `--out-dir` maps to `--dir`.
+
+Without an output directory or file, a single build can print its generated code to stdout. Use an output path for JSON runs, which suppress successful child output.
+
+## Workspaces
+
+```bash
 lpm bundle --all --config rolldown.config.mjs
-lpm bundle --filter web --entry src/index.js --out-dir dist
-lpm bundle --affected --base develop --config rolldown.config.mjs
+lpm bundle --filter web --filter api --config rolldown.config.mjs
+lpm bundle --filter-prod '...shared' --config rolldown.config.mjs
+lpm bundle --affected --base origin/main --config rolldown.config.mjs
 ```
 
-## Managed Rolldown plugin
+Selected dependencies run before their dependents. Independent members can run concurrently, up to the host CPU count. A ready member can start when a slot becomes available.
 
-`lpm bundle` does not rely on a project-local `rolldown` dependency. On first use, LPM CLI installs its approved Rolldown version into `~/.lpm/engines/rolldown/<version>/<platform>/`, verifies every tarball's SRI integrity, preserves the full extracted package layout, and reuses that verified cache on later runs.
+LPM CLI prepares each requested engine version before member execution. Members with the same requested pin share a prepared engine.
 
-Rolldown's managed layout is a composed npm package tree: the root `rolldown` package, `@rolldown/pluginutils`, `@oxc-project/types`, and the platform-specific native binding.
+`--all` conflicts with `--filter`, `--filter-prod`, and `--affected`. Filters and `--affected` combine their selections.
 
-```text
-~/.lpm/engines/
-└── rolldown/
-  └── 1.0.2/
-    └── darwin-arm64/
-      ├── bin/cli.mjs
-      ├── node_modules/@rolldown/pluginutils/
-      ├── node_modules/@oxc-project/types/
-      ├── node_modules/@rolldown/binding-darwin-arm64/
-      └── .lpm-engine.json
+An empty selection succeeds without a build. Add `--fail-if-no-match` when a selected member must exist. Watch mode always rejects an empty selection.
+
+See [workspace filters](/docs/packages/workspaces#filter-grammar) for dependency closures, exclusions, path patterns, and Git references.
+
+## JSON and exit codes
+
+```bash
+lpm bundle --entry src/index.ts --out-dir dist --json
+lpm bundle --all --config rolldown.config.mjs --json
 ```
 
-The engine sidecar records the engine identity, platform, entry path, every package's install subdir and tarball metadata, per-package SHA-256s, and a hash of the extracted layout. Reuse re-hashes the installed layout before Rolldown runs, so a tampered tree or mismatched package definition becomes a cache miss instead of trusted state.
+Both modes emit one JSON object with member results, exit codes, and durations. Failed members include captured diagnostics. Successful members omit captured output.
 
-Rolldown is managed through the public plugin command family:
+A launch failure has `exit_code: null` and an `error` message. Earlier preparation errors can use the [standard error object](/docs/reference/exit-codes).
+
+See the [`lpm lint` JSON example](/docs/dev/lint#json-and-exit-codes) for the envelope shape. LPM CLI retains at most 10 MiB per output stream, with a truncation marker for longer diagnostics.
+
+Single-project runs preserve Rolldown's exit code. Workspace runs exit `1` if any member fails. On Unix, interruption stops active tool descendants and exits `130` for SIGINT or `143` for SIGTERM.
+
+## Cache and recovery
+
+Managed engines normally live under `~/.lpm/engines/rolldown/<version>/<platform>/`. `LPM_HOME` changes the base directory.
+
+LPM CLI checks downloaded package integrity and the installed engine before reuse. It replaces a cached engine that fails this check.
 
 ```bash
 lpm plugin outdated
 lpm plugin update rolldown
 ```
 
-`lpm bundle` itself never checks the network for the upstream latest version. It uses the bundled verified floor or a newer version already approved by `lpm plugin update rolldown`.
+The bundle command does not check for the latest upstream version. [`lpm plugin update`](/docs/dev/plugin) approves an available update.
 
-## Pinning Rolldown
-
-Pin Rolldown per project in `lpm.json`:
-
-```json title="lpm.json"
-{
-  "tools": {
-    "rolldown": "1.1.3"
-  }
-}
-```
-
-The pin is exact. The version must be either the bundled verified floor or a version already approved in the sticky cache by `lpm plugin update rolldown`; otherwise `lpm bundle` exits before launching Node and tells you to run the update command.
-
-## Node runtime
-
-LPM CLI manages Rolldown, not Node itself. `lpm bundle` still needs `node` available through the normal PATH chain. The usual path is:
-
-```bash
-lpm use node@22
-```
-
-That installs a managed Node runtime and makes it available to LPM CLI commands. A system `node` on PATH also works.
-
-## Forwarding Rolldown flags
-
-Anything after `--` is passed straight to Rolldown:
-
-```bash
-lpm bundle --entry src/index.js --out-dir dist -- --watch
-lpm bundle --config rolldown.config.mjs -- --external react --treeshake
-```
-
-This is the escape hatch for upstream flags LPM CLI does not surface directly.
-
-## Workspaces
-
-```bash
-lpm bundle --all                               # every member
-lpm bundle --filter web                        # exact name
-lpm bundle --filter '@scope/*'                 # glob
-lpm bundle --filter './apps/*'                 # path glob
-lpm bundle --filter-prod ...shared             # prod graph closure
-lpm bundle --affected                          # members changed vs main
-lpm bundle --affected --base develop           # change base branch
-lpm bundle --filter web --fail-if-no-match     # exit non-zero on typo'd filter
-```
-
-Members run in topological levels, with packages inside each level executing in parallel up to the available CPU count. The managed Rolldown plugin is resolved once before workspace fan-out, so a cold install happens once per workspace run, not once per member.
-
-`--all` and `--affected` are mutually exclusive; filters compose with `--affected` (the affected set is unioned with the filter result). `--filter-prod` uses the same grammar as `--filter`, but closure operators ignore `devDependencies`.
-
-Filter grammar is documented in [Workspaces](/docs/packages/workspaces#filter-grammar).
-
-## Watch mode
-
-`lpm bundle -- --watch` works in single-package mode.
-
-In workspace mode, watch is only supported when the selection resolves to exactly one member. If `--all`, `--affected`, or a broad filter resolves to multiple members, LPM CLI exits with an error instead of starting one watcher per package.
+If Node cannot start, install a compatible runtime with [`lpm use`](/docs/dev/use). If configuration parsing fails, correct the reported file before retrying.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `--entry <PATH>` | Entry file to bundle |
-| `--out-dir <DIR>` | Output directory for bundle artifacts |
-| `--config <PATH>` | Explicit Rolldown config file |
-| `--format <esm\|cjs\|iife>` | Output format |
-| `--platform <node\|browser\|neutral>` | Target platform |
-| `--minify` | Minify the bundle output |
-| `--sourcemap` | Emit a sourcemap |
-| `--all` | Run in every workspace member |
-| `--filter <expr>` | Select workspace members by the [filter grammar](/docs/packages/workspaces#filter-grammar) (repeatable; entries union) |
-| `--filter-prod <expr>` | Select workspace members with production-only dependency closures |
-| `--affected` | Run only in members affected by changes vs `--base` |
-| `--base <REF>` | Git base ref for `--affected` (default: `main`) |
-| `--changed-files-ignore-pattern <glob>` | Ignore matching git-diff paths for `--affected` / `[git-ref]` filters |
-| `--test-pattern <glob>` | Treat matching git-diff paths as test-only for `--affected` / `[git-ref]` fan-out decisions |
-| `--fail-if-no-match` | Exit non-zero if no member matches the filter set (recommended in CI) |
+| `--entry <ENTRY>` | Input file. Maps to Rolldown's `--input`. |
+| `--out-dir <OUT_DIR>` | Output directory. Maps to Rolldown's `--dir`. |
+| `--config <CONFIG>` | Explicit Rolldown configuration file. |
+| `--format <FORMAT>` | Output format: `esm`, `cjs`, or `iife`. |
+| `--platform <PLATFORM>` | Target platform: `node`, `browser`, or `neutral`. |
+| `--minify` | Minify the output. |
+| `--sourcemap` | Generate a source map. |
+| `--all` | Run in every workspace member. Conflicts with filters and `--affected`. |
+| `--filter <FILTER>` | Select members with a repeatable workspace filter. |
+| `--filter-prod <FILTER_PROD>` | Select members with production-only dependency closures. |
+| `--affected` | Select changed members and their affected dependents. |
+| `--base <BASE>` | Git base for `--affected`. Default: `main`. |
+| `--changed-files-ignore-pattern <PATTERN>` | Ignore matching changed paths. Repeatable. |
+| `--test-pattern <PATTERN>` | Treat matching changes as tests when calculating dependent selection. Repeatable. |
+| `--fail-if-no-match` | Fail when the workspace selection is empty. |
+| `[ARGS]...` | Arguments forwarded to Rolldown. Use `--` to separate them from LPM CLI flags. |
 
-Anything after `--` (or trailing) is forwarded to Rolldown.
-
-Plus the [global flags](/docs/commands#global-flags).
-
-## `--json` in workspace mode
-
-Single-package mode preserves Rolldown's stdout — LPM CLI does not wrap it. Workspace mode emits one LPM CLI envelope on stdout, with per-member stdout/stderr captured only on failure:
-
-```json
-{
-  "success": false,
-  "packages": 3,
-  "succeeded": 2,
-  "failed": 1,
-  "duration_ms": 1840,
-  "members": [
-    { "name": "web", "success": true, "exit_code": 0, "duration_ms": 420 },
-    {
-      "name": "api",
-      "success": false,
-      "exit_code": 1,
-      "duration_ms": 180,
-      "stdout": "...",
-      "stderr": "..."
-    }
-  ]
-}
-```
-
-Spawn/config/engine failures surface as `exit_code: null` paired with an `error` string, distinguishing “ran and exited non-zero” from “could not even launch.”
+See [global flags](/docs/commands#global-flags) for `--json` and other shared options.
 
 ## See also
 
-- [`lpm check`](/docs/dev/check) — type-checking, with project-local `tsc` or managed `tsgo`
-- [`lpm lint`](/docs/dev/lint) — Oxlint
-- [Built-in tools](/docs/dev/builtin-tools) — managed plugins, project-local tools, and internal engines
+- [`lpm pack`](/docs/dev/pack) — build libraries with tsdown.
+- [`lpm check`](/docs/dev/check) — check TypeScript types.
+- [`lpm plugin`](/docs/dev/plugin) — inspect and update managed tools.
+- [`lpm use`](/docs/dev/use) — install and select Node or Bun.
