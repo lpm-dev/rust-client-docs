@@ -153,6 +153,37 @@ See [Task runner — Cache key](/docs/dev/task-runner#cache-key) for the complet
 
 The complete `lpm.json` affects the key. For CI-only read-only behavior, an environment override preserves the shared configuration file.
 
+### Declare output files precisely
+
+Output patterns select regular files relative to the project root. Multiple patterns combine their matches.
+
+| Pattern | Files included |
+| --- | --- |
+| `dist/*` | Files directly inside `dist/`. |
+| `dist/**` | Files inside `dist/` at any depth. |
+| `dist/**/*.js` | JavaScript files inside `dist/` at any depth. |
+| `report.json` | One file at the project root. |
+
+An output pattern that starts with `!` matches a literal name. It does not exclude files from another pattern.
+
+```json title="lpm.json task fragment"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": ["NODE_ENV"],
+      "outputs": ["dist/**", "reports/build.json"]
+    }
+  }
+}
+```
+
+Local and remote restores accept only files that match the current output patterns. A file outside those patterns rejects the entire restore.
+
+An accepted restore removes stale files that match the same patterns but are absent from the cached result. Other project files remain unchanged.
+
+Declare generated files only. Do not include source files or configuration that the task must preserve.
+
 ### Choose inherited variables with `cacheEnv`
 
 Without `cacheEnv`, all inherited variables visible to the task affect its key. Machine paths and CI run identifiers can therefore prevent reuse.
@@ -173,7 +204,7 @@ Without `cacheEnv`, all inherited variables visible to the task affect its key. 
 
 An empty list excludes all inherited variables from the key. Use it only for a task whose output does not depend on those variables.
 
-Project-loaded variables, including dotenv and vault values, always affect the key. `cacheEnv` does not change the task's environment or its upload eligibility.
+Project-loaded variables, including dotenv and local secrets, always affect the key. `cacheEnv` does not change the task's environment or its upload eligibility.
 
 ### Bypass caching for one run
 
@@ -189,7 +220,7 @@ Bypass both local and remote task caching:
 lpm run build --no-cache
 ```
 
-Watch mode runs tasks without the task cache. See [`lpm run --watch`](/docs/dev/run#watch-mode).
+Watch mode runs tasks without the task cache. See [`lpm run --watch`](/docs/dev/run#watch-finite-tasks).
 
 ## Protect cached artifacts
 
@@ -209,7 +240,9 @@ Every download requires a matching content hash. With a signing key configured, 
 
 Signatures authenticate artifacts. They do not encrypt their contents.
 
-LPM CLI checks the archive before it changes project files. Restored files must match the current project's declared outputs.
+LPM CLI checks the complete archive before it changes project outputs. It rejects undeclared files, directory entries, links, and unsafe paths.
+
+Empty directories are not cached. LPM CLI creates parent directories as needed for declared files.
 
 ### Secrets and upload policy
 
@@ -229,7 +262,7 @@ Patterns are case-insensitive and support `*`. Exclusions take precedence over i
 
 These fields do not redact logs, remove environment values, or sanitize output files. Allow a name only after you determine that its outputs are safe to share.
 
-Cache credentials belong in the parent shell or CI environment. Project dotenv and vault values configure the task, not the cache client's credentials.
+Cache credentials belong in the parent shell or CI environment. Project dotenv and local secrets configure the task, not the cache client's credentials.
 
 ### Custom cache endpoints
 
@@ -237,7 +270,15 @@ Cache credentials belong in the parent shell or CI environment. Project dotenv a
 
 An endpoint outside the configured Registry origin requires both `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`. The Registry login token is never sent to that endpoint.
 
-Remote endpoints require HTTPS. Direct HTTP is accepted only for localhost.
+Remote endpoints require HTTPS. HTTP is also accepted for `localhost`, `127.0.0.1`, and `[::1]`.
+
+For example, select a compatible local service for one run:
+
+```bash
+LPM_REMOTE_CACHE_URL="http://[::1]:3000/v8" lpm run build
+```
+
+The credential and signing-key requirements still apply to a different Registry origin.
 
 ## Usage and retention
 
@@ -250,7 +291,17 @@ The LPM.dev Registry applies these included storage limits:
 | Organization | 25 GiB per seat |
 | Enterprise | No fixed quota in the Enterprise plan |
 
-The maximum artifact upload size on the LPM.dev Registry is 100 MiB (104,857,600 bytes). This limit applies to the uploaded archive.
+The CLI and LPM.dev Registry accept archives up to 500 MiB (524,288,000 bytes).
+
+Restore also applies these limits to the archive contents:
+
+| Limit | Maximum |
+| --- | --- |
+| One extracted file | 256 MiB |
+| Total extracted content | 1 GiB |
+| Archive entries | 100,000 |
+
+A compressed archive can fit the upload limit but exceed an extraction limit. A rejected download becomes a cache miss.
 
 Default retention is 14 days, and a download refreshes the retention period.
 
@@ -286,7 +337,7 @@ Organization access continues during the billing grace period. After billing lap
 
 Make sure that producers and consumers use the same namespace, inputs, runtime versions, and task configuration. Inspect `cacheEnv` for missing or machine-specific selections.
 
-Project-loaded environment values also affect the key. Different dotenv or vault values can produce different keys.
+Project-loaded environment values also affect the key. Different dotenv or local secret values can produce different keys.
 
 ### Uploads are skipped
 
@@ -305,6 +356,12 @@ For an organization, use a token scoped to the selected organization. Inspect th
 Make sure that producers and consumers use the same signing key. Unsigned artifacts cannot satisfy a signed read.
 
 A rejected artifact becomes a miss, and LPM CLI runs the task locally. A successful run can upload a replacement with the configured key.
+
+### An archive contains undeclared output files
+
+Check that the producer and consumer use the same task configuration. Confirm that `outputs` includes every generated file needed by the task.
+
+LPM CLI rejects the archive before it replaces or removes project outputs. The task then runs locally and can publish a valid replacement.
 
 ### The cache service is unavailable
 
