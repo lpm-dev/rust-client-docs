@@ -1,89 +1,191 @@
 ---
 title: MCP servers
-description: "Wire Claude Code, Cursor, Windsurf, VS Code, and Claude Desktop to the LPM.dev Registry MCP server."
+description: "Connect AI editors to LPM.dev Registry tools through a managed MCP server."
 ---
 
+The LPM.dev Registry MCP server gives an AI editor tools to search packages, read package guidance, install dependencies, and audit projects.
+Use `lpm mcp` to configure the editor and manage the server launcher.
+
 ```bash
-lpm mcp <action> [name]
+lpm mcp setup [name]
+lpm mcp serve
+lpm mcp remove <name>
+lpm mcp status
 ```
 
-Manages [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server configuration for AI editors. `lpm mcp setup` writes the LPM.dev Registry MCP server entry into each supported editor that already has an MCP config file, and reports missing configs as skipped so the editor's agent can call LPM.dev Registry tools (search, install hint, audit, etc.) on your behalf.
+## Quickstart
+
+Enable MCP in your editor so its configuration file exists. Then run:
+
+```bash
+lpm mcp setup
+lpm mcp status
+```
+
+Restart the editor. Ask its agent to find a package on the LPM.dev Registry or read a package's API documentation.
+
+| Mode | Purpose |
+| --- | --- |
+| `setup [name]` | Write the Registry server entry into every supported, existing editor configuration. The default name is `lpm-registry`. |
+| `serve` | Run the managed server over stdio. An MCP client starts this mode automatically. |
+| `remove <name>` | Remove the named entry from every supported, existing editor configuration. |
+| `status` | List configured server names for each supported editor, including servers from other providers. |
+
+The optional name identifies a server entry. It does not select an editor or a different server package.
+There is no `lpm.json` configuration for this workflow.
 
 ## Examples
 
 ```bash
-lpm mcp setup                      # write the "lpm-registry" entry to existing editor configs
-lpm mcp setup my-server            # use a custom server name instead of "lpm-registry"
-lpm mcp status                     # which editors have any MCP server configured
-lpm mcp remove lpm-registry        # remove the LPM.dev Registry entry from every editor that has it
+# Use a distinct entry name in each existing editor configuration
+lpm mcp setup team-registry
+
+# Inspect configuration from a script
+lpm mcp status --json
+
+# Configure or remove an entry without prompts
+lpm mcp setup --json
+lpm mcp remove team-registry --json
 ```
 
-The positional argument is the **server name** that gets written into each editor's `mcpServers` (or VS Code's `servers`) map — it is **not** an editor selector. `lpm mcp setup` always walks every editor in the supported list, writes the entry for editors with an existing config file, and prints a skipped row for missing configs; pass a name to override the default `lpm-registry`.
-
-## Subcommands
-
-| Subcommand | Effect |
-| --- | --- |
-| `setup [name]` | Add an MCP entry under `name` (default `lpm-registry`) to every supported editor whose config file exists. Idempotent — re-running overwrites the entry in place. Missing configs are listed as skipped. |
-| `serve` | Run the verified stdio server configured by `setup`. Editors launch this automatically; direct terminal use and `--json` are rejected because stdout belongs to MCP JSON-RPC. |
-| `remove <name>` | Remove the named entry from every editor whose config file exists. Editors without an existing config are skipped silently. |
-| `status` | List every supported editor and which MCP servers (LPM.dev Registry or other) are configured in each. |
+Repeated `setup` replaces the named entry. It preserves unrelated servers and other configuration keys.
+`status` reports configuration only. It does not check a live server connection.
 
 ## Supported editors
 
-| Editor | Platform | Config file | Key |
+| Editor | Platform | Configuration file | Server key |
 | --- | --- | --- | --- |
-| Claude Code | all | `~/.claude.json` | `mcpServers` |
-| Cursor | all | `~/.cursor/mcp.json` | `mcpServers` |
-| Windsurf | all | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
+| Claude Code | All | `~/.claude.json` | `mcpServers` |
+| Cursor | All | `~/.cursor/mcp.json` | `mcpServers` |
+| Windsurf | All | `~/.codeium/windsurf/mcp_config.json` | `mcpServers` |
 | VS Code | macOS | `~/Library/Application Support/Code/User/mcp.json` | `servers` |
 | VS Code | Linux | `~/.config/Code/User/mcp.json` | `servers` |
 | Claude Desktop | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` |
 
-`setup` does not create missing editor config files. When a supported editor's config is present, LPM CLI merges the server entry alongside any servers the user (or another tool) already wrote. Other keys in the config — themes, settings, unrelated MCP servers — are preserved. A malformed existing config is a hard error: the file is left untouched rather than overwritten.
+`setup` skips missing files. It does not create editor configuration files or discover other editor locations.
+For another MCP client, configure the launcher manually through that client's configuration interface.
 
-Each editor configuration file has a 16 MiB limit enforced before JSON parsing. Missing files remain skipped; an oversized file is a hard, path-specific error and is left untouched. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
+Existing files must contain valid JSON and fit within the [16 MiB configuration limit](/docs/project-setup#local-configuration-size-limits).
+Setup and removal reject configuration files that are symlinks or directory junctions.
+Each file update is atomic and preserves existing Unix permission bits. An error in a later file does not undo earlier file updates.
 
 ## What gets written
+
+Setup records the absolute path of the current LPM CLI executable.
+The same path selects the CLI for tools that run package commands.
+For example:
 
 ```json
 {
   "mcpServers": {
     "lpm-registry": {
-      "command": "lpm",
-      "args": ["mcp", "serve"]
+      "command": "/absolute/path/to/lpm",
+      "args": ["mcp", "serve"],
+      "env": {
+        "LPM_CLI_PATH": "/absolute/path/to/lpm"
+      }
     }
   }
 }
 ```
 
-VS Code uses the same shape under the `servers` key instead of `mcpServers`. The launcher resolves `@lpm-registry/mcp-server@latest` through the LPM CLI install pipeline and runs the newest release allowed by the active security posture.
-Before a refresh replaces the cached runtime, LPM CLI checks its selected executable.
+VS Code uses `servers` instead of `mcpServers`.
+When you configure another client, use the path from `lpm mcp setup --json`.
+After an installation moves or an upgrade removes that executable path, run `setup` again.
+
+The saved path prevents a project executable named `lpm` from replacing the launcher through `PATH`.
+For a manually configured server, `LPM_CLI_PATH` must contain an absolute executable path for CLI tools.
+Without that override, the server searches absolute `PATH` locations outside its working directory, including native Windows and global npm installations.
+
+## Available tools
+
+The server connects to LPM.dev Registry APIs. The [LPM CLI itself supports other package registries](/docs/registries).
+
+| Task | MCP tools |
+| --- | --- |
+| Discover packages | `lpm_search`, `lpm_search_owners`, `lpm_packages_by_owner` |
+| Read package information | `lpm_package_info`, `lpm_quality_report`, `lpm_marketplace_info`, `lpm_pool_stats` |
+| Read guidance and source | `lpm_api_docs`, `lpm_llm_context`, `lpm_package_context`, `lpm_package_skills`, `lpm_browse_source` |
+| Read account or CLI information | `lpm_user_info`, `lpm_docs` |
+| Change or inspect a project | `lpm_add`, `lpm_install`, `lpm_audit` |
+
+Search accepts natural-language queries or structured filters, including `free`, `private`, `pool`, and `marketplace` distribution modes.
+Results still follow the account's package access.
+
+`lpm_add` and `lpm_install` run the corresponding CLI commands and can change project files.
+`lpm_audit` audits the requested project path, or the server's working directory if no path is supplied.
+These tools return the full CLI report. A failed command marks the MCP response as an error and retains available findings.
+
+Authentication and security policy for these three tools follow the CLI command.
+A local audit or an anonymous Free package operation does not require a token solely because it comes through MCP.
+
+## Managed runtime
+
+The launcher downloads `@lpm-registry/mcp-server@latest` and selects the newest release allowed by its security policy.
+It resolves the runtime independently of the editor project's lockfile and install overrides.
+
+The default runtime location is `~/.lpm/cache/mcp/runtime`, under `LPM_HOME` when configured.
+After 24 hours, a subsequent launch refreshes it. An active server can defer that refresh.
+A refresh installs into a restricted staging directory and checks the executable before replacing the active runtime.
 A failed refresh preserves the previous installation.
-[lpm cache prune --apply](/docs/packages/cache) waits until the server stops and retains the registered runtime.
 
-The managed server uses Node.js from outside the caller's project and `node_modules` directories.
-Its interpreter lookup excludes relative paths and project-controlled symlinks.
-The server still runs from the caller's directory and receives its documented LPM.dev Registry credentials.
-If no suitable Node.js executable is available, the command stops before it starts the server.
+A registry transport outage, retryable HTTP failure, or rate limit can fall back to the last verified runtime.
+Integrity, policy, firewall, provenance, authentication, and approval failures stop startup instead.
 
-The verified runtime lives at `~/.lpm/cache/mcp/runtime` and is revalidated after 24 hours. Refreshes install into a restricted staging directory and replace the active runtime only after the install and integrity checks complete. A registry transport outage, retryable HTTP failure, or rate limit can fall back to the last verified runtime; integrity, policy, firewall, provenance, authentication, and approval failures do not. Use `lpm cache path mcp` to inspect the cache or `lpm cache clean mcp` to remove it. Cleanup refuses while an MCP process is using the runtime.
+The server uses Node.js from outside the caller's working directory, detected project roots, and `node_modules` directories.
+Interpreter lookup excludes relative paths and project-controlled symlinks.
+The server retains the caller's working directory for project tools.
 
-LPM CLI writes editor configuration atomically and preserves the existing file's permissions, container key, unrelated servers, and other settings. Re-running `setup` replaces only the named entry with the same command and arguments.
+```bash
+lpm cache path mcp
+lpm cache clean mcp
+```
+
+[Cache cleanup](/docs/packages/cache) refuses while an MCP process uses the runtime.
+`lpm cache prune --apply` waits for the server to stop and retains the registered runtime.
 
 ## Authentication and custom registries
 
-The launcher downloads the public MCP package anonymously, so editor startup does not inspect the LPM CLI credential store merely to refresh the runtime. The verified MCP server still receives `LPM_TOKEN`; when it is unset, the server reads the OS keychain credential created by `lpm login` for the effective registry URL. Keychain lookup is registry-scoped, so `https://lpm.dev`, local development registries, and custom registries do not accidentally share credentials.
+The launcher downloads the public server package anonymously.
+The server uses `LPM_TOKEN`, or an OS keychain credential from [lpm login](/docs/infra/login) for the effective Registry URL.
+Keychain credentials are scoped to that URL.
 
-The registry defaults to `https://lpm.dev`. To use another trusted registry, set `LPM_REGISTRY_URL` in the environment inherited by the editor or in that editor's MCP server environment configuration. The MCP server accepts HTTPS registries and HTTP loopback registries, including IPv4-mapped IPv6 loopback addresses. It has no equivalent of the CLI's `--insecure` exception for remote HTTP. `lpm mcp setup` does not copy the current shell's registry override into editor configuration.
+`lpm_docs` always reads the LPM.dev Registry documentation at `https://lpm.dev/api/docs`. It does not use this CLI documentation site or a custom Registry URL.
 
-After `setup`, restart the editor and ask the agent something like "find a JSON-schema validator on the LPM.dev Registry" — it'll route through the MCP tools to LPM.dev Registry search and quality endpoints rather than guessing from training data.
+The default Registry URL is `https://lpm.dev`.
+For another trusted Registry instance, set `LPM_REGISTRY_URL` in the editor environment or its MCP server entry.
+Setup does not copy your shell's token or Registry override into editor configuration.
 
-## Flags
+The server accepts HTTPS URLs and HTTP loopback URLs. It has no remote HTTP exception equivalent to the CLI's `--insecure` flag.
+An invalid or unsupported server URL falls back to the default Registry URL.
+The CLI launcher also applies its own [Registry transport checks](/docs/infra/authentication).
 
-`lpm mcp` takes no specific flags besides the global flags. `--json` emits one structured document for `setup`, `remove`, and `status`; it is rejected for `serve` to keep stdout exclusively available to MCP JSON-RPC. Setup output includes `package`, `package_spec`, `version_policy`, `command`, and `args` alongside `success`, `server`, and `configured`; remove and status use `removed_from` and `editors`.
+## Troubleshooting
+
+| Symptom | Recovery |
+| --- | --- |
+| Setup reports a skipped editor | Enable MCP in that editor, then check the configuration path in the table. Run setup again. |
+| Setup rejects a configuration file | Correct invalid JSON or excessive size. For a linked file, manage its server entry through the editor or its configuration owner. |
+| The editor cannot start the executable | Run setup with the current LPM CLI installation, then restart the editor. |
+| No suitable Node.js executable | Install Node.js outside the project and expose it to the editor environment. |
+| A protected Registry tool needs authentication | Use `lpm login` for the effective Registry URL, or supply `LPM_TOKEN` through the editor environment. |
+| Runtime refresh fails | Resolve the reported network, integrity, or policy error. Stop the server before removing its MCP cache. |
+
+`serve` requires an MCP client over stdio. Direct interactive terminal use and `--json` are rejected because stdout carries MCP JSON-RPC.
+
+## Flags and structured output
+
+There are no MCP-specific flags. [Global flags](/docs/reference/terminal-output) apply where supported.
+Invalid subcommands, missing required names, and extra positional arguments return usage exit code `2`.
+
+`--json` emits one document for `setup`, `remove`, and `status`.
+Setup includes `server`, `configured`, `package`, `package_spec`, `version_policy`, `command`, `args`, and `env`.
+Removal reports `removed_from`. Status reports an `editors` list.
 
 ## See also
 
-- [`lpm skills`](/docs/packages/skills) — separate from MCP; package-published and standalone agent skills ([concept page](/docs/reference/ai-agent-skills))
-- [Model Context Protocol](https://modelcontextprotocol.io) — the upstream spec
+- [AI agent skills](/docs/reference/ai-agent-skills) — package guidance and standalone skills
+- [lpm skills](/docs/packages/skills) — manage agent instructions
+- [lpm audit](/docs/packages/audit) — project security reports
+- [lpm cache](/docs/packages/cache) — inspect or remove the managed runtime
+- [Model Context Protocol](https://modelcontextprotocol.io) — protocol documentation
