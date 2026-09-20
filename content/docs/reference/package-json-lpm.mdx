@@ -1,73 +1,77 @@
 ---
 title: package.json — "lpm" key
-description: "Reference for the LPM CLI-specific configuration block inside package.json."
+description: Configure dependency layout, peer checks, lifecycle scripts, trust, and version policy in package.json.
 ---
 
-LPM CLI reads its project-level configuration from a `"lpm"` block inside the project's `package.json`. Settings here are committed alongside dependencies, so the whole team picks them up automatically.
+The `lpm` object in `package.json` holds shared package-management configuration. It works with npm, private registries, and LPM.dev Registry.
 
-Every `package.json` read by LPM CLI has a 16 MiB limit enforced before JSON parsing. An oversized root or workspace-member manifest is a path-specific error, not a missing manifest or an empty configuration, and install fails before dependency resolution or registry access. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits) for the complete scope and exclusions.
-
-**Project-only.** Every key in this block — `scriptPolicy`, `trustedDependencies`, `minimumReleaseAge`, `minimumReleaseAgePolicy`, `scripts.autoBuild`, `linker`, the rest — applies to `lpm install` (and other commands that run in the project context). `lpm install -g` does **not** read this file: globals synthesize their own package.json and use the equivalent CLI flags plus `~/.lpm/config.toml` for the user-config tier. Global trust lives in a separate file at `~/.lpm/global/trusted-dependencies.json`.
-
-Security-sensitive project keys such as `scriptPolicy`, `minimumReleaseAge`, and `minimumReleaseAgePolicy` are treated as project **proposals**, not machine authority. If a repo asks for a weaker posture than this machine currently allows, install or rebuild fails and points you at [`lpm security unlock`](/docs/infra/security#temporary-unlocks) or a persistent [`lpm config`](/docs/infra/config) change.
-
-A few related fields live at the **top level** of `package.json` (not inside `"lpm"`) — `workspaces`, `engines`, `scripts`, `bin`, and `overrides` / `resolutions`. Those follow npm/pnpm/yarn conventions and are listed [at the bottom](#related-top-level-fields).
-
-```json title="package.json (LPM CLI-relevant fields)"
+```json title="package.json"
 {
   "name": "my-app",
-  "version": "1.0.0",
-
-  "engines": { "node": ">=22.0.0", "lpm": ">=0.32.0" },
-  "workspaces": ["packages/*", "apps/*"],
-
+  "private": true,
   "lpm": {
-    "linker": "isolated",
-    "strictDeps": "warn",
-    "strictPeerDependencies": false,
-    "catalogMode": "manual",
-    "cleanupUnusedCatalogs": false,
-
-    "scriptPolicy": "deny",
-    "triageAdvisor": "none",
-    "trustedDependencies": ["esbuild", "sharp"],
-
-    "minimumReleaseAge": 86400,
-    "minimumReleaseAgePolicy": "direct",
-    "minimumReleaseAgeExclude": ["react", "@scope/pkg"],
-    "engineStrict": true,
-
-    "overrides": {
-      "lodash": "^4.17.21",
-      "react@<18": "18.0.0"
-    },
-
-    "patchedDependencies": {
-      "lodash@4.17.21": {
-        "path": "patches/lodash@4.17.21.patch",
-        "originalIntegrity": "sha512-..."
-      }
-    },
-
-    "scripts": {
-      "autoBuild": false,
-      "denyAll": false,
-      "trustedScopes": ["@myorg/*"],
-      "passEnv": ["GITHUB_TOKEN"],
-      "readProject": "narrow",
-      "sandboxLimits": {
-        "RLIMIT_AS": 4294967296,
-        "RLIMIT_NPROC": 64,
-        "RLIMIT_NOFILE": 1024,
-        "RLIMIT_CPU": 60
-      },
-      "sandboxWriteDirs": ["build/", "dist/"]
-    }
+    "strictDeps": "strict",
+    "strictPeerDependencies": true,
+    "scriptPolicy": "deny"
   }
 }
 ```
 
+```bash
+lpm install
+lpm config list --json
+```
+
+Use [`lpm config list`](/docs/infra/config) to inspect effective configuration and its sources. Edit `package.json` to change these shared values.
+The generic [`lpm config set`](/docs/infra/config) command writes user configuration instead.
+
+## File scope and precedence
+
+Each project manifest defines its dependencies and package policy. Workspace rules differ by field, as described below.
+There is no single precedence order for the whole `lpm` object.
+
+| File | Purpose |
+| --- | --- |
+| `package.json > lpm` | Dependency layout, resolution policy, lifecycle trust, and sandbox requests. |
+| [`lpm.json`](/docs/reference/lpm-json) | Runtimes, development services, environments, tasks, and publishing. |
+| [`lpm.toml`](/docs/reference/lpm-toml) | Project defaults for save policy, workspace execution, and related CLI behavior. |
+| [`~/.lpm/config.toml`](/docs/reference/config-toml) | User defaults and machine security policy. |
+| [`lpm.config.json`](/docs/reference/lpm-config-json) | Source-package delivery rules for [`lpm add`](/docs/packages/add). |
+
+Security-sensitive project values require authorization if they weaken the approved machine policy.
+An install or rebuild then reports `security_approval_required` with a specific recovery command.
+See [temporary security unlocks](/docs/infra/security#temporary-unlocks).
+
+Global installs use their own manifest and user configuration. They do not inherit the current project's `lpm` object.
+Global trust lives in `~/.lpm/global/trusted-dependencies.json`. See [`lpm global`](/docs/packages/global).
+
+Project and workspace-member manifests have a 16 MiB size limit.
+Oversized manifests fail before dependency resolution. See [local configuration limits](/docs/project-setup#local-configuration-size-limits).
+
 ## Top-level keys under `"lpm"`
+
+All fields are optional. Defaults below apply when no higher-priority configuration supplies a value.
+
+| Field | Type | Default |
+| --- | --- | --- |
+| [`linker`](#linker) | `"hoisted"` or `"isolated"` | Automatic. |
+| [`strictDeps`](#strictdeps) | `"strict"`, `"warn"`, or `"loose"` | `"warn"`. |
+| [`autoInstallPeers`](#autoinstallpeers) | Boolean | `true`. |
+| [`strictPeerDependencies`](#strictpeerdependencies) | Boolean | `false`. |
+| [`catalogMode`](#catalogmode) | `"manual"`, `"prefer"`, or `"strict"` | `"manual"`. |
+| [`cleanupUnusedCatalogs`](#cleanupunusedcatalogs) | Boolean | `false`. |
+| [`scriptPolicy`](#scriptpolicy) | `"deny"`, `"allow"`, or `"triage"` | `"deny"`. |
+| [`triageAdvisor`](#triageadvisor) | Provider name | `"none"`. |
+| [`trustedDependencies`](#trusteddependencies) | Name array or binding object | Empty. |
+| [`minimumReleaseAge`](#minimumreleaseage) | Non-negative integer, seconds | `0`. |
+| [`minimumReleaseAgePolicy`](#minimumreleaseagepolicy) | `"direct"` or `"strict"` | `"direct"`. |
+| [`minimumReleaseAgeExclude`](#minimumreleaseageexclude) | Selector array | Empty. |
+| [`engineStrict`](#enginestrict) | Boolean | `true`. |
+| [`overrides`](#overrides) | Selector-to-range object | Empty. |
+| [`patchedDependencies`](#patcheddependencies) | Package-to-patch object | Empty. |
+| [`peerDependencyRules`](#peerdependencyrules) | Peer-rule object | Empty. |
+| [`scripts`](#the-lpmscripts-block) | Lifecycle and sandbox configuration | See field table. |
+| [`source`](#source) | Relative path string | Automatic source-file selection. |
 
 ### `linker`
 
@@ -75,30 +79,72 @@ A few related fields live at the **top level** of `package.json` (not inside `"l
 { "lpm": { "linker": "isolated" } }
 ```
 
-`node_modules` materialization style.
-
-| Value | Meaning |
+| Value | Layout |
 | --- | --- |
-| `"isolated"` | pnpm-style strict layout — each package sees only its declared deps |
-| `"hoisted"` | LPM CLI v2 hoisted virtual-store layout — root direct deps are surfaced at project `node_modules`, with package-local dependency links inside shared link entries |
+| `"isolated"` | Each package sees its declared dependencies through package-local links. |
+| `"hoisted"` | Root direct dependencies appear in project `node_modules`. Package-local dependency links use shared store entries. |
 
-**Default:** `"hoisted"` for single-package projects. LPM CLI auto-detects workspace roots (a `package.json > workspaces` glob or a `pnpm-workspace.yaml`) and defaults those projects to `"isolated"`. If a default-hoisted install detects incompatible peer requirements, LPM CLI switches that project to `"isolated"` for the install and records the decision in `lpm.lock` for warm installs. v2 hoisted mode does not intentionally flatten every transitive dependency to the project root.
+Single-package projects default to `hoisted`. Workspace projects default to `isolated`.
+The hoisted layout does not flatten every transitive dependency into the project root.
 
-CLI flag: `lpm install --linker <isolated\|hoisted>` overrides per-invocation. Precedence: `--linker` flag > `~/.lpm/config.toml > linker` > `LPM_LINKER` > this `package.json` value > built-in default (`"hoisted"`, or `"isolated"` if a workspace is detected). The peer-conflict auto-switch only applies at the built-in default tier, so any explicit value here opts out. Unknown values fail loudly at install time — there is no silent fallback.
+A default-hoisted install with incompatible peer requirements switches to `isolated` and records that decision in `lpm.lock`.
+An explicit linker value disables this automatic switch.
+
+Precedence: `--linker` → user `linker` → `LPM_LINKER` → project `lpm.linker` → automatic default.
+Unknown values fail installation.
+
+```bash
+lpm install --linker isolated
+```
+
+See [dependency layout](/docs/packages/dependency-graph) and [`lpm install`](/docs/packages/install).
 
 ### `strictDeps`
 
 ```json
-{ "lpm": { "strictDeps": "warn" } }
+{ "lpm": { "strictDeps": "strict" } }
 ```
 
-How strictly LPM CLI enforces declared dependencies (no implicit access to phantom deps).
+This field controls source-import checks for the manifest that the install uses.
+It does not change the `node_modules` layout.
 
 | Value | Behavior |
 | --- | --- |
-| `"strict"` | Hard error on undeclared imports |
-| `"warn"` | Print a warning, continue |
-| `"loose"` | Permit silently |
+| `"strict"` | Fail on undeclared package imports or an incomplete source scan. |
+| `"warn"` | Show advisory warnings after a full online install in human-readable mode. |
+| `"loose"` | Skip these import checks. |
+
+Strict checks run before dependency installation, including unchanged, offline, and JSON installs.
+Source edits trigger another check even when the manifest and lockfile remain unchanged. Unknown mode strings fail installation.
+
+The check scans JavaScript and TypeScript files in `src`, `app`, `pages`, `components`, and `lib`.
+If none of these directories exists, it scans the project directory.
+It skips nested packages, declaration files, generated directories, and symlinked files.
+
+Declarations in `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies` satisfy the check.
+Node built-ins, package self-imports, relative imports, and recognized local aliases do not require another dependency declaration.
+Aliases can come from TypeScript paths, `baseUrl`, or `lpm.config.json > importAlias`.
+
+After a full online install, strict mode also warns about imports whose packages remain uninstalled.
+This advisory appears only in human-readable output.
+
+This static check does not prove that every import resolves at runtime. It cannot resolve a dynamically constructed package name.
+If a strict check fails, correct the import or declare the dependency:
+
+```bash
+lpm install missing-package
+```
+
+### `autoInstallPeers`
+
+```json
+{ "lpm": { "autoInstallPeers": false } }
+```
+
+By default, LPM CLI installs missing non-optional peers automatically. Optional peers never trigger automatic installation.
+With `false`, missing peers remain diagnostics that you can resolve with explicit dependencies.
+
+Precedence: project `autoInstallPeers` → user `auto-install-peers` → `true`.
 
 ### `strictPeerDependencies`
 
@@ -106,9 +152,14 @@ How strictly LPM CLI enforces declared dependencies (no implicit access to phant
 { "lpm": { "strictPeerDependencies": true } }
 ```
 
-Whether peer-dependency diagnostics fail the install. Default `false`: missing required peers, peer version mismatches, and cross-consumer peer conflicts print warnings and the install continues. Set to `true` when those diagnostics should be hard failures, especially in CI. Optional peers that are absent still do not fail.
+With `true`, missing required peers, incompatible peer versions, and peer conflicts fail installation.
+With `false`, these conditions produce warnings. An absent optional peer does not fail the check.
 
-Precedence: `lpm install --strict-peer-dependencies` / `--no-strict-peer-dependencies` > `package.json > lpm.strictPeerDependencies` > `~/.lpm/config.toml > strict-peer-dependencies` > `false`.
+Precedence: `--strict-peer-dependencies` or `--no-strict-peer-dependencies` → project value → user `strict-peer-dependencies` → `false`.
+
+```bash
+lpm install --no-strict-peer-dependencies
+```
 
 ### `catalogMode`
 
@@ -116,17 +167,26 @@ Precedence: `lpm install --strict-peer-dependencies` / `--no-strict-peer-depende
 { "lpm": { "catalogMode": "prefer" } }
 ```
 
-How [`lpm install`](/docs/packages/install) saves registry dependencies that match the root default catalog.
+This field controls how [`lpm install <pkg>`](/docs/packages/install) saves registry dependencies against the root default catalog.
 
-| Value | Behavior |
+| Value | Save behavior |
 | --- | --- |
-| `"manual"` (default) | Keep normal raw save specs such as `"^4.3.6"` or the explicit range you typed. |
-| `"prefer"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; warn and save the direct spec when it does not. |
-| `"strict"` | Save `"catalog:"` when the root default catalog entry satisfies the resolved version; fail before committing `package.json` on mismatch or missing default-catalog entry. |
+| `"manual"` | Save the normal range or the explicit version specification. |
+| `"prefer"` | Save `catalog:` when the default catalog matches. Otherwise, warn and save the direct specification. |
+| `"strict"` | Require a matching default-catalog entry before the manifest change can succeed. |
 
-Automatic modes take precedence over explicit registry versions, save flags, and existing registry ranges. They preserve source dependencies, including workspace links, paths, aliases, Git sources, and tarball URLs. `--catalog` cannot replace these sources.
+Automatic catalog modes take priority over explicit registry versions, save flags, and existing registry ranges.
+They preserve workspace links, local paths, aliases, Git sources, and tarball URLs.
 
-This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and `"catalog:<name>"` dependencies still resolve through the root catalog set, and `lpm install --catalog[=<name>] <pkg>` can force a catalog save for one invocation.
+An explicit catalog request applies to one install:
+
+```bash
+lpm install react --catalog
+lpm install vitest --catalog=testing
+```
+
+Hand-written `catalog:` and `catalog:<name>` dependencies resolve in every mode.
+See [`lpm catalog`](/docs/packages/catalog) and [save policy](/docs/packages/save-policy).
 
 ### `cleanupUnusedCatalogs`
 
@@ -134,9 +194,11 @@ This affects `lpm install <pkg>` save policy only. Hand-written `"catalog:"` and
 { "lpm": { "cleanupUnusedCatalogs": true } }
 ```
 
-Prune root catalog entries that no root or workspace-member manifest references after a successful `lpm install`.
+After a successful install, remove catalog entries with no root or workspace-member reference.
+LPM CLI checks all four dependency sections, including peers and optional dependencies.
 
-**Default:** `false`. When enabled, LPM CLI scans `dependencies`, `devDependencies`, `optionalDependencies`, and `peerDependencies` for `"catalog:"` and `"catalog:<name>"` references, then removes unreferenced entries from root `package.json > catalogs`. In pnpm-style workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs: true` enables the same policy for `pnpm-workspace.yaml > catalog` / `catalogs`; an explicit `package.json > lpm.cleanupUnusedCatalogs` value wins when both are present.
+For pnpm workspaces, `pnpm-workspace.yaml > cleanupUnusedCatalogs` enables the same behavior.
+An explicit `package.json > lpm.cleanupUnusedCatalogs` value takes priority.
 
 ### `scriptPolicy`
 
@@ -144,52 +206,61 @@ Prune root catalog entries that no root or workspace-member manifest references 
 { "lpm": { "scriptPolicy": "deny" } }
 ```
 
-Dependency lifecycle-script gate for `lpm install` and `lpm rebuild`. Bare root-project lifecycle scripts are separate; see [`lpm install`](/docs/packages/install#lifecycle-scripts) for the full semantics.
+This field controls dependency lifecycle scripts for [`lpm install`](/docs/packages/install) and [`lpm rebuild`](/docs/packages/rebuild).
+Root-project lifecycle scripts have a separate [execution contract](/docs/packages/install#lifecycle-scripts).
 
-| Value | Behavior |
+| Value | Dependency behavior |
 | --- | --- |
-| `"deny"` (default) | Dependency scripts blocked. `lpm approve-scripts` required per package. |
-| `"allow"` | Run every dependency lifecycle script during install. |
-| `"triage"` | Tiered gate: greens auto-run in the sandbox; ambers and reds need manual review (or the [optional LLM advisor](/docs/packages/security-audit#optional-llm-advisor)). |
+| `"deny"` | Block scripts without individual trust or approval. |
+| `"allow"` | Permit all dependency lifecycle scripts and request automatic execution during install. |
+| `"triage"` | Evaluate scripts with security analysis, trust, provenance, and an optional advisor. |
 
-Precedence: CLI flag > `package.json > lpm > scriptPolicy` > `~/.lpm/config.toml > script-policy` > default (`deny`).
+Precedence: CLI policy flag → project `scriptPolicy` → user `script-policy` → `deny`, subject to approved security policy.
+The user `force-security-floor` setting can suppress weaker project values and CLI overrides.
 
-If this project value weakens the current approved machine floor, install or rebuild fails with `error_code: "security_approval_required"` instead of silently lowering the machine posture.
+Triage approval makes a package eligible to run. An install starts automatic execution if any of these conditions applies:
+
+- `--auto-build` is set.
+- `scripts.autoBuild` is `true`.
+- All packages with unbuilt scripts are trusted.
+- The effective policy is `allow`.
+
+The `scripts.denyAll` switch blocks execution in every policy mode.
+Invalid policy strings and wrongly typed lifecycle controls fail before execution, including under `--json`.
+For example, `"denyAll": "true"` is invalid. Use the Boolean `true`.
 
 ### `triageAdvisor`
 
 ```json
-{ "lpm": { "triageAdvisor": "claude-cli" } }
+{ "lpm": { "scriptPolicy": "triage", "triageAdvisor": "codex" } }
 ```
-
-Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor). Active only when `scriptPolicy: "triage"`.
 
 | Value | Provider |
 | --- | --- |
-| `"none"` (default) | No advisor — portable layers 1-4 only. |
-| `"claude-cli"` | [Claude CLI](https://github.com/anthropics/claude-code). |
-| `"codex"` | OpenAI [Codex CLI](https://github.com/openai/codex). |
-| `"ollama"` | Ollama-served local model. |
+| `"none"` | No advisor. The other security checks still apply. |
+| `"claude-cli"` | Claude CLI. |
+| `"codex"` | Codex CLI. |
+| `"ollama"` | A local Ollama model. |
 
-Approvals are **ephemeral** — never written to `package.json` or any other file. A second `lpm install` invokes the advisor again. Use [`lpm approve-scripts`](/docs/packages/approve-scripts) (which writes to `trustedDependencies`) for durable trust.
+The advisor is active only under the `triage` policy.
+Precedence: `--advisor` → project `triageAdvisor` → user `triage-advisor` → `none`.
+An unknown or unavailable provider produces a warning, and installation continues without the advisor.
 
-Precedence: `package.json > lpm > triageAdvisor` > `~/.lpm/config.toml > triage-advisor` > default (`"none"`).
+Advisor verdicts can use a local cache. A cached verdict does not create a persistent `trustedDependencies` entry.
+Execution approval belongs to the current install. Packages that do not run remain available for review.
+Use [`lpm approve-scripts`](/docs/packages/approve-scripts) for durable trust.
+
+See [the optional advisor](/docs/packages/security-audit#optional-llm-advisor).
 
 ### `trustedDependencies`
 
-```json
-{ "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
-```
-
-Allowlist of dependency packages permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Two accepted shapes:
-
-**Legacy array form** — names only:
+The legacy array grants trust by package name:
 
 ```json
 { "lpm": { "trustedDependencies": ["esbuild", "sharp"] } }
 ```
 
-**Rich map form** — bound to integrity + script hash, so any change re-opens the package for review:
+The binding form records the package version, source integrity, and lifecycle-script hash:
 
 ```json
 {
@@ -204,9 +275,10 @@ Allowlist of dependency packages permitted to run lifecycle scripts under `scrip
 }
 ```
 
-Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`](/docs/packages/approve-scripts).
+A changed binding requires another review. Trust does not bypass sandbox-capability approval or `scripts.denyAll`.
+Manage bindings with [`lpm approve-scripts`](/docs/packages/approve-scripts) and inspect changes with [`lpm trust diff`](/docs/packages/trust).
 
-> Only `package.json > lpm > trustedDependencies` is read. A top-level `"trustedDependencies"` field (outside the `"lpm"` block) is **not** consulted — convert legacy top-level entries by moving them under `"lpm"`.
+A top-level `trustedDependencies` field outside `lpm` does not grant lifecycle trust.
 
 ### `minimumReleaseAge`
 
@@ -214,19 +286,17 @@ Manage with [`lpm trust diff`](/docs/packages/trust) and [`lpm approve-scripts`]
 { "lpm": { "minimumReleaseAge": 86400 } }
 ```
 
-Cooldown in **seconds** before a new dependency version is installable. The default is `0`, which disables the cooldown.
-
-By default, project installs apply this value to direct dependencies. Strict mode also checks transitive dependencies and lockfile replays.
-
-For ranges, LPM CLI skips new candidates and can select an older candidate that satisfies the range. An exact pin fails during its cooldown.
-
+The cooldown delays installation of new package versions. The unit is seconds. `0` disables the cooldown.
+A range can select an older eligible version. An exact pin fails during its cooldown.
 The selected version does not exceed the current `dist-tags.latest` target in semantic-version order.
 
-Use `lpm install --allow-new` to bypass the cooldown. Use [`minimumReleaseAgeExclude`](#minimumreleaseageexclude) to exempt selected packages.
+Precedence: CLI → project value → user `minimum-release-age-secs` → `0`, subject to approved security policy.
 
-Precedence: CLI > `package.json > lpm.minimumReleaseAge` > `~/.lpm/config.toml > minimum-release-age-secs` > disabled default (`0`).
+For an authorized one-run bypass:
 
-If the repo lowers the cooldown below the current approved machine floor, install fails with `security_approval_required` and points you at a temporary [`lpm security unlock`](/docs/infra/security#temporary-unlocks) or a persistent machine-level config change.
+```bash
+lpm install --allow-new
+```
 
 ### `minimumReleaseAgePolicy`
 
@@ -234,40 +304,26 @@ If the repo lowers the cooldown below the current approved machine floor, instal
 { "lpm": { "minimumReleaseAgePolicy": "strict" } }
 ```
 
-Scope for the [`minimumReleaseAge`](#minimumreleaseage) cooldown.
-
-| Value | Behavior |
+| Value | Scope |
 | --- | --- |
-| `"direct"` (default) | Check direct/root dependencies only. This keeps normal installs fast and avoids downgrading a mature direct package because one of its children was published recently. |
-| `"strict"` | Check direct and transitive dependencies. Lockfile replays are revalidated from persisted `registry-published-at` timestamps when available. |
+| `"direct"` | Direct dependencies. |
+| `"strict"` | Direct and transitive dependencies, including lockfile replay. |
 
-Precedence: `package.json > lpm.minimumReleaseAgePolicy` > `~/.lpm/config.toml > release-age-policy` > default (`"direct"`).
-
-If the repo sets a looser policy than the current approved machine posture, install fails with `security_approval_required`. A machine with `force-security-floor = true` suppresses a project-level downgrade back to the stricter policy instead.
+Strict replay checks use saved publication timestamps when available.
+Precedence: project value → user `release-age-policy` → `direct`, subject to approved security policy.
 
 ### `minimumReleaseAgeExclude`
 
 ```json
-{
-  "lpm": {
-    "minimumReleaseAgeExclude": ["react", "@company/*", "react@19.1.0"]
-  }
-}
+{ "lpm": { "minimumReleaseAgeExclude": ["react", "@company/*", "react@19.1.0"] } }
 ```
 
-Package selectors exempted from the minimum-release-age resolver and install halt. Alias dependencies match by their canonical target name, not the local alias key.
+Accepted selectors are package names, scope wildcards, and exact package versions.
+Ranges such as `react@^19` and protocol values such as `npm:react` are invalid.
+Aliases match their canonical package name.
 
-The field accepts these selector types:
-
-- A package name, such as `react`
-- A scope wildcard, such as `@company/*`
-- An exact package version, such as `react@19.1.0`
-
-Version ranges and protocol specifiers are invalid. For example, `react@^19` and `npm:react` are invalid.
-
-CLI, project, and user exclude lists merge in that order. LPM CLI removes duplicate selectors.
-
-Use [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age-exclude) to manage the project list.
+CLI, project, and user lists combine in that order. Duplicate selectors appear once.
+Manage the project list with [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age-exclude).
 
 ### `engineStrict`
 
@@ -275,11 +331,15 @@ Use [`lpm trust release-age-exclude`](/docs/packages/trust#lpm-trust-release-age
 { "lpm": { "engineStrict": true } }
 ```
 
-Whether workspace-root `engines.lpm` / `engines.node` and, during installs, selected dependencies' `engines.node` constraints are enforced. Default `true` — workspace-root mismatches abort install / rebuild / add, `lpm run` validates the effective Node, and required dependency mismatches abort installation. Packages reachable only through optional dependency edges are skipped when their Node constraint is incompatible.
+The workspace-root value controls engine checks. Member values do not replace it.
+LPM CLI checks root `engines.lpm` and `engines.node`, plus selected dependencies' Node requirements during installation.
 
-Precedence: `lpm install --no-engine-strict` (CLI) > `package.json > lpm.engineStrict` > `~/.lpm/config.toml > engine-strict` > `true` default.
+A required dependency with an incompatible Node requirement fails installation.
+A package reachable only through optional dependencies is omitted instead.
+With `false`, incompatible dependencies remain installed and human-readable output shows warnings.
 
-Set to `false` per-project to fall back to warning-only behavior. Incompatible dependencies remain installed and the unsatisfied constraints print warnings on stderr (suppressed under `--json`).
+Precedence: `--no-engine-strict` → root project value → user `engine-strict` → `true`.
+See [Node version pinning](/docs/dev/node-version-pinning).
 
 ### `overrides`
 
@@ -295,35 +355,31 @@ Set to `false` per-project to fall back to warning-only behavior. Incompatible d
 }
 ```
 
-LPM CLI-native dependency overrides — same intent as pnpm's `pnpm.overrides` and npm's top-level `overrides`. Selectors:
-
 | Selector | Matches |
 | --- | --- |
-| `"foo"` | Every instance of `foo` |
-| `"foo@<1.0.0"` | Instances whose natural version satisfies the range |
-| `"baz>foo"` / `"baz>foo@1"` | Instances reached **through** `baz` |
+| `foo` | Every instance of `foo`. |
+| `foo@<1.0.0` | Natural selections in that range. |
+| `baz>foo` | `foo` dependencies of `baz`. |
+| `baz>foo@1` | Matching `foo` versions reached through `baz`. |
 
-The target replaces the declared range of each matching consumer. An exact target pins one version, even when that version is outside the consumer range.
+The target replaces the matching consumer's declared range.
+An exact target pins one version. A range selects the newest eligible version in that range.
+Security and platform checks still apply.
 
-A range target selects the newest eligible published version in the target range. Security and platform policies still apply.
+Root entries apply to every workspace member. Member entries extend the same field, with member values winning on duplicate selectors.
+Across fields, precedence is `lpm.overrides` → top-level `overrides` → `resolutions`.
 
-Override targets must be strings. LPM CLI does not apply npm's nested-object value form. Install and `lpm doctor --all` warn about each ignored top-level `overrides` or `resolutions` value. Use a parent selector such as `path-scurry>lru-cache` instead.
+Targets must be strings. Nested npm override objects produce warnings and do not apply.
+Multi-segment selectors such as `a>b>c` fail installation.
 
-Workspace-root entries apply to the root and all members. Member entries extend the root map, and a member value wins for the same selector.
+Plain and unqualified parent selectors can rescue a range with no available version.
+Range-qualified selectors require a natural candidate. They do not match a replacement from another override.
 
-Field precedence is `lpm.overrides`, then top-level `overrides`, then `resolutions`. Multi-segment paths (`a>b>c`) are rejected at parse time.
+If override selection fails, LPM CLI warns and retains the natural selection.
+A required dependency fails if neither selection is available. Later engine checks can also fail or omit a selected package.
 
-Install summaries include only overrides that change a selected version. A matching override that selects the natural version does not appear as applied.
-
-Plain selectors and unqualified `parent>child` selectors can rescue a dependency whose original range has no available candidate.
-Range-qualified selectors require a natural candidate. They do not match a replacement version from another override.
-If an override target is unavailable or rejected during override selection, LPM CLI warns and retains the natural selection.
-Selection checks release age, publisher trust, and platform compatibility. Later engine checks can fail or omit the selected package.
-A required dependency still fails if neither selection is available.
-
-A rescued selection shows `unresolved` in text summaries and `from_version: null` in JSON output and saved override records.
-See [Resolver](/docs/packages/resolver#overrides-and-aliases) for selection behavior.
-
+Summaries include overrides that change a version. A rescued dependency shows `unresolved` in text and `from_version: null` in JSON.
+See [resolver overrides](/docs/packages/resolver#overrides-and-aliases).
 
 ### `patchedDependencies`
 
@@ -340,15 +396,14 @@ See [Resolver](/docs/packages/resolver#overrides-and-aliases) for selection beha
 }
 ```
 
-Local patches apply after dependency resolution and linking, before lifecycle scripts. Each key has the format `"<name>@<exact-version>"`.
-[`lpm patch`](/docs/packages/patch) and [`lpm patch-commit`](/docs/packages/patch) create and register patches automatically.
-The `path` field is relative to the `package.json` that declares it.
+Each key uses an exact package version. `path` is relative to the manifest that declares it.
+[`lpm patch`](/docs/packages/patch) and [`lpm patch-commit`](/docs/packages/patch) create these entries.
 
-`lpm.lock > [patches]` records each artifact's SHA-256 checksum.
-Installs check this checksum and compare each selected destination's source integrity with `originalIntegrity`. A mismatch stops installation.
-These checks apply to the selected package bytes. They do not detect an upstream republish until an install selects the changed source.
+Patches apply after dependency linking and before lifecycle scripts.
+Installs check the patch checksum from `lpm.lock` and the selected package's source integrity. A mismatch stops installation.
+These checks do not detect an upstream republish until an install selects the changed source.
 
-Installs skip patches for deliberately omitted dependencies and retain their registrations. A registration absent from the dependency graph produces an error.
+Deliberately omitted dependencies retain their patch registrations. A registration absent from the dependency graph produces an error.
 Patches cannot change dependency resolution or repair a peer conflict that prevents installation.
 
 ### `peerDependencyRules`
@@ -357,59 +412,9 @@ Patches cannot change dependency resolution or repair a peer conflict that preve
 {
   "lpm": {
     "peerDependencyRules": {
-      "ignoreMissing": ["@types/react", "fsevents"],
-      "allowedVersions": {
-        "react": "16 || 17 || 18",
-        "card>react": "17",
-        "@scope/foo@^2>react": "17",
-        "typescript": "5"
-      },
+      "ignoreMissing": ["fsevents"],
+      "allowedVersions": { "card>react": "18 || 19" },
       "allowAny": ["@babel/*"]
-    }
-  }
-}
-```
-
-Tunes the post-resolution peer-dependency warning loop. Three independent sub-keys; each addresses a different complaint:
-
-| Sub-key | Effect | Key shape |
-| --- | --- | --- |
-| `ignoreMissing` | Suppress missing-peer warnings for the listed names. Use when a peer is intentionally optional (something else installs it; your code handles absence). | Names + glob patterns (`*`, `@scope/*`, `*-suffix`, etc.) |
-| `allowedVersions` | Widen the accepted range. When the resolved peer's version doesn't satisfy the package's declared range, this widened range is tested as a fallback. If either matches, no warning fires. | Structured selectors (see below) |
-| `allowAny` | Accept any version when the peer is in the tree. Suppresses version-mismatch warnings for matched names. **Does not** suppress missing-peer warnings (combine with `ignoreMissing` for that). | Names + glob patterns |
-
-#### `allowedVersions` selector grammar
-
-The same grammar as [`lpm.overrides`](#overrides). The selector decides which `(consumer, peer)` pair the rule applies to:
-
-| Selector | Matches |
-| --- | --- |
-| `"react"` | any peer named `react`, regardless of consumer |
-| `"@scope/foo"` | scoped peer, any consumer |
-| `"foo>react"` | `react` peer of `foo` (any version of foo) |
-| `"foo@^2>react"` | `react` peer of `foo` whose installed version satisfies `^2` |
-| `"@scope/foo@^2>react"` | scoped parent + version range |
-
-Multi-segment paths (`"a>b>c"`) and standalone version qualifiers on a bare peer name (`"foo@2"` without `>`) are rejected at install time. Glob patterns are **not** accepted in `allowedVersions` — use the structured selector grammar above.
-
-Same shape as pnpm's `pnpm.peerDependencyRules` — `lpm migrate` translates the pnpm side verbatim, validating selector keys with the same parser the resolver uses at install time. Hand-authored typos in `lpm.peerDependencyRules.allowedVersions` (bad selector, unparseable widened range) abort the install with a named error — same fail-closed posture as `lpm.overrides`. Drift between the pnpm and LPM CLI sides post-migration is surfaced as the `pnpm_peer_rules_drift` code on `lpm doctor --json`.
-
-## The `lpm.scripts` block
-
-Configuration for dependency lifecycle-script execution under `lpm rebuild` and the auto-build flow. Most fields control the sandbox and capability surface granted to scripts.
-
-```json
-{
-  "lpm": {
-    "scripts": {
-      "autoBuild": false,
-      "denyAll": false,
-      "trustedScopes": ["@myorg/*"],
-      "passEnv": ["GITHUB_TOKEN"],
-      "readProject": "narrow",
-      "sandboxLimits": { "RLIMIT_AS": 4294967296 },
-      "sandboxWriteDirs": ["build/"],
-      "sandboxReadAllow": [".env"]
     }
   }
 }
@@ -417,28 +422,85 @@ Configuration for dependency lifecycle-script execution under `lpm rebuild` and 
 
 | Field | Type | Effect |
 | --- | --- | --- |
-| `autoBuild` | bool | If `true`, `lpm install` auto-runs `lpm rebuild` for trusted packages. Equivalent to `lpm install --auto-build`; if a trusted dependency lifecycle script fails, install exits non-zero. |
-| `denyAll` | bool | Refuse to run any dependency lifecycle scripts, ever — even trusted ones. Hard kill switch. |
-| `trustedScopes` | string[] | Lowercase npm scope wildcards whose packages are trusted for script execution. Manage with [`lpm trust lifecycle-scope`](/docs/packages/trust#lpm-trust-lifecycle-scope). |
-| `passEnv` | string[] | Exact additional environment names to pass after approval. Reserved runtime variables are rejected. |
-| `readProject` | `"narrow"` \| `"full"` | Narrow reads allow dependency directories and build metadata. Approved full reads include all project files and secrets. |
-| `sandboxLimits` | object | Per-resource limits. Keys: `RLIMIT_AS`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`, `RLIMIT_CPU`. Values: non-negative integer. Any requested limit outside the approved baseline triggers review. Raw user-configured `[sandbox.limits]` ceilings are not authority on their own. |
-| `sandboxWriteDirs` | string[] | Extra directories the sandbox lets scripts write to. Relative entries stay inside the canonical project root. Absolute entries outside it require a covering [`max-sandbox-write-roots`](/docs/reference/config-toml) entry. Existing paths and the nearest existing ancestor of missing paths are resolved before use; symlink, junction, and reparse-point traversal below the authorized root is rejected. The dangerous-root denylist still has final veto. |
-| `sandboxReadAllow` | string[] | Individual files inside the project that scripts can read after approval. The CLI combines these paths with user-level `script-read-allow`. Directories, symlinks, and paths outside the project are rejected. Changes require another approval. |
+| `ignoreMissing` | Name or glob array | Suppress matching missing-peer diagnostics. |
+| `allowedVersions` | Selector-to-range object | Accept this range in addition to the peer's declared range. |
+| `allowAny` | Name or glob array | Accept any installed version. Missing-peer diagnostics still apply. |
 
-The project root itself may be reached through a symlink; LPM CLI resolves it once and evaluates containment against its canonical target. Links or reparse points inside the project or an explicitly authorized write root are not accepted, including when the requested leaf does not exist yet.
+#### `allowedVersions` selector grammar
 
-Widening any of `passEnv`, `readProject`, `sandboxReadAllow`, `sandboxWriteDirs`, or `sandboxLimits` beyond the approved baseline requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts) — the system does not silently grant elevated capabilities from raw repo or user config edits.
+| Selector | Matches |
+| --- | --- |
+| `react` | The peer named `react` for any consumer. |
+| `@scope/foo` | A scoped peer for any consumer. |
+| `foo>react` | The `react` peer of `foo`. |
+| `foo@^2>react` | The `react` peer of a matching `foo` version. |
+| `@scope/foo@^2>react` | The same rule with a scoped consumer. |
 
-Each `trustedScopes` entry applies to all package versions and script contents in that scope. Use strict [`trustedDependencies`](#trusteddependencies) bindings for individual packages.
+Multi-segment paths, standalone peer-version qualifiers such as `foo@2`, and globs are invalid in `allowedVersions`.
+Invalid selectors and ranges fail installation.
+[`lpm migrate`](/docs/packages/migrate) translates supported pnpm peer rules and checks the same selector grammar.
+[`lpm doctor --json`](/docs/infra/doctor) reports later pnpm/LPM CLI rule differences as `pnpm_peer_rules_drift`.
 
-An added scope requires a signed `trust-scope-widen` authorization. The authorization is local, but the scope list remains in the shared `package.json`.
+## The `lpm.scripts` block
 
-LPM CLI removes the signed scope authorization when you run `lpm trust lifecycle-scope remove`.
+```json
+{
+  "lpm": {
+    "scripts": {
+      "autoBuild": true,
+      "denyAll": false,
+      "trustedScopes": [],
+      "passEnv": [],
+      "readProject": "narrow",
+      "sandboxWriteDirs": ["build/"]
+    }
+  }
+}
+```
+
+These fields control dependency lifecycle scripts and their requested sandbox access.
+
+| Field | Type and default | Effect |
+| --- | --- | --- |
+| `autoBuild` | Boolean, `false` | Request automatic execution of trusted scripts. A lifecycle failure fails installation. |
+| `denyAll` | Boolean, `false` | Block every dependency lifecycle script, including trusted scripts. |
+| `trustedScopes` | String array, empty | Trust every package version and script in the listed lowercase npm scopes. |
+| `passEnv` | String array, empty | Request additional environment variables. Reserved runtime variables are invalid. |
+| `readProject` | `"narrow"` or `"full"`, `"narrow"` | Narrow reads permit dependency directories and build metadata. Full reads include project secrets. |
+| `sandboxLimits` | Object, empty | Request resource limits with non-negative integer values. |
+| `sandboxWriteDirs` | String array, empty | Request additional writable directories. |
+| `sandboxReadAllow` | String array, empty | Request read access to individual files inside the project. |
+
+`sandboxLimits` accepts `RLIMIT_AS`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`, and `RLIMIT_CPU`.
+Limits outside the approved baseline require review. Raw user-configured limits do not grant that authority.
+
+Relative write directories stay inside the canonical project root.
+External absolute paths require a covering user `max-sandbox-write-roots` entry and approval.
+Dangerous roots remain forbidden. Symlinks, junctions, and reparse points below an authorized root are rejected.
+The project root itself can be a symlink to its canonical directory.
+
+`sandboxReadAllow` combines with user `script-read-allow` entries.
+Directories, symlinks, and paths outside the project are invalid.
+Changes to requested access require another approval through [`lpm approve-scripts`](/docs/packages/approve-scripts).
+
+Manage scope trust with [`lpm trust lifecycle-scope`](/docs/packages/trust#lpm-trust-lifecycle-scope).
+An added scope requires signed `trust-scope-widen` authorization. Removal also removes that local authorization.
+For individual packages, prefer [version and integrity bindings](#trusteddependencies).
+
+### `source`
+
+```json
+{ "lpm": { "source": "src/components" } }
+```
+
+This legacy field selects a file or directory for source-package delivery with [`lpm add`](/docs/packages/add).
+It applies when `lpm.config.json` does not provide `files` rules.
+The path must stay inside the extracted package. Directory contents keep paths relative to that directory.
+For new packages, use [`lpm.config.json`](/docs/reference/lpm-config-json).
 
 ## Related top-level fields
 
-These live at the top level of `package.json`, not inside `"lpm"`:
+These fields belong directly in `package.json`, outside `lpm`.
 
 ### `workspaces`
 
@@ -446,74 +508,77 @@ These live at the top level of `package.json`, not inside `"lpm"`:
 { "workspaces": ["packages/*", "apps/*"] }
 ```
 
-Or the object form:
+The object form is also accepted:
 
 ```json
 { "workspaces": { "packages": ["packages/*"] } }
 ```
 
-Both shapes accepted. See [Workspaces](/docs/packages/workspaces).
+See [workspaces](/docs/packages/workspaces).
 
 ### `engines`
 
 ```json
-{ "engines": { "node": ">=22.0.0", "lpm": ">=0.32.0" } }
+{ "engines": { "node": ">=22.0.0", "lpm": ">=0.78.0" } }
 ```
 
-Runtime / CLI version constraints. LPM CLI enforces both `engines.node` (against the effective Node version) and `engines.lpm` (against the running CLI version) on the workspace root by default. It also enforces `engines.node` from selected dependency versions, persisting those ranges in `lpm.lock` for warm, frozen, and offline replay. Required mismatches abort; optional-only incompatible packages are skipped.
+`engines.node` checks compatibility. It does not select or install Node.
+Runtime selection uses `lpm.json > runtime.node`, `.nvmrc`, or `.node-version`, then the Node on `PATH`.
+A missing required runtime produces an error with a selection hint.
 
-`engines.node` never selects or installs a runtime. LPM CLI applies `lpm.json > runtime.node`, `.nvmrc`, or `.node-version` first; without one, it preserves the Node already on `PATH`. Engine enforcement then validates that effective version. If no Node is available, the constraint fails with an explicit runtime-selection hint.
-
-Other keys (`engines.npm`, `engines.pnpm`, `engines.yarn`, `engines.bun`) are recognized and surfaced as a one-line stderr warning that LPM CLI doesn't enforce them. Use `engines.lpm` for the LPM CLI version, and use `lpm.json > runtime.bun` when scripts need a managed Bun binary on `PATH`.
-
-Opt out via `lpm install --no-engine-strict`, `package.json > lpm > engineStrict = false`, or `~/.lpm/config.toml > engine-strict = false`.
+LPM CLI also checks the root `engines.lpm` value against its own version.
+Other manager keys, including `npm`, `pnpm`, `yarn`, and `bun`, produce warnings and are not enforced.
+Use `lpm.json > runtime.bun` to select a managed Bun runtime.
 
 ### `overrides` / `resolutions`
 
-npm-style `overrides` and yarn-style `resolutions` are read for compatibility. Workspace-root entries apply to every member.
-
-A member value wins when the same selector exists in the same field. [`lpm.overrides`](#overrides) takes precedence across fields.
+These compatibility fields use the supported [override rules](#overrides).
+Root entries apply to workspace members, and same-field member values take priority.
 
 ### `scripts`, `bin`, `dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`
 
-Standard npm fields — LPM CLI reads them as you'd expect.
+LPM CLI reads these standard npm fields for tasks, executable links, and dependency resolution.
+See [npm compatibility](/docs/packages/npm-compatibility) for supported behavior.
 
 ### `catalogs`
 
 ```json
 {
   "catalogs": {
-    "default": { "react": "^18.2.0", "react-dom": "^18.2.0" },
-    "testing": { "jest": "^29.0.0", "vitest": "^1.0.0" }
+    "default": { "react": "^19.0.0" },
+    "testing": { "vitest": "^3.0.0" }
   }
 }
 ```
 
-Centralized version catalogs for monorepos. Members reference catalog versions with `"catalog:"` or `"catalog:<name>"`.
+Members reference these ranges with `catalog:` or `catalog:<name>`.
+LPM CLI also reads `pnpm-workspace.yaml > catalog` and `catalogs`.
+On duplicate entries, root `package.json > catalogs` takes priority.
 
-LPM CLI reads catalogs from root `package.json > catalogs` and from pnpm-style `pnpm-workspace.yaml`:
+Catalog values must be package ranges. A catalog cannot reference another catalog.
+See [`lpm catalog`](/docs/packages/catalog).
 
-```yaml title="pnpm-workspace.yaml"
-packages:
-  - "packages/*"
-cleanupUnusedCatalogs: true
-catalog:
-  react: ^18.2.0
-catalogs:
-  testing:
-    vitest: ^1.0.0
+## Validation and recovery
+
+```bash
+lpm doctor --all --json
+lpm config list --json
+lpm install --json
 ```
 
-`pnpm-workspace.yaml > catalog` becomes LPM CLI's default catalog. `pnpm-workspace.yaml > catalogs` becomes the named catalog map. When both files define the same catalog package entry, `package.json > catalogs` wins and LPM CLI keeps the pnpm-workspace entry only for non-conflicting packages.
+[`lpm doctor`](/docs/infra/doctor) reports configuration and compatibility problems.
+The command that consumes a field performs its behavior-specific checks.
+Invalid lifecycle controls fail instead of inheriting a more permissive policy.
 
-Catalog entry values must be concrete package ranges. A catalog entry cannot point at another catalog entry with `"catalog:"` or `"catalog:<name>"`; LPM CLI rejects recursive catalog definitions during install.
-
-Set `package.json > lpm > catalogMode` to control whether `lpm install <pkg>` writes matching default-catalog entries back as `"catalog:"`. Set `cleanupUnusedCatalogs` to prune unused catalog entries after successful installs.
+If a strict import check fails, add the missing declaration or correct the import.
+If a security approval is required, review the requested scope before you use the reported unlock command.
+If a peer check fails, correct the dependency ranges or define a specific peer rule.
 
 ## See also
 
-- [`lpm.json`](/docs/reference/lpm-json) — separate file for dev-server, task-runner, and publish config
-- [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults (save policy, etc.)
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults
-- [Save policy](/docs/packages/save-policy) — how install ranges are written
-- [Workspaces](/docs/packages/workspaces) — filter grammar and topology
+- [`lpm install`](/docs/packages/install)
+- [`lpm.json`](/docs/reference/lpm-json)
+- [`lpm.toml`](/docs/reference/lpm-toml)
+- [User configuration](/docs/reference/config-toml)
+- [Save policy](/docs/packages/save-policy)
+- [Workspaces](/docs/packages/workspaces)
