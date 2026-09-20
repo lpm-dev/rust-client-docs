@@ -6,10 +6,12 @@ description: "Inspect, diagnose, and test local programs that allow, warn about,
 Use `lpm policy` to inspect and test local policy extensions for package installs.
 
 ```bash
+lpm policy <COMMAND> [--json]
+
 lpm policy list [--json]
 lpm policy status [--json]
 lpm policy doctor [<EXTENSION>] [--json]
-lpm policy test <EXTENSION> --package <NAME@VERSION> [--json]
+lpm policy test <EXTENSION> --package <PACKAGE> [--json]
 ```
 
 A policy extension is a local program that reviews resolved package candidates. It returns an `allow`, `warn`, or `block` decision for each candidate.
@@ -33,7 +35,7 @@ The output shows the number of active extensions, their modes, and any command-a
 | `lpm policy list` | Show active extension configuration | You want names, commands, modes, error behavior, and timeouts |
 | `lpm policy status` | Show a policy overview and diagnostics | You want a read-only summary that always exits successfully after valid configuration loads |
 | `lpm policy doctor [EXTENSION]` | Diagnose all extensions or one named extension | You need a CI gate or an exit code for failed diagnostics |
-| `lpm policy test <EXTENSION> --package <NAME@VERSION>` | Run one extension with a synthetic package candidate | You want to see its decision before an install |
+| `lpm policy test <EXTENSION> --package <PACKAGE>` | Run one extension with a synthetic package candidate | You want to see its decision before an install |
 
 `list`, `status`, and `doctor` do not run extension programs. `test` runs the selected program.
 
@@ -48,7 +50,63 @@ Use a policy extension for a package rule that depends on your own system. Commo
 
 Policy extensions are separate from [LPM Firewall](/docs/guides/firewall) and the [`lpm security`](/docs/infra/security) floor.
 
-The current policy-extension configuration is local user configuration. It is not part of the signed security floor or an OS-managed policy.
+Policy extensions use local user configuration. They are not part of the signed security floor or an OS-managed policy.
+
+## Configuration
+
+Configure policy extensions in `~/.lpm/config.toml`. The path follows [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout).
+
+```toml title="~/.lpm/config.toml"
+[policy.extensions.local-feed]
+command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
+enabled = true
+mode = "enforce"
+on-error = "block"
+timeout-ms = 5000
+events = ["package.candidate"]
+```
+
+| Key | Accepted value | Default | Purpose |
+| --- | --- | --- | --- |
+| `command` | Non-empty string array | Required for an active extension | Select the program and its arguments |
+| `enabled` | Boolean | `true` | Include or disable the extension |
+| `mode` | `report` or `enforce` | `report` | Control the effect of package decisions |
+| `on-error` | `warn` or `block` | `warn` in report mode, `block` in enforcement mode | Control runner and protocol errors |
+| `timeout-ms` | Integer from `1` through `120000` | `5000` | Limit the complete extension exchange |
+| `events` | `["package.candidate"]` | `["package.candidate"]` | Select the supported policy event |
+
+These are the only accepted keys. This rule also applies to disabled extensions.
+
+`warn` is an alias for report mode. `deny` and `block` are aliases for enforcement mode.
+
+A command can contain at most 64 entries, including the executable. Disabled extensions skip the other value checks.
+
+There is no command-line override or one-run opt-out for these extensions. To disable an extension, set its `enabled` value to `false`.
+
+### Command rules
+
+The first `command` entry must use one of these forms:
+
+- An absolute executable path
+- A program name found in an absolute `PATH` directory
+
+LPM CLI rejects relative executable paths such as `./policy-extension`. It also ignores relative and empty `PATH` entries.
+
+Later `command` entries are program arguments. LPM CLI starts the program directly and does not use a shell.
+
+The program runs in the current project directory during install. `lpm policy test` uses the directory where you run the command.
+
+LPM CLI provides a small process environment. It sends one JSON request on standard input and reads one JSON response from standard output.
+
+Read the [policy-extension protocol](/docs/reference/config-toml#policy-extensions) before you write an extension.
+
+## Project configuration
+
+Policy extensions use only `~/.lpm/config.toml`.
+
+You cannot configure them in `lpm.json`, `package.json`, or `lpm.toml`. A cloned repository cannot activate a local program.
+
+This configuration is not part of the signed security floor. Protect write access to `~/.lpm/config.toml` with your operating-system permissions.
 
 ## Recipes
 
@@ -67,6 +125,8 @@ lpm policy status
 ```
 
 Disabled extensions do not appear in either command.
+
+List output redacts recognized credential arguments and URL credentials in both terminal and JSON output. Stored arguments and extension execution remain unchanged.
 
 ### Diagnose one extension
 
@@ -100,7 +160,9 @@ For a scoped package, LPM CLI uses the final `@` as the version separator:
 lpm policy test local-feed --package @scope/pkg@1.2.3
 ```
 
-Use one npm-compatible concrete version. LPM converts accepted loose forms to a canonical version before it starts the extension. For example, `v19.0.0` and `19.0` become `19.0.0`.
+Use a valid package name and one npm-compatible concrete version. LPM CLI rejects malformed names before it starts the extension.
+
+LPM CLI converts accepted loose versions to a canonical version. For example, `v19.0.0` and `19.0` become `19.0.0`.
 
 Ranges such as `^19.0.0` and `~19.0.0` are invalid. Wildcards and dist-tags such as `latest` are also invalid.
 
@@ -141,56 +203,6 @@ on-error = "block"
 
 Enforcement mode stops the install for a `block` decision.
 
-## Configuration
-
-Configure policy extensions in `~/.lpm/config.toml`:
-
-```toml title="~/.lpm/config.toml"
-[policy.extensions.local-feed]
-command = ["/usr/local/bin/lpm-policy-feed", "--deny-list", "/etc/lpm/deny.json"]
-enabled = true
-mode = "enforce"
-on-error = "block"
-timeout-ms = 5000
-events = ["package.candidate"]
-```
-
-| Key | Accepted value | Default | Purpose |
-| --- | --- | --- | --- |
-| `command` | Non-empty string array | Required for an active extension | Select the program and its arguments |
-| `enabled` | Boolean | `true` | Include or disable the extension |
-| `mode` | `report` or `enforce` | `report` | Control the effect of package decisions |
-| `on-error` | `warn` or `block` | `warn` in report mode, `block` in enforcement mode | Control runner and protocol errors |
-| `timeout-ms` | Integer from `1` through `120000` | `5000` | Limit the complete extension exchange |
-| `events` | `["package.candidate"]` | `["package.candidate"]` | Select the supported policy event |
-
-These are the only accepted keys. This rule also applies to disabled extensions.
-
-### Command rules
-
-The first `command` entry must use one of these forms:
-
-- An absolute executable path
-- A program name found in an absolute `PATH` directory
-
-LPM CLI rejects relative executable paths such as `./policy-extension`. It also ignores relative and empty `PATH` entries.
-
-Later `command` entries are program arguments. LPM CLI starts the program directly and does not use a shell.
-
-The program runs in the current project directory during install. `lpm policy test` uses the directory where you run the command.
-
-LPM CLI provides a small process environment. It sends one JSON request on standard input and reads one JSON response from standard output.
-
-Read the [policy-extension protocol](/docs/reference/config-toml#policy-extensions) before you write an extension.
-
-## Project configuration
-
-Policy extensions use only `~/.lpm/config.toml`.
-
-You cannot configure them in `lpm.json`, `package.json`, or `lpm.toml`. A cloned repository cannot activate a local program.
-
-This configuration is not part of the signed security floor yet. Protect write access to `~/.lpm/config.toml` with your operating-system permissions.
-
 ## How installs use extensions
 
 LPM CLI runs active extensions after dependency resolution and package filtering. It runs them before registry tarballs are fetched or packages are linked.
@@ -212,7 +224,7 @@ The extension can omit candidates that need no decision. Every returned decision
 | `warn` | Print the error and continue the install |
 | `block` | Stop the install |
 
-The timeout includes the standard-input write, process exit, output reads, and response validation.
+The timeout includes the standard-input write, process exit, output reads, and response validation. Output limits are 64 KiB for standard output and 16 KiB for standard error.
 
 Warm lockfile and offline installs run the same policy extensions before linking. A warm install cannot bypass a local policy extension.
 
@@ -325,7 +337,7 @@ lpm policy test local-feed --package react@19.0.0 --json
 }
 ```
 
-For `doctor`, `success: true` means that the command produced a diagnostic response. Use `no_failures` and the process exit code for policy health.
+For both commands, `success: true` means that the command produced a diagnostic response. Use `no_failures` and the process exit code for policy health.
 
 ### Test output
 
@@ -395,7 +407,7 @@ lpm install --json --timing
 | --- | --- | --- |
 | `doctor` | `[EXTENSION]` | Diagnose only one named active extension |
 | `test` | `<EXTENSION>` | Select one named active extension |
-| `test` | `--package <NAME@VERSION>` | Send one exact package candidate to the extension |
+| `test` | `--package <PACKAGE>` | Send a candidate such as `react@19.0.0` to the extension |
 | All | `--json` | Print structured JSON |
 
 `list` and `status` have no command-specific flags. See the other [global flags](/docs/commands#global-flags).
