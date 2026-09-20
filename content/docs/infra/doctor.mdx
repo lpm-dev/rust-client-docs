@@ -202,8 +202,8 @@ Supported fixes include:
 
 `lpm doctor list --json` shows the supported action before a fix run. For each code, `auto_fix` identifies the action or is null.
 
-The JSON field `fixes_applied` lists completed fixes. `fixes_failed` lists unsuccessful actions and their errors.
-After repairs, doctor reloads root and member manifests before it reruns the same check set. A failed repair keeps the exit code at `1`.
+The JSON field `fixes_applied` lists completed fixes. `fixes_failed` lists unsuccessful actions and their errors. Targeted actions include the plugin name, tunnel domain, or runtime version selector.
+After repairs, doctor reloads root and member manifests before it reruns the same check set. A failed repair appears in the final terminal summary and keeps the exit code at `1`.
 
 Repairs apply once to the initial report. The final report can show remaining or newly discovered problems.
 
@@ -342,12 +342,12 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | `auth_missing` | fail | No registry auth token is configured. **Fix:** Run [lpm login](/docs/infra/login). |
 | `auth_storage_keychain` | pass | LPM CLI stores authentication material for this registry in the OS keychain. |
 | `auth_storage_fallback` | warn | LPM CLI stores authentication material in encrypted files instead of the OS keychain. **Fix:** Unlock or repair the keychain. Then run [lpm login](/docs/infra/login) again. |
-| `vault_storage_keychain` | pass | On macOS, vault secrets are unlocked through the OS Keychain. |
-| `vault_storage_native` | pass | On Linux and Windows, vault blobs use an encrypted local key that the OS secure store protects. |
-| `vault_storage_fallback` | warn | Vault secrets use the fallback key at `~/.lpm/.vault-fallback-key`. Processes from the same user can read this key. **Fix:** Unlock or repair the OS secure store. |
-| `vault_storage_unavailable` | fail | Encrypted vault files exist, but LPM CLI cannot access either local key. **Fix:** Unlock the secure store. If necessary, restore the fallback key from backup. |
+| `vault_storage_keychain` | pass | macOS Keychain is the selected backend for local secrets. This result does not probe Keychain access or secret decryption. |
+| `vault_storage_native` | pass | A native data key exists, or the OS secure store is the preferred backend for new local secrets. Read the detail to distinguish these states. |
+| `vault_storage_fallback` | warn | Local secrets use the fallback key at `~/.lpm/.vault-fallback-key`. Processes from the same user can read this key. **Fix:** Unlock or repair the OS secure store. |
+| `vault_storage_unavailable` | fail | Encrypted local secret files exist, but LPM CLI cannot access either local key. **Fix:** Unlock the secure store. If necessary, restore the fallback key from backup. |
 | `auth_unverified` | warn | The credential could not be checked because the registry request failed. |
-| `vault_storage_native_with_fallback` | warn | The native secure store works, but a local fallback key also exists. |
+| `vault_storage_native_with_fallback` | warn | A native data key and a local fallback key both exist. The fallback key still permits offline decryption. |
 
 ### Policy extensions
 
@@ -522,7 +522,7 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 
 | Code | Severity | Description |
 | --------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sigstore_verify_enforced` | pass | Sigstore provenance verification is fail-closed. Rejected attestations refuse the install or approval. |
+| `sigstore_verify_enforced` | pass | When verification runs, a rejected attestation stops the install or approval. This result does not examine verification scope or fetch availability. |
 | `sigstore_verify_warn_mode` | warn | Warn mode is requested. It applies only when security approvals and managed policy permit it. |
 | `sigstore_verify_disabled` | warn | Disabled verification is requested. It applies only when security approvals and managed policy permit it. |
 | `sigstore_config_approval_required` | fail | The requested verification mode needs approval or conflicts with managed policy. Restore the approved mode or follow the reported remediation. |
