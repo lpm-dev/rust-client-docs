@@ -1,154 +1,262 @@
 ---
 title: Glossary
-description: "LPM CLI, LPM.dev Registry, and LPM Firewall terminology in one place."
+description: "Definitions for package, workspace, runtime, and security terms used by LPM CLI and LPM.dev Registry."
 ---
 
-A reference for terms that mean something specific in LPM CLI, the LPM.dev Registry, or LPM Firewall. Sorted alphabetically.
+Use this glossary to look up terms in the command pages. Entries are alphabetical.
+
+**LPM CLI** is the local `lpm` executable. **LPM.dev Registry** hosts packages and distribution services.
+**LPM Firewall** provides package verdicts and npm policy checks. LPM CLI works with npm and other registries, as well as LPM.dev Registry.
 
 ### Add (vs. install)
 
-**`lpm add`** is *source delivery* — copies a package's source files into your project, like `shadcn-ui`. **`lpm install`** is *runtime dependency* — resolves and links into `node_modules/`. Not aliases. See [`lpm add`](/docs/packages/add) and [`lpm install`](/docs/packages/install).
+[lpm add](/docs/packages/add) copies package source into your project.
+[lpm install](/docs/packages/install) installs runtime dependencies into `node_modules`, or installs Swift dependencies through the supported Swift workflow.
+The commands are separate operations.
 
 ### Auto-build
 
-The signal that triggers the rebuild step for trusted packages immediately after install completes. Sources: `lpm install --auto-build` (works on both project and `-g` installs), `lpm install --yolo` / `--policy=allow` (auto-triggers under the allow policy), or — project only — `package.json > lpm > scripts.autoBuild = true`. If a trusted lifecycle script fails, install exits non-zero. Globals don't read per-project script knobs from `package.json`, so triage with mixed-trust trees on `-g` requires the explicit `--auto-build` flag.
+Automatic dependency lifecycle execution after installation. An explicit `--auto-build`, project `scripts.autoBuild`, or effective `allow` policy can request it.
+It also runs when all packages with pending scripts are trusted, including applicable triage approvals.
+
+Each package must still pass the applicable execution gates. `scripts.denyAll` suppresses execution.
+See [Lifecycle scripts](/docs/packages/install#lifecycle-scripts).
 
 ### Behavioral tag
 
-A static-analysis flag attached to an installed package by [`lpm audit`](/docs/packages/audit) and queryable via [`lpm query`](/docs/packages/query). Examples: `:eval`, `:network`, `:fs`, `:shell`, `:child-process`, `:obfuscated`. Used to make security gates more precise than blanket version pinning.
+A label for behavior found by static package analysis, such as network access, shell execution, or dynamic code evaluation.
+A tag is evidence for review, rather than proof that a package is malicious.
+Use [lpm audit](/docs/packages/audit) and [lpm query](/docs/packages/query).
 
 ### Capability
 
-A widening request a package's lifecycle scripts can declare in `lpm.scripts.{passEnv, readProject, sandboxLimits}`. Beyond the user's defaults, it requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts) — the system never silently grants elevated capabilities.
+A dependency script's request for access or resource limits beyond its baseline.
+The `lpm.scripts` fields include `passEnv`, `readProject`, `sandboxReadAllow`, `sandboxWriteDirs`, and `sandboxLimits`.
+
+A request that widens the baseline needs a matching approval. Equal or tighter limits do not require that extra approval.
+See [lpm approve-scripts](/docs/packages/approve-scripts).
 
 ### Cold install
 
-An install where neither `node_modules` nor the global store has the dep tree yet — everything is downloaded from the registry. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as the slowest steady-state path.
+An install without reusable installed packages or cached package contents. Remote packages need retrieval; local sources remain local.
+See [lpm install](/docs/packages/install).
 
 ### Config-aware package
 
-A package whose tarball ships an `lpm.config.json` at the root. [`lpm add`](/docs/packages/add#authoring-config-aware-packages-lpmconfigjson) treats it as a configurable installer (interactive prompts, conditional file copy, conditional dep injection). Without `lpm.config.json` it's a plain source copy.
+A source package with `lpm.config.json` at the archive root.
+[lpm add](/docs/packages/add) uses this file for prompts, conditional files, and dependency changes.
+See [lpm.config.json](/docs/reference/lpm-config-json).
 
 ### Distribution mode
 
-A package's access mode on LPM.dev Registry: **Private** (default), **Free**, **Pool**, or **Marketplace**. Distribution is separate from package format. See [LPM.dev package distribution](/docs/packages/package-distribution).
+A package's access and payment model on LPM.dev Registry: **Private**, **Free**, **Pool**, or **Marketplace**.
+Private is the default. The publisher selects other modes explicitly.
+See [LPM.dev package distribution](/docs/packages/package-distribution).
 
 ### Greedy-fusion (resolver)
 
-The default resolver. Streams metadata fetches into the dispatcher. Faster than the legacy PubGrub-with-split-retry resolver; opt out with `LPM_RESOLVER=pubgrub`.
+The default dependency resolver. It selects package versions and their dependency graph.
+`LPM_RESOLVER=pubgrub` selects the alternative resolver.
+See [Resolver](/docs/packages/resolver).
 
 ### Hoisted layout
 
-LPM CLI's v2 hoisted virtual-store layout. Root direct deps are surfaced at project `node_modules/<dep>`, while package-local dependency links live inside shared store link entries. **Starting default for single-package projects.** Workspaces auto-default to [isolated](#isolated-layout), and default installs with incompatible peer requirements auto-switch to isolated; override per-invocation with `lpm install --linker=hoisted`, per-user with `~/.lpm/config.toml > linker`, or per-project with `package.json > lpm > linker`.
+A `node_modules` layout that exposes root direct dependencies at the project root and keeps package-local links in shared store entries.
+It is the starting default for standalone projects.
+
+Workspaces default to [isolated layout](#isolated-layout). Unconfigured installs also switch to isolated layout when peer requirements conflict.
+See [lpm install](/docs/packages/install) for explicit linker settings.
+
+### Importer
+
+One project's record in a lockfile. It contains manifest inputs and, in a workspace, that project's selected package graph.
+The root importer is `.`; members use relative paths.
+See [Lockfile format](/docs/reference/lockfile-format#importers).
 
 ### Integrity
 
-The SRI hash (`sha512-…`) recorded in the lockfile against each resolved package. Verified on every install. Drift is a hard error.
+A content hash that binds expected package archive bytes, commonly an SRI value such as `sha512-…`.
+Downloaded archives are checked when expected integrity is available; validated cached state can be reused.
+Without a registry hash, permissive installs record a hash on first retrieval. `--strict-integrity` rejects that missing hash.
+
+A mismatch is an error. Mutable directory and link sources use manifest fingerprints instead of archive integrity.
+See [Lockfile format](/docs/reference/lockfile-format#sources-and-integrity).
 
 ### Isolated layout
 
-pnpm-style strict `node_modules` — each package gets exactly the deps it declared, no phantom-dependency access. Project `node_modules/<pkg>` is a symlink into the [global content-addressable store](/docs/packages/content-addressable-store). **Default for workspaces** (when LPM CLI detects a `package.json > workspaces` glob or a `pnpm-workspace.yaml`) and for default installs where resolution detects incompatible peer requirements; otherwise single-package projects start [hoisted](#hoisted-layout).
+A `node_modules` layout that gives each package links to its declared dependencies.
+It is the default for workspaces and for automatic recovery from incompatible peer requirements.
+See [Content-addressable store](/docs/packages/content-addressable-store).
 
 ### Lockfile
 
-The authoritative `lpm.lock` TOML file. It records exact package instances, sources, dependency targets, and workspace selections. Current schema 13 has no binary companion. See [Lockfile format](/docs/reference/lockfile-format).
+The authoritative `lpm.lock` TOML file. It records exact package instances, sources, dependency targets, and workspace selections.
+Current schema 13 has no binary companion. See [Lockfile format](/docs/reference/lockfile-format).
 
 ### lpm.dev
 
-The LPM.dev Registry monetization layer. Hosts Private, Free, Pool, and Marketplace packages under the `@lpm.dev/` scope. **LPM CLI is registry-agnostic** — lpm.dev is one of several registries it can talk to. See [Registries](/docs/registries).
+The hosted LPM.dev Registry, including package access, distribution, and monetization services.
+LPM CLI is registry-agnostic. See [Registries](/docs/registries).
 
 ### Marketplace package
 
-A distribution mode where installs require a license purchase. Per-package opt-in.
+An LPM.dev Registry distribution mode with paid package access through a license purchase.
+The publisher opts in per package. See [LPM.dev package distribution](/docs/packages/package-distribution).
 
 ### MCP
 
-[Model Context Protocol](https://modelcontextprotocol.io). The LPM.dev Registry ships an MCP server that AI editors can wire up via [`lpm mcp setup`](/docs/reference/mcp-servers).
+[Model Context Protocol](https://modelcontextprotocol.io), a protocol that connects AI tools to external capabilities.
+Use [lpm mcp setup](/docs/reference/mcp-servers) to configure supported editor integrations.
 
 ### Minimum release age
 
-Cooldown before a new package version is installable. The cooldown is off by default. When enabled, it checks direct project dependencies unless you select strict scope.
+A waiting period before newly published package versions become eligible for installation. It is off by default.
+Direct scope checks direct dependencies; strict scope also checks transitive dependencies and lockfile replay.
 
-Strict mode also checks transitive dependencies and lockfile replays. Use `--allow-new` to bypass the cooldown for one install.
-
-Release-age exclusions accept a package name, an exact version, or `@scope/*`. Configure them for one run, one project, or one user.
-
-Use `--min-release-age`, `minimumReleaseAge`, or `minimum-release-age-secs` to configure the cooldown duration.
-
-Use `--min-release-age-exclude` for one run. Use `lpm trust release-age-exclude` for a project. Use `lpm config release-age-exclude` for a user.
+`--allow-new` requests a one-run bypass, subject to applicable security authorization.
+See [lpm install](/docs/packages/install), [lpm trust](/docs/packages/trust), and [lpm config](/docs/infra/config) for duration and exclusion settings.
 
 ### npm-alias dep
 
-A dep declared like `"my-react": "npm:react@^19.0.0"`. Local name (`my-react`) diverges from the canonical target (`react`). Tracked in lockfiles via `alias-dependencies` and `root-aliases`.
+A dependency with a local name that differs from its canonical package name, such as `"my-react": "npm:react@^19.0.0"`.
+The lockfile preserves the alias and its exact selected target. See [npm compatibility](/docs/packages/npm-compatibility).
+
+### Package instance
+
+One exact package in a resolved graph, including its dependency and peer targets.
+Two instances can share the same name, version, and archive but use different targets.
+See [Lockfile format](/docs/reference/lockfile-format#dependency-and-peer-targets).
 
 ### Plugin
 
-A versioned, lazy-downloaded tool that backs one of LPM CLI's built-in commands — Oxlint powers [`lpm lint`](/docs/dev/lint), Biome powers [`lpm fmt`](/docs/dev/fmt), and Rolldown powers [`lpm bundle`](/docs/dev/bundle). First use downloads and verifies the tool into LPM CLI's global cache; the same machine reuses the verified copy across projects. Pin versions per-project in `lpm.json > tools`; manage installed plugins with [`lpm plugin`](/docs/dev/plugin) (`list`, `outdated`, `update`, `remove`). Tools that aren't plugin-backed, such as `tsc` via [`lpm check`](/docs/dev/check) or `tsdown` via [`lpm pack`](/docs/dev/pack), stay project-owned.
+A managed tool that LPM CLI downloads and verifies for a built-in command.
+Examples include Oxlint for [lpm lint](/docs/dev/lint), Biome for [lpm fmt](/docs/dev/fmt), and Rolldown for [lpm bundle](/docs/dev/bundle).
+
+[lpm check](/docs/dev/check) uses an installed `tsc` by default, preferring the project version and then checking system `PATH`.
+`--engine tsgo` uses a managed plugin.
+[lpm pack](/docs/dev/pack) uses project-installed `tsdown`.
+Pin supported tools in `lpm.json`; manage cached versions with [lpm plugin](/docs/dev/plugin).
 
 ### Pool package
 
-A distribution mode where the package's metadata is public but installs are gated to pool subscribers. Publisher earns a share of the pool's revenue. Per-package opt-in.
+An LPM.dev Registry distribution mode with public metadata and subscriber-gated installation.
+Eligible usage contributes to the publisher's share of Pool revenue.
+See [LPM.dev package distribution](/docs/packages/package-distribution).
 
 ### Provenance
 
-Sigstore-signed attestation that proves which CI workflow built a tarball and which commit it came from. Generated at publish time with `lpm publish --provenance`. Verified at install / audit time.
+Signed evidence that links a package artifact to its build or publisher identity.
+[lpm publish --provenance](/docs/packages/publish) can attach supported publication evidence.
+
+Install verification depends on the configured scope and availability policy. Frozen replay checks recorded evidence against the lockfile without re-verifying the original bundle.
+[lpm audit signatures](/docs/packages/audit) checks registry signatures, which are a separate mechanism.
+See [Security audit](/docs/packages/security-audit).
 
 ### Provenance drift
 
-A change in a package's publisher identity between a prior approval and a candidate version. LPM CLI blocks installs on drift on both project and `-g` paths; opt out per-package via `lpm install --ignore-provenance-drift <pkg>` or fully via `--ignore-provenance-drift-all`. The reference snapshot is captured into the trust binding's `provenanceAtApproval` field at `lpm approve-scripts` time (or `--global` time for the global trust file).
+A change from an approved provenance reference: removal of provenance, publisher changes, workflow-path changes, or a different Git reference kind.
+A new tag value alone does not count as drift.
+
+Comparison needs an approval reference and available current evidence. Best-effort availability does not promise a comparison during every install.
+See [lpm approve-scripts](/docs/packages/approve-scripts) and [Security audit](/docs/packages/security-audit).
 
 ### Quality score
 
-Per-package score (0–100) computed from readme / license / types / tests / maintenance signals. Run [`lpm quality`](/docs/packages/quality) to view; gate publishing with `lpm publish --min-score N`.
+A package score from 0 to 100 based on metadata and package-quality signals.
+Use [lpm quality](/docs/packages/quality) to inspect it or [lpm publish --min-score](/docs/packages/publish) to set a publishing threshold.
 
 ### Rebuild
 
-The dependency lifecycle-script step of the install pipeline. The executed dependency phases are `preinstall`, `install`, `postinstall` (in that order); dependency `prepare` and `prepublishOnly` are recognized for detection but never executed. Default-deny: dependency scripts don't run during `lpm install` (or `lpm install -g`) and require approval via [`lpm approve-scripts`](/docs/packages/approve-scripts) (project) / `lpm approve-scripts --global` (global) or a non-default [script policy](/docs/packages/install#lifecycle-scripts). Bare project installs have a separate root lifecycle runner for `pnpm:devPreinstall`, `preinstall`, `install`, `postinstall`, `preprepare`, `prepare`, and `postprepare`. The standalone `lpm rebuild` command targets the project; a `lpm rebuild --global` companion is a planned follow-up — until then, reinstalling the affected global is the post-approval rerun path.
+Dependency lifecycle execution through [lpm rebuild](/docs/packages/rebuild).
+The dependency phases are `preinstall`, `install`, and `postinstall`, in that order.
+Dependency `prepare` and `prepublishOnly` are detected but are not executed by this step.
+
+Untrusted dependency scripts are blocked by default. Approved scripts can run through rebuild or [auto-build](#auto-build).
+Root-project install hooks use a separate lifecycle.
+
+Standalone rebuild targets the project. For a global package, use [lpm approve-scripts --global](/docs/packages/approve-scripts), then reinstall the package.
 
 ### Sandbox
 
-The OS-level containment LPM CLI runs lifecycle scripts inside: Seatbelt on macOS, landlock on Linux, AppContainer on Windows. Three modes: **default** (filesystem containment + env scrubbing; outbound network allowed), **strict** (also denies outbound network), **none** (no containment; full host access including credential env). Set per-invocation with `lpm install --strict-sandbox` / `--paranoid` (alias) / `--no-sandbox`; persistently with `[sandbox] mode` in `~/.lpm/config.toml` (or `LPM_STRICT_SANDBOX=1` for strict). Setup wizard: [`lpm config sandbox`](/docs/infra/config#focused-settings). Packages can request capability widening (extra write roots, env vars) via the [`lpm.scripts`](#capability) block in `package.json`, but widening requires explicit approval through [`lpm approve-scripts`](/docs/packages/approve-scripts).
+Operating-system containment for dependency lifecycle scripts. The normal modes are `default`, `strict`, and `none`.
+The effective protection depends on the platform, authorized configuration, and any explicitly permitted degraded mode.
+
+Configure it through invocation flags, project `lpm.toml`, or user `config.toml`.
+A request for weaker protection can require a security unlock. Root-project lifecycle hooks use the ordinary script runner.
+See [Security](/docs/infra/security) and [Policy](/docs/infra/policy).
 
 ### Save policy
 
-The rule that decides what range gets saved to `package.json` when `lpm install <pkg>` finishes. Defaults to `^resolvedVersion`. See [Save policy](/docs/packages/save-policy).
+The rule that selects the dependency range written to `package.json` after installation.
+The default is `^<resolved-version>`. See [Save policy](/docs/packages/save-policy).
 
 ### Script policy
 
-`deny` (default) / `allow` / `triage`. Governs whether and how dependency lifecycle scripts run on both `lpm install` and `lpm install -g`; it does not gate the root project's bare-install lifecycle. Set per-invocation with `--policy` / `--yolo` / `--triage`, per-project with `package.json > lpm > scriptPolicy` (project installs only), per-user with `~/.lpm/config.toml > script-policy` (applies to both project and `-g`). On `-g` the project-config tier is N/A; the chain collapses to CLI flag > `~/.lpm/config.toml` > default. Setup wizard: `lpm config scripts`.
+The dependency lifecycle policy: `deny` by default, or explicitly authorized `allow` or `triage`.
+It does not govern the root project's install hooks.
+
+The requested policy follows CLI, project, user, then default precedence. Global installs omit the project tier.
+Security authorization and managed floors also apply. See [Lifecycle scripts](/docs/packages/install#lifecycle-scripts).
 
 ### Skill (agent skill)
 
-A Markdown file that teaches an AI agent how to use a package or workflow. Package authors publish LPM.dev package skills that extract into `.lpm/skills/<package>/` during [`lpm install`](/docs/packages/install) and [`lpm add`](/docs/packages/add) (skip with `--no-skills`). The LPM CLI also manages standalone standard `SKILL.md` sources from GitHub or local directories through [`lpm skills`](/docs/packages/skills). Package-published skills follow LPM.dev publishing validation; standalone sources are commit-pinned and security-scanned before installation. See [AI agent skills](/docs/reference/ai-agent-skills) for the full model.
+Instructions that help an AI agent use a package or workflow.
+Package-published skills can install under `.lpm/skills/<package>/`; [lpm skills](/docs/packages/skills) also manages standalone sources.
 
-### Triage advisor
-
-`none` (default) / `claude-cli` / `codex` / `ollama`. Optional LLM advisor for the [triage gate](/docs/packages/security-audit#optional-llm-advisor) — only active when script policy is `triage`. Set per-project with `package.json > lpm > triageAdvisor`, per-user with `~/.lpm/config.toml > triage-advisor`. Independent of script policy. Approvals are **ephemeral** — never written to disk — so a second install invokes the advisor again. Setup wizard: `lpm config triage`.
+These two sources have different installation and validation rules. See [AI agent skills](/docs/reference/ai-agent-skills).
 
 ### Source package
 
-A package whose tarball ships an `lpm.config.json` at the root — `lpm add` treats it as a configurable installer. Status is **content-based** (the file's presence), not naming or registry.
+A package whose files are delivered into a project through [lpm add](/docs/packages/add).
+It can be a plain source copy or a [config-aware package](#config-aware-package).
+The package name or registry alone does not determine the installation behavior.
 
 ### Store
 
-The global content-addressable package store at `~/.lpm/store/`. The default v2 layout keeps one canonical object per source hash and shares graph-keyed link entries across projects. Experimental v3, selected only with `LPM_STORE_VERSION=v3`, adds content-and-mode-addressed file blobs and tree manifests. Project `node_modules/<pkg>` is a **symlink** into the matching link entry; package files are materialized with independent writable inodes through copy-on-write clones/reflinks or independent copies, so writes cannot alter canonical object/blob bytes. Maintained by [`lpm store`](/docs/infra/store); see [Content-addressable store](/docs/packages/content-addressable-store) for the full mechanism.
+The shared package store, normally under `~/.lpm/store/`.
+The default v2 layout keeps canonical package objects and graph-specific link entries. Experimental v3 adds shared file blobs and tree manifests.
+
+Writable package files use independent clones or copies, so project writes do not alter canonical contents.
+Use [lpm store](/docs/infra/store); see [Content-addressable store](/docs/packages/content-addressable-store).
+
+### Triage advisor
+
+An optional advisor for dependency scripts under the `triage` policy. Available choices are `none`, `claude-cli`, `codex`, and `ollama`.
+Configure it per project or user, or override it with `--advisor` for an install.
+
+Advisor approvals apply to the current run and are not saved for future runs.
+See [Security audit](/docs/packages/security-audit#optional-llm-advisor).
 
 ### Trusted dependency
 
-A package on a trust allowlist that's permitted to run lifecycle scripts under `scriptPolicy: "deny"`. Project trust lives in `package.json > lpm > trustedDependencies` (legacy array of names, or rich map bound to integrity + script hash). Global trust lives in `~/.lpm/global/trusted-dependencies.json` (rich map only, with an extra `provenanceAtApproval` snapshot used by the install-time drift gate). The two stores are independent — `lpm approve-scripts` writes the former, `lpm approve-scripts --global` writes the latter.
+A dependency permitted to pass the trust gate for lifecycle execution. Trust can come from an explicit binding or an approved scope pattern.
+Artifact and script changes, requested capabilities, and security policy can still prevent execution.
+
+Project trust lives in `package.json > lpm > trustedDependencies`.
+Global trust lives in `~/.lpm/global/trusted-dependencies.json`. Both rich binding formats can record `provenanceAtApproval`.
+Use [lpm approve-scripts](/docs/packages/approve-scripts) to review blocked packages.
 
 ### Tunnel claim
 
-Pro/Org-only — registering a stable tunnel domain so subsequent `lpm dev --tunnel` and `lpm tunnel` runs serve from the same URL. Free users get an ephemeral random domain on every run.
+A reservation for a stable tunnel domain on LPM.dev Registry, available to eligible Pro and organization accounts.
+Free tunnels use temporary random domains. See [Tunneling](/docs/infra/tunneling).
 
 ### Up-to-date install
 
-An `lpm install` invocation that detects nothing has changed (mtime fast path) and exits in a few ms without doing any work. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as `~14 ms`.
+An install that reuses recorded installation state because the relevant inputs and checks still match.
+Admission and policy checks still apply; reuse does not mean no work occurs.
+See [lpm install](/docs/packages/install).
 
 ### Warm install
 
-An install where the global store and lockfile are present but `node_modules` is missing. The install rebuilds `node_modules/` from already-extracted store entries — no downloads, no resolution. Reported in [benchmarks](https://github.com/lpm-dev/rust-client#benchmarks) as `~387 ms`.
+An install that can reuse a valid lockfile and cached package contents, often to restore missing `node_modules`.
+Missing packages, stale inputs, policy checks, or `--force` can require extra work or network requests.
+See [lpm install](/docs/packages/install).
 
 ### Workspace
 
-A monorepo declared via `package.json > workspaces` (npm/yarn array form, or yarn-style object form). LPM CLI walks the globs, builds a topological graph, and exposes member-targeting via `--filter` and `-w`. See [Workspaces](/docs/packages/workspaces).
+A group of packages declared through `package.json > workspaces`, `pnpm-workspace.yaml`, or both.
+LPM CLI supports the manifest array form and object form with a `packages` array.
+
+`--filter` selects members. For install, `-w` selects the workspace root.
+See [Workspaces](/docs/packages/workspaces).
