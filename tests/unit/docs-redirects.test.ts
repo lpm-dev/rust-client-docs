@@ -3,6 +3,8 @@ import config from "../../next.config.mjs";
 
 describe("documentation redirects", () => {
   it.each([
+    ["/docs/reference/lockb-format", "/docs/reference/lockfile-format"],
+    ["/docs/reference/lockb-format.mdx", "/docs/reference/lockfile-format.mdx"],
     ["/docs/packages/free-distribution", "/docs/packages/package-distribution"],
     [
       "/docs/packages/free-distribution.mdx",
