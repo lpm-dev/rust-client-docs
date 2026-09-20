@@ -1,82 +1,105 @@
 ---
 title: lpm.json
-description: "Canonical schema reference for the lpm.json project file."
+description: Configure project runtimes, tasks, development services, environments, and publish targets.
 ---
 
-`lpm.json` sits next to `package.json` and provides LPM CLI-specific configuration that doesn't fit npm's manifest shape — runtime pinning, task graph, dev services, local-domain proxy config, tunnel domain, env-file mapping, env-var schema, and multi-registry publish settings.
-
-The file is **optional**. Every field has a default. When `lpm.json` is missing, LPM CLI falls back to `package.json` semantics (scripts, engines, etc.).
-
-LPM CLI reads `lpm.json` with a 16 MiB limit enforced before JSON parsing. Missing retains the optional fallback above; an oversized file is a path-specific error and aborts before a configured script, service, or child process is spawned. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
-
-This page is the schema-by-field reference. For a usage-oriented overview of what `lpm dev` reads from `lpm.json`, see [`lpm dev`](/docs/dev/dev#configuration-lpmjson).
-
-## Editor autocomplete
-
-LPM CLI publishes a JSON Schema for `lpm.json` at [`https://cli.lpm.dev/schemas/lpm.json`](https://cli.lpm.dev/schemas/lpm.json) — auto-derived from the typed Rust struct that the CLI consumes. Add a `$schema` line to get inline validation and field completion in any editor that supports JSON Schema (VS Code, Cursor, JetBrains):
+`lpm.json` stores project configuration for LPM CLI beside `package.json`.
+Use it to share runtime versions, task behavior, development services, and publish targets with your team.
+The file is optional. An empty object is valid.
 
 ```json title="lpm.json"
 {
   "$schema": "https://cli.lpm.dev/schemas/lpm.json",
-  "runtime": { "node": ">=22.0.0", "bun": "1.3.14" }
+  "runtime": { "node": "22" },
+  "tasks": {
+    "build": {
+      "command": "tsup",
+      "cache": true,
+      "outputs": ["dist/**"]
+    }
+  }
 }
 ```
 
-Or emit the schema yourself from the locally-installed CLI:
-
 ```bash
-lpm schema lpm.json                       # to stdout
-lpm schema lpm.json -o lpm.schema.json    # to a file
+lpm run build
+lpm doctor
 ```
 
-Both `lpm schema lpm.json` and the published copy are regenerated from the same Rust struct that parses your manifest at install time, so they describe the surface the CLI actually accepts. The published copy is updated alongside CLI releases — between releases, `lpm schema lpm.json` is the source of truth for whichever version is on your machine.
+Keep dependencies and ordinary scripts in `package.json`.
+Use [`package.json > lpm`](/docs/reference/package-json-lpm) for installation and dependency policy.
+Use [`lpm.toml`](/docs/reference/lpm-toml) for project CLI defaults.
+The similarly named [`lpm.config.json`](/docs/reference/lpm-config-json) describes source packages for [`lpm add`](/docs/packages/add).
 
-The older `https://lpm.dev/schemas/lpm.json` URL remains a compatibility alias for existing repositories.
+## Editor autocomplete
 
-When stdout is an interactive terminal, schema output may use syntax color. Redirected or piped output remains plain pretty-printed JSON, including when color is forced globally.
+Add `$schema` to get field completion and checks in editors that support JSON Schema.
+The public URL is [`https://cli.lpm.dev/schemas/lpm.json`](https://cli.lpm.dev/schemas/lpm.json).
+The older `https://lpm.dev/schemas/lpm.json` URL remains a compatibility alias.
+
+To use the schema from your installed CLI version:
+
+```bash
+lpm schema lpm.json -o lpm.schema.json
+```
+
+[`lpm schema`](/docs/reference/schemas) emits a schema. It does not check your project file.
+The CLI also checks constraints that JSON Schema cannot express, such as service cycles and host conflicts.
 
 ## Top-level shape
 
-```json title="lpm.json"
-{
-  "$schema":      "https://cli.lpm.dev/schemas/lpm.json",
-  "vault":        "<uuid-v4>",
-  "vaultSync":    { /* LPM-managed sync metadata */ },
-  "runtime":      { "<runtime>": "<semver>" },
-  "tools":        { "<tool>": "<version>" },
-  "https":        true,
-  "cert":         { "extraPermittedDns": ["myapp.local"], "allowPublicDns": false },
-  "tunnel":       { "domain": "<full-domain>" },
-  "proxy":        { "host": "<local-hostname>", "port": 443, "httpRedirect": true },
-  "env":          { "<script>": "<.env-file>" },
-  "envSchema":    { "vars": { "<NAME>": { "required": true, "format": "url" } } },
-  "environments": { "<name>": { "extends": "<base>", "file": "<.env-file>" } },
-  "tasks":        { "<name>": { /* TaskConfig */ } },
-  "services":     { "<name>": { /* ServiceConfig */ } },
-  "publish":      { /* PublishConfig */ }
-}
-```
+All top-level fields are optional. Omit fields that your project does not use.
+An optional field does not necessarily accept `null`.
 
-Every top-level field is optional and defaults to empty / `null`.
+| Field | Purpose | Default |
+| --- | --- | --- |
+| `$schema` | Editor schema URL. | Unset. |
+| `name` | Display name for environment sync when `package.json` has no name. | Project directory name. |
+| `runtime` | Managed runtime selectors. | `{}`. |
+| `tools` | Managed tool version pins. | `{}`. |
+| `tasks` | Commands, dependencies, and task caching. | `{}`. |
+| `remoteCache` | Hosted task cache configuration. | Disabled. |
+| `services` | Development processes and readiness checks. | `{}`. |
+| `https` | Local HTTPS for development. | Unset. |
+| `cert` | Additional certificate constraints. | Unset. |
+| `proxy` | Local hostname and proxy listener defaults. | Unset. |
+| `tunnel` | Claimed tunnel domain for development. | Unset. |
+| `env` | Environment file mappings by script name. | `{}`. |
+| `envSchema` | Environment variable requirements. | Unset. |
+| `environments` | Named environment inheritance. | Unset. |
+| `vault` | Stable project identity for encrypted environments. | Created by [`lpm env`](/docs/dev/env). |
+| `vaultSync` | CLI-managed sync and account metadata. | Unset. |
+| `publish` | Registry targets and publication defaults. | LPM.dev Registry. |
+
+LPM CLI reads configuration from the relevant project directory.
+Workspace inheritance differs by feature. The file is not a universal set of workspace defaults.
 
 ## `runtime`
 
 ```json
-{ "runtime": { "node": ">=22.0.0", "bun": "1.3.14" } }
+{ "runtime": { "node": "22", "bun": "1.3.14" } }
 ```
 
-| Field | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `node` | string | — | Managed Node version spec. Exact versions, prefixes, semver ranges, `latest`, and `lts` are accepted. |
-| `bun` | string | — | Managed Bun version spec. Exact versions, `vX.Y.Z`, `bun-vX.Y.Z`, `latest`, prefixes, and semver ranges are accepted. `lts` is rejected because Bun has no LTS channel. |
+| Field | Accepted selectors |
+| --- | --- |
+| `node` | Exact versions, prefixes, semver ranges, `latest`, and `lts`. |
+| `bun` | Exact versions, prefixes, semver ranges, `vX.Y.Z`, `bun-vX.Y.Z`, and `latest`. Bun does not support `lts`. |
 
-`runtime.node` takes precedence over `.nvmrc` and `.node-version`. `package.json > engines.node` validates the selected or `PATH` Node but never selects or installs one. `runtime.bun` is the only Bun runtime detection source; `package.json > engines.bun` is not enforced. Both runtime fields are auto-installed via [`lpm use`](/docs/dev/use).
+`runtime.node` takes precedence over `.nvmrc`, then `.node-version`.
+`package.json > engines.node` checks the chosen Node version. It does not select or install one.
+Bun uses only `runtime.bun`. The CLI does not enforce `engines.bun`.
+See [`lpm use`](/docs/dev/use) for managed runtime installation.
 
-When both runtimes are selected, script `PATH` is prepended as `node_modules/.bin`, managed Node `bin`, managed Bun `bin`, inherited `PATH`. `runtime.bun` exposes `bun` to scripts; it does not make `lpm run` invoke `bun run`.
+Malformed JSON or non-string runtime values fail runtime detection, including during [`lpm install`](/docs/packages/install).
+An absent selector retains normal fallback behavior. A leading UTF-8 BOM is accepted.
+Unknown runtime names with string values are accepted but do not select another managed runtime.
 
-Workspace members and dev services resolve selectors from their directories. A local selector replaces the same root runtime.
+When both runtimes are selected, script `PATH` starts with `node_modules/.bin`, managed Node, then managed Bun.
+The inherited `PATH` follows these entries.
+A Bun selector exposes `bun` to scripts. It does not change [`lpm run`](/docs/dev/run) into `bun run`.
 
-Each unselected runtime inherits from the root.
+Workspace members and development services resolve selectors from their own directories.
+Each local selector replaces the same root selector. Other runtimes inherit from the root.
 
 ## `tools`
 
@@ -84,15 +107,23 @@ Each unselected runtime inherits from the root.
 { "tools": { "oxlint": "1.57.0", "biome": "2.4.8", "rolldown": "1.1.3" } }
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `<tool>` | string | Pin a built-in managed plugin to a specific version. Honored by [`lpm lint`](/docs/dev/lint), [`lpm fmt`](/docs/dev/fmt), and [`lpm bundle`](/docs/dev/bundle). |
+| Key | Consumer |
+| --- | --- |
+| `oxlint` | [`lpm lint`](/docs/dev/lint). |
+| `biome` | [`lpm fmt`](/docs/dev/fmt). |
+| `rolldown` | [`lpm bundle`](/docs/dev/bundle). |
 
-Only `oxlint`, `biome`, and `rolldown` are managed plugin keys today. Any other key (`tools.typescript`, `tools.tsgo`, `tools.eslint`, …) is ignored by the resolver — `lpm` warns once per command invocation that the pin is ignored. For [`lpm check`](/docs/dev/check), declare `typescript` in `package.json > devDependencies` to pin the default compiler. The `--engine tsgo` mode uses the version bundled with LPM CLI. A local `@typescript/native-preview` dependency does not change that managed version.
+Other keys are ignored with a warning once per command.
+For [`lpm check`](/docs/dev/check), pin `typescript` in `devDependencies`.
+The `--engine tsgo` mode uses the version bundled with LPM CLI.
 
-When an Oxlint or Biome pin isn't already in `~/.lpm/plugins/`, the next invocation downloads and verifies it against the upstream `<asset_url>.sha256` sidecar. A Rolldown pin must already be the bundled floor or an approved version from `lpm plugin update rolldown`; `lpm bundle` does not check upstream during normal execution. See [Built-in tools](/docs/dev/builtin-tools#checksum-verification) for the trust model.
+Missing Oxlint and Biome versions download with upstream checksum checks.
+A Rolldown pin must match the bundled version or an approved [`lpm plugin update`](/docs/dev/plugin) version.
+Normal bundle runs do not check upstream.
 
-For [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), members inherit the workspace root pin unless they supply their own. Invalid configuration fails the affected run.
+For lint and format commands, workspace members inherit the root pin unless they provide their own.
+Invalid configuration stops the affected run.
+See [Built-in tools](/docs/dev/builtin-tools#checksum-verification).
 
 ## `https`
 
@@ -100,9 +131,11 @@ For [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), members inherit
 { "https": true }
 ```
 
-| Type | Default | Notes |
-| --- | --- | --- |
-| `bool` | `null` (unset) | When `true`, [`lpm dev`](/docs/dev/dev) serves over HTTPS by default. CLI `--no-https` overrides. |
+`https` is an optional boolean.
+A true value enables local HTTPS for [`lpm dev`](/docs/dev/dev).
+Use `lpm dev --no-https` to disable it for one run.
+LPM CLI serves HTTPS in front of the verified HTTP application endpoint.
+It does not inject framework HTTPS variables or certificate paths into the application.
 
 ## `cert`
 
@@ -110,12 +143,16 @@ For [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), members inherit
 { "cert": { "extraPermittedDns": ["myapp.local"], "allowPublicDns": false } }
 ```
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `extraPermittedDns` | string[] | `[]` | Extra validated DNS subtrees to permit on the constrained project intermediate. These are policy constraints, not extra browser SANs and not proxy routes. |
-| `allowPublicDns` | bool | `false` | Allows public DNS names in `extraPermittedDns` and local-domain `host` fields. Leave off for purely local names. |
+| `extraPermittedDns` | string[] | `[]` | Additional DNS subtrees allowed by the project certificate intermediate. |
+| `allowPublicDns` | boolean | `false` | Permit public DNS names in certificate constraints and local-domain host fields. |
 
-`extraPermittedDns` entries must be bare multi-label names such as `myapp.local`; LPM CLI derives both the exact subtree and subdomain subtree for the project intermediate. Use `--host` or `proxy.host` / `services.<name>.host` for actual browser hostnames.
+Use bare names with multiple labels, such as `myapp.local`.
+Each entry permits that name and its subdomains.
+These entries do not add browser certificate names or proxy routes.
+For browser hostnames, use `--host`, `proxy.host`, or `services.<name>.host`.
+See [Local HTTPS](/docs/infra/local-https).
 
 ## `tunnel`
 
@@ -123,11 +160,13 @@ For [`lpm lint`](/docs/dev/lint) and [`lpm fmt`](/docs/dev/fmt), members inherit
 { "tunnel": { "domain": "acme-api.lpm.llc" } }
 ```
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `domain` | string | Stable tunnel domain (must already be claimed via [`lpm tunnel claim`](/docs/infra/tunnel)). Pro/Org only — free users get an ephemeral random domain. |
+`domain` is an optional string for an already claimed tunnel domain.
+A configured domain automatically enables tunneling during [`lpm dev`](/docs/dev/dev).
+Use `lpm dev --no-tunnel` for one run without a tunnel.
+The `--domain` flag overrides the configured domain.
 
-CLI flags: `lpm dev --tunnel`, `lpm dev --domain <NAME>`, `lpm tunnel <port> <domain>`.
+Claim a stable domain with [`lpm tunnel claim`](/docs/infra/tunnel).
+Stable domains require Pro or Organization access. Free tunnels receive a random temporary domain.
 
 ## `proxy`
 
@@ -135,15 +174,27 @@ CLI flags: `lpm dev --tunnel`, `lpm dev --domain <NAME>`, `lpm tunnel <port> <do
 { "proxy": { "host": "app.localhost", "port": 443, "httpRedirect": true } }
 ```
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `host` | string | — | Friendly top-level local hostname registered by `lpm dev` when the proxy daemon has an HTTPS listener. `lpm dev` also prepares constrained project cert-chain coverage and updates the hosts file when this host is not under `.localhost`. |
-| `port` | number | `443` | HTTPS proxy listen port used by `lpm proxy start` when no explicit listener flags are passed. `0` lets the OS pick a free port. |
-| `httpRedirect` | bool | `true` | Whether `lpm proxy start` also binds an HTTP-to-HTTPS redirect listener on port 80 when no explicit listener flags are passed. |
+| `host` | string | Unset | Friendly hostname for the primary development endpoint. |
+| `port` | integer | `443` | HTTPS listener port for [`lpm proxy start`](/docs/infra/proxy). `0` requests a free port. |
+| `httpRedirect` | boolean | `true` | Also listen on port 80 for HTTP-to-HTTPS redirects. |
 
-`proxy.host` and `services.<name>.host` are normalized to lowercase, must use a local TLD (`.localhost`, `.test`, `.local`, `.internal`, `.home.arpa`) unless `cert.allowPublicDns` is true, and cannot duplicate another local-domain host in the same file.
+Explicit proxy listener flags override the listener defaults.
+Hostnames are normalized to lowercase and must be unique within the file.
+Allowed local suffixes are `.localhost`, `.test`, `.local`, `.internal`, and `.home.arpa`.
+Other suffixes require `cert.allowPublicDns: true`.
 
-When local-domain config is present and no daemon is running, `lpm dev` starts `lpm proxy start --detach` automatically. With no explicit listener flags, that start path uses `proxy.port` and `proxy.httpRedirect`. With a running HTTPS listener, `lpm dev` prepares the project certificate chain for configured hosts through the normal trust consent flow, writes managed hosts-file entries for hosts that are not `localhost` / `*.localhost`, registers routes against final assigned service ports, and releases both route and hosts-file entries when the dev session exits. On Unix, LPM CLI uses `sudo` for the system hosts file when the current process lacks permission; on Windows, it asks for Administrator elevation through UAC. Use [`lpm hosts clean`](/docs/infra/hosts) to remove orphaned managed blocks after interrupted sessions. The TLS daemon also prepares or refreshes project certificate chains during route registration, but it does not install the root CA into the trust store. The startup banner marks proxy endpoints as resolving until assignment; exact route lines print after registration, and dashboard service rows update to the final ports. LPM CLI does not inject certificate paths or framework HTTPS variables into the app; `https` / `--https` enables a separate LPM CLI-owned TLS frontend over the verified HTTP child endpoint.
+With local-domain configuration, [`lpm dev`](/docs/dev/dev) starts a detached proxy if none is running.
+An HTTPS proxy listener is required for route registration.
+The development session prepares project certificates through the normal trust consent flow.
+Non-localhost names also receive managed hosts-file entries.
+System hosts changes can require `sudo` on Unix or Administrator elevation on Windows.
+
+Routes use the final assigned service ports. Startup output shows the final URLs after registration.
+Normal exit removes routes and managed hosts entries.
+After an interrupted session, use [`lpm hosts clean`](/docs/infra/hosts) to remove orphaned entries.
+The proxy can refresh certificate chains but does not install the root certificate into the trust store.
 
 ## `vault`
 
@@ -151,15 +202,17 @@ When local-domain config is present and no daemon is running, `lpm dev` starts `
 { "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b" }
 ```
 
-| Type | Notes |
-| --- | --- |
-| string | This stable identifier links the project to a vault row on LPM.dev Registry. New values use UUID v4. Safe legacy slug IDs remain supported. The CLI creates the value during the first `lpm env` command if the field is missing. Commit this value to git. The value is a pointer, not a secret. |
+This string identifies the project for encrypted environments and cloud sync.
+[`lpm env`](/docs/dev/env) creates a UUID when the field is absent. Safe legacy slug identifiers remain supported.
+Commit the identifier. It is not a secret.
 
-The CLI rejects empty values, path separators, `..`, leading `~`, control characters, colons, and absolute drive prefixes. This validation prevents path traversal in the file fallback at `~/.lpm/vaults/<id>.enc`.
+LPM CLI rejects empty values, path separators, `..`, leading `~`, control characters, colons, and absolute drive prefixes.
+If you remove the field, the next environment command creates a new identifier.
+The old cloud data remains under the previous identifier.
 
-If you remove the field, the next `lpm env` command creates a new UUID. The previous server data remains available under the old identifier.
-
-[`LPM_VAULT_ID`](/docs/reference/env-vars#auth-and-routing) is read only by `lpm env pull --oidc`. A non-empty, trimmed value takes precedence over this local `vault` field and can bootstrap a checkout without one. If the variable is unset, empty, or whitespace-only, LPM CLI falls back to this field; the pull fails if neither source exists. Other `lpm env` operations ignore it. See [Environment project identity](/docs/infra/secrets-vault#configure-a-project).
+[`LPM_VAULT_ID`](/docs/reference/env-vars#auth-and-routing) overrides this value only for `lpm env pull --oidc`.
+A blank value falls back to the local field. Other environment commands ignore the variable.
+See [Environment project identity](/docs/infra/secrets-vault#configure-a-project).
 
 ## `vaultSync`
 
@@ -204,37 +257,32 @@ If you remove the field, the next `lpm env` command creates a new UUID. The prev
 | `authorityCheckpoints.personal.<registry>.<principal>` | object | Authoritative personal-vault revision floor and optional last-sync time for one Registry and immutable user ID. |
 | `authorityCheckpoints.organizations.<slug>.<registry>.<principal>` | object | Authoritative organization-vault revision floor and optional last-sync time for one Registry, organization slug, and immutable organization ID. |
 
-The CLI owns every `vaultSync` field. `authorityCheckpoints` provides the durable account binding and rollback floor used by personal and organization cloud operations. `personalPlatformBindings` prevents platform credentials created by one account from being reused by another account at the same Registry. The version and timestamp fields are non-authoritative summaries for status display and compatibility.
+LPM CLI maintains every `vaultSync` field.
+`authorityCheckpoints` records account bindings and minimum accepted cloud revisions.
+`personalPlatformBindings` binds platform credentials to their original account and Registry.
+The other version and timestamp fields are non-authoritative summaries for status display.
 
-Do not edit or remove `vaultSync`. Removing its authority checkpoints resets local rollback and account-binding protection. A later operation can then establish a new principal and revision checkpoint for that checkout.
+Do not edit or remove `vaultSync`. Removal resets local rollback and account-binding protection. A later operation can then establish a new principal and revision checkpoint for that checkout.
 
 If a version does not match, the server returns `409 VaultConflictError`. Then pull the remote values, resolve the conflict, and push again.
 
 Commands use a project-local lock when they update `lpm.json`. Each command preserves unrelated fields and atomically replaces the file.
 
-The CLI rejects a symbolic-link or junction `lpm.json` during an update. This rule prevents a cloned project from redirecting the write.
-
-The parser accepts unknown fields for forward compatibility. The `lpm doctor` command reports unknown nested fields with their complete paths.
-
-For example, `lpm doctor` reports the ignored typo `proxy.httpRediect`. An older CLI can still open configuration from a newer project.
+LPM CLI rejects a symbolic-link or junction `lpm.json` during an update. This rule prevents a cloned project from redirecting the write.
 
 ## `env`
 
 ```json
-{
-  "env": {
-    "dev":     ".env.development",
-    "staging": ".env.staging",
-    "prod":    ".env.production"
-  }
-}
+{ "env": { "dev": ".env.development", "staging": ".env.staging" } }
 ```
 
-Map of script name to environment file. `lpm run dev` loads `.env.development`. `lpm run staging` loads `.env.staging`.
+Map script names to environment files.
+For example, `lpm run dev` loads `.env.development`.
+An explicit `--env` overrides `tasks.<name>.env`, which overrides this mapping.
+The flag also applies to [`lpm dev`](/docs/dev/dev).
 
-CLI `--env=<MODE>` overrides `tasks.<name>.env` and this mapping. The flag also applies to [`lpm dev`](/docs/dev/dev).
-
-Existing environment files must resolve inside the project directory. LPM CLI rejects configured paths and symlinks that resolve outside the project.
+Configured files must remain inside the project directory, including after symlink resolution.
+See [Environment loading](/docs/dev/env) for file order, encrypted values, and inherited variables.
 
 ## `envSchema`
 
@@ -243,46 +291,62 @@ Existing environment files must resolve inside the project directory. LPM CLI re
   "envSchema": {
     "vars": {
       "DATABASE_URL": { "required": true, "format": "url" },
-      "API_KEY":      { "required": true, "secret": true },
-      "LOG_LEVEL":    { "default": "info", "pattern": "^(trace|debug|info|warn|error)$" }
+      "API_KEY": { "required": true, "secret": true },
+      "LOG_LEVEL": { "default": "info", "enum": ["debug", "info", "error"] }
     }
   }
 }
 ```
 
-Schema for env-var validation. Drives the env check that runs before `lpm run`, `lpm dev`, `lpm <file>`, and `lpm exec`. Per-var fields:
+This schema checks variables before scripts, development services, executable files, and [`lpm exec`](/docs/dev/exec) child processes start.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `required` | bool | Fail if not set |
-| `format` | string | Built-in validator. One of: `url`, `email`, `port`, `boolean`, `integer`, `hostname`, `ip` |
-| `pattern` | string | A Rust regex that the value must match. `^` and `$` require a complete-value match |
-| `enum` | string[] | The allowed values |
-| `default` | string | The default value for an unset variable. It must satisfy `format`, `pattern`, and `enum` |
-| `secret` | bool | Marks the value as sensitive. LPM CLI fully redacts the value in validation errors and logs |
-| `client` | bool | Allows client-side exposure for integrations that support public variables |
-| `description` | string | Adds variable details to errors and generated `.env.example` files |
+| Variable field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `required` | boolean | `false` | Require a non-empty value. |
+| `format` | string | Unset | `url`, `email`, `port`, `boolean`, `integer`, `hostname`, or `ip`. |
+| `pattern` | string | Unset | Regex pattern. Use `^` and `$` for a complete-value match. |
+| `enum` | string[] | Unset | Allowed values. |
+| `default` | string | Unset | Value for an unset variable. Must pass every declared check. |
+| `secret` | boolean | `false` | Redact the value in schema errors and logs. |
+| `client` | boolean | `false` | Mark the variable for integrations that support client exposure. |
+| `description` | string | Unset | Details for errors and generated `.env.example` files. |
 
-Variable names must contain 1 to 256 ASCII letters, numbers, or underscores. The first character must be a letter or underscore.
+Variable names contain 1–256 ASCII letters, numbers, or underscores.
+The first character must be a letter or underscore.
+Invalid names, patterns, or defaults stop the command before a child process starts.
+An empty default cannot satisfy a required variable.
+Errors escape terminal control characters.
 
-An invalid name, regex, or default stops the command before it starts a child process. An empty default cannot satisfy a required variable.
-Validation errors escape terminal control characters from schema fields and non-secret values.
-
-Skip the check per-invocation with `--no-env-check`.
+Use `--no-env-check` to skip this check for one invocation.
+The flag does not make invalid environment inheritance valid.
 
 ## `environments`
 
 ```json
 {
   "environments": {
-    "base":    { "file": ".env" },
+    "base": ".env",
     "staging": { "extends": "base", "file": ".env.staging" },
-    "preview": { "extends": "staging", "file": ".env.preview" }
+    "preview": { "extends": "staging" },
+    "empty": {}
   }
 }
 ```
 
-Named environment definitions with inheritance. Useful when you have many `.env.*` variants and want to avoid duplicating shared keys. `extends` chains resolve transitively.
+Define reusable file chains for named environments.
+A string is a file path. An object accepts optional `extends` and `file` strings.
+An empty object is valid and adds no file.
+
+LPM CLI loads the base first and the selected environment last.
+Later files replace earlier values. An inherited environment without `file` adds no extra file.
+Missing parent names, cycles, and unsafe file paths fail before the command starts.
+
+For an undeclared environment name, normal dotenv loading or an explicit file mapping still applies.
+For example, `--env preview` can load `.env.preview` without an `environments.preview` entry.
+
+```bash
+lpm run deploy --env staging
+```
 
 ## `tasks.<name>`
 
@@ -301,55 +365,41 @@ Named environment definitions with inheritance. Useful when you have many `.env.
 }
 ```
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `command` | string | falls back to `package.json > scripts.<name>` | Override the script body |
-| `dependsOn` | string[] | `[]` | Other tasks that must finish first. `"build"` = same package; `"^build"` = the same task in upstream workspace deps, with workspace selection. |
-| `cache` | bool | `false` | Enable task caching. Requires `outputs`. |
-| `outputs` | string[] | `[]` | Globs of files this task produces (e.g. `["dist/**"]`). Required when `cache: true`. |
-| `inputs` | string[] | sensible defaults\* | Globs that invalidate the cache. |
-| `env` | string | — | Env mode for this task (`"production"` loads `.env.production`). |
-| `cacheEnv` | string[] | all inherited variables | Exact inherited variable names that affect cached output. An empty list selects none. Project-loaded values always remain inputs. |
+| `command` | string | `package.json > scripts.<name>` | Command body. |
+| `dependsOn` | string[] | `[]` | Same-project tasks, or `^task` for upstream workspace tasks. |
+| `cache` | boolean | `false` | Enable caching. Requires output patterns. |
+| `outputs` | string[] | `[]` | Files produced by the task. |
+| `inputs` | string[] | Project defaults | Files that affect cached results. An empty list uses the defaults. |
+| `env` | string | Unset | Environment name for this task. |
+| `cacheEnv` | string[] | All inherited variables | Exact inherited variable names included in the cache key. `[]` selects none. |
 
-Use [`cacheEnv`](/docs/dev/task-runner#cache-key) to exclude inherited variables that do not affect the result.
-Absolute script paths and executable identity remain cache inputs, so this setting does not guarantee reuse across machines or checkout paths.
-Include every inherited variable that affects the task. This field does not change the child environment or permit secret-bearing remote uploads.
+Default `inputs`:
 
-\*Default `inputs`: `src/**`, `lib/**`, `app/**`, `pages/**`, `components/**`,
-`scripts/**`, `bin/**`, root `*.js`, `*.cjs`, `*.mjs`, `*.ts`, `*.tsx`, and `*.jsx` files,
-`package.json`, `lpm.json`, `tsconfig.json`, `tsconfig.*.json`, `*.config.js`, `*.config.ts`, and `*.config.mjs`.
+```json
+[
+  "src/**", "lib/**", "app/**", "pages/**", "components/**", "scripts/**", "bin/**",
+  "*.js", "*.cjs", "*.mjs", "*.ts", "*.tsx", "*.jsx",
+  "package.json", "lpm.json", "tsconfig.json", "tsconfig.*.json",
+  "*.config.js", "*.config.ts", "*.config.mjs"
+]
+```
 
-`*` matches within one path component. `**` spans directories. Braces are literal characters, so use separate patterns for alternatives.
-These patterns also control [task watch mode](/docs/dev/run#watch-finite-tasks).
+Patterns must be project-relative and cannot contain parent traversal.
+`*` matches one path component. `**` spans directories.
+Braces and a leading `!` are literal characters. Use separate patterns for alternatives.
+Input patterns also control [task watch mode](/docs/dev/run#watch-finite-tasks).
 
-A cached task also includes the cache identities of its transitive
-same-project dependencies. LPM hashes direct dependency outputs as task
-inputs. It validates each declared dependency output before a cache hit or
-cache publication.
+Cache keys include manifests, supported lockfiles, dependency task identities, and executable identity.
+Workspace members also include root manifests and workspace configuration.
+Project-loaded environment values always remain cache inputs, regardless of `cacheEnv`.
+Include every inherited variable that affects the result.
 
-For workspace task runs, each task includes the identity of every reachable
-`^task` dependency. An upstream input or execution-contract change invalidates
-the cache of each reachable downstream task.
-
-Each cache key for a workspace member also includes the root `package.json`,
-`lpm.json`, and `pnpm-workspace.yaml` files. Root lockfiles use the same rules
-as member lockfiles.
-
-The cache key includes the complete canonical `package.json`, including helper
-scripts and module settings. It also includes `lpm.lock` and supported npm,
-Yarn, pnpm, Bun, and Deno lockfiles.
-
-Each `inputs` and `outputs` item must be a valid, project-relative glob. LPM CLI
-rejects absolute paths, parent traversal, and invalid glob syntax before it
-starts a task.
-
-Output patterns combine regular-file matches. `dist/*` matches direct files,
-and `dist/**` includes nested files. A leading `!` is literal, not an exclusion.
-
-On a cache hit, LPM CLI accepts only files that match the current `outputs`.
-It rejects an archive with undeclared files before it changes project outputs.
-An accepted restore removes declared files that are absent from the cached result.
-See [Remote task cache](/docs/infra/remote-cache#declare-output-files-precisely).
+A cache restore accepts only files matched by the current output patterns.
+It removes declared output files absent from the cached result.
+Keep output patterns limited to generated files.
+See [Task runner](/docs/dev/task-runner) for dependency ordering, cache keys, and workspace execution.
 
 ## `remoteCache`
 
@@ -358,133 +408,179 @@ See [Remote task cache](/docs/infra/remote-cache#declare-output-files-precisely)
   "remoteCache": {
     "enabled": true,
     "team": "acme",
-    "url": "https://lpm.dev/v8",
     "signature": true,
     "readOnly": false,
-    "env": {
-      "include": ["CI", "NODE_ENV"],
-      "exclude": ["*_TOKEN", "*_SECRET", "DATABASE_URL"]
-    }
+    "env": { "exclude": ["*_TOKEN", "*_SECRET", "DATABASE_URL"] }
   }
 }
 ```
 
-Hosted cache settings for tasks that already opt in with `tasks.<name>.cache: true` and `outputs`. LPM CLI checks the local task cache first, then the hosted cache, then runs the task and uploads the result when the run succeeds.
+Hosted caching applies to tasks with `cache: true` and declared outputs.
+LPM CLI checks the local cache, then the hosted cache, then runs the task.
+Successful runs can upload their declared outputs.
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `enabled` | bool | `false` | Enable hosted cache reads and writes |
-| `team` | string | token's namespace | Organization slug. An organization selection requires a token scoped to that organization. Without this field, personal tokens use personal storage and organization tokens use organization storage. |
-| `url` | string | configured registry + `/v8` | Remote cache endpoint. Hosts outside the configured registry origin require `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`. |
-| `signature` | bool | `false` | Require `LPM_REMOTE_CACHE_SIGNATURE_KEY`; downloads without a valid HMAC tag are treated as misses. Third-party cache hosts always require a signing key. |
-| `readOnly` | bool | `false` | Read hosted artifacts but skip uploads |
-| `env.include` | string[] | `[]` | Variable-name patterns explicitly allowed for remote uploads |
-| `env.exclude` | string[] | `[]` | Variable-name patterns that block remote uploads |
-| `env.allowSecrets` | bool | `false` | Permit secret-looking env var names after project opt-in |
+| `enabled` | boolean | `false` | Enable hosted cache use. |
+| `team` | string | Token namespace | Organization slug. Requires a token scoped to that organization. |
+| `url` | string | Configured Registry plus `/v8` | Hosted cache endpoint. |
+| `signature` | boolean | `false` | Require artifact signatures with `LPM_REMOTE_CACHE_SIGNATURE_KEY`. |
+| `readOnly` | boolean | `false` | Download artifacts without uploads. |
+| `env.include` | string[] | `[]` | Variable-name patterns permitted for uploads. |
+| `env.exclude` | string[] | `[]` | Variable-name patterns that prevent uploads. |
+| `env.allowSecrets` | boolean | `false` | Explicit project permission for secret-looking variable names. |
 
-Secret-looking loaded or inherited env vars (`TOKEN`, `SECRET`, `PASSWORD`, `DATABASE_URL`, `*_KEY`, and similar names) block remote uploads by default. Local task caching still works.
+`LPM_REMOTE_CACHE` overrides `enabled`, including an explicit false value.
+Nonblank `LPM_REMOTE_CACHE_URL` and `LPM_REMOTE_CACHE_TEAM` override their matching fields.
+Read-only mode applies if either `readOnly` or `LPM_REMOTE_CACHE_READ_ONLY` is true.
+An environment false value cannot disable a project read-only requirement.
 
-See [Remote task cache](/docs/infra/remote-cache) for setup, team access, CI examples, and storage limits.
+Endpoints outside the configured Registry origin require `LPM_REMOTE_CACHE_TOKEN` and `LPM_REMOTE_CACHE_SIGNATURE_KEY`.
+Invalid artifact signatures produce cache misses.
+Secret-looking environment names prevent uploads by default. Local caching remains available.
+See [Remote task cache](/docs/infra/remote-cache) for setup and the full upload policy.
 
 ## `services.<name>`
 
 ```json
 {
   "services": {
-    "db":  { "command": "docker compose up postgres", "readyPort": 5432, "readyTimeout": 60 },
-    "api": {
-      "command": "node server.js",
-      "port": 4000,
-      "dependsOn": ["db"],
-      "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" }
-    },
+    "db": { "command": "docker compose up postgres", "readyPort": 5432, "readyTimeout": 60 },
+    "api": { "command": "node server.js", "port": 4000, "dependsOn": ["db"] },
     "web": { "command": "next dev", "port": 3000, "primary": true, "host": "web.app.localhost" }
   }
 }
 ```
 
-| Field | Type | Default | Notes |
+Start these processes with [`lpm dev`](/docs/dev/dev).
+The file supports at most 256 services.
+Names contain 1–64 ASCII letters, numbers, underscores, or hyphens, and start with a letter.
+Names must also produce distinct peer environment prefixes.
+
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `command` | string | **required** | Shell command to run |
-| `port` | number | — | Preferred service port. Host-routed services, explicit primaries, and recognized sole development servers can receive an automatic port. Generic workers stay portless unless primary endpoint features request a port |
-| `dependsOn` | string[] | `[]` | Services that must be ready before this one starts |
-| `readyPort` | number | falls back to `port` | TCP port to poll for readiness |
-| `readyUrl` | string | — | HTTP URL on `localhost`, `127.0.0.1`, or `[::1]`. The first 2xx response succeeds; redirects are not followed |
-| `readyTimeout` | number | `30` | Shared deadline for listener ownership and application readiness, from `1` to `3600` seconds |
-| `env` | object | `{}` | Extra env vars injected into this service only |
-| `restart` | bool | `false` | Restart after a non-zero exit, with delays from 1 to 30 seconds and at most 10 attempts. More than 60 seconds continuously ready resets the budget |
-| `primary` | bool | `false` | Its verified endpoint receives HTTPS, tunnel, network, and browser-open handling |
-| `host` | string | — | Friendly local hostname registered by `lpm dev` against the final assigned service port when the proxy daemon has an HTTPS listener. `lpm dev` also prepares constrained project cert-chain coverage and updates the hosts file when the host is not under `.localhost`. With `port`, `localhost:<port>` keeps working; without `port`, `lpm dev` injects the assigned port as `PORT`. |
-| `cwd` | string | project root | Working directory, relative to project root |
+| `command` | string | Required | Nonblank shell command. |
+| `port` | integer | Unset | Preferred service port, from `1` to `65535`. |
+| `dependsOn` | string[] | `[]` | Services that must become ready first. |
+| `readyPort` | integer | `port` | TCP readiness port, from `1` to `65535`. |
+| `readyUrl` | string | Unset | Loopback HTTP readiness URL. The first 2xx response succeeds. Redirects are not followed. |
+| `readyTimeout` | integer | `30` | Readiness deadline, from `1` to `3600` seconds. |
+| `env` | object of strings | `{}` | Environment values for this service. |
+| `restart` | boolean | `false` | Restart after a nonzero exit. |
+| `primary` | boolean | `false` | Use this endpoint for HTTPS, tunneling, network access, and browser opening. |
+| `host` | string | Unset | Local hostname routed through an HTTPS proxy. |
+| `cwd` | string | Project root | Working directory relative to the project root. |
+
+Host-routed services and explicit primaries can receive automatic ports.
+A recognized sole development server can also receive a port.
+Generic workers remain portless unless primary endpoint features require a port.
+LPM CLI injects assigned ports through `PORT`.
+
+Readiness URLs must use `localhost`, `127.0.0.1`, or `[::1]`.
+The readiness deadline covers listener ownership and application readiness.
+Missing dependencies, duplicate names, and dependency cycles stop startup.
+
+Restart delays grow from 1 to 30 seconds, with at most 10 attempts.
+More than 60 seconds continuously ready resets this budget.
+See [`lpm dev`](/docs/dev/dev) for endpoint checks and service recipes.
 
 ## `publish`
 
 ```json
 {
   "publish": {
-    "registries": ["lpm", "npm"],
-    "lpm":    { "name": "@lpm.dev/owner.pkg" },
-    "npm":    { "name": "@scope/pkg", "access": "public", "tag": "latest", "otpRequired": true },
-    "github": { "name": "@owner/pkg", "access": "public" },
-    "gitlab": { "name": "pkg", "access": "public", "projectId": "12345", "registry": "https://gitlab.com" }
+    "registries": ["npm"],
+    "npm": { "name": "@acme/widgets", "access": "public", "tag": "latest" }
   }
 }
 ```
 
+Use [`lpm publish`](/docs/packages/publish) to publish to npm, LPM.dev Registry, GitHub Packages, GitLab Packages, or a custom registry.
+The CLI is registry-agnostic.
+
 ### Top-level
 
-| Field | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `registries` | string[] | `["lpm"]` | Targets a single `lpm publish` invocation hits. Values are `lpm`, `npm`, `github`, `gitlab`, or an `https://` custom registry URL. Custom URL entries require an exact token from `lpm login --login-registry <URL> --token <T>`. CLI flags (`--lpm`, `--npm`, `--github`, `--gitlab`, `--publish-registry`) override. |
+`registries` is an array of `lpm`, `npm`, `github`, `gitlab`, or HTTPS registry URLs.
+An absent or empty array falls back to LPM.dev Registry.
+Explicit target flags replace the configured selection: `--lpm`, `--npm`, `--github`, `--gitlab`, and `--publish-registry`.
+Loopback HTTP URLs are supported for local registries.
 
 ### `publish.lpm`
 
-| Field | Type | Notes |
+| Field | Type | Purpose |
 | --- | --- | --- |
-| `name` | string | Override the lpm.dev package name. Must match `@lpm.dev/owner.pkg`. |
+| `name` | string | Package name override in `@lpm.dev/owner.pkg` format. |
 
 ### `publish.npm`
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `name` | string | `package.json > name` | Override the npm package name (e.g., `"@scope/pkg"`). Required if `package.json > name` starts with `@lpm.dev/`. |
-| `access` | `"public"` \| `"restricted"` | `"public"` | Visibility. npm provenance requires effective access to be `"public"`. |
-| `tag` | string | `"latest"` | dist-tag for the published version |
-| `registry` | string | `https://registry.npmjs.org` | Custom npm-compatible registry URL. Non-default registries require an exact token from `lpm login --login-registry <URL> --token <T>`; `NPM_TOKEN` and `lpm login --npm` auth are only used for the default npm registry. |
-| `otpRequired` | bool | `false` | Prompt for OTP before the first publish attempt (saves a round-trip) |
+| `name` | string | Manifest name | npm package name. Required as an override for an `@lpm.dev/*` manifest name. |
+| `access` | string | `public` | `public` or `restricted`. npm provenance requires public access. |
+| `tag` | string | `latest` | Distribution tag. Prereleases require an explicit tag. |
+| `registry` | string | `https://registry.npmjs.org` | npm-compatible endpoint. |
+| `otpRequired` | boolean | `false` | Request an OTP before the first publish attempt. |
+
+GitHub and GitLab names fall back to `publish.npm.name`, then the manifest name.
+Their access values fall back to `publish.npm.access`, then `public`.
+Custom npm-compatible targets use the npm name and access defaults.
+All npm-compatible targets use `publish.npm.tag`.
+For prereleases, set an explicit tag such as `next`.
+
+Custom endpoints require an exact registry token saved by [`lpm login`](/docs/infra/login).
+`NPM_TOKEN` and npm login credentials apply only to the default npm registry.
 
 ### `publish.github`
 
-| Field | Type | Notes |
+| Field | Type | Purpose |
 | --- | --- | --- |
-| `name` | string | Override the GitHub Packages name. Must be scoped (`@owner/pkg`). |
-| `access` | `"public"` \| `"restricted"` | Visibility |
+| `name` | string | Scoped package name, such as `@owner/pkg`. |
+| `access` | string | `public` or `restricted`. |
 
 ### `publish.gitlab`
 
-| Field | Type | Default | Notes |
+| Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `name` | string | — | Override the GitLab Packages name |
-| `access` | `"public"` \| `"restricted"` | — | Visibility |
-| `projectId` | string | **required** | GitLab project ID — needed to construct the registry URL |
-| `registry` | string | `https://gitlab.com` | GitLab instance URL |
+| `name` | string | npm name, then manifest name | GitLab package name. |
+| `access` | string | npm access, then `public` | `public` or `restricted`. |
+| `projectId` | string | Required | GitLab project identifier. |
+| `registry` | string | `https://gitlab.com` | GitLab instance URL. |
 
 ## Precedence with other config
 
-For fields with multiple sources, the precedence chain is:
+Precedence differs by feature:
 
-1. **CLI flag** (highest)
-2. **`lpm.json`**
-3. **`package.json`** (where applicable — `engines`, `scripts`)
-4. **`~/.lpm/config.toml`** (user-level, where applicable)
-5. **Built-in default** (lowest)
+| Workflow | Selection order |
+| --- | --- |
+| Node runtime | `runtime.node`, `.nvmrc`, `.node-version`, system `PATH`. |
+| Task command | `tasks.<name>.command`, then `package.json > scripts.<name>`. |
+| Task environment | `--env`, `tasks.<name>.env`, `env.<script>`, normal dotenv loading. |
+| Development HTTPS | `--no-https` disables it; otherwise `--https` or `https: true` enables it. |
+| Development tunnel | `--no-tunnel` disables it; otherwise a domain or `--tunnel` enables it. |
+| Publish targets | Explicit target flags, configured nonempty target list, LPM.dev Registry. |
+| Hosted cache | Per-field environment rules in [`remoteCache`](#remotecache). |
+
+Do not assume that every field inherits from a workspace root or user configuration.
+
+## Validation and recovery
+
+Configuration files have a [16 MiB size limit](/docs/project-setup#local-configuration-size-limits).
+Malformed JSON and invalid typed fields fail the command that reads them.
+Ordinary unknown fields are ignored for forward compatibility.
+[`lpm doctor`](/docs/infra/doctor) reports unknown nested paths, such as `proxy.httpRediect`.
+CLI-managed `vaultSync` metadata uses stricter field checks.
+
+If a command reports an invalid field, correct that field and run the command again.
+For inheritance errors, check parent names and remove cycles.
+For service errors, check names, port bounds, readiness timeouts, and dependency names.
+For editor checks that differ from your CLI, emit the schema from that installed version.
 
 ## See also
 
-- [`lpm dev`](/docs/dev/dev) — the most common consumer, with usage-oriented examples
-- [`lpm run`](/docs/dev/run) — reads `tasks` and `env`
-- [`lpm publish`](/docs/packages/publish) — reads `publish`
-- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — sibling config block
-- [JSON Schemas](/docs/reference/schemas) — published schema URLs and `lpm schema`
-- [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults
+- [`lpm dev`](/docs/dev/dev)
+- [`lpm run`](/docs/dev/run)
+- [`lpm publish`](/docs/packages/publish)
+- [`package.json > lpm`](/docs/reference/package-json-lpm)
+- [JSON Schemas](/docs/reference/schemas)
+- [`lpm.toml`](/docs/reference/lpm-toml)
+- [`~/.lpm/config.toml`](/docs/reference/config-toml)
