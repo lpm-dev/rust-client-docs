@@ -85,7 +85,7 @@ The fast mode examines:
 - Local authentication and secret storage
 - Sigstore settings
 
-The fast mode does not contact a registry or tunnel service, or start a background update request. It also does not run lint or format checks.
+Without repairs, fast mode does not contact a registry or tunnel service. It does not start background update requests or run lint or format checks.
 
 Use `--all` to add:
 
@@ -128,8 +128,10 @@ Use this command after a machine change, a toolchain change, or a difficult inst
 ### Use doctor as a CI gate
 
 ```bash
-lpm doctor --all --json > doctor-report.json
+lpm doctor --json > doctor-report.json
 ```
+
+Add `--all` for tool, machine, and connected-service checks. Full mode requires registry credentials for a passing authentication result.
 
 If a check fails, doctor exits with code `1`. Warnings keep exit code `0`.
 
@@ -137,7 +139,7 @@ The JSON report contains both the summary and every emitted check. Match automat
 
 ### Apply supported fixes
 
-Save your project changes before you use `--fix`. Some fixes can change project files or installed dependencies.
+Save your project changes before you use `--fix`. Some fixes can change project files or installed dependencies. Repairs can download packages and runtimes, even without `--all`.
 
 ```bash
 lpm doctor --fix
@@ -201,7 +203,9 @@ Supported fixes include:
 `lpm doctor list --json` shows the supported action before a fix run. For each code, `auto_fix` identifies the action or is null.
 
 The JSON field `fixes_applied` lists completed fixes. `fixes_failed` lists unsuccessful actions and their errors.
-After repairs, doctor reruns the same check set. A failed repair keeps the exit code at `1`.
+After repairs, doctor reloads root and member manifests before it reruns the same check set. A failed repair keeps the exit code at `1`.
+
+Repairs apply once to the initial report. The final report can show remaining or newly discovered problems.
 
 `lpm doctor --fix` runs the selected checks before it changes the project. If automatic fixes exist, doctor shows the planned actions and asks once.
 
@@ -378,8 +382,8 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | `lockfile_binary_stale` | warn | `lpm.lockb` does not match the contents of `lpm.lock`, or stale binary bytes remain for a TOML-only graph. **Fix:** Run `lpm doctor --fix` to reconcile, or run [lpm install](/docs/packages/install). |
 | `lockfile_binary_corrupt` | warn | `lpm.lockb` does not parse as a valid binary lockfile. **Fix:** Run `lpm doctor --fix` to reconcile from `lpm.lock`. |
 | `gitattributes_lockb_marked` | pass | `.gitattributes` marks `lpm.lockb` as binary. |
-| `gitattributes_lockb_unmarked` | warn | `.gitattributes` does not mark `lpm.lockb` as binary. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`. |
-| `gitattributes_missing` | warn | No `.gitattributes` file exists, so Git can treat `lpm.lockb` as text. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`. |
+| `gitattributes_lockb_unmarked` | warn | `.gitattributes` does not mark `lpm.lockb` as binary. **Fix:** Run `lpm doctor --all --fix` or add `lpm.lockb binary`. |
+| `gitattributes_missing` | warn | No `.gitattributes` file exists, so Git can treat `lpm.lockb` as text. **Fix:** Run `lpm doctor --all --fix` or add `lpm.lockb binary`. |
 | `deps_sync_clean` | pass | `lpm.lock` and `package.json` agree on the declared dependency set. |
 | `deps_sync_drift` | warn | `lpm.lock` and `package.json` disagree — manifest changes have not been resolved. **Fix:** Run [lpm install](/docs/packages/install) to reconcile. |
 | `local_source_dir_ok` | pass | A `file:` / `link:` dependency points at a directory with a readable `package.json`. |
@@ -550,7 +554,7 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 Use `--json` for CI and scripts:
 
 ```bash
-lpm doctor --all --json
+lpm doctor --json
 ```
 
 ```json
@@ -682,7 +686,7 @@ Read [lpm login](/docs/infra/login) for authentication options.
 
 ### Read the remediation for a check
 
-Use the code from doctor output:
+Use `checks[].code` from `lpm doctor --json`:
 
 ```bash
 lpm doctor list --code <CODE>
