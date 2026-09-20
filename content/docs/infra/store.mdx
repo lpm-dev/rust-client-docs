@@ -3,9 +3,10 @@ title: lpm store
 description: "Find, verify, or reset the shared package store."
 ---
 
-Use `lpm store` to find, verify, or remove the shared package store on your computer.
+Use `lpm store` to inspect shared package data, diagnose corruption, or reset the store before a fresh install.
 
 ```bash
+lpm store <COMMAND>
 lpm store path [--json]
 lpm store verify [--deep] [--fix] [--json]
 lpm store clean [--json]
@@ -29,58 +30,40 @@ lpm store verify
 | `verify` | Verifies v1, v2, and v3 store data | An install reports a store error, or you want an integrity check |
 | `clean` | Immediately removes all v1, v2, and v3 store data | You need a complete reset and accept new downloads and builds |
 
-## What the shared store does
+## Store configuration
 
-LPM CLI saves package data in `~/.lpm/store/`. Projects link to this shared data instead of keeping a separate package cache.
-
-The store reduces repeat downloads and duplicate data across projects. It also contains package security caches and reusable native-build artifacts.
-
-A store version identifies the layout of saved data. It does not identify a package version or the [`lpm.lock` format](/docs/reference/lockfile-format).
-
-## Store versions
-
-| Version | Status | Layout | How to select it | Use case |
-| --- | --- | --- | --- | --- |
-| v1 | Legacy | One complete directory for each package name and version | `LPM_STORE_VERSION=v1` | Use it only for compatibility with the legacy layout |
-| v2 | Default | Shared package objects with dependency layouts for each project graph | No setting is necessary | Use it for normal development and CI |
-| v3 | Experimental | Reusable file blobs, package-tree records, and v2-style dependency layouts | `LPM_STORE_VERSION=v3` | Use it to test the experimental file-level store |
-
-### v1
-
-The v1 store keeps each extracted package under `~/.lpm/store/v1/<name>@<version>/`. It reuses matching package names and versions.
-
-v1 is the legacy layout. Select it only for compatibility or downgrade testing.
-
-### v2
-
-The v2 store keeps package content in shared objects. It also keeps separate link entries for different dependency graphs.
-
-Two projects can reuse the same package content. Each project can still have the dependency layout that its lockfile requires.
-
-v2 is the current default. An unset or empty `LPM_STORE_VERSION` value selects v2.
-
-### v3
-
-The v3 store divides package trees into reusable file blobs. Tree and source records describe how LPM CLI reconstructs each package.
-
-Identical files can share stored data across different packages. v3 retains the dependency-link model from v2.
-
-v3 is experimental. LPM CLI never selects it automatically.
-
-### Select a version for an install
-
-Set `LPM_STORE_VERSION` for the install command:
+The default store path is `~/.lpm/store/`. `LPM_HOME` changes the parent directory for LPM CLI data:
 
 ```bash
-LPM_STORE_VERSION=v1 lpm install  # use the legacy layout
-LPM_STORE_VERSION=v3 lpm install  # use the experimental layout
+LPM_HOME=/srv/lpm lpm store path
+LPM_HOME=/srv/lpm lpm store verify --deep
 ```
 
-The values `1`, `2`, and `3` are aliases for `v1`, `v2`, and `v3`. An unknown value produces a warning and selects v2.
+`lpm.json` has no store configuration. All projects that use the same LPM CLI home share its package data, security caches, and native-build artifacts.
 
-`lpm.json` cannot select a store version. The `LPM_STORE_VERSION` environment variable is the only current selector.
+`lpm store path` prints the path without creating the store or acquiring its lock.
 
-The three versions can exist at the same time. `lpm store verify` and `lpm store clean` always act on all three versions.
+### Store versions
+
+| Version | Status | Stored data |
+| --- | --- | --- |
+| v1 | Legacy | Complete package directories, identified by name and version |
+| v2 | Default | Shared package objects and separate dependency layouts |
+| v3 | Experimental | Shared file blobs, package-tree records, and dependency layouts |
+
+The three versions can exist together. Verification and cleaning always cover all three versions, regardless of `LPM_STORE_VERSION`.
+
+To select a layout for an install, set `LPM_STORE_VERSION` for that command:
+
+```bash
+LPM_STORE_VERSION=v3 lpm install
+```
+
+The values `v1`, `v2`, and `v3` select a version. The values `1`, `2`, and `3` are aliases.
+
+An unset or empty value selects v2. An unknown value produces a warning and selects v2. LPM CLI never selects v3 automatically.
+
+See [Content-addressable store](/docs/packages/content-addressable-store) for the storage model.
 
 ## Recipes
 
@@ -98,7 +81,11 @@ If a diagnostic tool or script needs the active store root, use this command.
 lpm store verify
 ```
 
-The fast verification examines package directories, manifests, link metadata, object references, and v3 store metadata.
+Fast verification requires a nonempty, regular `package.json` file. It examines package directories, link metadata, object references, and v3 store metadata.
+
+It rejects redirected store roots and package directories, including symbolic links and Windows junctions. It also rejects linked manifests.
+
+Normal dependency links inside a package layout remain supported. Fast verification does not parse manifests or rehash package bytes.
 
 ### Run a deep verification
 
@@ -108,7 +95,9 @@ Run this command from a project root:
 lpm store verify --deep
 ```
 
-Deep verification parses each `package.json`. It compares package names and versions with their store entries.
+Deep verification requires each `package.json` to contain a JSON object. If `name` or `version` is present, it must be a matching string.
+
+Legacy manifests can omit those fields. Deep verification does not require them to exist.
 
 Deep verification reads the applicable project lockfile, including a workspace member's view. It compares integrity through installed links and exact dependency relationships. It also rehashes v3 file blobs.
 
@@ -124,7 +113,9 @@ If no applicable `lpm.lock` exists, LPM CLI skips the lockfile comparison. If an
 lpm store verify --fix
 ```
 
-`--fix` implies deep verification. It refreshes missing or stale `.lpm-security.json` files.
+`--fix` implies deep verification. It refreshes missing or stale `.lpm-security.json` files with atomic replacement.
+
+If a cache file is a symbolic link or hard link, replacement preserves the linked target. Redirected package directories fail verification before cache repair.
 
 `--fix` does not restore missing packages or repair manifests and integrity errors. LPM CLI reports these errors for separate recovery.
 
@@ -134,7 +125,9 @@ lpm store verify --fix
 lpm store verify --deep --json > store-report.json
 ```
 
-If LPM CLI finds corruption, it writes the JSON report and then exits with status `1`.
+If verification finds corruption, it writes the JSON report and exits with status `1`.
+
+Errors that prevent enumeration, such as a redirected store root, return a command error before the detailed report.
 
 ### Inspect v3 orphan counts
 
@@ -154,6 +147,11 @@ lpm cache prune --apply  # apply the removal plan
 [`lpm cache prune`](/docs/packages/cache#prune-unused-packages) uses project references to retain required store entries. The preview does not remove data.
 
 ## Verification levels
+
+For v1 and v2, deep verification compares saved integrity markers with the applicable lockfile. It does not recalculate integrity from extracted package bytes.
+
+For v3, deep verification also rehashes stored file blobs. Oversized or unreadable source-integrity markers fail verification.
+
 
 | Command | Package and link structure | `package.json` contents | `lpm.lock` integrity | v3 blob hashes | Security cache |
 | --- | --- | --- | --- | --- | --- |
@@ -324,18 +322,19 @@ lpm store clean
 lpm install
 ```
 
-The clean action removes package data, link entries, security caches, and native-build artifacts. It retains the outer `~/.lpm/store/` directory.
+The clean action removes package data, link entries, security caches, and native-build artifacts. It retains the outer store directory and control files.
+
+If a version root is a symbolic link or junction, cleaning removes the link and preserves its target. Dangling version-root links are also removed.
+
+A redirected outer store root is rejected before LPM CLI creates a lock file or removes data.
 
 The next install downloads or rebuilds the required packages. For normal cleanup, use the reference-aware [`lpm cache prune`](/docs/packages/cache#prune-unused-packages) command.
 
-If verification reports corruption, first run:
+If verification reports only security-cache differences, use `lpm store verify --fix`. These differences alone do not cause a failed exit status.
 
-```bash
-lpm cache prune --apply
-lpm install
-```
+If package data is corrupt, inspect the reported paths. `--fix` cannot restore those files.
 
-If the error remains, use `lpm store clean` for a complete reset.
+For corruption in unused data, preview [`lpm cache prune`](/docs/packages/cache#prune-unused-packages). For a complete reset, use the clean-and-install recipe above.
 
 ## Concurrent operations
 
