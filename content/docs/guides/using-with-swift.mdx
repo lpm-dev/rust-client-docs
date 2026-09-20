@@ -1,75 +1,110 @@
 ---
 title: Using LPM CLI with Swift
-description: "SPM integration via SE-0292 — login, install, publish."
+description: Install Swift dependencies, connect Xcode projects, and publish Swift packages on LPM.dev Registry.
 ---
 
-LPM.dev Registry speaks the [SE-0292 Swift Package Registry API](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md), so Swift Package Manager (SPM) can resolve hosted Swift packages natively. LPM CLI performs the required Registry setup as part of installation.
+LPM CLI connects Swift Package Manager to LPM.dev Registry through the SE-0292 registry protocol. SwiftPM resolves and builds the dependencies.
 
-## Prerequisites
-
-- LPM CLI installed — see [Installation](/docs/installation).
-- Swift toolchain installed.
-- An lpm.dev account and `lpm login` for Private, Pool, or Marketplace packages. Free packages need no account.
-
-## Installing a Swift package
+From a directory with `Package.swift`:
 
 ```bash
 lpm install @lpm.dev/owner.swift-pkg
-lpm install @lpm.dev/owner.swift-pkg@1.2.0      # specific version
-lpm install --yes @lpm.dev/owner.swift-pkg      # choose the first eligible target
+swift build
 ```
 
-On the first Swift install in an unconfigured project, LPM CLI:
+Install a compatible Swift toolchain first. For Xcode projects, install Xcode and select the intended developer directory.
 
-1. Sets the `lpmdev` scope to the LPM.dev Registry SE-0292 endpoint.
-2. Passes the current LPM.dev Registry session to SPM when protected access is required. Free releases skip this login.
-3. Installs the Registry CMS signing certificate.
-4. Configures the signing policy for the Registry hostname.
-5. Checks access, updates `Package.swift`, resolves dependencies, and checks required products with the native dependency graph.
+Private, Pool, and Marketplace packages require [authentication](/docs/infra/authentication) and package access. Available Free releases need no account.
 
-Setup failures abort the install instead of leaving a partially configured trust path. One eligible target is selected automatically. With multiple eligible targets, a normal install asks which target should receive the dependency; `-y` / `--yes` skips that selector and chooses its default, the first eligible target.
-
-Every reinstall resolves dependencies, even when the declaration already exists. Missing dependency files are restored. LPM CLI checks access to every resolved LPM.dev Registry dependency, including cached transitive dependencies. Revoked access stops installation.
-
-A `Package.swift` in the current directory takes precedence over an unrelated parent `package.json`.
-
-For protected HTTPS installs, LPM CLI signs in to SPM again even when the Registry scope matches. A rejected stored bearer causes one session refresh and one login retry.
-
-The same routing applies in workspaces. Use `-w` for a root `Package.swift`, run from a member directory for that member, or use `--filter` to select Swift members. LPM CLI mutates, configures, reports, and runs `swift package resolve` from the same selected directory. In mixed JavaScript/Swift workspaces, Swift versions go only through SE-0292 while JavaScript versions retain normal `package.json` installation.
-
-Use [`lpm install`](/docs/packages/install) for native Swift dependencies. Use [`lpm add`](/docs/packages/add) when you want to copy source files into your project.
-
-You do not need to run `lpm swift-registry` before installing. That command remains available for explicit repair and certificate refresh:
+## Install a dependency
 
 ```bash
-lpm swift-registry
+# Authenticate for a protected package
+lpm login
+
+# Install an available version
+lpm install @lpm.dev/owner.swift-pkg
+
+# Install a specific version
+lpm install @lpm.dev/owner.swift-pkg@1.2.0
 ```
 
-See the [trust model](/docs/packages/swift-package-registry#trust-model) for what package signing currently attests to and why the `lpmdev` scope uses a dedicated trust policy.
+LPM CLI configures the registry endpoint, certificate, and signing policy before SwiftPM resolves the package. Protected access also requires a SwiftPM registry login.
+
+One eligible target is selected automatically. With several targets, the command asks which target receives the product.
+
+For non-interactive installation:
+
+```bash
+lpm install @lpm.dev/owner.swift-pkg@1.2.0 --yes
+```
+
+`--yes` selects the first eligible target. Check the resulting `Package.swift` before committing it.
+
+The dependency must expose a compatible library product. Test, binary, and system targets cannot receive package products through the target selector.
+
+### Identity mapping
+
+| LPM.dev Registry package | SwiftPM identity |
+| --- | --- |
+| `@lpm.dev/owner.swift-pkg` | `lpmdev.owner_swift-pkg` |
+
+[lpm install](/docs/packages/install) writes the SwiftPM identity into `Package.swift`. The underscore separates the owner from the package name.
+
+A local `Package.swift` takes precedence over an unrelated parent `package.json`. Swift dependencies belong in `Package.swift`, not `lpm.json`.
+
+For a mixed workspace, run from the Swift member directory or select it with `--filter`. Use `-w` to select a root Swift package.
+
+## Check resolution and commit the result
+
+```bash
+swift build
+swift test
+```
+
+Commit the manifest changes and the project's applicable `Package.resolved` file. Follow the repository's lockfile policy for reusable libraries.
+
+Reinstalling an existing declaration still resolves dependencies and checks package access. Cached transitive dependencies do not bypass LPM.dev Registry access rules.
+
+If you intend to copy source files, use [lpm add](/docs/packages/add). It is a different workflow from a native Swift dependency.
 
 ## Xcode projects and workspaces
 
-Run the install from the directory that contains your `.xcodeproj` or `.xcworkspace`:
+From the directory with your `.xcodeproj` or `.xcworkspace`:
 
 ```bash
 lpm install @lpm.dev/owner.swift-pkg --yes
 ```
 
-LPM CLI creates `Packages/LPMDependencies`, links its library to the app target, and adds a Frameworks phase if necessary. The wrapper exports the package modules. Its deployment targets include the app configuration and the minimum versions declared by installed dependencies. For `.xcconfig` files and deployment variables, LPM reads the effective settings from Xcode. It uses the lowest app minimum across build configurations for each supported platform. An existing wrapper keeps higher minimum versions from earlier installs.
+LPM CLI creates `Packages/LPMDependencies` and links its library into the app target. The wrapper exports the dependency's modules.
 
-Workspace discovery follows nested project references. A single project is selected automatically. With multiple projects, a project that matches the workspace name takes precedence. If selection is ambiguous, run the command from the intended project directory. References outside the workspace directory and symbolic links require installation from the actual project directory.
+Its deployment targets account for the app and installed dependencies. Existing higher minimum versions remain intact.
 
-Xcode needs the registry scope outside the wrapper. LPM CLI therefore sets `lpmdev` in `~/.swiftpm/configuration/registries.json` as well as the wrapper configuration. Other registry scopes and signing settings remain intact.
+A single project is selected automatically. With several direct projects, LPM CLI prefers the project matching the directory name.
 
-If an older CLI created package references that Xcode ignored, repeat the install with the updated CLI. It repairs those misplaced references and restores missing app product links or Frameworks entries. Complete links to other targets remain intact. If Xcode is open, close and reopen the project after installation.
+If projects come from one workspace, its name can select the matching project.
 
-### Lockfiles and CI builds
+If selection is ambiguous, run from the intended project directory. References outside the workspace and symbolic links also require the actual project directory.
 
-LPM resolves the selected Xcode project and its containing workspaces before it reports a successful install. Workspace resolution uses the available schemes. Commit the updated shared `Package.resolved` files with the wrapper changes.
+LPM CLI configures the `lpmdev` scope for both the wrapper and Xcode's user configuration. Other registry scopes remain intact.
 
-If Xcode resolution fails, LPM restores the previous project, wrapper files, and shared lockfiles. The command returns an error.
+The command resolves the project and its containing workspaces before success. A failed resolution restores the project, wrapper, and shared lockfiles.
 
-Xcode also stores generated resolution state in its package cache. If CI restores an older cache, resolve dependencies with the same cache paths before the frozen build:
+Commit the wrapper, project changes, and shared `Package.resolved` files. If Xcode was open, reopen the project after installation.
+
+### Build in CI
+
+A fresh runner needs the registry scope, signing certificate, signing policy, and SwiftPM credentials before native resolution.
+
+From the Xcode project directory, provide a read-scoped `LPM_TOKEN` for protected packages and run:
+
+```bash
+lpm swift-registry --json
+```
+
+This configures the project scope and Xcode's user scope. A CLI token alone does not configure SwiftPM authentication.
+
+Use the same package-cache path for resolution and the frozen build:
 
 ```bash
 xcodebuild -resolvePackageDependencies \
@@ -82,65 +117,81 @@ xcodebuild -workspace MyApp.xcworkspace -scheme MyApp \
   -onlyUsePackageVersionsFromResolvedFile build
 ```
 
-The CLI requires `xcodebuild` for Xcode project installation. Native SwiftPM projects continue to use `swift package resolve`.
+Replace the workspace and scheme names. CI needs credentials for protected dependencies, even when it restores a package cache.
 
-## Publishing a Swift package
+## Publish a Swift package
 
-LPM CLI detects Swift from `Package.swift` in the published archive. Install a compatible Swift toolchain before publishing. On macOS, LPM CLI uses the developer directory selected by `xcode-select`.
+Publication needs both `Package.swift` and a `package.json` that identifies the Registry release. The manifest selects the files to upload:
 
-Run `lpm publish --check` to inspect the archive without uploading it. Malformed manifests, unsupported tools versions, and inspection failures stop publication. LPM.dev Registry also inspects the uploaded source before storing its metadata.
-
-Literal directories in `package.json` `files`, such as `Sources` and `Tests`, are relative to the package root. They do not include matching directories under `.build`. Use explicit glob patterns when you need nested matches.
-
-```bash
-lpm publish
+```json title="package.json"
+{
+  "name": "@lpm.dev/acme.swift-widget",
+  "version": "1.0.0",
+  "description": "Swift widget library",
+  "license": "MIT",
+  "files": ["Package.swift", "Sources", "Tests"]
+}
 ```
 
-The publish pipeline:
+Replace the owner and package name. Include any resources or alternate manifests that the package requires.
 
-- Packs the repo into a tarball.
-- Generates a `.zip` source archive with the SE-0292-required `{pkgName}-{version}/` top-level wrapper.
-- Computes the SHA-256 checksum that SPM expects.
-- Generates a CMS-1.0.0 detached signature (ECDSA P-256 / SHA-256) with the LPM.dev Registry signing cert.
-- Uploads tarball + zip + signature to lpm.dev.
+Select LPM.dev Registry explicitly in the package's own configuration:
 
-After publish, `lpm install` configures SPM when needed and resolves the package by its LPM.dev Registry identity.
+```json title="lpm.json"
+{
+  "publish": {
+    "registries": ["lpm"]
+  }
+}
+```
 
-A release can include [manifests for different Swift versions](/docs/packages/swift-package-registry#manifests-for-different-swift-versions). The Registry checks and signs each manifest before publication.
+```bash
+swift build
+swift test
+lpm publish --lpm --check
+lpm login
+lpm publish --lpm --dry-run --ignore-scripts
+lpm publish --lpm --yes --ignore-scripts --wait
+```
 
-## Identity mapping
+The local check inspects `Package.swift` from the publication archive with the selected Swift toolchain. On macOS, it uses the developer directory from `xcode-select`.
 
-LPM.dev Registry packages are named `@lpm.dev/owner.pkg-name`. SE-0292 scopes can't contain dots, so LPM CLI maps them when surfacing to SPM:
+Malformed manifests, unsupported tools versions, and failed inspection stop publication. Literal `Sources` and `Tests` entries select root directories, excluding matching directories under `.build`.
 
-| LPM.dev Registry name | SPM identity |
+LPM CLI uploads the package archive. LPM.dev Registry inspects it, creates the Swift source ZIP, and signs the release artifacts.
+
+The Registry signing key stays on the service. Publishers do not need that key to publish.
+
+New packages start in Private distribution. See [package distribution](/docs/packages/package-distribution) before requesting Free, Pool, or Marketplace distribution.
+
+## Repair registry configuration
+
+```bash
+lpm swift-registry
+```
+
+[lpm swift-registry](/docs/packages/swift-registry) downloads the current certificate and checks the endpoint and signing configuration. A failed certificate download preserves the previous file.
+
+Automatic installation performs these checks too. Malformed configuration stops setup before replacement.
+
+The `lpmdev` policy accepts the Registry's signing certificate. It does not establish the publisher's identity or prove that package code is safe.
+
+See the [Swift registry trust model](/docs/packages/swift-package-registry#trust-model) for the exact signing guarantees.
+
+## Troubleshooting
+
+| Problem | Action |
 | --- | --- |
-| `@lpm.dev/owner.pkg-name` | `lpmdev.owner_pkg-name` |
-
-The `_` between owner and package name is the unambiguous separator: LPM.dev Registry forbids `_` in both owner and package name, so the boundary remains clear when either half contains hyphens. You do not need to deal with the SPM identity by hand; `lpm install` performs the translation.
-
-## Verifying signatures
-
-LPM.dev Registry serves the CMS signing certificate at `https://lpm.dev/api/swift-registry/certificate` in DER form. On every automatic setup check, LPM CLI validates the bounded DER response, compares it with the local certificate, and verifies the complete default and `lpmdev` signing policy—even when the scope URL already matches. Missing configuration and stale certificate or signing-policy values are repaired before SwiftPM resolves the dependency.
-Malformed JSON, unsupported configuration versions, and invalid field types stop setup before changes. Correct the reported configuration and retry.
-
-Signatures are surfaced in three places per release:
-
-- The release metadata JSON (base64 CMS).
-- The `X-Swift-Package-Signature` HTTP header on ZIP download.
-- A comment block in the `Package.swift` manifest response.
-
-If the certificate rotates, rerun [lpm swift-registry](/docs/packages/swift-registry). Every setup run downloads the current certificate. Failed downloads stop setup and preserve the previous file.
-
-For the trust-model rationale (why the cert is self-signed, why SPM uses a `silentAllow` registry override rather than a trust-store entry, what the signature actually attests to), see [Trust model](/docs/packages/swift-package-registry#trust-model).
-
-## Common pitfalls
-
-- **Choose the delivery method.** `lpm install` manages a native Swift dependency. `lpm add` copies source files into your project.
-- **`Package.swift` must use the SE-0292 identity** (`lpmdev.owner_pkg-name`), not the LPM.dev Registry-native form. `lpm install` writes it correctly; if you hand-edit, mind the format — the `_` separates owner from package name.
-- **Refresh after a certificate rotation.** Run [lpm swift-registry](/docs/packages/swift-registry). A failed download stops setup and preserves the previous certificate.
+| No Swift project found | Run from the directory with `Package.swift`, `.xcodeproj`, or `.xcworkspace`. |
+| No compatible library product | Check the package's products and supported Swift tools versions. |
+| SwiftPM and Xcode tools differ | Select matching toolchains before installation. |
+| Protected dependency is unavailable | Check the account's access, subscription, or license. |
+| Stale certificate or registry configuration | Run [lpm swift-registry](/docs/packages/swift-registry). |
+| Publication omits source or resources | Correct `files`, then repeat `lpm publish --lpm --check`. |
 
 ## See also
 
-- [`lpm install`](/docs/packages/install) — runtime dependency installer (works for Swift)
-- [`lpm swift-registry`](/docs/packages/swift-registry) — repair and certificate-refresh command
-- [SE-0292](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0292-package-registry-service.md) — the upstream protocol spec
+- [lpm install](/docs/packages/install) — dependency installation
+- [Swift package registry](/docs/packages/swift-package-registry) — protocol, manifests, and trust
+- [Publishing a package](/docs/guides/publishing-a-package) — publication checks and recovery
+- [lpm swift-registry](/docs/packages/swift-registry) — configuration repair
