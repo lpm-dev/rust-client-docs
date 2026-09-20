@@ -1,158 +1,283 @@
 ---
-title: Publishing your first package
-description: "From lpm init to lpm publish, with quality checks and provenance."
+title: Publishing a package
+description: Publish to npm, GitHub Packages, GitLab, a private registry, or LPM.dev Registry.
 ---
 
-This guide walks through publishing a package from scratch. By the end you'll have a package on the LPM.dev Registry that anyone you grant access to can `lpm install`. We'll cover quality gates, secret scanning, and provenance — the things you can't see from the command name alone.
+LPM CLI publishes JavaScript packages to npm-compatible registries and LPM.dev Registry. An LPM.dev Registry account is unnecessary for other targets.
 
-## 1. Authenticate
-
-```bash
-lpm login
-```
-
-Opens your browser, you authenticate against the LPM.dev Registry, LPM CLI captures the redirect token and stores it in your OS keychain. You only do this once per machine.
+From an existing package directory, this sequence publishes to npm:
 
 ```bash
-lpm whoami
+lpm publish --npm --check
+lpm login --npm
+lpm publish --npm --dry-run --ignore-scripts
+lpm publish --npm --yes
 ```
 
-Confirms the identity, plan tier, and any orgs you belong to.
+The final command uploads the package and authorizes its publish scripts. If your build is already complete, use `--ignore-scripts` on that command.
 
-## 2. Create the package
+## Choose a registry
+
+| Registry | Target flag | Package name and configuration |
+| --- | --- | --- |
+| npm | `--npm` | An npm-compatible name, such as `@acme/widget`. |
+| GitHub Packages | `--github` | A scoped name, such as `@acme/widget`. |
+| GitLab Packages | `--gitlab` | An npm-compatible name and `publish.gitlab.projectId`. |
+| Private or custom registry | `--publish-registry <URL>` | An npm-compatible name and the full HTTPS registry endpoint. |
+| LPM.dev Registry | `--lpm` | `@lpm.dev/<owner>.<package>`, such as `@lpm.dev/acme.widget`. |
+
+**npm-compatible targets default to public access.** If the registry must restrict access, set the appropriate `access` field before publication.
+
+A target flag replaces the target list in `lpm.json`. Without flags or a configured list, publication targets LPM.dev Registry.
+
+`.npmrc` install routing does not select the publish target. Use `lpm.json` or a target flag instead of `package.json > publishConfig` for registry, access, and tag choices.
+
+## Create a package
+
+For a new npm-compatible package, use [lpm init](/docs/packages/init):
 
 ```bash
-mkdir my-pkg && cd my-pkg
-lpm init --lpm
+mkdir widget
+cd widget
+lpm init --npm --yes --name @acme/widget
 ```
 
-`lpm init --lpm` walks you through `owner` / `name` / `version` / `description`. The published name will be `@lpm.dev/<owner>.<name>` — pick an `owner` you've claimed on the LPM.dev Registry (or one your org owns). Plain `lpm init` asks for the target first; choose **LPM.dev Registry package** for this guide.
+This creates a manifest and selects npm in `lpm.json`. It does not create source files or build output.
 
-For a non-interactive bootstrap (CI scripts):
+For a new LPM.dev Registry package:
 
 ```bash
-lpm init --lpm -y --owner <owner> --name <name>
+lpm init --lpm --yes --owner acme --name widget
 ```
 
-Plain `lpm init -y` is still valid and defaults to an LPM.dev Registry package, but the explicit flags avoid leaving placeholder owner/name values in automation.
+Replace `acme` with your account or organization slug. Explicit names avoid placeholder values in non-interactive initialization.
 
-## 3. Write your code
+For an existing package, keep its manifest. Check the name, version, license, entrypoints, and published files.
 
-Build out the package — `src/` (or wherever), `dist/` (your build output), README, license. The defaults `lpm init` writes to `package.json` (substituting the owner/name you supplied):
+`package.json > private: true` blocks every publication and preview. Private distribution on LPM.dev Registry is a separate access policy.
 
-```json
+## Save publication defaults
+
+Add this configuration to the package's own [lpm.json](/docs/reference/lpm-json#publish):
+
+```json title="lpm.json"
 {
-  "name": "@lpm.dev/<owner>.<name>",
-  "version": "1.0.0",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "module",
-  "license": "MIT",
-  "files": ["dist"],
-  "packageManager": "lpm@<version>"
+  "publish": {
+    "registries": ["npm"],
+    "npm": {
+      "name": "@acme/widget",
+      "access": "public",
+      "tag": "latest"
+    }
+  }
 }
 ```
 
-It also writes an `AGENTS.md` package-manager hint so coding agents in the repo use `lpm install`, `lpm add`, and `lpm run`.
+For a restricted npm package, change `access` to `restricted`. npm requires a scoped name for restricted access.
 
-Tighten `files` to whatever you actually want shipped. Anything not listed (README, LICENSE, package.json) is included by default per npm convention. If `files` is absent, LPM CLI excludes project-local `.lpm` state from the implicit package set while preserving valid direct publisher-authored `.lpm/skills/*.md` files. Installed dependency skill sets are excluded whether the file set is implicit or explicit.
+For GitHub, set `registries` to `["github"]` and add `github.name` and `github.access`. GitHub otherwise inherits the npm name and access configuration.
 
-## 4. Preview the publish
+For GitLab, include the project ID:
 
-```bash
-lpm publish --dry-run
+```json title="lpm.json"
+{
+  "publish": {
+    "registries": ["gitlab"],
+    "gitlab": {
+      "projectId": "12345",
+      "name": "@acme/widget",
+      "access": "restricted"
+    }
+  }
+}
 ```
 
-Validates the package configuration and authored skills, packs each target artifact, scans the actual final artifacts for hardcoded secrets, computes the normalized local LPM.dev quality score, resolves real LPM.dev authentication, and performs a non-mutating Registry permission/version preflight. Explicitly included files are scanned even when Git ignores them. It does not reserve or upload a version, create Registry state, generate requested provenance, or claim publication occurred.
+For a custom registry, put its full URL in `registries`. Its package name, access, and tag come from the `npm` configuration.
+
+Each workspace package needs its own publish configuration. Publication does not inherit these fields from the workspace root.
+
+## Authenticate the selected registry
 
 ```bash
+# npm browser login
+lpm login --npm
+
+# GitHub or GitLab CLI session, environment token, or stored token
+lpm login --github
+lpm login --gitlab
+
+# Custom registry: include the endpoint path
+lpm login --login-registry https://registry.example.com/npm --token '<token>'
+
+# LPM.dev Registry browser login
+lpm login
+```
+
+Choose the command for your target. See [authentication](/docs/infra/authentication) for credential sources, storage, and rotation.
+
+Custom registries need credentials for their endpoint. A public npm credential or `NPM_TOKEN` does not authorize an arbitrary custom registry.
+
+## Prepare the files
+
+A typical compiled package includes its output directory:
+
+```json title="package.json (relevant fields)"
+{
+  "name": "@acme/widget",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "files": ["dist"]
+}
+```
+
+Create the source, README, and license. Run your project's build before a local check:
+
+```bash
+lpm install
+lpm run build
 lpm publish --check
 ```
 
-Runs the network-free preparation path and stops before LPM.dev OIDC, skills staleness, and publish-permission lookups. Both preview modes update only the effective manifest used in memory when authored skills require `.lpm/skills`; they do not modify `package.json`. A real publish may persist the entry.
+Use your existing build script, or configure [lpm pack](/docs/dev/pack) for a library build. Publication creates its archive from the resulting files.
 
-## 5. Set a quality floor (optional)
+`files` limits the archive contents. The manifest, README, license files, and required entrypoints can also enter the archive.
 
-```bash
-lpm publish --min-score 80
-```
+Without `files`, `.npmignore` takes precedence over `.gitignore`. Explicitly included files still enter the secret scan, even if Git ignores them.
 
-Aborts an LPM.dev Registry publish if its normalized local score is below 80. The score is an aggregate, so use the failing rows from `lpm publish --check` to decide which improvements matter rather than treating the threshold as a substitute for specific project checks.
+If the package declares bundled dependencies, install them before publication. Missing dependencies and unsafe symlinks stop preparation.
 
-The local score is computed from readme presence/length, license declaration, types coverage, test signals, and maintenance heuristics, normalized over locally applicable weights. A package passing every local check reaches 100. Server-only checks are reported as `not_evaluated`, never fabricated as passes or counted as local failures. The Registry computes its separate final server score after upload. See [`lpm quality`](/docs/packages/quality) for the completed report of an already-published package.
+## Check before uploading
 
-If `package.json` declares `bundledDependencies` or `bundleDependencies`, install first so every requested direct and transitive package is available in the verified LPM layout. Bundled content counts toward tarball limits, secret scanning, and provenance. Missing packages or unsafe symlinks stop the publish.
-
-## 6. Publish
-
-```bash
-lpm publish
-```
-
-Pack → scan every final target artifact → quality report → confirmation prompt → upload. Skip the prompt with `-y` (good in CI).
-
-When CI must wait for public availability, use `--wait` for a Pool or Marketplace version:
-
-```bash
-lpm publish --wait
-```
-
-The command keeps upload success separate from the publication wait. If the wait fails, do not publish the same version again.
-
-The package starts in **private** distribution mode — only you (and anyone you grant access to) can install it. To make it discoverable or paid, flip the distribution mode in the LPM.dev Registry dashboard:
-
-| Mode | What it means |
+| Command | What happens |
 | --- | --- |
-| **Private** (default) | Only the publisher and granted users can install. Metadata is not public. |
-| **Pool** | Metadata is public. Installs gated to pool subscribers. Publisher earns a share of pool revenue. |
-| **Marketplace** | Installs require a license purchase. |
+| `lpm publish --check` | Builds the publication archive and checks it locally. No lifecycle scripts, registry requests, or uploads. |
+| `lpm publish --dry-run --ignore-scripts` | Checks the selected targets and credentials without lifecycle scripts or uploads. |
+| `lpm publish --dry-run --yes` | Runs publish lifecycle scripts and checks the selected targets without uploads. |
 
-Mode changes are **irreversible** — going public is a one-way door. See [Distribution mode](/docs/reference/glossary#distribution-mode).
+Local checks include package configuration, final archive secret scanning, authored skills, supplied provenance files, and applicable quality checks.
 
-## 7. (Optional) Provenance
+Real publication and dry-run can run these scripts in order: `prepublishOnly`, `prepack`, `prepare`, `postpack`, `publish`, and `postpublish`.
 
-In CI with an audience-`sigstore` OIDC token — GitHub Actions or GitLab CI:
+These scripts can change local files or contact external services. `--yes` grants script consent as well as skipping the publication prompt.
 
-```bash
-lpm publish --provenance
-lpm publish --npm --provenance
-```
+For LPM.dev Registry, dry-run can exchange a CI identity for temporary credentials and write authentication audit records. Use `--check` for checks without that exchange.
 
-Generates a Sigstore-signed attestation that proves which workflow built the tarball and which commit it came from. With `--npm`, LPM CLI attaches npm's expected `{name}-{version}.sigstore` bundle in the publish payload. Consumers can verify provenance via the audit pipeline or the registry UI.
+## Publish once
 
-`--provenance` fails loud (non-zero exit) if no usable Sigstore-audience token is found or if Sigstore signing fails — it never silently publishes without provenance. Useful as a hard gate in security-critical packages.
-
-On GitHub Actions, enable `permissions: id-token: write` on the job. On GitLab CI, mint `SIGSTORE_ID_TOKEN` via the `id_tokens` block with `aud: sigstore`. Other platforms aren't supported.
-
-For npm-compatible targets, provenance requires public access. LPM CLI's npm default is public for scoped and unscoped packages. If repo config enables provenance but a one-off publish should skip it, pass `--no-provenance`.
-
-## 8. Publishing elsewhere
-
-`lpm publish` defaults to the LPM.dev Registry. To target other registries:
+After the checks pass:
 
 ```bash
-lpm publish --npm                                 # registry.npmjs.org
-lpm publish --github                              # GitHub Packages
-lpm publish --gitlab                              # GitLab Packages
-lpm publish --publish-registry https://r.example.com   # custom npm-compatible
+lpm publish --yes
 ```
 
-You must have auth for the selected target. `lpm login --npm` opens the browser login for npm.
+The command uses the configured targets. For one invocation, select a target explicitly:
 
-GitHub and GitLab login can use environment tokens or existing `gh` and `glab` sessions. These sources are not copied into LPM storage.
+```bash
+lpm publish --github --yes
+```
 
-Custom registries use `lpm login --login-registry <URL> --token <T>`. For multiple targets, set `lpm.json > publish.registries`. See [`lpm.json`](/docs/reference/lpm-json#publish).
+For an LPM.dev Registry quality floor, use these commands instead of the ordinary check and publish:
 
-## Common pitfalls
+```bash
+lpm publish --lpm --check --min-score 80
+lpm publish --lpm --yes --min-score 80 --wait
+```
 
-- **`init -y` defaults aren't directory-derived.** Under `-y`, the target is the LPM.dev Registry, owner is your `lpm whoami` profile username (or the literal `"username"` if offline / not logged in), and **name is literally `"package"`** (not your directory's name). The published shape becomes `@lpm.dev/<your-username>.package` — pass `--owner` / `--name` or edit before publishing.
-- **Quality score below 80 by default = no readme, no license, no types.** Easy fix; usually a 5-minute task.
-- **Distribution mode is irreversible.** Pool / marketplace are one-way doors. Stay private until you're sure.
-- **Generated provenance only works in OIDC-capable CI.** Don't pass `--provenance` from a developer laptop. For npm-compatible targets with a pre-generated bundle, use `--provenance-file <PATH>`.
+There is no default minimum score. `--min-score` applies only to that invocation. The Registry calculates its final report after upload.
+
+`--wait` waits for the uploaded release under its current distribution rules. It does not select a distribution mode.
+
+### Publish to multiple registries
+
+Use a name for each registry:
+
+```json title="lpm.json"
+{
+  "publish": {
+    "registries": ["npm", "lpm"],
+    "npm": { "name": "@acme/widget", "access": "public" },
+    "lpm": { "name": "@lpm.dev/acme.widget" }
+  }
+}
+```
+
+Authenticate both targets, then run the check and publication sequence. Each archive receives its target name. The source manifest keeps its original name.
+
+### Publish a prerelease
+
+Set `publish.npm.tag` to `next` before an npm-compatible prerelease:
+
+```bash
+lpm version 2.0.0-rc.1 --no-git-tag-version
+lpm publish --npm --check
+lpm publish --npm --yes
+```
+
+Ordinary [lpm publish](/docs/packages/publish) has no `--tag` flag. Use [lpm release publish](/docs/packages/release) for publication across selected workspace packages.
+
+## Publish from CI
+
+For npm, configure Trusted Publishing for the package, or provide a publish-capable `NPM_TOKEN` through the CI secret store.
+
+GitHub Actions needs `permissions: id-token: write`. Other supported CI providers can supply `NPM_ID_TOKEN` with audience `npm:registry.npmjs.org`.
+
+LPM CLI attempts the npm identity exchange first. If that exchange fails, it can use an available npm token.
+
+After the build:
+
+```bash
+lpm publish --npm --check --json
+lpm publish --npm --ignore-scripts --yes --json
+```
+
+For LPM.dev Registry, configure a trusted publisher for an existing package. GitHub Actions needs `permissions: id-token: write`.
+
+```bash
+lpm publish --lpm --check --json
+lpm publish --lpm --ignore-scripts --yes --wait --json
+```
+
+GitLab CI supplies `LPM_OIDC_TOKEN` with audience `https://lpm.dev`. A dry-run consumes that supplied assertion, so a later publication needs a fresh assertion.
+
+### Add provenance
+
+Replace the final publish command with:
+
+```bash
+lpm publish --npm --ignore-scripts --yes --provenance
+```
+
+Generated provenance requires a separate OIDC assertion with the Sigstore audience. GitHub Actions uses `id-token: write`. GitLab supplies `SIGSTORE_ID_TOKEN` with audience `sigstore`.
+
+A provenance identity does not authenticate publication to the registry. npm-compatible provenance also requires public access.
+
+If provenance cannot be generated, publication fails. Use `--no-provenance` to disable configured provenance for one run.
+
+## Choose LPM.dev distribution
+
+New packages start in Private distribution. The dashboard can request Free, Pool, or Marketplace distribution when the account meets the requirements.
+
+Public activation requires review. The package stays private until approval. Activated public modes cannot switch to another mode or return to Private.
+
+See [package distribution](/docs/packages/package-distribution) for access, eligibility, dependency restrictions, and review states.
+
+## Recover from a failed publication
+
+- **Invalid name or target:** Check the resolved names and registry configuration before another upload.
+- **Secret scan failure:** Remove the secret from the published files and rotate an exposed credential.
+- **Version already exists:** Inspect that version before choosing a new version with [lpm version](/docs/packages/version).
+- **One target failed:** Retry only that target. Successful uploads do not roll back across registries.
+- **A post-publish script or publication wait failed:** The upload can already exist. Inspect the registry before retrying.
+- **Trusted Publisher exchange failed:** Check the package's trust configuration, workflow identity, and token audience.
 
 ## See also
 
-- [`lpm publish`](/docs/packages/publish) — full flag reference
-- [`lpm quality`](/docs/packages/quality) — what the score covers
-- [`lpm init`](/docs/packages/init) — manifest scaffolding
-- [Authentication](/docs/infra/authentication) — token management
+- [lpm publish](/docs/packages/publish) — complete options and target behavior
+- [lpm init](/docs/packages/init) — package initialization
+- [lpm release](/docs/packages/release) — workspace publication
+- [lpm quality](/docs/packages/quality) — completed quality reports
+- [CI/CD setup](/docs/guides/ci-cd-setup) — reproducible installs and credentials
+- [Using with Swift](/docs/guides/using-with-swift) — Swift publication
