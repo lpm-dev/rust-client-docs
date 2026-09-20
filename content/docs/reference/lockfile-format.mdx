@@ -1,313 +1,288 @@
 ---
 title: lpm.lock format
-description: "TOML lockfile schema — what every field means and why it's there."
+description: "Read the TOML lockfile fields, exact dependency targets, workspace records, and validation rules."
 ---
 
-`lpm.lock` is the human-readable, git-diffable lockfile written next to `package.json` for a standalone project or at the root of a workspace. It pins every transitive dependency by exact version, source identity, SRI integrity hash, platform metadata, registry-signature evidence, and any cryptographically verified provenance evidence, so the next install can reproduce the same graph without trusting ambient registry state.
+`lpm.lock` records the exact dependency graph for a project or workspace. LPM CLI uses this file for repeatable installs.
 
-The current lockfile is TOML-only because the binary format cannot represent exact package instances. LPM CLI removes a stale [`lpm.lockb`](/docs/reference/lockb-format).
+The current schema is **13**. It uses TOML only. Commit `lpm.lock` with the manifest changes that produced it.
 
-## File location
-
-Standalone project: `<project-root>/lpm.lock`
-
-Workspace: `<workspace-root>/lpm.lock`. Member commands read their importer projection from this file; successful recursive migration removes legacy member lockfiles.
-
-## Top-level shape
-
-```toml title="lpm.lock"
-[metadata]
-lockfile-version = 13
-resolved-with = "greedy-fusion"
-# Only present when the default linker auto-switched to isolated
-# after detecting incompatible peer requirements.
-auto-isolated-peer-conflicts = true
-
-[importers.".".dependencies]
-react = "^19.0.0"
-
-[importers.".".dev-dependencies]
-vite = "^6.0.0"
-
-[patches."left-pad@1.3.0"]
-path = "patches/left-pad@1.3.0.patch"
-sha256 = "sha256-..."
-original-integrity = "sha512-..."
-
-[provenance."react@19.0.0#npm-..."]
-subject-name = "pkg:npm/react@19.0.0"
-subject-sha512 = "..."
-integrated-time-secs = 1740000000
-log-id = "..."
-log-index = 123456
-bundle-sha256 = "sha256-..."
-
-[provenance."react@19.0.0#npm-...".snapshot]
-present = true
-publisher = "github:facebook/react"
-workflowPath = ".github/workflows/publish.yml"
-workflowRef = "refs/tags/v19.0.0"
-attestation_cert_sha256 = "sha256-..."
-
-[[packages]]
-instance-id = "d7d8fbc52d7d998935c243be78e563594fcb08459d8b71dfdf96c60ed307a4e8"
-name = "react"
-version = "19.0.0"
-source = "registry+https://registry.npmjs.org"
-integrity = "sha512-..."
-dependencies = ["scheduler@0.25.0"]
-tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
-registry-published-at = "2025-01-01T00:00:00.000Z"
-node-engine = ">=18"
-
-[[packages.registry-signatures]]
-keyid = "SHA256:..."
-sig = "MEUCIQ..."
-
-[packages.dependency-targets]
-scheduler = "58b7a5e0c3f25598fdbd56da146a1841b4ce2b78f359414cd782817437512560"
-
-[[packages]]
-instance-id = "58b7a5e0c3f25598fdbd56da146a1841b4ce2b78f359414cd782817437512560"
-name = "scheduler"
-version = "0.25.0"
-source = "registry+https://registry.npmjs.org"
-integrity = "sha512-..."
-os = ["darwin", "linux"]
-cpu = ["arm64", "x64"]
-libc = ["glibc"]
-optional = true
-
-[[packages]]
-instance-id = "8d7fd69910cda17e7de89f87e3eed10a3f182ecf34ae46d2592046ae553f5296"
-name = "wa-sqlite"
-version = "1.0.0"
-source = "git+https://github.com/rhashimoto/wa-sqlite.git#779219540f66cecaa159da32b3b8936697ba10a7"
-integrity = "sha512-..."
-
-# Only present when at least one root dep uses npm:<target>@<range>
-[root-aliases]
-my-react-alias = "react"
-
-# Only present when the eager peer-drain pass synthesized installs to
-# satisfy unmet peerDependencies (default-on under autoInstallPeers).
-ambient-peer-installs = ["loose-envify"]
+```bash
+lpm install
+git diff -- lpm.lock
+lpm install --frozen-lockfile
 ```
 
-The example above shows the standalone package table. A workspace union replaces `[[packages]]` with content-addressed rows and gives every importer an explicit projection:
+Use [Lockfiles](/docs/packages/lockfile) for everyday workflows. This page describes the file fields and their relationships.
 
-```toml title="workspace lpm.lock"
+## Location and authority
+
+| Project | Location |
+| --- | --- |
+| Standalone package | `<project-root>/lpm.lock` |
+| Workspace | `<workspace-root>/lpm.lock` |
+
+A workspace lockfile contains an **importer** for the root and each retained member. An importer records that project's manifest inputs and selected packages.
+
+Member commands read their importer from the root file. A successful recursive migration removes obsolete member lockfiles.
+
+LPM CLI reads authoritative TOML for installs. It does not fall back to a binary companion if TOML is missing or invalid.
+The file limit is **64 MiB**, for both reads and writes.
+
+## File structure
+
+The following excerpts illustrate field placement. Placeholder hashes and omitted rows make them unsuitable as complete lockfiles.
+Let [lpm install](/docs/packages/install) generate the file.
+
+```toml title="Standalone lpm.lock excerpt"
+# Root-level arrays go before any table header.
+ambient-peer-installs = ["react"]
+
 [metadata]
 lockfile-version = 13
 resolved-with = "greedy-fusion"
 
 [importers."."]
-locked-packages = ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+auto-install-peers = true
 
-[importers."packages/web"]
-locked-packages = [
-  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-]
+[importers.".".dependencies]
+widget = "^1.0.0"
 
-[importers."packages/web".dependencies]
-react = "^19.0.0"
-
-[workspace-packages."sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
-instance-id = "d7d8fbc52d7d998935c243be78e563594fcb08459d8b71dfdf96c60ed307a4e8"
-name = "react"
-version = "19.0.0"
+[[packages]]
+instance-id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+name = "widget"
+version = "1.0.0"
 source = "registry+https://registry.npmjs.org"
 integrity = "sha512-..."
+dependencies = ["helper@2.0.0"]
+
+[packages.dependency-targets]
+helper = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[root-resolutions.widget]
+instance-id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+package = "widget"
+version = "1.0.0"
+source = "registry+https://registry.npmjs.org"
 ```
+
+| Top-level field | Purpose |
+| --- | --- |
+| `metadata` | Schema version, resolver name, and automatic linker selection. |
+| `importers` | Manifest snapshots and workspace package selections. |
+| `packages` | Package rows for a standalone graph. |
+| `workspace-packages` | Shared package rows for a workspace graph. |
+| `root-resolutions` | Exact packages linked at the project root. |
+| `root-aliases` | Root dependency names that differ from canonical package names. |
+| `ambient-peer-installs` | Automatically installed peers exposed at the project root. |
+| `patches` | Patch paths, patch hashes, and original package integrity. |
+| `catalogs` | Resolved catalog entries. |
+| `provenance` | Previously verified publication evidence. |
 
 ## `[metadata]`
 
-| Field | Type | Notes |
+| Field | Type | Meaning |
 | --- | --- | --- |
-| `lockfile-version` | u32 | Schema version. Current: `13`. Version `11` added local manifest fingerprints. Version `12` added structured peer edges. Version `13` added exact package-instance identities for rows, edges, and roots. |
-| `resolved-with` | string | Which resolver produced this file (e.g. `"greedy-fusion"`, `"pubgrub"`). Informational. |
-| `auto-isolated-peer-conflicts` | bool | Present only when a default-hoisted install detected incompatible peer requirements and auto-switched the project to isolated layout. Warm installs read this before the resolver runs so the install hash and linker stay on the peer-preserving layout. Explicit linker config ignores this flag. |
+| `lockfile-version` | Integer | File schema version. Current: `13`. |
+| `resolved-with` | String, optional | Resolver name, such as `greedy-fusion` or `pubgrub`. |
+| `auto-isolated-peer-conflicts` | Boolean | `true` when peer conflicts caused automatic isolated linking. Omitted when false. |
+
+The automatic linker record preserves the layout on later installs. An explicit linker configuration takes precedence.
 
 ## `[importers]`
 
-```toml
-[importers.".".dependencies]
-react = "^19.0.0"
+A standalone project uses `importers."."`. A workspace also uses member paths, such as `importers."packages/web"`.
+Importer paths must stay within the lockfile root.
 
-[importers.".".dev-dependencies]
-vite = "^6.0.0"
+Frozen installs compare these manifest inputs before they reuse the graph:
 
-[importers.".".lpm-overrides]
-"left-pad" = "1.3.0"
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `dependencies` | Table | Declared production dependencies. |
+| `dev-dependencies` | Table | Declared development dependencies. |
+| `optional-dependencies` | Table | Declared optional dependencies. |
+| `peer-dependencies` | Table | Declared peer dependencies. |
+| `lpm-overrides` | Table | Project `lpm.overrides`, with catalog references resolved. |
+| `overrides` | Table | npm overrides, with catalog references resolved. |
+| `resolutions` | Table | Yarn resolutions, with catalog references resolved. |
+| `catalogs` | Nested table | Catalog ranges visible to the importer. |
+| `patches-fingerprint` | String, optional | Fingerprint of the project's patch declarations. |
+| `peer-dependency-rules-fingerprint` | String, optional | Fingerprint of nondefault peer rules. |
+| `auto-install-peers` | Boolean, optional | Effective automatic peer-install setting. |
+| `workspace-root-peer-providers-fingerprint` | String, optional | Fingerprint of the root packages that provide workspace peers. |
 
-[importers.".".catalogs.default]
-react = "^19.0.0"
+Workspace importers also carry their own graph records:
 
-[importers."."]
-patches-fingerprint = "sha256-..."
-peer-dependency-rules-fingerprint = "sha256-..."
-auto-install-peers = true
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `locked-packages` | String array | Package IDs selected from `workspace-packages`. |
+| `root-resolutions` | Table | Exact root selections for this importer. |
+| `root-aliases` | Table | Root aliases for this importer. |
+| `ambient-peer-installs` | String array | Automatic peers exposed in this importer's root. |
+| `patches` | Table | This importer's patch evidence. |
+| `catalog_resolutions` | Nested table | Resolved catalog entries. This field uses an underscore. |
+| `provenance` | Table | This importer's verified publication evidence. |
+| `auto-isolated-peer-conflicts` | Boolean | Automatic isolated linking for this importer. |
+
+## Package rows
+
+Standalone files use `[[packages]]`. Workspace files use the same fields under `[workspace-packages."sha256:<digest>"]`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `instance-id` | String | Required 64-character lowercase hexadecimal ID for this exact graph instance. |
+| `name` | String | Canonical package name. |
+| `version` | String | Exact package version. |
+| `source` | String, optional | Registry, tarball, Git, directory, or link source identity. |
+| `integrity` | String, optional | Package archive SRI hash. Required for remote tarball and GitHub rows. |
+| `unpacked-size` | Positive integer, optional | Registry-reported unpacked bytes. Used as a download scheduling hint. |
+| `manifest-fingerprint` | String, optional | Semantic manifest hash for mutable directory and link sources. |
+| `dependencies` | String array | Dependency-local names and selected versions or source IDs. |
+| `dependency-targets` | Table | Exact target instance for each dependency-local name. |
+| `alias-dependencies` | Array of string pairs | Local dependency name and canonical target name. |
+| `peer-edges` | Table array | Resolved peer identities. |
+| `peer-targets` | Table | Exact target instance for each peer-local name. |
+| `os` | String array | Operating-system restrictions. |
+| `cpu` | String array | CPU restrictions. |
+| `libc` | String array | C library restrictions. |
+| `optional` | Boolean | `true` when only optional paths reach the package. |
+| `node-engine` | String, optional | The package's `engines.node` requirement. |
+| `tarball` | String, optional | Cached archive URL for a registry package. |
+| `registry-signatures` | Table array | Registry signatures, with `keyid` and `sig` fields. |
+| `registry-published-at` | String, optional | Publication timestamp used for registry signing-key checks. |
+
+Empty collections and most absent optional fields are omitted. Legacy files can contain `peers`; current writers use `peer-edges` and `peer-targets`.
+
+### Sources and integrity
+
+Common source forms include:
+
+```text
+registry+https://registry.npmjs.org
+tarball+https://example.com/package.tgz
+git+https://github.com/owner/repo.git#<40-character-commit>
+directory+<path>
+link+<path>
 ```
 
-Importer snapshots record the manifest inputs that must match before a frozen install can replay the lockfile. A standalone lockfile uses `"."`. A workspace union also uses member-relative keys such as `"packages/web"`; paths must remain safely below the lockfile root.
+The importer keeps the declared range or Git reference. The package row records the selected version and immutable remote source.
+Root replay checks both source kind and source identity. A registry declaration cannot select a Git row with matching name and version.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `dependencies` | table | `package.json > dependencies` exactly as declared. |
-| `dev-dependencies` | table | `package.json > devDependencies` exactly as declared. |
-| `optional-dependencies` | table | `package.json > optionalDependencies` exactly as declared. |
-| `peer-dependencies` | table | `package.json > peerDependencies` exactly as declared. |
-| `lpm-overrides` | table | `package.json > lpm.overrides` after catalog references are resolved. |
-| `overrides` | table | npm-style `package.json > overrides` after catalog references are resolved. |
-| `resolutions` | table | yarn-style `package.json > resolutions` after catalog references are resolved. |
-| `catalogs` | nested table | Catalog ranges visible to this importer. |
-| `patches-fingerprint` | string | Hash of `lpm.patchedDependencies`; absent when no patches are declared. |
-| `peer-dependency-rules-fingerprint` | string | Hash of `lpm.peerDependencyRules`; absent when default/empty. |
-| `auto-install-peers` | bool | Effective `autoInstallPeers` value captured for frozen replay. |
-| `workspace-root-peer-providers-fingerprint` | string | Exact workspace-root provider graph used when satisfying this importer's peers. |
-| `locked-packages` | string[] | Sorted SHA-256 IDs in `workspace-packages` that form this importer's package closure. Workspace unions only. |
-| `root-aliases` | table | Importer-local npm alias links. |
-| `root-resolutions` | table | Importer-local exact root package selections. |
-| `ambient-peer-installs` | string[] | Importer-local peers surfaced at its `node_modules` root. |
-| `patches` | table | Importer-local patch evidence. |
-| `catalog_resolutions` | nested table | Importer-local resolved catalog snapshot. |
-| `provenance` | table | Importer-local verified provenance evidence. |
-| `auto-isolated-peer-conflicts` | bool | Whether this importer automatically selected isolated linking for peer conflicts. |
+Directory and link rows require `manifest-fingerprint = "sha256-<64-character-digest>"`. They cannot carry archive `integrity`.
+LPM CLI checks the local manifest's name, version, and semantic fingerprint before reuse.
+
+Registry packages normally carry an integrity hash. `--strict-integrity` rejects a registry package without one; otherwise first retrieval can establish the hash.
+See [lpm install](/docs/packages/install) for integrity policy.
+
+The `tarball` field is a URL hint for registry packages. A non-registry source with this field is invalid.
+URL hints remain subject to download safety checks; they do not replace source identity or integrity checks.
+
+### Dependency and peer targets
+
+```toml title="Package row excerpt"
+dependencies = ["my-react@19.0.0"]
+alias-dependencies = [["my-react", "react"]]
+
+[packages.dependency-targets]
+my-react = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[packages.peer-edges]]
+local-name = "react"
+target-name = "react"
+target-version = "19.0.0"
+# Optional source identity:
+# target-wrapper-id = "<source-id>"
+
+[packages.peer-targets]
+react = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+```
+
+A dependency entry uses `<local-name>@<version>`. For local, tarball, or Git targets, the suffix can be a canonical source ID.
+The matching exact target selects the package instance.
+
+Dependency-target keys must match dependency-local names. Peer-target keys must match peer-local names.
+Each target must exist in the same standalone graph or importer selection.
+
+Packages can share a name, version, and archive but need different instances because their dependency or peer targets differ.
+Missing, ambiguous, or inconsistent targets fail validation.
+
+### Platform and engine checks
+
+LPM CLI applies `os`, `cpu`, and `libc` restrictions again when it reuses the lockfile.
+It skips incompatible optional packages. Incompatible required packages fail the install.
+
+Dependency Node.js requirements are checked against the effective runtime and `engine-strict` setting.
+See [npm compatibility](/docs/packages/npm-compatibility).
+
+## `[root-resolutions]` and aliases
+
+Each root selection contains these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `instance-id` | Exact selected graph instance. Required in schema 13. |
+| `package` | Canonical package name. |
+| `version` | Exact selected version. |
+| `source` | Source identity, when present. |
+
+The table key is the name exposed in `node_modules`. The entry must agree with its target row.
+The same shape applies to `importers.<path>.root-resolutions`.
+
+`root-aliases` maps local names to canonical names. For example:
+
+```toml
+[root-aliases]
+my-react = "react"
+```
+
+`ambient-peer-installs` lists automatic peers exposed at the root even when the manifest does not declare them as direct dependencies.
+The corresponding package rows and exact root selections remain necessary.
 
 ## `[workspace-packages]`
 
-Workspace lockfiles store the union graph as tables keyed by `sha256:<hex>`. The digest includes each exact package instance and its exact edge targets.
+Workspace files share package rows across importers. Each row key is `sha256:<digest>` and binds the row contents, including exact edge targets.
 
-Two rows can share one package name, version, and source. They remain separate when their dependency or peer contexts are different.
+```toml title="Workspace lpm.lock excerpt"
+[importers."packages/web"]
+locked-packages = ["sha256:<row-digest>"]
 
-Every `importers.<path>.locked-packages` entry must reference an existing row. The reader rejects unsafe importer paths, duplicate IDs inside one importer, unreferenced union rows, content-address mismatches, and ambiguous package identities inside a projection. These checks run before commands consume the graph.
+[workspace-packages."sha256:<row-digest>"]
+instance-id = "<64-character-instance-id>"
+name = "react"
+version = "19.0.0"
+source = "registry+https://registry.npmjs.org"
+integrity = "sha512-..."
+```
 
-Projecting an importer rebuilds the standalone view expected by install and read-only commands: its package rows, root aliases and selections, ambient peers, patches, catalogs, provenance, and automatic linker state. Other importers' rows remain invisible.
+Each importer must select every package needed by its graph. Commands for one member see only that selection.
+
+Validation rejects unsafe importer paths, duplicate selections, missing rows, unreferenced rows, incorrect content addresses, and inconsistent exact targets.
 
 ## `[patches]`
 
 ```toml
 [patches."left-pad@1.3.0"]
 path = "patches/left-pad@1.3.0.patch"
-sha256 = "sha256-..."
+sha256 = "sha256-<patch-digest>"
 original-integrity = "sha512-..."
 ```
 
-Patch records bind `package.json > lpm.patchedDependencies` to the exact patch file bytes LPM CLI is allowed to replay. The table key is the exact patched package selector (`<name>@<version>`).
+The key identifies the exact package version. `path` is relative to the project root.
+`sha256` binds the patch bytes; `original-integrity` binds the original package archive.
+An install fails if either binding does not match. See [lpm patch](/docs/packages/patch).
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `path` | string | Patch file path relative to the project root. |
-| `sha256` | string | SHA-256 digest of the patch file contents. Install hard-errors if the current file hash differs from this value. |
-| `original-integrity` | string | SRI integrity of the pristine package bytes the patch was authored against. Install also verifies this before applying the patch. |
-
-`[patches]` is TOML-only metadata. Projects with patch records skip `lpm.lockb` and remove any stale binary companion.
-
-## `[[packages]]` and workspace package rows
-
-Standalone lockfiles use one `[[packages]]` entry per resolved package. Workspace unions use the same fields below each `[workspace-packages."sha256:..."]` key. Standalone entries are sorted by package identity; workspace rows are sorted by content address for deterministic diffs and minimal merge conflicts.
-
-GitHub packages use a commit-pinned `source` value and SHA-512 `integrity`. The user-written branch, tag, shorthand, or commit remains in the importer snapshot, while the package entry always records the resolved lowercase 40-character commit. This separation lets frozen and offline installs verify the manifest is unchanged while replaying immutable package bytes.
-
-Root replay checks the manifest source kind and identity. A registry range cannot select a GitHub row with the same name and version.
-
-Direct remote-tarball URLs must match exactly. Direct local paths must identify the same package or remain reachable through the declared local-source graph.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `instance-id` | string | Required 64-character lowercase hexadecimal ID for this exact graph instance. |
-| `name` | string | Package name (e.g. `react`, `@lpm.dev/owner.pkg`) |
-| `version` | string | Exact resolved version |
-| `source` | string \| absent | Typed source identity, such as `registry+https://registry.npmjs.org`, `tarball+https://…`, `directory+…`, `link+…`, or commit-pinned `git+https://github.com/…#<commit>`. Absent for packages without a known source. |
-| `integrity` | string \| absent | SRI integrity hash (`sha512-…`). Populated from registry metadata or computed for supported remote sources. Required and verified when replaying registry, remote tarball, and GitHub packages. |
-| `registry-signatures` | table[] | npm-compatible `dist.signatures` entries persisted as nested `[[packages.registry-signatures]]` tables. Skipped when absent. |
-| `registry-published-at` | string \| absent | Publish timestamp used to verify npm registry signing-key expiry without rehydrating package metadata. |
-| `os` | string[] | `package.json > os` restrictions for this version. Skipped when empty. |
-| `cpu` | string[] | `package.json > cpu` restrictions for this version. Skipped when empty. |
-| `libc` | string[] | `package.json > libc` restrictions for this version. Skipped when empty. |
-| `node-engine` | string \| absent | The package's `package.json > engines.node` constraint. Warm and frozen installs revalidate it against the effective Node.js version and `engine-strict` setting. |
-| `optional` | bool | Present as `true` when the package is reachable only through optional dependency edges. Used with platform filtering so warm installs can skip incompatible optional packages and fail incompatible required packages. |
-| `dependencies` | string[] | Direct deps as `<local_name>@<version>` entries. Skipped from output when empty. |
-| `dependency-targets` | table | Maps each dependency-local name to one exact `instance-id`. The keys must match `dependencies`. |
-| `alias-dependencies` | `[string, string][]` | npm-alias edges as `[local_name, target_canonical_name]` pairs. Only present when the package uses `npm:<target>@<range>` aliases. |
-| `peer-edges` | table[] | Structured peer edges with local name, target name, version, and optional source wrapper ID. |
-| `peer-targets` | table | Maps each peer-local name to one exact `instance-id`. The keys must match `peer-edges`. |
-| `tarball` | string \| absent | Tarball URL hint cached from resolve time. Speeds up the warm-install fast path by letting it skip the per-package metadata round-trip. Only valid for `Source::Registry` packages — pairing this hint with a non-Registry source is rejected at parse time. Absent on lockfiles produced before this hint shipped. |
-
-### `dependencies` format
+## `[catalogs]`
 
 ```toml
-dependencies = ["scheduler@0.25.0", "loose-envify@1.4.0"]
+[catalogs.default.react]
+specifier = "^19.0.0"
+version = "19.0.0"
+reference = "catalog:"
 ```
 
-`<local_name>@<version>` — the local-name is what the depending package writes in its own `dependencies` map. For non-aliased deps the local name equals the canonical registry name. For npm-alias deps (`npm:react@^19.0.0` masquerading as `react-canary`), the local name diverges from the target — see `alias-dependencies` below.
-
-For a local, tarball, or Git target, the value after `@` can be its canonical source ID. The matching `dependency-targets` entry remains authoritative.
-
-### Exact targets
-
-```toml
-[packages.dependency-targets]
-scheduler = "58b7a5e0c3f25598fdbd56da146a1841b4ce2b78f359414cd782817437512560"
-
-[[packages.peer-edges]]
-local-name = "react"
-target-name = "react"
-target-version = "19.0.0"
-
-[packages.peer-targets]
-react = "d7d8fbc52d7d998935c243be78e563594fcb08459d8b71dfdf96c60ed307a4e8"
-```
-
-Each exact target must reference a package row in the same standalone graph or importer projection. LPM CLI rejects missing, ambiguous, or inconsistent targets.
-
-Root selections also contain an `instance-id`. This field prevents a root link from selecting another row with the same package coordinates.
-
-Lockfile versions 1–12 do not contain these exact targets. Upgrade a standalone project with `lpm install` before offline or frozen use.
-
-For a workspace, run `lpm install --recursive` from the workspace root. This command creates exact projections for every retained importer.
-
-### `alias-dependencies` format
-
-```toml
-alias-dependencies = [["my-react", "react"]]
-```
-
-Each `[local_name, target_canonical_name]` records that the package depends on `my-react@<version>` (in `dependencies`) but the actual target is `react`. Used to compute the right `.lpm/<target>@<version>/` store path on link.
-
-### `tarball` field
-
-```toml
-tarball = "https://registry.npmjs.org/react/-/react-19.0.0.tgz"
-```
-
-A dist-URL hint cache for `Source::Registry` packages. Lets the warm-install fast path skip the per-package metadata round-trip. For non-Registry sources (`Source::Tarball`, `Source::Git`), the URL is part of source identity (lives inside the source variant) — pairing them with this field is rejected at parse time.
-
-### Platform fields
-
-```toml
-os = ["darwin", "linux"]
-cpu = ["arm64", "x64"]
-libc = ["glibc"]
-optional = true
-```
-
-LPM CLI records `os`, `cpu`, and `libc` restrictions from the package version's manifest. Empty arrays are omitted. Warm installs replay the same host filtering as fresh installs: incompatible optional packages are skipped; incompatible required packages fail loudly.
-
-The `optional = true` bit means this package is only reachable through optional dependency edges. It is what lets the lockfile fast path distinguish "safe to skip on this host" from "required package cannot run here."
-
-### Registry signatures
-
-```toml
-registry-published-at = "2025-01-01T00:00:00.000Z"
-
-[[packages.registry-signatures]]
-keyid = "SHA256:..."
-sig = "MEUCIQ..."
-```
-
-When npm metadata includes `dist.signatures`, LPM CLI persists the signature payloads and the version publish timestamp. Install-time signature verification can then run from the lockfile fast path without fetching the full package metadata again. The verifier still checks the package integrity hash and registry signing keys; the lockfile stores evidence, not a cached pass/fail verdict.
+Each resolved entry records its requested `specifier`, exact `version`, and original catalog `reference` (such as `catalog:`).
+Workspace importers store this shape under `catalog_resolutions`. Their `catalogs` field instead records declared catalog ranges.
+See [lpm catalog](/docs/packages/catalog).
 
 ## `[provenance]`
 
@@ -348,45 +323,48 @@ The reader rejects orphaned evidence, empty required fields, malformed digests, 
 
 `lpm.lock` is trusted project input. It stores derived evidence, not the original Sigstore bundle, so frozen replay does not rerun the certificate-chain, transparency-log, or signed-statement verification and cannot independently detect a sophisticated edit that changes all related derived fields consistently. Protect and review lockfile changes like source code. Online attestation-cache hits do rerun verification because that cache stores the original bundle bytes.
 
-## `[root-aliases]`
+## Ordering and review
 
-```toml
-[root-aliases]
-my-alias = "actual-package"
+Package rows sort by name, version, source identity, and instance ID. Workspace row tables sort by content address.
+Importer `locked-packages` entries follow package identity order, rather than digest order.
+Dependency arrays and evidence tables also have deterministic ordering.
+
+A dependency update can change several package rows, exact targets, root selections, and workspace content addresses.
+Review source changes, integrity changes, new dependencies, and publication evidence before you commit the file.
+
+## Schema upgrades and recovery
+
+`lockfile-version` identifies the file schema, rather than the CLI release. Older clients reject unsupported newer schemas.
+Frozen and offline installs require the current exact-instance graph.
+
+For an older file, run an online install before CI or offline use:
+
+```bash
+lpm install --no-frozen-lockfile
 ```
 
-Maps root-level npm-alias edges so warm installs reproduce the original `node_modules/<local>/` layout without re-resolving. Empty for projects without root-level aliases — and omitted entirely from output in that case (backwards-compatible with older lockfiles that pre-date alias support).
+For a workspace, refresh every retained importer from the root:
 
-## `ambient-peer-installs`
-
-```toml
-ambient-peer-installs = ["loose-envify", "scheduler"]
+```bash
+lpm install --recursive --no-frozen-lockfile
 ```
 
-Canonical names the resolver auto-installed at root scope to satisfy unmet `peerDependencies` (the eager peer-drain pass, on by default via `autoInstallPeers = true`). These packages are already in `[[packages]]` (they were resolved and extracted like any other dep) — this list carries the orthogonal signal *"surface them at `node_modules/<peer>/` even though they aren't in `pkg.dependencies`."* Symmetric with `[root-aliases]` — both are project-side install-orchestration metadata, not per-package state.
+Review and commit the result. If a merge produces an invalid file, restore a valid revision before you regenerate it.
+Do not repair hashes or exact targets by hand. [lpm doctor](/docs/infra/doctor) reports lockfile problems.
 
-Empty and omitted from output on the common no-auto-install path (project's `dependencies` block already covers every declared peer). See [Resolver](/docs/packages/resolver#peerdependencies-and-optionaldependencies) for the auto-install contract + toggle.
+## Legacy binary files
 
-## Determinism
+Older workflows can leave `lpm.lockb`. Migration without installation can also produce a version 12 staging file and a binary companion.
+The subsequent online install creates the current TOML graph.
 
-The on-disk file is deterministic by construction:
-
-- `[[packages]]` entries are sorted by name
-- `[workspace-packages]` rows are sorted by content address
-- importer package IDs are sorted and deduplicated
-- `dependencies` arrays inside each package are sorted
-- `[provenance]` entries are sorted by their full package/source key
-- Optional fields are omitted when empty / `None` rather than written as null
-
-This makes `git diff lpm.lock` actionable: a new dep adds entries, a version bump rewrites a single package's fields, and you can spot supply-chain surprises without parsing.
-
-## Schema versioning
-
-`lockfile-version` is schema-versioned, not tool-versioned. A version changes only when the file structure changes. Older clients reject a newer schema.
+LPM CLI retains binary validation and repair support for those files. Current schema 13 cannot use the binary format.
+When LPM CLI writes the current lockfile, it removes an obsolete binary companion. Commit that removal with the TOML update.
+See [lpm migrate](/docs/packages/migrate#converted-files-and-installation) for staging and rollback behavior.
 
 ## See also
 
-- [`lpm.lockb` format](/docs/reference/lockb-format) — companion binary lockfile
-- [Lockfile concept](/docs/packages/lockfile) — design overview, when each file is read
-- [`lpm install --offline`](/docs/packages/install) — installs entirely from the lockfile
-- [`lpm install --strict-integrity`](/docs/packages/install) — disallow trust-on-first-use for tarball-URL deps
+- [Lockfiles](/docs/packages/lockfile)
+- [lpm install](/docs/packages/install)
+- [Workspaces](/docs/packages/workspaces)
+- [Resolver](/docs/packages/resolver)
+- [lpm doctor](/docs/infra/doctor)
