@@ -6,6 +6,7 @@ description: "Update LPM CLI on the stable or nightly release channel."
 Use `lpm self-update` to update LPM CLI or switch release channels. The command detects the installation method and uses its update process.
 
 ```bash
+lpm self-update [OPTIONS]
 lpm self-update [--channel <stable|nightly>] [--refresh] [--json]
 ```
 
@@ -39,12 +40,12 @@ An explicit `--channel` value changes the channel. A switch from nightly to stab
 
 | Installation method | Stable | Nightly |
 | --- | --- | --- |
-| npm | Supported | Supported |
+| npm, pnpm, Bun, Yarn, Volta | Supported | Supported |
 | Standalone | Supported | Supported |
 | Homebrew | Supported | Not supported |
 | Cargo | Supported | Not supported |
 
-Homebrew and Cargo installations return an error for `--channel nightly`. Use npm or a standalone installation for nightly releases.
+Homebrew and Cargo installations return an error for `--channel nightly`. Use a supported registry package manager or a standalone installation for nightly releases.
 
 ## How the update runs
 
@@ -52,14 +53,14 @@ LPM CLI identifies the installation method from the current executable. Normal o
 
 | Installation method | Normal output | With `--json` |
 | --- | --- | --- |
-| npm | Runs a version-pinned npm install | Returns the command and does not run it |
+| npm, pnpm, Bun, Yarn, Volta | Runs a version-pinned global package update | Returns the command and does not run it |
 | Homebrew | Runs `brew upgrade lpm` | Returns the command and does not run it |
 | Cargo | Verifies the release, then installs its source commit | Verifies the release and returns the commit-pinned command |
 | Standalone | Verifies and replaces the binary | Verifies and replaces the binary |
 
 > **CAUTION:** `--json` is not a universal preview. It applies the update for a standalone installation.
 
-If the installed version is current, the command makes no change. If the installed version is newer, the command also makes no change.
+On the same channel, a current or newer installed version needs no update. An explicit channel switch can install a lower version.
 
 ## Recipes
 
@@ -99,13 +100,17 @@ The flag also bypasses the one-hour cooldown after a failed lookup. It does not 
 
 ### Get an external update plan
 
-> **CAUTION:** Use this recipe only for npm, Homebrew, or Cargo installations. A standalone installation applies the update.
+> **CAUTION:** Use this recipe for an installation owned by an external package manager. A standalone installation applies the update.
 
 ```bash
 lpm self-update --json
 ```
 
-For an external installation method, read `install_method` and `update_command`. Then run the returned command in your normal update environment.
+For an external installation method, read `install_method`, `update_shell`, and `update_command`. Run the returned command in the specified shell.
+
+For programmatic execution, use `update_program` with the `update_args` array. The plan uses an absolute manager path and preserves names such as `cargo`.
+
+Plan creation checks the current launcher and its owning manager. It does not reserve the installation for a later command.
 
 There is no universal dry-run flag for `lpm self-update`.
 
@@ -115,6 +120,10 @@ There is no universal dry-run flag for `lpm self-update`.
 | --- | --- |
 | Homebrew | `brew upgrade lpm` |
 | npm | `npm install -g @lpm-registry/cli@<version>` |
+| pnpm | `pnpm add --global @lpm-registry/cli@<version>` |
+| Bun | `bun add --global @lpm-registry/cli@<version>` |
+| Yarn | `yarn global add @lpm-registry/cli@<version>` |
+| Volta | `volta install @lpm-registry/cli@<version>` |
 | Cargo | `cargo install --git https://github.com/lpm-dev/rust-client --rev <verified-source-commit> lpm-cli --force --locked` |
 | Standalone | `lpm self-update` |
 
@@ -148,13 +157,21 @@ LPM CLI uses a different trust model for each installation method.
 
 LPM CLI resolves each external manager from a filtered `PATH`. The manager must use an absolute, non-project path with trusted ownership.
 
+The filter removes project paths, relative paths, `node_modules/.bin` directories, and directories without trusted write permissions. LPM CLI also excludes directories with project-owned or untrusted executable targets.
+
+These rules protect interpreter and helper lookup. Trusted directory aliases resolve to their checked targets. Helper symlink routes must also have trusted write permissions.
+
+On Windows, helper entries that are symbolic links or other reparse points cause LPM CLI to exclude their directory. Ordinary executable files and command shims remain supported.
+
+If a manager or interpreter becomes unavailable, use a trusted global installation and retry. Do not add a shared-writable directory to bypass this check.
+
 LPM CLI verifies the manager file before it runs the update. It also verifies the installed LPM CLI version after the update.
 
 These checks do not add independent artifact attestation to registry managers or Homebrew. Their configured repositories remain part of the trust boundary.
 
 Cargo ownership detection reads the local Cargo install metadata. Stale metadata does not prove the build provenance of the current executable.
 
-LPM CLI rejects intermediate manager and configuration symlinks. It accepts a leaf manager symlink only for a target that passes the same checks.
+LPM CLI rejects intermediate configuration symlinks. It accepts manager symlinks only when their paths and targets pass the same trust checks.
 
 For manager ownership detection, `XDG_CONFIG_HOME` must resolve inside the account home. LPM CLI ignores an external configuration root.
 
@@ -164,7 +181,7 @@ LPM CLI reads the npm `latest` or `nightly` tag first. If that lookup fails, it 
 
 Successful `lpm self-update` lookups remain cached for 10 minutes. Stable and nightly use separate cache state in `~/.lpm/update-check.json`.
 
-A failed lookup starts a one-hour cooldown for that channel. During the cooldown, the command returns the previous error state without a network request.
+A failed lookup starts a one-hour cooldown for that channel. A later successful lookup, including a not-modified response, clears that failure state. During the cooldown, the command returns the previous error state without a network request.
 
 Use `--refresh` to bypass the successful-result cache and the failure cooldown.
 
@@ -192,11 +209,15 @@ For a standalone installation, LPM CLI downloads the release files and completes
 2. It verifies that the signed Git reference and source commit match the requested version.
 3. It verifies that the signature time matches the GitHub release time.
 4. It verifies the checksum of the manifest.
-5. It verifies the downloaded binary against the manifest.
+5. It verifies the downloaded release asset against the manifest.
 
 If any verification step fails, LPM CLI refuses the update and retains the current binary.
 
-The updater attempts to copy the current binary to `<binary>.previous`. This backup is best-effort and can be absent after a permission error.
+On Linux and Windows, the updater attempts to copy the current binary to `<binary>.previous`. This backup is best-effort and can be absent.
+
+On macOS, the updater replaces the app bundle and its command links. It keeps temporary rollback copies during replacement and removes them after success.
+
+If macOS replacement or final verification fails, the updater attempts to restore those copies. It does not retain a permanent `.previous` binary.
 
 ### Supported standalone targets
 
@@ -210,6 +231,10 @@ The updater attempts to copy the current binary to `<binary>.previous`. This bac
 There is no standalone Linux ARM64 musl asset. On that platform, [install from source](/docs/installation#from-source-cargo).
 
 ### macOS app bundle compatibility
+
+The macOS release asset is a ZIP, such as `lpm-darwin-arm64.zip`. Its attestation records the ZIP checksum, not the extracted executable checksum.
+
+Extraction and each system verification command have a 60-second deadline. Each output stream has a 1 MiB limit. A timeout or oversized response fails the update.
 
 The updater accepts signed app bundles with and without the optional application icon. It still checks required files, code signatures, notarization, and the signing identity. Removing a resource covered by the app signature causes verification to fail.
 
@@ -231,7 +256,9 @@ The installer preserves saved credentials and configuration. It retains the [ins
 
 If verification fails, do not replace the current binary manually with the rejected download. Retry later or install a trusted exact version.
 
-If the new binary cannot start, look for `<binary>.previous` beside it. Restore that backup manually, or reinstall an exact release.
+On Linux or Windows, if the new binary cannot start, look for `<binary>.previous` beside it. Restore that backup or reinstall an exact release.
+
+On macOS, if recovery fails, reinstall a trusted release with the installer.
 
 The standalone updater does not provide an automatic rollback command. See [Installation](/docs/installation) for exact-version and source installations.
 
@@ -272,13 +299,14 @@ LPM CLI terminates the manager process group after errors and timeouts. On Unix,
   "cache_hit": false,
   "channel": "stable",
   "target_channel": "stable",
-  "channel_changed": false
+  "channel_changed": false,
+  "duration_ms": 120
 }
 ```
 
 ### External update plan
 
-For npm, Homebrew, and Cargo, JSON output reports the update command but does not run it:
+For external package managers, JSON output reports a verified update plan without running it:
 
 ```json
 {
@@ -287,11 +315,18 @@ For npm, Homebrew, and Cargo, JSON output reports the update command but does no
   "latest": "0.72.0",
   "up_to_date": false,
   "install_method": "npm",
-  "update_command": "npm install -g @lpm-registry/cli@0.72.0",
+  "update_command": "/usr/local/bin/npm install -g @lpm-registry/cli@0.72.0",
+  "update_shell": "posix",
+  "update_program": "/usr/local/bin/npm",
+  "update_args": ["install", "-g", "@lpm-registry/cli@0.72.0"],
+  "applied": false,
+  "launcher_verified": true,
+  "manager_target_verified": true,
   "cache_hit": false,
   "channel": "stable",
   "target_channel": "stable",
-  "channel_changed": false
+  "channel_changed": false,
+  "duration_ms": 120
 }
 ```
 
@@ -312,6 +347,7 @@ For a standalone installation, JSON output applies the update and includes its v
   "channel": "stable",
   "target_channel": "stable",
   "channel_changed": false,
+  "duration_ms": 2400,
   "verified": true,
   "attestation": {
     "publisher": "<verified publisher>",
@@ -322,8 +358,8 @@ For a standalone installation, JSON output applies the update and includes its v
     "log_id": "<transparency log ID>",
     "leaf_cert_sha256": "<certificate SHA-256>",
     "manifest_sha256": "<manifest SHA-256>",
-    "asset_sha256": "<binary SHA-256>",
-    "asset_name": "lpm-darwin-arm64",
+    "asset_sha256": "<ZIP SHA-256>",
+    "asset_name": "lpm-darwin-arm64.zip",
     "source_commit": "<verified source commit>"
   }
 }
@@ -341,13 +377,20 @@ For a standalone installation, JSON output applies the update and includes its v
 | `channel` | String | Channel of the current binary |
 | `target_channel` | String | Channel selected for this command |
 | `channel_changed` | Boolean | `true` for different `target_channel` and `channel` values |
+| `duration_ms` | Integer | Elapsed command time in milliseconds |
 
 ### Outcome fields
 
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `install_method` | String | Detected method for an available update |
-| `update_command` | String | External update plan for npm, Homebrew, or Cargo |
+| `update_command` | String | Shell command for an external update plan |
+| `update_shell` | String | `posix` on Unix or `powershell` on Windows |
+| `update_program` | String | Absolute path to the verified external manager |
+| `update_args` | String array | Arguments for that manager |
+| `applied` | Boolean | `false` for an external plan |
+| `launcher_verified` | Boolean | Current launcher matches the running installation |
+| `manager_target_verified` | Boolean | External manager owns that installation |
 | `verified` | Boolean | `true` after an applied standalone update passes all verification steps |
 | `attestation` | Object | Verification record for an applied standalone update |
 
@@ -363,17 +406,19 @@ For a standalone installation, JSON output applies the update and includes its v
 | `log_id` | String | Identifier of the transparency log |
 | `leaf_cert_sha256` | String | SHA-256 digest of the signing certificate |
 | `manifest_sha256` | String | SHA-256 digest of the signed manifest |
-| `asset_sha256` | String | SHA-256 digest of the installed binary |
+| `asset_sha256` | String | SHA-256 digest of the downloaded asset: a ZIP on macOS or a binary elsewhere |
 | `asset_name` | String | Release asset selected for the current platform |
 | `source_commit` | String | Source commit from the verified release statement |
 
-## GitHub fallback limits
+## GitHub API limits
 
-GitHub permits 60 unauthenticated API requests each hour for one IP address. This limit matters only after the npm lookup fails.
+GitHub normally permits 60 unauthenticated API requests each hour for one IP address.
+
+Version discovery uses GitHub as a fallback. Standalone and Cargo updates also need GitHub release metadata for verification, even when npm discovery succeeds.
 
 Set `GITHUB_TOKEN` or `GH_TOKEN` to use the authenticated limit of 5,000 requests each hour. Public repository metadata access is sufficient.
 
-If the fallback reaches its limit, LPM CLI reports the reset time. Wait for that time, or supply a token.
+If a release request reaches its limit, LPM CLI reports the reset time. Wait for that time, or supply a token.
 
 ## CI
 
