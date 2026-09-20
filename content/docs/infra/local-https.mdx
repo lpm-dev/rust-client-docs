@@ -1,6 +1,6 @@
 ---
 title: Local HTTPS
-description: "Use trusted HTTPS for local development without adding TLS to your application."
+description: "Serve local apps over trusted HTTPS, configure hostnames, and manage device trust and certificate renewal."
 ---
 
 Local HTTPS gives your development site a browser-trusted HTTPS URL. LPM CLI handles TLS in front of your application.
@@ -8,6 +8,14 @@ Local HTTPS gives your development site a browser-trusted HTTPS URL. LPM CLI han
 Your application continues to use plain HTTP. Use local HTTPS for secure cookies, OAuth callbacks, service workers, secure WebSockets, and browser features that require a trusted origin.
 
 The trust applies only to devices that trust your local certificate authority (CA).
+
+```bash
+# Enable HTTPS for this run
+lpm dev --https
+
+# Prepare trust before a development run
+lpm cert trust
+```
 
 ## How local HTTPS works
 
@@ -17,13 +25,13 @@ LPM CLI accepts the HTTPS or secure WebSocket connection. It sends the request t
 Browser HTTPS/WSS → LPM CLI → Application HTTP/WS
 ```
 
-LPM CLI creates one root CA for each machine. This CA signs the certificates for your local projects.
+LPM CLI creates a local root CA in your user profile. This CA signs the certificates for your projects.
 
 ```text
-Per-machine root CA → Project certificate → Browser trust
+Local root CA → Project certificate → Browser trust
 ```
 
-The root CA is not part of LPM CLI. Its private key stays on your machine.
+Each user profile generates its own root key. LPM CLI does not ship or download a shared root key.
 
 If you run `lpm dev --https --port 4000`, the browser connects to port `4000`. LPM CLI gives the application a separate managed port.
 
@@ -35,7 +43,7 @@ Your application must use plain HTTP in this workflow. Disable framework HTTPS a
 | --- | --- |
 | Use HTTPS for the project | `"https": true` in `lpm.json` |
 | Use HTTPS for one run | `lpm dev --https` |
-| Disable project HTTPS for one run | `lpm dev --no-https` |
+| Disable the direct HTTPS frontend for one run | `lpm dev --no-https` |
 | Prepare trust before development | `lpm cert trust` |
 
 ## Enable HTTPS in `lpm.json`
@@ -55,14 +63,16 @@ Start the project:
 lpm dev
 ```
 
-LPM CLI creates the project certificate and starts the HTTPS frontend. It renews the project certificate before it expires.
+LPM CLI prepares the project certificate and starts the HTTPS frontend. Certificate renewal occurs during setup, when the certificate is within 30 days of expiry.
 
 Use a command-line override for one run:
 
 ```bash
 lpm dev --https       # enable HTTPS for this run
-lpm dev --no-https    # disable HTTPS for this run
+lpm dev --no-https    # disable the direct HTTPS frontend
 ```
+
+`--no-https` does not disable named-host proxy routes. A configured `proxy.host` or service hostname still requires certificates and local trust.
 
 ## Approve the local CA
 
@@ -95,7 +105,7 @@ To remove the CA from the trust store, run:
 lpm cert uninstall
 ```
 
-This command keeps the CA files on disk. You can trust the same CA again with `lpm cert trust`.
+This command keeps the CA files on disk. Stop runtimes that serve this CA before uninstall. You can trust the same CA again with `lpm cert trust`.
 
 ## Use project hostnames
 
@@ -168,11 +178,23 @@ Public DNS names require an explicit opt-in:
 }
 ```
 
-> CAUTION: Enable `allowPublicDns` only for DNS names that you control. This field increases the authority of your local CA.
+> CAUTION: Enable `allowPublicDns` only for DNS names that you control. This field expands the permitted names in the project certificate chain.
+
+### Existing root restrictions
+
+`LPM_CERT_NAME_CONSTRAINTS=1` creates a root restricted to local DNS names and private IP ranges. The restriction applies at root creation or rotation.
+
+That root permits `localhost`, subdomains of `.localhost`, `.local`, and `.test`, plus loopback, private, and link-local IP ranges. It does not permit `.internal`, `.home.arpa`, or public DNS names.
+
+The permitted IP ranges are `127.0.0.0/8`, `::1/128`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `fc00::/7`, and `fe80::/10`.
+
+Project configuration cannot expand an existing root's authority. LPM CLI rejects certificate issuance and TLS publication when a requested name is outside those restrictions.
+
+Use a permitted hostname such as `app.test`. If you need a different root policy, review it before an explicit [CA rotation](/docs/infra/cert#rotate-the-root-ca).
 
 ## Protect the local CA
 
-The root CA is unique to your machine. LPM CLI does not ship or download a shared root CA.
+The local root CA belongs to the user profile that created it. Other profiles or devices can have different root CAs.
 
 Anyone with the root CA private key can create certificates that your machine trusts. Do not copy or commit this key.
 
@@ -187,8 +209,10 @@ Project certificates for custom hostnames use a constrained project chain. The r
 | Platform | Trust-store behavior |
 | --- | --- |
 | macOS | LPM CLI uses the user login Keychain. The operation does not require `sudo`. |
-| Linux | LPM CLI uses the system CA store. The operation requires `sudo`. |
+| Linux | Supported system CA stores require elevated privileges. Non-root users use `sudo`. |
 | Windows | LPM CLI uses the Root certificate store. Windows can request UAC approval. |
+
+Automatic Linux installation supports `update-ca-certificates` and `update-ca-trust` layouts. Other layouts require manual CA installation.
 
 Chrome, Edge, Safari, and many Linux browsers use the operating-system trust store.
 
@@ -219,7 +243,7 @@ Without CA bootstrap, copy `~/.lpm/certs/rootCA.pem` to the device through a tru
 
 | Scope | Files |
 | --- | --- |
-| Machine | `~/.lpm/certs/rootCA.pem` and `~/.lpm/certs/rootCA-key.pem` |
+| User profile | `~/.lpm/certs/rootCA.pem` and `~/.lpm/certs/rootCA-key.pem` |
 | Project | `<project>/.lpm/certs/cert.pem` and `<project>/.lpm/certs/key.pem` |
 
 Do not commit the generated project files. If the project does not ignore `.lpm/`, add it to `.gitignore`.
@@ -239,9 +263,13 @@ LPM CLI creates a new project certificate in these cases:
 - The certificate does not contain a requested hostname.
 - The certificate is not compatible with the active CA.
 
-Project certificate renewal starts within 30 days of expiry. Root CA warnings start within 60 days and become urgent within 30 days.
+On the next HTTPS setup within 30 days of expiry, LPM CLI renews the project certificate. An active frontend retains its loaded certificate.
 
-LPM CLI never rotates the root CA automatically because rotation changes machine trust. When `lpm cert status` reports an expiry warning, rotate the CA:
+Root CA warnings start within 60 days and become urgent within 30 days.
+
+LPM CLI never rotates the root CA automatically because rotation changes local trust.
+
+If the root needs replacement, stop active TLS runtimes and rotate it:
 
 ```bash
 lpm cert rotate
@@ -254,7 +282,9 @@ lpm cert reconcile --dry-run
 lpm cert reconcile
 ```
 
-The reconcile command also removes expired grace entries.
+The reconcile command also removes expired grace entries. Destructive trust changes stop while a runtime still serves the affected CA generation.
+
+For a transition that retains the previous CA temporarily, see [grace rotation](/docs/infra/cert#rotate-the-root-ca).
 
 ## Common problems
 
@@ -290,7 +320,7 @@ Run `lpm cert rotate`. LPM CLI replaces the CA and reissues the known project ce
 
 ### Root CA rotation stopped
 
-Preview the repair with `lpm cert reconcile --dry-run`. Then run `lpm cert reconcile`.
+Stop the runtime named in the error. Preview the repair with `lpm cert reconcile --dry-run`. Then run `lpm cert reconcile`.
 
 ### Another device does not trust the site
 
