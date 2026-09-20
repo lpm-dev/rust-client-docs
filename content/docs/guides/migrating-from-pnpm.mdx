@@ -1,117 +1,161 @@
 ---
 title: Migrating from pnpm
-description: "Convert a pnpm-lock.yaml project to LPM CLI, isolated layout preserved."
+description: Move a pnpm project to LPM CLI with workspace, catalog, override, and patch checks.
 ---
 
-`lpm migrate` converts a pnpm project to LPM CLI. It writes a version 12 staging lockfile, then runs an online install by default.
+Use [lpm migrate](/docs/packages/migrate) from the workspace root with `package.json` and `pnpm-lock.yaml`. Lockfile major versions 5, 6, and 9 are supported.
 
-The install writes version 13 with exact package-instance identities. The command creates backups before it changes files.
+LPM CLI works with npm, private registries, and LPM.dev Registry. Install it with the [installation guide](/docs/installation).
 
-The migration shape is the same as [migrating from npm](/docs/guides/migrating-from-npm). This page covers the pnpm-specific differences.
+For a monorepo, run migration from the workspace root. Member-directory migration fails before it changes files.
 
-## What carries over cleanly
+`--rollback` can still restore an older migration from the member directory that contains its recovery files.
 
-- **Isolated `node_modules` layout for workspaces and peer conflicts.** Workspace projects auto-flip to LPM CLI's isolated layout (symlinks into a virtual store) — same shape pnpm uses, so your imports keep working unchanged and you get the same phantom-dep protection. Single-package projects start hoisted, but default installs auto-switch to isolated when resolution detects incompatible peer requirements. Force isolated with `lpm install --linker=isolated` or `package.json > lpm > linker = "isolated"` if you want pnpm's shape there for every install.
-- **`.pnpmfile.cjs` is unaffected.** LPM CLI doesn't use it, but doesn't delete it either. If you have one, decide whether you still need it.
-- **Workspaces and catalogs.** LPM CLI reads `package.json > workspaces` first; if it's absent, it falls back to `pnpm-workspace.yaml` for member globs. It also reads pnpm-style `pnpm-workspace.yaml > catalog` and `catalogs` for default and named catalog entries, so `catalog:` dependencies keep resolving without moving catalog data into `package.json`. If `cleanupUnusedCatalogs: true` is set in `pnpm-workspace.yaml`, LPM CLI prunes unused catalog entries after successful installs.
-- **`.npmrc`-declared private registries** carry over verbatim. LPM CLI honors `.npmrc` for routing.
+## Preview and convert
 
-## Run the migration
+Commit the current project before migration. Keep the previous package manager available for rollback.
 
 ```bash
-lpm migrate --dry-run   # preview
-lpm migrate             # do it
+lpm migrate --dry-run
+lpm migrate
 ```
 
-Same flow as the npm path:
+Read the detected source, skipped entries, warnings, and workspace count before conversion.
 
-1. Detect pnpm, parse `pnpm-lock.yaml`, convert.
-2. Write a version 12 staging `lpm.lock`. If the graph fits the binary format, write `lpm.lockb`.
-3. Touch `.npmrc` (with `--no-npmrc` to skip), backing up the original.
-4. Run an online `lpm install`. This step writes version 13 and removes the staging `lpm.lockb`.
-5. Run `build` + `test` to verify (skip with `--skip-verify`).
-6. Print summary + CI hint.
+If several supported lockfiles exist, the newest modification time selects the input. There is no source-selection flag.
 
-## Optional flags
+Equal timestamps prefer `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`. Other lockfiles stay in place.
 
-| Flag | Effect |
+Migration writes a staging lockfile, configures `.npmrc`, installs dependencies online, and runs available root `build` and `test` scripts.
+
+**The online install resolves the manifest requirements again.** Migration does not guarantee the exact versions from the previous lockfile.
+
+At a workspace root, installation includes the workspace members. Verification runs the root scripts. Use your usual workspace checks too.
+
+Workspace hooks that request the same install lock fail with a parent-installation conflict. Run those commands after migration.
+
+The command is non-interactive. An existing `lpm.lock` requires `--force`. `--yes` does not imply that flag.
+
+## Review pnpm configuration
+
+Workspace discovery combines `package.json > workspaces` with `pnpm-workspace.yaml > packages`. Overlapping members are deduplicated and exclusions apply.
+
+The root YAML file can provide `catalog`, `catalogs`, and `cleanupUnusedCatalogs`. Matching manifest catalog entries and an explicit manifest cleanup setting take precedence.
+
+Workspace installs use isolated layout by default. For a single package that must use isolated layout too:
+
+```json title="package.json (additional field)"
+{
+  "lpm": { "linker": "isolated" }
+}
+```
+
+Existing `.npmrc` routing remains in place. Migration does not execute `.pnpmfile.cjs`. Translate required hook behavior into supported configuration before conversion.
+
+### Overrides, patches, and peer rules
+
+Migration checks supported translations before it changes files:
+
+| pnpm field in `package.json` | Destination |
 | --- | --- |
-| `--dry-run` | Parse + convert only, write nothing |
-| `--force` | Overwrite an existing `lpm.lock` |
-| `-y`, `--yes` | Reserved. The flow is non-interactive today, so this flag is a no-op. It does NOT imply `--force`. |
-| `--no-install` | Convert lockfile only, skip install |
-| `--skip-verify` | Skip `build` + `test` verification |
-| `--no-npmrc` | Don't touch `.npmrc` |
-| `--ci` | Generate a CI workflow template |
-| `--no-ci` | Suppress CI hint |
-| `--rollback` | Restore from `.backup` files |
+| `pnpm.overrides` | `lpm.overrides` |
+| `pnpm.patchedDependencies` | `lpm.patchedDependencies` and lockfile patch records |
+| `pnpm.peerDependencyRules` | `lpm.peerDependencyRules` |
 
-## Verify and commit
+Conflicting rules, unsupported shapes, missing patch files, and unsafe patch paths stop conversion.
 
-If you used `--no-install`, run `lpm install` before the offline command.
+Patch files are copied into `patches/`. Original files remain, and retained `pnpm.patchedDependencies` paths point to the new copies.
+
+Review both configurations before alternating package managers. Commit the copied patches with their manifest and lockfile records.
+
+For compatibility diagnostics after conversion:
 
 ```bash
-lpm install --offline       # confirm reproducibility
-lpm test
-lpm lint
-lpm fmt --check
+lpm doctor --all --json
 ```
+
+See [lpm migrate](/docs/packages/migrate#pnpm-configuration) for translation details and [workspaces](/docs/packages/workspaces) for catalog behavior.
+
+## Separate conversion from installation
+
+For a conversion without dependency installation, verification scripts, or registry configuration:
 
 ```bash
-git add lpm.lock .npmrc package.json
-test ! -f lpm.lockb || git add lpm.lockb
-git rm pnpm-lock.yaml pnpm-lock.yaml.backup .npmrc.backup
-git commit -m "Migrate to LPM CLI"
+lpm migrate --no-install --skip-verify --no-npmrc --no-ci --json
 ```
 
-## What `lpm migrate` translates from `package.json`
+`--no-install` alone does not skip verification. Migration has no dedicated `lpm.json` fields.
 
-- **`pnpm.overrides`** is auto-translated to `package.json > lpm.overrides` with the same selector grammar. `lpm install` does not use the original `pnpm.overrides` block as resolution input. Successful entries land in `lpm.overrides`, and the original block stays in place for parallel pnpm use. The translation validates every entry before it changes a file. Invalid values and merge conflicts stop the migration without a partial update.
+The staging lockfile cannot support an offline or frozen install. Complete a mutable online install first:
 
-- **`pnpm.patchedDependencies`** is auto-translated to `package.json > lpm.patchedDependencies` with `originalIntegrity` resolved from the migrated lockfile. Each patch file is copied to LPM CLI's canonical `patches/<safe_key>.patch` location (or treated as a validated no-op if the source is already at that path), and `lpm.lock > [patches]` records the patch path + SHA-256 so the first LPM CLI install can verify the bytes it replays. The plan validates everything up front: missing source files, paths outside the project root, paths through symlinked ancestors, directory targets, and any package whose lockfile entry is missing or has no integrity hash all abort the migration with a structured error before any disk mutation. Like the overrides block, the original `pnpm.patchedDependencies` is left in place after migration.
+```bash
+lpm install --no-frozen-lockfile
+```
 
-- **`pnpm.peerDependencyRules`** is auto-translated to `package.json > lpm.peerDependencyRules` with the same shape verbatim — `ignoreMissing`, `allowedVersions`, and `allowAny` all carry over. List entries (`ignoreMissing` / `allowAny`) are unioned with any pre-existing LPM CLI-side entries; map entries (`allowedVersions`) merge selector-by-selector. Same selector with the same range is a no-op idempotent merge; same selector with a different range is a hard conflict that aborts the migration before any disk mutation. Range strings that don't parse as valid semver, and selector keys that don't match LPM CLI's grammar, are surfaced up-front as parse errors with the offending entry named. `allowedVersions` selectors mirror `lpm.overrides`: bare peer names (`"react"`), scoped peers (`"@scope/foo"`), and parent-scoped forms (`"foo>react"`, `"foo@^2>react"`, `"@scope/foo@^2>react"`) all carry over verbatim; multi-segment paths and bare-name-with-version forms (`"foo@2"` without `>`) are rejected on both surfaces. Pattern semantics (`@scope/*`, `*-suffix`, etc.) work for `ignoreMissing` and `allowAny`. The same parser runs at install time, so hand-edits to `lpm.peerDependencyRules` after migration fail loud (`LpmError::Script`) instead of silently no-op'ing.
+The explicit flag also works where `CI=true` normally selects frozen installation.
 
-After migration, `lpm install` is silent when the LPM CLI fields cover every pnpm entry. Later drift causes a human-output warning that suggests `lpm migrate`.
+## Check the result
 
-The `--json` flag suppresses that stderr warning. Use `lpm doctor --json` to detect drift through `pnpm_overrides_drift`, `pnpm_patches_drift`, and `pnpm_peer_rules_drift`.
+Run the project's existing checks, then replay the new lockfile:
 
-## pnpm-specific gotchas
+```bash
+lpm run build
+lpm run test
+lpm install --frozen-lockfile
+```
 
-- **`pnpm.overrides` is migration input, not install input.** Run `lpm migrate` after each pnpm-side change, or update `lpm.overrides` directly.
-- **`pnpm-workspace.yaml`** is read as a fallback when `package.json > workspaces` is absent, and its `catalog` / `catalogs` blocks are read as root catalogs. If the same catalog package entry exists in both `package.json > catalogs` and `pnpm-workspace.yaml`, LPM CLI uses the `package.json` value. `cleanupUnusedCatalogs: true` is honored unless `package.json > lpm.cleanupUnusedCatalogs` explicitly says otherwise.
-- **`shamefully-hoist`** in `.npmrc` is pnpm-specific. LPM CLI's closest equivalent is `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`; hoisted mode still uses LPM CLI's v2 virtual-store layout instead of flattening every transitive dependency to the project root.
+Replace these script names with the checks that your project defines. `lpm run` preserves custom test commands and their arguments.
 
-## Rollback
+After the store contains every required package, you can check offline replay:
+
+```bash
+lpm install --frozen-lockfile --offline
+```
+
+`--offline` controls package-network work. Root lifecycle scripts can still contact the network.
+
+Dependency scripts stay denied by default. Review [blocked scripts](/docs/packages/approve-scripts) before authorizing packages that require installation builds.
+
+## Commit the migration
+
+Inspect the complete diff and the resolved dependency versions:
+
+```bash
+git status --short
+git diff
+```
+
+Commit `lpm.lock`, any generated `lpm.lockb`, `.gitattributes`, and the intended manifest, configuration, patch, and CI changes.
+
+Review `.npmrc` before committing it. Store credentials in environment variables or a user-level file, not in the repository.
+
+Keep `.backup` files and `.lpm-migrate-manifest.json` together until you accept the migration. Keep these recovery files out of commits.
+
+Remove the old manager's tracked lockfile only after the team accepts the migration. Do not delete recovery snapshots to clean the Git diff.
+
+For CI, replace the install step with [lpm ci](/docs/guides/ci-cd-setup). Review generated templates before enabling them.
+
+## Roll back or retry
 
 ```bash
 lpm migrate --rollback
 ```
 
-Restores `pnpm-lock.yaml`, `.npmrc` (if touched), `.gitattributes`, and `package.json` (rolled back when the `pnpm.*` translations mutated it) to pre-migration state. Files the migration newly created — `lpm.lock`, `lpm.lockb`, any new `.gitattributes`, and any patch files copied to `patches/` — are removed.
+Rollback restores or removes files recorded in `.lpm-migrate-manifest.json`. Other install changes, `node_modules`, store contents, and script output remain.
 
-## Lifecycle scripts
+After rollback, run the previous manager's install command to restore its dependency layout.
 
-Bare `lpm install` runs your root project lifecycle, including `prepare`. Dependency lifecycle scripts (`postinstall`, etc.) remain under `script-policy: deny` by default. After the migration's `lpm install` step, run:
-
-```bash
-lpm rebuild
-```
-
-For packages that pnpm allowed to run scripts but LPM CLI hasn't trusted yet, [`lpm approve-scripts`](/docs/packages/approve-scripts) walks the blocked set interactively.
-
-If your project depends on `postinstall` for a tight inner loop and you're confident about the trust set:
+For an install or verification failure, fix the reported cause before retrying:
 
 ```bash
-lpm install --auto-build
+lpm migrate --force
 ```
 
-Auto-runs `lpm rebuild` for trusted packages right after install. If a trusted lifecycle script fails, install exits non-zero. Or set `package.json > lpm > scripts.autoBuild: true` to make it sticky.
+Repeated migration retains the first recovery snapshots. Keep them until you no longer need rollback.
 
 ## See also
 
-- [Migrating from npm](/docs/guides/migrating-from-npm) — same shape, different source lockfile
-- [`lpm migrate`](/docs/packages/migrate) — full flag reference
-- [Registries](/docs/registries) — `.npmrc` routing
-- [`lpm install --linker`](/docs/packages/install) — keeping a flat npm-style layout if you need it
-- [`lpm approve-scripts`](/docs/packages/approve-scripts) — review blocked lifecycle scripts after first install
+- [lpm migrate](/docs/packages/migrate) — flags, input formats, and recovery
+- [Lockfile](/docs/packages/lockfile) — authoritative files and frozen installs
+- [Registries](/docs/registries) — routing and authentication
+- [CI/CD setup](/docs/guides/ci-cd-setup) — reproducible CI installation
