@@ -1,26 +1,129 @@
 ---
 title: AI agent skills
-description: "Understand LPM.dev package skills and standalone GitHub or local agent skills."
+description: "Use package guidance and standalone skills with clear ownership, updates, and agent targets."
 ---
 
-Agent skills are Markdown instructions that help an AI agent use a package, workflow, or project correctly. The LPM CLI supports two distinct systems under the [`lpm skills`](/docs/packages/skills) command family.
+Agent skills are Markdown instructions that explain how to use a package or perform a task.
+LPM CLI manages package guidance and standalone skills through [lpm skills](/docs/packages/skills).
 
 ## Two systems, one command
 
 | | LPM.dev package skills | Standalone skills |
 | --- | --- | --- |
-| Purpose | Versioned guidance shipped with an `@lpm.dev/*` package | Reusable agent capability independent of a package install |
-| Source | Publisher-authored `.lpm/skills/*.md` files | Standard `SKILL.md` directories from GitHub or a local source |
-| Delivery | Validated and stored by the LPM.dev Registry | Resolved and security-scanned by the LPM CLI |
-| Project storage | `.lpm/skills/<owner.package>/` | `.lpm/managed-skills/` plus selected agent targets |
-| Lifecycle | Reconciled with the package version | Added, updated, enabled, disabled, or removed explicitly |
-| Agent links | None | Linked by default, or copied with `--copy` |
+| Purpose | Guidance for an `@lpm.dev/*` package release | Instructions independent of a package installation |
+| Source | Publisher-authored `.lpm/skills/*.md` files | `SKILL.md` directories from GitHub or local files |
+| Delivery | Reviewed by the LPM.dev Registry | Read and scanned by LPM CLI |
+| Project storage | `.lpm/skills/<owner.package>/` | `.lpm/managed-skills/` |
+| Agent targets | No automatic links | Links by default, or copies with `--copy` |
+| Updates | Follow online dependency installation | Explicit `update` from the original source |
 
-The two systems can coexist in one project. Their paths and ownership records keep publisher source, installed package guidance, and standalone managed content separate.
+Both systems can coexist. Their ownership records separate installed guidance, authored package files, and standalone content.
+Neither system has dedicated [`lpm.json`](/docs/reference/lpm-json) configuration.
+A task can run a skill command, as shown in the [command reference](/docs/packages/skills#a-task-in-lpmjson).
+
+## Quickstart
+
+```bash
+# Install a direct dependency and its approved package guidance
+lpm install @lpm.dev/owner.package
+
+# Preview a standalone skill for Codex
+lpm skills add ./team-skills --skill release-notes --agent codex --project --dry-run
+
+# Install the reviewed selection without prompts
+lpm skills add ./team-skills --skill release-notes --agent codex --project --yes
+
+# Inspect both kinds
+lpm skills list
+lpm skills dashboard
+```
+
+Project skill commands use the current directory. Run them from the intended project root.
+Package guidance stays in `.lpm/skills/<owner.package>/` without editor configuration changes.
+Tell your agent where to read it:
+
+```text
+Read .lpm/skills/owner.package/ before changing code that uses @lpm.dev/owner.package.
+```
+
+## Use guidance from an LPM.dev package
+
+An online [lpm install](/docs/packages/install) fetches approved skills for direct LPM.dev Registry dependencies, including aliases.
+It requests the selected package version, not a separate latest release.
+
+```text
+my-project/
+└── .lpm/
+    └── skills/
+        └── owner.package/
+            ├── .lpm-package-skills.json
+            ├── usage.md
+            └── gotchas.md
+```
+
+The ownership manifest records the package version and file digests. LPM CLI uses it to detect local changes before replacement or removal.
+Do not edit the manifest.
+
+### Automatic reconciliation
+
+Online project installations reconcile the owned directory with the selected release's approved skill set.
+An upgrade can add, replace, or remove guidance files. Removing the final direct dependency or alias removes its intact owned directory.
+Offline installations do not fetch skills. Global package installations disable automatic skill installation.
+
+```bash
+# Disable automatic fetching persistently
+lpm config lpm-skills --set false
+
+# Override the preference for one installation
+lpm install --skills
+lpm install --no-skills
+```
+
+The preference order is the invocation's `--skills` or `--no-skills`, then `auto-install-lpm-skills`, then the legacy `noSkills` fallback.
+The default is enabled. The same invocation flags apply to [lpm add](/docs/packages/add) and [lpm ci](/docs/packages/ci).
+See [lpm config](/docs/infra/config#focused-settings) for the stored preference.
+
+Disabling automatic fetching preserves existing guidance.
+After an upgrade with `--no-skills`, the next enabled online installation replaces stale guidance with the selected version's set.
+This also applies when package files are already up to date.
+
+Several direct aliases can select different versions of one package.
+Their shared guidance directory uses the highest selected version, with the same selection on subsequent installations.
+
+### Explicit retrieval
+
+```bash
+lpm skills add @lpm.dev/owner.package@1.4.0 --dry-run
+lpm skills add @lpm.dev/owner.package@1.4.0 --yes
+```
+
+The optional version must be exact. Without it, the Registry selects the latest accessible release independently of installed dependencies.
+Explicit retrieval works even if automatic fetching is disabled.
+A later enabled installation restores guidance for its selected dependency version.
+
+Anonymous users can read approved guidance for Free packages. Private guidance requires publisher access.
+Pending, processing, failed, or rejected skill reviews stop retrieval and preserve the existing set.
+A partially flagged review can supply its approved subset. An approved empty set removes older, intact guidance files.
+
+### Safe package cleanup
+
+```bash
+lpm skills clean --dry-run
+lpm skills clean --yes
+```
+
+Cleanup removes only package sets whose files and digests match a valid ownership manifest.
+It preserves direct publisher files, edited or untracked content, invalid manifests, symlinks, standalone skills, and agent targets.
+Interactive cleanup defaults to **No**. Scripts require `--yes`.
+An enabled online installation restores removed package guidance.
+
+If local changes or an invalid manifest prevent replacement or removal, back up the affected directory.
+Move that directory out of `.lpm/skills/`, then retry the command.
+Dependency installation and removal report an error for these conflicts. Source-package addition reports a warning and preserves the directory.
 
 ## Publish guidance with an LPM.dev package
 
-Publishers place each skill directly under `.lpm/skills/`:
+Place authored Markdown files directly under `.lpm/skills/`:
 
 ```text
 package-repository/
@@ -31,7 +134,8 @@ package-repository/
         └── migration.md
 ```
 
-Each file contains YAML frontmatter followed by Markdown guidance:
+Nested publisher paths such as `.lpm/skills/guides/usage.md` are rejected.
+Each file has YAML frontmatter and a Markdown body:
 
 ```md
 ---
@@ -44,134 +148,116 @@ globs:
 
 # Package usage
 
-Import the public client, initialize it once, and reuse that instance. Follow the package's documented error handling and configuration conventions when changing an existing integration.
+Import the public client and initialize it once. Reuse that instance for related requests. Handle documented errors at the application boundary. When the application stops, close the client.
 ```
 
-Nested publisher paths are not supported. `.lpm/skills/guides/usage.md` is rejected by both the LPM CLI preflight and the LPM.dev Registry instead of being silently ignored.
+| Field or limit | Contract |
+| --- | --- |
+| `name` | Required lowercase letters, digits, or hyphens. The first and last characters must be alphanumeric. Names must be unique. |
+| `description` | Required string of 10–500 characters. |
+| `version` | Optional string that identifies the release for which the author wrote the guidance. |
+| `globs` | Optional array of file-pattern strings. |
+| Body | At least 100 Markdown characters. |
+| File size | At most 15 KiB. |
+| Package total | At most 10 skills and 100 KiB. |
 
-The publisher workflow is:
+The authored `version` field is separate from the package version recorded in the installed ownership manifest.
+A later package release can carry unchanged guidance with its original authored version.
 
 ```bash
-# Optional: install the standalone authoring guide
-lpm skills add lpm-dev/lpm-guide
-
-# Validate direct .lpm/skills/*.md files
 lpm skills validate
-
-# Publish the package and its skills
+lpm publish --check
 lpm publish
 ```
 
-`validate` enforces the registry contract: required `name` and `description`, valid lowercase names, descriptions from 10 to 500 characters, at least 100 Markdown body characters, at most 15 KB per file, at most 10 skills and 100 KB total, unique names, and the package-skill security rules.
+[Validation](/docs/packages/skills) checks the package-skill contract and security rules.
+LPM.dev Registry publishing also checks those files before acceptance.
 
-Optional `version` identifies the package release the guidance was authored for. It is stored per skill rather than inferred from the package release that carries the file, so older guidance remains identifiable after a later package publish. The LPM CLI preserves the field in installed package-skill frontmatter.
-
-If `package.json > files` would exclude `.lpm/skills`, a real `lpm publish` adds the directory before creating the tarball; `--check` and `--dry-run` model that change in memory without touching the manifest. When `files` is omitted, the implicit publish walker traverses only `.lpm/skills`, includes only direct publisher-authored Markdown candidates, and excludes every other `.lpm` certificate, log, install hash, audit, and runtime-state file. LPM.dev Registry publishes validate those candidates first; other targets include them by path shape. Installed, manifest-owned dependency skill directories are ignored during publisher validation and excluded from both implicit and explicit tarballs. LPM CLI scans the actual final artifact for every target, so published skill content receives the same secret scan as the rest of the package.
-
-## Use guidance from an LPM.dev package
-
-Installing a direct `@lpm.dev/*` dependency fetches its published guidance by default:
-
-```bash
-lpm install @lpm.dev/owner.package
-```
-
-The LPM CLI materializes an exact, package-owned set:
-
-```text
-my-project/
-└── .lpm/
-    └── skills/
-        └── owner.package/
-            ├── .lpm-package-skills.json
-            ├── usage.md
-            └── gotchas.md
-```
-
-`.lpm-package-skills.json` records ownership and content digests. It lets the LPM CLI reconcile upgrades, verify integrity, and distinguish installed consumer content from publisher-authored files. Do not edit it.
-
-Package skills remain in `.lpm/skills/<owner.package>/`. The LPM CLI does not create agent links or modify editor configuration for them. Point your agent at the relevant directory when you want it to use the package author's guidance:
-
-```text
-Read .lpm/skills/owner.package/ before changing code that uses @lpm.dev/owner.package.
-```
-
-### Automatic reconciliation
-
-Package skill installation is enabled by default. Installing or upgrading a direct package reconciles its directory to the exact published set; removing the package removes its owned directory.
-
-```bash
-lpm config lpm-skills --set false
-```
-
-Use `--no-skills` with [`lpm install`](/docs/packages/install), [`lpm add`](/docs/packages/add), or `lpm ci` to opt out once. Use `--skills` to override a disabled preference once. Precedence is `--skills` / `--no-skills`, then `auto-install-lpm-skills`, then the legacy `noSkills` fallback, then the enabled default.
-
-The preference controls future automatic fetching and reconciliation only. It does not delete existing content or disable explicit retrieval:
-
-```bash
-lpm skills add @lpm.dev/owner.package --dry-run
-lpm skills add @lpm.dev/owner.package --yes
-```
-
-### Safe package cleanup
-
-```bash
-lpm skills clean --dry-run
-lpm skills clean
-```
-
-`clean` previews the exact installed package sets, file count, and size. In a terminal it asks for confirmation with **No** selected by default; scripts must pass `--yes`.
-
-Only package directories whose files and digests exactly match a valid LPM CLI ownership manifest are removed. Direct publisher files, untracked or modified content, invalid manifests, symlinks, standalone managed skills, and agent links are preserved. Re-run `lpm install` to restore removed package guidance.
+If `package.json > files` excludes `.lpm/skills`, a real [lpm publish](/docs/packages/publish) adds the directory before packaging.
+`--check` and `--dry-run` model that change without editing the manifest.
+Without a `files` allowlist, packaging includes direct authored Markdown under `.lpm/skills/` and excludes other `.lpm` state.
+Valid ownership manifests keep installed dependency skill sets out of publisher validation and package tarballs.
+The final artifact receives the same secret scan as other published content, including for other registries.
 
 ## Manage standalone skills
 
-Standalone skills come from a GitHub repository or tree URL, GitHub `owner/repository` shorthand, or a local directory:
+Standalone sources accept local directories, local `SKILL.md` files, GitHub shorthand, and HTTPS repository, tree, or `SKILL.md` blob URLs.
 
 ```bash
-lpm skills add vercel-labs/skills --skill find-skills
-lpm skills add https://github.com/vercel-labs/agent-skills --skill web-design-guidelines
-lpm skills add ./team-skills --skill release-notes --agent codex --project
+lpm skills add owner/repository --list
+lpm skills add ./team-skills/release-notes/SKILL.md --list
+lpm skills add https://github.com/owner/repository/tree/main/skills --list
+
+lpm skills add owner/repository \
+  --skill release-notes \
+  --agent codex --agent claude-code \
+  --project --yes
 ```
 
-Remote standalone inputs currently resolve through GitHub. A discovery catalog can point you to a skill, but the LPM CLI input is its underlying GitHub source. Local inputs are read directly from the selected directory.
+Discovery searches standard skill layouts. `--full-depth` includes other locations.
+`--skill '*'` selects all discovered skills. Repeated `--skill` and `--agent` flags select several names or targets.
 
-In a terminal, `add` opens a wizard for source, skills, project or global scope, compatible agent targets, security review, and confirmation. Scripts provide those choices explicitly and pass `--yes` after reviewing `--dry-run`.
-
-`lpm skills install` is a compatibility alias for `lpm skills add`; use `add` in new scripts.
+Interactive addition asks for source, skill selection, scope, agent targets, security review, and confirmation.
+For scripts, provide those choices and `--yes` after reviewing `--dry-run`.
+Global `--json` disables prompts.
+`lpm skills install` is a compatibility alias for `add`.
 
 ### Storage and targets
 
-Standalone content is stored once in an LPM-managed canonical location, then linked by default or copied with `--copy` to selected targets:
+Project content lives under `.lpm/managed-skills/`. Global content lives under `${LPM_HOME:-~/.lpm}/managed-skills/`.
+Each store has a `skills.lock.json` ownership record.
 
-| Target | Project path |
-| --- | --- |
-| Codex | `.agents/skills/<skill>/` |
-| Claude Code | `.claude/skills/<skill>/` |
-| Cursor | `.cursor/skills/<skill>/` |
-| Grok | `.grok/skills/<skill>/` |
-| OpenCode | `.opencode/skills/<skill>/` |
-| Pi | `.pi/skills/<skill>/` |
-| Kimi (Moonshot) | `.kimi/skills/<skill>/` |
+| Agent | Project target | Default global target |
+| --- | --- | --- |
+| Codex | `.agents/skills/<skill>/` | `~/.codex/skills/<skill>/` |
+| Claude Code | `.claude/skills/<skill>/` | `~/.claude/skills/<skill>/` |
+| Cursor | `.cursor/skills/<skill>/` | `~/.cursor/skills/<skill>/` |
+| Grok | `.grok/skills/<skill>/` | `~/.grok/skills/<skill>/` |
+| OpenCode | `.opencode/skills/<skill>/` | `~/.config/opencode/skills/<skill>/` |
+| Pi | `.pi/skills/<skill>/` | `~/.pi/agent/skills/<skill>/` |
+| Kimi | `.kimi/skills/<skill>/` | `~/.kimi/skills/<skill>/` |
 
-Project canonical content lives in `.lpm/managed-skills/`. Global canonical content lives under the LPM home directory. Project links are relative, so moving the project directory keeps healthy links intact.
-
-Global targets use each agent's native home contract: `${CODEX_HOME:-~/.codex}/skills`, `~/.claude/skills`, `~/.cursor/skills`, `${GROK_HOME:-~/.grok}/skills`, `${XDG_CONFIG_HOME:-~/.config}/opencode/skills`, `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills`, and `~/.kimi/skills`.
+Global targets honor `CODEX_HOME`, `GROK_HOME`, `XDG_CONFIG_HOME`, and `PI_CODING_AGENT_DIR` for the corresponding agents.
+Project links are relative and remain usable when the project moves.
+`--copy` creates copies. Windows can fall back to copies if symlink creation is unavailable.
+Agent-specific frontmatter can restrict compatible targets.
 
 ### Source and security boundary
 
-GitHub sources must use HTTPS. Branches, tags, and commit refs are resolved to an immutable commit before download. `GH_TOKEN` or `GITHUB_TOKEN` is used only for authenticated GitHub API requests and is not forwarded to the archive host.
+GitHub sources require HTTPS. LPM CLI resolves a branch, tag, or commit ref to a commit before each download.
+`GH_TOKEN` takes precedence over `GITHUB_TOKEN`. The credential goes only to the GitHub API, not the archive host.
 
-The remote boundary limits downloads to 20 MB, expanded content to 64 MB, regular files to 1 MB, 500 archive entries, and 12 directory levels. Traversal, symlinks, hard links, special entries, and oversized selected files are rejected.
+Remote limits include a 20 MiB download, 64 MiB expanded content, 500 archive entries, and bounded paths with 12 directory levels.
+Traversal paths are rejected. A URL subpath limits which skill trees discovery examines.
+Within discovered skill trees, links, special entries, and regular files larger than 1 MiB are rejected.
+Unrelated archive entries outside those trees do not automatically invalidate a source.
+All discovered skill trees receive these checks before `--skill` selection.
 
-Before installation, the LPM CLI scans selected skills for prompt injection, secret access or exfiltration, shell-download execution, and destructive filesystem instructions:
+Local sources exclude `.git` and reject symlinks, special files, or oversized regular files throughout the selected source root.
+Local limits also include 500 files, 64 MiB total content, and 12 directory levels.
 
-| Severity | Effect |
+LPM CLI scans skill content for prompt injection, secret access, exfiltration, downloaded shell execution, and destructive filesystem instructions.
+
+| Finding | Effect |
 | --- | --- |
-| `warning` | Included in the plan; installation can continue after explicit confirmation. |
-| `block` | Stops installation before managed storage or agent targets are written. |
+| `warning` | Appears in the plan. Installation can continue after explicit confirmation. |
+| `block` | Stops installation before managed content or agent targets change. |
 
-`lpm skills update --dry-run` shows a bounded content diff and identifies new findings by rule, severity, file, and line. Binary auxiliary files are preserved and represented by SHA-256 digest rather than interpreted as text.
+### Updates and review
+
+```bash
+lpm skills update release-notes --dry-run
+lpm skills update release-notes --yes
+lpm skills disable release-notes --agent cursor --yes
+lpm skills enable release-notes --agent cursor --yes
+```
+
+An update reads the original source again. Branches and movable tags can resolve to a newer commit. Local sources reflect current files.
+Each downloaded revision is pinned for that installation. A later update can advance it.
+
+The dry run shows a bounded diff and identifies new findings by rule, severity, file, and line.
+Binary auxiliary files remain intact and appear by SHA-256 digest in the diff.
+LPM CLI checks target compatibility before replacement or re-enabling.
 
 ## Unified inventory and lifecycle
 
@@ -179,36 +265,43 @@ Before installation, the LPM CLI scans selected skills for prompt injection, sec
 lpm skills list
 lpm skills view owner.package/usage
 lpm skills view release-notes
+lpm skills doctor
 lpm skills dashboard
+lpm skills prune --dry-run
 ```
 
-Inventory uses three ownership categories:
+Inventory uses `package`, `managed`, and `external` ownership kinds.
+External skills exist in agent directories but have no LPM CLI ownership record.
 
-- `package`: LPM.dev package guidance in `.lpm/skills/<owner.package>/`.
-- `managed`: standalone content explicitly added through `lpm skills add`.
-- `external`: agent-directory skills discovered but not managed by the LPM CLI.
-
-The command boundary follows that ownership:
-
-| Operation | Publisher files | Installed package sets | Standalone managed skills |
+| Operation | Authored package files | Installed package sets | Managed standalone skills |
 | --- | --- | --- | --- |
-| `validate` | Validates | Ignores valid owned sets | No effect |
-| `clean` | Preserves | Removes after preview and confirmation | No effect |
-| `update`, `enable`, `disable`, `remove` | No effect | No effect | Manages selected skills and targets |
-| `list`, `view`, `dashboard` | Not inventory items | Inspects | Inspects and manages |
+| `validate` | Checks | Ignores valid owned sets | No effect |
+| `clean` | Preserves | Removes intact sets after confirmation | No effect |
+| `update`, `enable`, `disable`, `remove` | No effect | No effect | Changes selected skills and targets |
+| `list`, `view`, `dashboard` | Not inventory items | Inspects | Inspects |
 
-`view` reports source, estimated context size, security findings, integrity, and target health. `doctor` diagnoses canonical content, targets, ownership, disabled targets, and broken external links. `prune --dry-run` previews exact stale target and state paths before cleanup.
+Package `view` reports the package, skill name, and file size. Its text output also shows the path.
+Managed `view` reports source, stored context estimate, current security findings, and target status.
+It does not check the canonical content against a stored digest.
 
-The authenticated local dashboard always combines project and global discovery; its source and **needs attention** tabs filter that inventory in the browser. Selecting a skill loads its exact raw Markdown, rendered body, bounded file tree, and metadata by stable inventory ID. External aliases that resolve to the same canonical directory are one inventory item with multiple agent targets. Branded badges identify Codex, Claude Code, Cursor, Grok, OpenCode, Pi, and Kimi targets. A top-level agent alias is resolved for inspection, while symlinks inside the skill tree remain rejected. Broken aliases stay visible with `broken-link` integrity and explicit missing-target text.
+`doctor` checks canonical-directory existence, target ownership and status, disabled targets, and broken external links.
+It does not check canonical content digests.
+`prune --dry-run` previews stale targets and records before cleanup.
 
-Preview-and-apply actions are available only for managed standalone skills. Package and external skills are inspection-only. Agent labels mean configured targets, not observed use by a running agent; context numbers are estimates, not session or billing usage.
+The local dashboard combines project and global discovery. Its source and **needs attention** filters narrow the inventory.
+Selecting a skill shows raw Markdown, a rendered body, a bounded file tree, and metadata.
+External aliases to one canonical directory appear as one item with several agent targets. Broken aliases remain visible.
 
-Global `--json` emits one structured result for every command, including no-op operations. Unified inventory includes total and per-category counts. Validation, cleanup, and prune can therefore report successful zero-count results without implying a mutation.
+Dashboard mutations apply only to managed standalone skills. Package and external skills are inspection-only.
+Agent labels show configured targets, not observed use. Context estimates do not measure session or billing usage.
+
+Global `--json` emits one structured result, including successful zero-count operations.
+A successful empty result does not imply that files changed.
 
 ## See also
 
-- [`lpm skills`](/docs/packages/skills) — command examples and flags for every workflow
-- [`lpm install --no-skills`](/docs/packages/install) — opt out of package skill extraction
-- [`lpm add --no-skills`](/docs/packages/add) — same for dependency installation
-- [`lpm config lpm-skills`](/docs/infra/config#focused-settings) — persist automatic package skill installation
-- [MCP servers](/docs/reference/mcp-servers) — tools and agent skills are separate integrations
+- [lpm skills](/docs/packages/skills) — full syntax, flags, and command examples
+- [lpm install](/docs/packages/install) — automatic package guidance and invocation overrides
+- [lpm publish](/docs/packages/publish) — publish authored package skills
+- [lpm config](/docs/infra/config#focused-settings) — automatic skill preference
+- [MCP servers](/docs/reference/mcp-servers) — tools available to an agent
