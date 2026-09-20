@@ -1,62 +1,135 @@
 ---
-title: Terminal output security
-description: "How the LPM CLI separates trusted UI, external text, structured JSON, and raw child-process output."
+title: Terminal output
+description: "Control colors and JSON output, separate result streams, and understand terminal sanitization."
 ---
 
-The LPM CLI treats text from registries, package metadata, project files, paths, URLs, task and service configuration, policy providers, and intercepted child processes as untrusted when it appears inside CLI-owned terminal output.
+LPM CLI provides human-readable output and command-specific JSON results. Use JSON for scripts that need stable fields.
 
-This boundary protects human-readable output without removing the CLI's own colors and formatting.
+```bash
+lpm install --json > install.json 2> install.log
+lpm install --color=never
+lpm install --verbose
+```
 
-## Human-readable output
+## Standard output and error
 
-The LPM CLI sanitizes externally controlled fields before adding its own colors, prefixes, status glyphs, or other terminal formatting.
+Install progress, warnings, and diagnostics go to stderr. Commands can write results or human-readable reports to stdout.
+Human output is intended for people; its wording and layout can change.
 
-Inline fields include package names and versions, dependency-graph labels and queries, CI setup values, process names, advisory summaries, registry and server messages, paths, URLs, git references, task and service names, workspace values, and similar data embedded in a CLI-owned row. Inline fields cannot add another terminal line or rewrite the current line: newline, carriage return, tab, backspace, delete, and other raw controls are rendered as `?`.
+In JSON mode, commands with structured results write their JSON to stdout. Diagnostic and captured task logs can still appear on stderr.
 
-Terminal escape sequences are removed as complete units, including CSI, OSC, DCS, APC, PM, SOS, single-character ESC sequences, and their C1 forms. This prevents external text from changing colors, moving the cursor, setting the terminal title, creating an unsafe hyperlink, or writing to the clipboard. Printable Unicode is preserved.
+Keep the streams separate when you parse a result:
 
-For an intentionally multiline block, the CLI preserves legitimate line-feed and tab structure where that structure is part of the output contract. Carriage-return rewriting is not preserved; CRLF is normalized to LF and a lone carriage return is rendered as `?`.
+```bash
+lpm run build --json > build.json 2> build.log
+```
 
-## Intercepted child output
+Do not combine stderr with stdout before parsing JSON. Check the process status as well as the result fields.
+See [Exit codes](/docs/reference/exit-codes).
 
-Child output is inside the sanitization boundary whenever the LPM CLI intercepts it to add presentation or retain it for later display. This includes:
+## Color controls
 
-- live output with CLI-owned task or service prefixes
-- buffered output printed after a task completes
-- captured output replayed from the task cache
-- lifecycle output intercepted by install or rebuild
-- service logs stored and rendered by the dashboard
+| Control | Behavior |
+| --- | --- |
+| `--color=always` | Enable CLI styling, including when stdout is redirected. |
+| `--color=never` | Disable CLI color and styling. |
+| `--color=auto` | Default. Use environment settings, then stdout terminal detection. |
+| `FORCE_COLOR=0` or `FORCE_COLOR=false` | Disable styling in automatic mode. |
+| Other nonempty `FORCE_COLOR` values | Enable styling in automatic mode. |
+| Nonempty `NO_COLOR` | Disable styling when `FORCE_COLOR` has no value. |
 
-The CLI sanitizes each intercepted line before adding a prefix or color. Cached and structured data retains its original value; sanitization happens when the value crosses into human terminal output.
+Explicit `always` or `never` wins. In automatic mode, nonempty `FORCE_COLOR` takes precedence over `NO_COLOR`.
+Empty environment values have no effect.
+
+```bash
+NO_COLOR=1 lpm install
+FORCE_COLOR=1 lpm install
+lpm install --color=never > install.out 2> install.log
+```
+
+Plain output can still contain Unicode symbols. Install spinners also require an interactive stderr stream.
+These controls govern CLI styling; a child program that owns its terminal output can apply its own color settings.
 
 ## JSON output
 
-`--json` output keeps the original semantic values. The LPM CLI does not terminal-sanitize strings before placing them in a JSON envelope, so a registry message or captured output can be recovered exactly after parsing the JSON.
+JSON envelopes differ by command. Use the command page for its fields, success conditions, and captured-output rules.
+When present, `schema_version` identifies that envelope's version. It is not a single shared version for every command.
 
-The JSON serializer structurally escapes characters as required to keep the byte stream valid JSON. Consumers should parse the JSON instead of rendering string values directly to a terminal. A consumer that later displays a parsed external string owns its own terminal-output boundary.
+[lpm run](/docs/dev/run) reports task metadata, including status, duration, cache hits, and failures.
+Its child logs go to stderr. Tool commands such as [lpm check](/docs/dev/check) can include failed child output inside their JSON results.
 
-## Raw child-process output
+JSON serialization preserves the semantic values of included strings. It escapes control characters to produce valid JSON.
+It does not remove terminal commands from those strings.
 
-Some commands intentionally give a child process direct ownership of stdin, stdout, stderr, or the terminal. The LPM CLI does not see those bytes and cannot sanitize them. This compatibility boundary is required for interactive programs, terminal-aware tools, prompts, progress UIs, and normal shell/process semantics.
+This does not guarantee a complete copy of child output. A command can omit successful logs or truncate captured failures.
+For example, workspace tool results include failed output with a 10 MB limit per stream.
 
-Directly inherited child output is therefore outside the CLI's sanitization guarantee. The boundary changes as soon as the CLI captures, prefixes, buffers, summarizes, or replays that output: those render paths are sanitized as described above.
+Parse JSON before you use its fields. If your program later displays a parsed string in a terminal, sanitize that string at display time.
 
-This is an output-rendering protection, not a sandbox for child processes or a replacement for terminal-emulator security updates.
+Some commands preserve child-process I/O instead of producing a CLI envelope. For example, [lpm exec](/docs/dev/exec) passes through the child output.
+A global `--json` flag does not turn an arbitrary child program's output into JSON.
 
-## Boundary summary
+## Human-readable fields
 
-| Output path | Contract |
+LPM CLI treats external text as untrusted when it places that text inside its own terminal output.
+This includes package metadata, project values, paths, URLs, registry messages, and task or service names.
+
+Inline fields cannot insert a line or rewrite the current line. Newline, carriage return, tab, backspace, delete, and other raw controls become `?`.
+Printable Unicode remains intact.
+
+Terminal escape sequences are removed before CLI colors, prefixes, or other formatting are added.
+This covers cursor movement, title changes, terminal hyperlinks, clipboard commands, and related escape-sequence families.
+
+Multiline blocks retain line feeds and tabs when the output format permits them.
+CRLF becomes LF. A lone carriage return becomes `?`, so it cannot rewrite a displayed line.
+
+## Captured child output
+
+Sanitization applies when LPM CLI captures child output and displays it as human-readable text. This includes:
+
+- Task or service lines with CLI prefixes.
+- Buffered task output and task-cache replay.
+- Captured dependency lifecycle output.
+- Root install-hook output redirected to stderr in JSON mode.
+- Service logs displayed by the development dashboard.
+
+Sanitization happens at the human display boundary. Task-cache data and included JSON strings can retain their original values.
+Dashboard service logs are sanitized before storage and display.
+
+## Direct child output
+
+Interactive programs need direct terminal access for prompts, progress displays, and keyboard input.
+When a command gives a child process inherited stdin, stdout, or stderr, the child owns those streams.
+LPM CLI cannot sanitize bytes that it does not capture.
+
+For example, ordinary root install hooks inherit their streams. In JSON mode, LPM CLI captures those hooks and sanitizes their stderr replay.
+The applicable protection therefore depends on the output path, not only the command name.
+
+| Output path | Protection |
 | --- | --- |
-| CLI-owned human row | External inline fields are sanitized before trusted CLI styling. |
-| CLI-owned multiline block | Escape commands and rewrite controls are removed; documented LF/tab structure may be preserved. |
-| Captured, prefixed, buffered, or replayed child output | Sanitized when rendered to a human terminal. |
-| Dashboard service logs | Sanitized before storage/rendering under the shared terminal policy. |
-| Structured JSON | Valid JSON with the original semantic string values. |
-| Directly inherited child terminal | Raw compatibility boundary; the child owns its terminal output. |
+| CLI human-readable field | External inline controls and terminal commands are removed. |
+| CLI multiline block | Terminal commands and rewrite controls are removed; permitted line structure remains. |
+| Captured child output displayed as text | Sanitized before display. |
+| Included JSON string | JSON escaping; no terminal sanitization. |
+| Direct inherited child stream | Raw child output. |
+
+Terminal sanitization protects the display. Dependency-script permissions and containment are separate controls; see [Security](/docs/infra/security).
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| A JSON parser sees progress lines | Capture stdout and stderr separately. Check whether the command supports a CLI JSON envelope. |
+| A pipe loses colors | Use `--color=always` for CLI styling. |
+| A child still prints colors | Use the child's color option or environment configuration. |
+| A captured task loses cursor movement | Run an interactive command through a path with direct child I/O, such as [lpm exec](/docs/dev/exec). |
+| More diagnostics are needed | Add `--verbose`; keep stderr when you save the result. |
 
 ## See also
 
-- [`lpm run`](/docs/dev/run) — buffering, streaming prefixes, and task-cache replay
-- [`lpm exec`](/docs/dev/exec) — direct source-file and project-binary execution
-- [`lpm dev`](/docs/dev/dev) — prefixed service output and dashboard logs
-- [`lpm rebuild`](/docs/packages/rebuild) — intercepted lifecycle output
+- [Exit codes](/docs/reference/exit-codes)
+- [Environment variables](/docs/reference/env-vars)
+- [lpm run](/docs/dev/run)
+- [lpm exec](/docs/dev/exec)
+- [lpm dev](/docs/dev/dev)
+- [lpm rebuild](/docs/packages/rebuild)
