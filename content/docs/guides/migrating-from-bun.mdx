@@ -1,96 +1,152 @@
 ---
 title: Migrating from Bun
-description: "Convert a Bun bun.lock or bun.lockb project to LPM CLI with rollback safety."
+description: Convert a Bun lockfile while keeping runtime choices and lifecycle-script permissions explicit.
 ---
 
-`lpm migrate` converts a Bun project to LPM CLI. It writes a version 12 staging lockfile.
+Use [lpm migrate](/docs/packages/migrate) from the directory with `package.json` and `bun.lock` or `bun.lockb`.
 
-By default, an online install then writes version 13 with exact package-instance identities.
+LPM CLI works with npm, private registries, and LPM.dev Registry. Install it with the [installation guide](/docs/installation).
 
-This guide covers the Bun-specific parts. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
+For a monorepo, run migration from the workspace root. Member-directory migration fails before it changes files.
 
-## Prerequisites
+`--rollback` can still restore an older migration from the member directory that contains its recovery files.
 
-- LPM CLI installed - see [Installation](/docs/installation).
-- A `package.json` plus `bun.lock` or `bun.lockb` in the project root.
-- A clean or committed working tree.
+## Preview and convert
 
-`bun.lock` supports JSON comments and trailing commas. If `bun.lockb` is selected, LPM CLI converts a fixed copy with the `bun` executable on `PATH`.
-The binary converter emits Yarn text, which LPM CLI converts to its staging lockfile.
-An older sibling `bun.lock` does not replace the selected binary input. If Bun is unavailable, migration fails.
-
-## 1. Preview
+Commit the current project before migration. Keep the previous package manager available for rollback.
 
 ```bash
 lpm migrate --dry-run
-```
-
-Dry-run detects Bun, parses the selected lockfile, converts the graph in memory, and writes nothing. It reports package counts, workspace counts, and any conversion problems before touching disk.
-
-If the project contains multiple lockfiles, LPM CLI chooses the most recently modified one. On timestamp ties, the priority order is `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`.
-
-## 2. Run The Migration
-
-```bash
 lpm migrate
 ```
 
-What runs:
+Read the detected source, skipped entries, warnings, and workspace count before conversion.
 
-1. Confirm `package.json` exists and refuse to overwrite an existing `lpm.lock` unless `--force` is set.
-2. Parse Bun package entries, exact versions, tarball URLs, integrity strings, dependency edges, and dev/optional metadata.
-3. Write a version 12 staging `lpm.lock`. If the graph fits the binary format, write `lpm.lockb`.
-4. Back up the Bun lockfile, `.npmrc` when touched, `.gitattributes`, and any pre-existing LPM CLI lockfiles.
-5. Add LPM CLI registry routing to `.npmrc` unless `--no-npmrc` is set.
-6. If `--no-install` is not set, run an online `lpm install`. This step writes version 13 and removes the staging binary file.
-7. Run `build` + `test` scripts unless `--skip-verify` is set.
+If several supported lockfiles exist, the newest modification time selects the input. There is no source-selection flag.
 
-The flow is non-interactive. `-y` is accepted but reserved for a future interactive mode; it does not imply `--force`.
+Equal timestamps prefer `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`. Other lockfiles stay in place.
 
-## 3. Verify
+Migration writes a staging lockfile, configures `.npmrc`, installs dependencies online, and runs available root `build` and `test` scripts.
 
-If you used `--no-install`, run `lpm install` before the offline command.
+**The online install resolves the manifest requirements again.** Migration does not guarantee the exact versions from the previous lockfile.
+
+At a workspace root, installation includes the workspace members. Verification runs the root scripts. Use your usual workspace checks too.
+
+Workspace hooks that request the same install lock fail with a parent-installation conflict. Run those commands after migration.
+
+The command is non-interactive. An existing `lpm.lock` requires `--force`. `--yes` does not imply that flag.
+
+## Review Bun-specific behavior
+
+The text `bun.lock` parser accepts comments and trailing commas. A selected binary `bun.lockb` requires the `bun` executable on `PATH`.
+
+Binary conversion reads a fixed copy and uses Bun's text output. It does not fall back to an older sibling `bun.lock`.
+
+The imported lockfile is staging data. The online install rebuilds package identities and dependency reachability from the project manifests.
+
+Migration does not translate `bunfig.toml`. Move required registry routing and credentials into supported [`.npmrc` configuration](/docs/registries).
+
+### Keep runtime choices explicit
+
+Migration changes dependency management. It does not rewrite project scripts that invoke `bun`, or replace a project's Bun runtime requirement.
+
+Keep Bun available for those scripts. If the project needs a managed runtime, select one with [lpm use](/docs/dev/use).
 
 ```bash
-lpm install --offline
-lpm test
-lpm lint
+lpm use bun@latest
+lpm run test
 ```
 
-`lpm install --offline` confirms the new lockfile and the warmed store can replay without network access. If your Bun project used scripts that shell out through `bun`, keep Bun installed wherever those scripts run; migration changes the package manager, not your project scripts.
+### Review script permissions
 
-## 4. Commit
+Bun's top-level `trustedDependencies` does not authorize dependency scripts in LPM CLI.
+
+LPM CLI reads its own `lpm.trustedDependencies` policy. Review the blocked package set with [lpm approve-scripts](/docs/packages/approve-scripts).
+
+Use [lpm rebuild](/docs/packages/rebuild) for approved dependency builds. Do not copy a trust list without reviewing the package scripts.
+
+Single-package installs default to hoisted layout. Workspaces and default installs with peer conflicts use isolated layout.
+
+## Separate conversion from installation
+
+For a conversion without dependency installation, verification scripts, or registry configuration:
 
 ```bash
-git add lpm.lock .npmrc package.json
-test ! -f lpm.lockb || git add lpm.lockb
-git rm bun.lock bun.lockb bun.lock.backup bun.lockb.backup .npmrc.backup
-git commit -m "Migrate to LPM CLI"
+lpm migrate --no-install --skip-verify --no-npmrc --no-ci --json
 ```
 
-Only remove files that exist in your repo. Do not commit `.backup` files unless you intentionally keep migration rollback artifacts in the repository.
+`--no-install` alone does not skip verification. Migration has no dedicated `lpm.json` fields.
 
-## Bun-Specific Notes
+The staging lockfile cannot support an offline or frozen install. Complete a mutable online install first:
 
-- `bun.lock` comments, trailing commas, dependency metadata, and integrity strings are supported.
-- A selected `bun.lockb` needs the `bun` executable on `PATH`.
-- Bun lockfile metadata carries dev and optional package flags, so the converted lockfile preserves those package classifications.
-- The install step rebuilds `node_modules`. Single-package projects default to LPM CLI's hoisted v2 layout; workspaces and peer-conflict installs use isolated layout unless you override the linker.
-- Dependency lifecycle scripts remain denied by default. After migration, run [`lpm rebuild`](/docs/packages/rebuild) and [`lpm approve-scripts`](/docs/packages/approve-scripts) for packages that need install-time builds.
+```bash
+lpm install --no-frozen-lockfile
+```
 
-## Rollback
+The explicit flag also works where `CI=true` normally selects frozen installation.
+
+## Check the result
+
+Run the project's existing checks, then replay the new lockfile:
+
+```bash
+lpm run build
+lpm run test
+lpm install --frozen-lockfile
+```
+
+Replace these script names with the checks that your project defines. `lpm run` preserves custom test commands and their arguments.
+
+After the store contains every required package, you can check offline replay:
+
+```bash
+lpm install --frozen-lockfile --offline
+```
+
+`--offline` controls package-network work. Root lifecycle scripts can still contact the network.
+
+Dependency scripts stay denied by default. Review [blocked scripts](/docs/packages/approve-scripts) before authorizing packages that require installation builds.
+
+## Commit the migration
+
+Inspect the complete diff and the resolved dependency versions:
+
+```bash
+git status --short
+git diff
+```
+
+Commit `lpm.lock`, any generated `lpm.lockb`, `.gitattributes`, and the intended manifest, configuration, patch, and CI changes.
+
+Review `.npmrc` before committing it. Store credentials in environment variables or a user-level file, not in the repository.
+
+Keep `.backup` files and `.lpm-migrate-manifest.json` together until you accept the migration. Keep these recovery files out of commits.
+
+Remove the old manager's tracked lockfile only after the team accepts the migration. Do not delete recovery snapshots to clean the Git diff.
+
+For CI, replace the install step with [lpm ci](/docs/guides/ci-cd-setup). Review generated templates before enabling them.
+
+## Roll back or retry
 
 ```bash
 lpm migrate --rollback
 ```
 
-Restores the original managed files and removes files created by migration. Repeated migrations retain the first snapshots.
-Rollback does not restore `node_modules` or undo arbitrary script output. Use Bun to restore its dependency layout after rollback.
+Rollback restores or removes files recorded in `.lpm-migrate-manifest.json`. Other install changes, `node_modules`, store contents, and script output remain.
+
+After rollback, run the previous manager's install command to restore its dependency layout.
+
+For an install or verification failure, fix the reported cause before retrying:
+
+```bash
+lpm migrate --force
+```
+
+Repeated migration retains the first recovery snapshots. Keep them until you no longer need rollback.
 
 ## See also
 
-- [`lpm migrate`](/docs/packages/migrate) - full flag reference
-- [Migrating from npm](/docs/guides/migrating-from-npm) - package-lock migration
-- [Migrating from pnpm](/docs/guides/migrating-from-pnpm) - pnpm-specific translations
-- [Migrating from Yarn](/docs/guides/migrating-from-yarn) - Yarn lockfile migration
-- [Lockfile](/docs/packages/lockfile) - what gets committed and why
+- [lpm migrate](/docs/packages/migrate) — flags, input formats, and recovery
+- [Lockfile](/docs/packages/lockfile) — authoritative files and frozen installs
+- [Registries](/docs/registries) — routing and authentication
+- [CI/CD setup](/docs/guides/ci-cd-setup) — reproducible CI installation

@@ -1,174 +1,225 @@
 ---
 title: Zero-config dev server
-description: "Configure lpm.json once, then run lpm dev — HTTPS, tunnel, and multi-service orchestration."
+description: Start a project, then add shared runtime configuration, environments, HTTPS, and services.
 ---
 
-`lpm dev` is the marquee command of the Dev section. With nothing configured, it runs your `dev` script. With a few lines of `lpm.json`, it picks up the right Node version, syncs deps, loads `.env`, serves over HTTPS, exposes a public tunnel, and orchestrates multiple services with readiness checks. This guide covers the path from "works in my repo" to "works the same for the whole team."
-
-## Step 0: Just run it
+Use [lpm dev](/docs/dev/dev) to start your project's development command. Add `lpm.json` as the project needs shared configuration.
 
 ```bash
 lpm dev
 ```
 
-If your `package.json` has a `dev` script, `lpm dev` runs it. Stop here if that's all you need.
+With a `dev` script in `package.json`, this starts the server and opens its verified local URL. Stop the session with Ctrl+C.
 
-The rest of this guide is about turning that into something repeatable: a checked-in config that gives every contributor the same setup with no per-machine fiddling.
-
-## Step 1: Pin the Node version
-
-```json title="lpm.json"
+```json title="package.json (relevant fields)"
 {
-  "runtime": { "node": ">=22.0.0" }
-}
-```
-
-`lpm dev` will use the pinned version, auto-installing it via [`lpm use`](/docs/dev/use) if missing. Node's fall-back chain is `lpm.json > runtime.node` → `.nvmrc` → `.node-version` → inherited `PATH`; Bun is read from `lpm.json > runtime.bun`. `package.json > engines.node` validates compatibility but never selects or installs Node. See [Managed runtimes](/docs/dev/node-version-pinning) for the full detection contract.
-
-```bash
-lpm use node@22                # install + pin in one step (writes lpm.json)
-```
-
-## Step 2: Map env files to scripts
-
-```json title="lpm.json"
-{
-  "env": {
-    "dev":     ".env.development",
-    "staging": ".env.staging",
-    "prod":    ".env.production"
+  "scripts": {
+    "dev": "vite"
   }
 }
 ```
 
-`lpm run dev` now loads `.env.development` automatically. `lpm run staging` loads `.env.staging`. CLI override: `lpm dev --env=preview` loads `.env.preview` regardless.
+Use your project's existing server command. LPM CLI prepares stale dependencies through the configured registries before startup.
 
-For env-var validation (CI catches missing required vars before they explode at runtime):
+## Keep the command in `lpm.json`
 
-```json title="lpm.json"
-{
-  "envSchema": {
-    "vars": {
-      "DATABASE_URL": { "required": true, "format": "url" },
-      "API_KEY":      { "required": true, "secret": true }
-    }
-  }
-}
-```
-
-The check runs before every `lpm run` / `lpm dev` / `lpm <file>` / `lpm exec`. Skip with `--no-env-check`.
-
-## Step 3: Turn on HTTPS
-
-```json title="lpm.json"
-{ "https": true }
-```
-
-Plus a one-time CA install:
-
-```bash
-lpm cert trust
-```
-
-Now `lpm dev` serves over `https://localhost`. Browsers trust the cert. See [Local HTTPS](/docs/infra/local-https) for the file layout.
-
-## Step 4: Add a tunnel
-
-```json title="lpm.json"
-{ "tunnel": { "domain": "acme-api.lpm.llc" } }
-```
-
-Plus the claim (Pro/Org only):
-
-```bash
-lpm tunnel claim acme-api.lpm.llc
-```
-
-Now `lpm dev` exposes the dev server at `https://acme-api.lpm.llc`. Webhooks to the public URL are captured to disk for replay:
-
-```bash
-lpm tunnel inspect            # browse captured events
-lpm tunnel replay 3           # re-deliver event #3 to localhost
-lpm tunnel inspect --ui       # browser-based inspector
-```
-
-Free users get an ephemeral random domain on every run. To keep one stable URL, claim it.
-
-## Step 5: Multi-service orchestration
-
-```json title="lpm.json"
-{
-  "services": {
-    "db": {
-      "command": "docker compose up postgres",
-      "readyPort": 5432,
-      "readyTimeout": 60
-    },
-    "api": {
-      "command": "node server.js",
-      "port": 4000,
-      "dependsOn": ["db"],
-      "env": { "DATABASE_URL": "postgres://localhost:5432/myapp" }
-    },
-    "web": {
-      "command": "next dev",
-      "port": 3000,
-      "primary": true
-    }
-  }
-}
-```
-
-`lpm dev` starts each service, assigns and verifies owned listener ports, runs any additional `readyPort` / `readyUrl` checks, and prefixes each service's logs:
-
-```text
-[db]  ✔ ready (0.8s)
-[api] ✔ ready (3.4s)
-[web] ✔ ready (1.2s)
-Local http://localhost:<resolved-port>/
-```
-
-The primary service's verified endpoint receives LPM CLI-owned HTTPS, tunnel, and LAN frontends plus the browser-open. Mark exactly one service as `primary: true` in a multi-service config.
-
-For better-than-prefixed-logs viewing:
-
-```bash
-lpm dev --dashboard
-```
-
-TUI dashboard with per-service log panels and webhook inspection.
-
-## Step 6: Task graph and caching
-
-For things you build, not run-and-watch — define them in `tasks` for caching and dependency ordering:
+An explicit task command takes precedence over `scripts.dev`:
 
 ```json title="lpm.json"
 {
   "tasks": {
-    "build": {
-      "command": "tsup",
-      "dependsOn": ["^build"],
-      "cache": true,
-      "outputs": ["dist/**"],
-      "inputs": ["src/**", "package.json"]
+    "dev": {
+      "command": "vite",
+      "env": "development"
     }
   }
 }
 ```
 
-`^build` means "build me only after every upstream workspace dep has built." `cache: true` caches the result keyed by inputs; a re-run with unchanged inputs replays instantly. See [`lpm run`](/docs/dev/run) and [Task runner](/docs/dev/task-runner).
+```bash
+lpm dev --no-open
+lpm dev --env staging
+```
 
-## Common pitfalls
+`--env` overrides `tasks.dev.env`, then the `env.dev` mapping. Without an explicit task command, the package script runs with its `predev` and `postdev` hooks.
 
-- **`lpm cert trust` only needs to run once per machine.** Teammates each run it on their laptop; CI doesn't need it.
-- **Tunnel domain `claim` is per-organization or per-user.** Claim it once, commit `lpm.json`, every teammate uses the same URL.
-- **Mark exactly one service `primary: true`.** Otherwise `lpm dev`'s flag-routing and browser-open don't have a clear target.
-- **`readyPort` defaults to `port` if absent.** If your service listens on a different port for readiness checks (uncommon), set `readyPort` explicitly.
+Direct dev sessions use the task command and environment. Task dependencies and caches run through [lpm run](/docs/dev/run).
+
+## Pin the runtime
+
+```bash
+lpm use node@22
+```
+
+[lpm use](/docs/dev/use) installs the selected version and writes the resolved version to `lpm.json`. Commit that configuration for the team.
+
+Node selection uses `runtime.node`, then `.nvmrc`, then `.node-version`, then `PATH`. `engines.node` checks compatibility but does not select Node.
+
+For a prepared environment that must avoid automatic downloads:
+
+```bash
+LPM_NO_AUTO_INSTALL=1 lpm dev --no-install --no-open
+```
+
+`--no-install` skips dependencies. The environment variable controls automatic runtime downloads. Install the required runtime and dependencies before this command.
+
+## Load variables and local secrets
+
+For the selected `development` environment, ordinary file loading uses this order:
+
+1. `.env`
+2. `.env.local`
+3. `.env.development`
+4. `.env.development.local`
+
+Later files override earlier files. Safe inherited variables take precedence over files. Local secrets from [lpm env](/docs/dev/env) override matching file values.
+
+Named environments can specify different files and inheritance. See [managing secrets](/docs/guides/managing-secrets) for encrypted storage and team sync.
+
+Add an environment schema to catch missing values before startup:
+
+```json title="lpm.json (additional field)"
+{
+  "envSchema": {
+    "vars": {
+      "DATABASE_URL": { "required": true, "format": "url" },
+      "API_KEY": { "required": true, "secret": true }
+    }
+  }
+}
+```
+
+`secret: true` marks a value as sensitive. It does not move a dotenv value into encrypted storage.
+
+Restart the session after changes to variables. For one diagnostic run, `--no-env-check` skips schema checks and schema defaults.
+
+## Add local HTTPS
+
+```bash
+lpm dev --https
+```
+
+On first use, LPM CLI asks before trusting its local certificate authority. Each developer completes that step on their machine.
+
+To enable HTTPS for future sessions, add `"https": true` to `lpm.json`:
+
+```json title="lpm.json (additional field)"
+{
+  "https": true
+}
+```
+
+```bash
+lpm dev --https --port 4000
+lpm dev --no-https
+```
+
+With HTTPS, port `4000` belongs to the HTTPS frontend. The application runs on a separate internal HTTP port.
+
+Use the URL printed by the command. See [local HTTPS](/docs/infra/local-https) for browser trust and mobile setup.
+
+## Start several services
+
+Replace the single command with a `services` object:
+
+```json title="lpm.json"
+{
+  "services": {
+    "api": {
+      "command": "node api.mjs",
+      "port": 4000,
+      "readyUrl": "http://localhost:4000/health",
+      "readyTimeout": 60
+    },
+    "web": {
+      "command": "vite",
+      "port": 5173,
+      "primary": true,
+      "dependsOn": ["api"]
+    }
+  }
+}
+```
+
+The API must read `PORT` and provide a successful response at `/health`. LPM CLI can assign another port if the preferred port is occupied.
+
+```bash
+lpm dev web
+lpm dev --dashboard
+```
+
+Selecting `web` also starts `api`. In service mode, trailing arguments select services instead of becoming command arguments.
+
+The primary service receives browser, HTTPS, tunnel, and LAN features. When you use those features, keep the primary service selected.
+
+The web process receives `API_URL` and `API_PORT`. Use these values instead of assuming that the API keeps its preferred port.
+
+An assigned port must belong to the service process. `readyPort` adds a TCP check. `readyUrl` adds a local HTTP check and takes precedence.
+
+Readiness failures stop startup and clean up the services. For background workers, omit the port and readiness fields unless they expose an endpoint.
+
+## Share a public URL
+
+After [authentication](/docs/infra/authentication):
+
+```bash
+lpm dev --tunnel
+```
+
+For a reserved domain on an eligible plan:
+
+```bash
+lpm tunnel claim acme-api.lpm.llc
+lpm dev --domain acme-api.lpm.llc
+```
+
+To enable that domain from configuration:
+
+```json title="lpm.json (additional field)"
+{
+  "tunnel": { "domain": "acme-api.lpm.llc" }
+}
+```
+
+```bash
+lpm dev --no-tunnel
+```
+
+A shared configuration does not grant domain ownership or account access. Each session needs an authorized account.
+
+Tunnel requests enter `.lpm/inspector.db`. Use [lpm tunnel](/docs/infra/tunnel) to inspect and replay captured requests.
+
+```bash
+lpm tunnel inspect
+lpm tunnel replay 3
+```
+
+`--no-inspect` disables the browser inspector, while request capture continues. See [tunneling](/docs/infra/tunneling) for access controls and account limits.
+
+## Run without prompts
+
+```bash
+lpm dev --https --yes --no-open --no-dashboard
+```
+
+`--yes` approves certificate trust and managed hosts-file changes. Operating-system elevation can still require interaction.
+
+For finite CI jobs, use [lpm run](/docs/dev/run), [lpm test](/docs/dev/test), or your build command. A dev server stays active until stopped.
+
+## Troubleshooting
+
+| Problem | Action |
+| --- | --- |
+| No dev command | Add `scripts.dev` or `tasks.dev.command`. |
+| Missing executable | Run [lpm install](/docs/packages/install) and check the project command. |
+| Runtime mismatch | Select a compatible version with [lpm use](/docs/dev/use). |
+| Service never becomes ready | Check its logs, `PORT` handling, and readiness endpoint. |
+| Wrong environment value | Check the selected environment, inherited variables, and local secrets. |
+| Tunnel access fails | Check the account, reserved domain, and plan through [lpm tunnel](/docs/infra/tunnel). |
 
 ## See also
 
-- [`lpm dev`](/docs/dev/dev) — full command reference
-- [`lpm.json` reference](/docs/reference/lpm-json) — every field, every type
-- [`lpm cert`](/docs/infra/cert) — local HTTPS detail
-- [`lpm tunnel`](/docs/infra/tunnel) — claim, inspect, replay
-- [Task runner](/docs/dev/task-runner) — caching internals
+- [lpm dev](/docs/dev/dev) — command reference
+- [lpm.json](/docs/reference/lpm-json) — complete configuration
+- [Task runner](/docs/dev/task-runner) — finite tasks and caches
+- [Port management](/docs/infra/port-management) — service ports and cleanup

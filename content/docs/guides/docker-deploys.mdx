@@ -1,111 +1,163 @@
 ---
-title: Docker Deploys
-description: "Build Docker images with lpm fetch, offline installs, and lpm deploy."
+title: Docker deployments
+description: Build container images with a committed lockfile, isolated credentials, and portable workspace output.
 ---
 
-Use one of two Docker patterns:
+Use a frozen install for a single package. For a workspace application, use [lpm deploy](/docs/packages/workspaces#lpm-deploy) to create a portable production directory.
 
-- Single package: warm the store from `lpm.lock`, then run an offline frozen install.
-- Workspace app: run `lpm deploy` in a build stage, then `COPY --from=pruned` the self-contained output.
+```bash
+docker build -t acme-api .
+```
 
-Both patterns start from committed lockfiles. `lpm.lock` is authoritative; commit `lpm.lockb` too when LPM CLI writes it, but Docker cache layers can key off `lpm.lock`.
+Both recipes require a committed `lpm.lock`. When LPM CLI writes `lpm.lockb`, commit it too.
 
-## Single-Package Image
+The examples pin LPM CLI to `0.78.0`. Choose an approved base-image digest and matching runtime version for production.
+
+## Exclude credentials from the build context
+
+Create this file before the first build:
+
+```text title=".dockerignore"
+.git
+**/node_modules
+**/.lpm
+**/.env*
+**/.npmrc
+**/.netrc
+**/_netrc
+**/.ssh
+**/*.key
+**/*.pem
+.lpm-migrate-manifest.json
+**/*.backup
+```
+
+Add any other plaintext secret exports your project uses. If the application ships a public certificate or example environment file, review the exclusions.
+
+A Docker secret mount keeps credentials out of `COPY`. Build commands and lifecycle scripts can still read a mounted credential during that step.
+
+## Build a single-package image
+
+This example runs an existing `server.js` without a compilation step:
 
 ```dockerfile
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.10
 FROM node:22-bookworm-slim
 
-RUN npm install -g @lpm-registry/cli
+RUN npm install --global @lpm-registry/cli@0.78.0
 WORKDIR /app
 
 COPY lpm.lock ./
-RUN lpm fetch --platform linux/x64/glibc
-
-COPY package.json ./
-RUN lpm install --offline --frozen-lockfile --prod
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    --mount=type=secret,id=lpm_token,env=LPM_TOKEN \
+    lpm fetch
 
 COPY . .
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    --mount=type=secret,id=lpm_token,env=LPM_TOKEN \
+    lpm install --offline --frozen-lockfile --prod
 
 CMD ["node", "server.js"]
 ```
 
-`lpm fetch` only reads `lpm.lock`, so ordinary source changes do not invalidate package downloads. The later `lpm install --offline --frozen-lockfile --prod` links from the warmed store and fails if `package.json` does not match the importer snapshot in `lpm.lock`.
+The lockfile-only fetch layer can survive ordinary source changes. The source enters before installation so root lifecycle scripts and local dependencies have their files.
 
-Use a platform that matches the runtime image:
+Secret mounts are optional for public dependencies. For a protected build:
 
 ```bash
-lpm fetch --platform linux/x64/glibc  # Debian/Ubuntu images
-lpm fetch --platform linux/x64/musl   # Alpine x64 images
-lpm fetch --platform linux/arm64/musl # Alpine arm64 images
+# npm-compatible registry credentials
+docker build --secret id=npmrc,src=.npmrc -t acme-api .
+
+# LPM.dev Registry token already present in the shell environment
+docker build --secret id=lpm_token,env=LPM_TOKEN -t acme-api .
 ```
 
-If the project has local `file:` or `link:` sources, copy those source directories before the offline install. `lpm fetch` skips local sources because their bytes live in the checkout, not in a registry tarball.
+Do not put credentials in Docker `ARG` or `ENV` instructions. Those values can enter build metadata or image layers.
 
-## Layer Cache Notes
+### Match the target platform
 
-Keep the LPM CLI store in an image layer when that same stage ships `node_modules`. LPM CLI links installed packages through the store, so a BuildKit cache mount at `/root/.lpm/store` would disappear after the `RUN` step and leave broken links in the final image.
+Without `--platform`, [lpm fetch](/docs/packages/fetch) selects the build environment's platform. For an explicit target:
 
-Use ordinary Docker layer caching for the store-warm step, or use [`lpm deploy`](#workspace-deploy-image), whose output carries a deploy-local `.lpm/store/` alongside `node_modules`. Do not cache or copy `node_modules` between builds; LPM CLI recreates it from the lockfile and store.
+```bash
+lpm fetch --platform linux/x64/glibc
+lpm fetch --platform linux/x64/musl
+lpm fetch --platform linux/arm64/musl
+```
 
-## Workspace Deploy Image
+Match the architecture and libc to the runtime image. Debian uses glibc. Alpine uses musl.
 
-For monorepos, `lpm deploy` materializes one workspace member into a self-contained output directory. The output includes the selected member source, selected local workspace dependencies under `.lpm/deploy-workspace/`, a pruned `lpm.lock`, a deploy-local store, and a populated `node_modules/`.
+Local `file:` and `link:` dependencies need their source directories before installation. Fetch does not download those local sources.
+
+### Keep the package store available
+
+Installed links can refer to the package store. In the single-stage example, the store remains in the image alongside `node_modules`.
+
+A temporary BuildKit cache mount at `/root/.lpm/store` disappears after its `RUN` step. Do not rely on that mount for runtime links.
+
+For a smaller runtime image, use a self-contained framework output or the workspace deployment pattern below. Copying only `node_modules` can leave links broken.
+
+`--offline` controls package-network work. Root lifecycle scripts still run and can access the network unless Docker restricts it separately.
+
+## Build a workspace application
+
+Prepare the application and its local dependencies before deployment:
 
 ```dockerfile
-# syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim AS pruned
+# syntax=docker/dockerfile:1.10
+FROM node:22-bookworm-slim AS build
 
-RUN npm install -g @lpm-registry/cli
+RUN npm install --global @lpm-registry/cli@0.78.0
 WORKDIR /repo
-
 COPY . .
-RUN lpm deploy /prod/api --filter api
+
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    --mount=type=secret,id=lpm_token,env=LPM_TOKEN \
+    lpm ci
+RUN lpm run build --filter 'api...'
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    --mount=type=secret,id=lpm_token,env=LPM_TOKEN \
+    lpm deploy /prod/api --filter api
 
 FROM node:22-bookworm-slim AS runtime
-
 WORKDIR /app
-COPY --from=pruned /prod/api /app
-
-CMD ["node", "server.js"]
+COPY --from=build /prod/api /app
+CMD ["node", "dist/server.js"]
 ```
 
-`lpm deploy` requires `--filter` or `--filter-prod`, and the final selection must match exactly one workspace member. `--prod` is the default. Use `--dev` for a dev-dependency deploy tree and `--no-optional` to omit optional dependencies.
+Replace `api`, the build command, and the entrypoint with your application values. The member's `files` field must include the built output.
 
-The runtime image does not need LPM CLI unless your own runtime scripts call it.
+The output directory must sit outside the workspace. The filter must select exactly one member.
 
-## Deploy Copy Rules
+Deployment includes local workspace dependencies, `node_modules`, a deployment-local store, and a lockfile. Internal links remain usable after the directory moves on Unix.
 
-`lpm deploy` copies publishable files: `package.json > files` when present, otherwise `.npmignore`, otherwise `.gitignore`. It then applies a deny list at every directory level:
+The runtime image does not need LPM CLI unless application commands use it. Build native dependencies for the same operating system, architecture, libc, and runtime ABI.
 
-- `node_modules`, `.lpm`, `lpm.lock`, `lpm.lockb`
-- `.env`, `.env.local`, `.env.development`, `.env.development.local`, `.env.production`, `.env.production.local`, `.env.test`, `.env.test.local`
-- `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, `.hg`
-- `.DS_Store`, `Thumbs.db`
+`--prod` is the default selection. `--dev` selects development dependencies instead of production dependencies. Use `--no-optional` to omit optional dependencies.
 
-Still add a `.dockerignore` so secrets and local state never enter the Docker build context:
+## Control deployment contents
 
-```text title=".dockerignore"
-node_modules
-.lpm
-.env*
-.git
-```
+For copied member and workspace-dependency sources, deployment selects files through `package.json > files`, otherwise `.npmignore`, otherwise `.gitignore`.
 
-## Common Pitfalls
+These source copies exclude package-manager state, VCS files, dotenv files, and `.npmrc`, `.netrc`, and `_netrc` credential files. Credential names match regardless of letter case.
 
-| Symptom | Fix |
+A `files` allowlist does not override these exclusions. The exclusions do not filter files inside installed registry packages or other local directory dependencies.
+
+Review the generated directory before publishing the image. Deployment does not identify every possible filename that can contain a secret.
+
+## Troubleshooting
+
+| Failure | Recovery |
 | --- | --- |
-| `lpm install --offline` says a package is missing from the store | Run `lpm fetch --platform <target>` in an earlier layer or remove `--offline` for that build |
-| Native optional package is missing in Alpine | Fetch for `linux/<arch>/musl`, not `glibc` |
-| `lpm deploy` says the filter matched zero or many members | Narrow the filter and preview it with [`lpm filter`](/docs/packages/workspaces#filter-grammar) |
-| Deploy output path is rejected | Put it outside the workspace tree, such as `/prod/api` |
-| Source changes invalidate install cache | Copy only `lpm.lock` before `lpm fetch`, then copy `package.json`, then copy the rest of the source |
+| Offline package is absent | Fetch online for the target platform and retain the resulting store. |
+| Root lifecycle script cannot find a file | Copy the required project files before installation. |
+| Runtime dependency link is broken | Keep the referenced store or use a self-contained deployment directory. |
+| Native dependency cannot load | Match the build and runtime platform and Node ABI. |
+| Deployment filter matches zero or several packages | Preview and narrow it with [lpm filter](/docs/packages/workspaces). |
+| Built files are absent | Run the build and include its output in the member's `files` list. |
 
 ## See also
 
-- [`lpm fetch`](/docs/packages/fetch) - lockfile-only store warming
-- [`lpm install --offline --frozen-lockfile`](/docs/packages/install#frozen-lockfile-and-ci) - reproducible installs
-- [Workspaces: `lpm deploy`](/docs/packages/workspaces#lpm-deploy) - deploy command reference
-- [Monorepo setup](/docs/guides/monorepo-setup) - workspace filters and deploy flow
-- [CI/CD setup](/docs/guides/ci-cd-setup) - caching `~/.lpm/store`
+- [lpm fetch](/docs/packages/fetch) — populate the store
+- [lpm install](/docs/packages/install) — frozen and offline installation
+- [Monorepo setup](/docs/guides/monorepo-setup) — workspace tasks and deployment
+- [CI/CD setup](/docs/guides/ci-cd-setup) — credentials and caches

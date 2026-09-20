@@ -1,129 +1,145 @@
 ---
 title: Migrating from npm
-description: "Convert a package-lock.json project to LPM CLI with rollback safety."
+description: Convert an npm project, review dependency changes, and retain a usable rollback path.
 ---
 
-`lpm migrate` converts an npm project to LPM CLI. It writes a version 12 staging lockfile, then runs an online install by default.
+Use [lpm migrate](/docs/packages/migrate) from the directory with `package.json` and `package-lock.json`. npm lockfile versions 1, 2, and 3 are supported.
 
-The install writes version 13 with exact package-instance identities. Every changed file has a backup. Use `--rollback` to restore the original state.
+LPM CLI works with npm, private registries, and LPM.dev Registry. Install it with the [installation guide](/docs/installation).
 
-This guide is the migration walkthrough. For the full flag reference, see [`lpm migrate`](/docs/packages/migrate).
+For a monorepo, run migration from the workspace root. Member-directory migration fails before it changes files.
 
-## Prerequisites
+`--rollback` can still restore an older migration from the member directory that contains its recovery files.
 
-- LPM CLI installed — see [Installation](/docs/installation).
-- A working `package-lock.json` in the project root.
-- A reasonably-clean working tree (commit before migrating, just to be safe).
+## Preview and convert
 
-## 1. Preview
+Commit the current project before migration. Keep the previous package manager available for rollback.
 
 ```bash
 lpm migrate --dry-run
-```
-
-Detects npm, parses `package-lock.json`, converts to the LPM CLI format, but **writes nothing**. Reports the package count, any packages that couldn't be converted (with reasons), and the workspace member count.
-
-If anything looks wrong, fix it before doing the real run.
-
-## 2. Run the migration
-
-```bash
 lpm migrate
 ```
 
-What runs, in order:
+Read the detected source, skipped entries, warnings, and workspace count before conversion.
 
-1. **Pre-flight** — confirms `package.json` exists, refuses to clobber an existing `lpm.lock`.
-2. **Detect, parse, convert** — reads `package-lock.json`, converts entries to LPM CLI's lockfile shape.
-3. **Write** — emits a version 12 staging `lpm.lock`. If the graph fits the binary format, it also emits `lpm.lockb`.
-4. **`.npmrc`** — adds LPM CLI-aware config to `.npmrc` (or creates one). Backs up the original to `.npmrc.backup`.
-5. **Install** — runs an online `lpm install`. This step writes version 13 and removes the staging `lpm.lockb`.
-6. **Verify** — runs `build` + `test` if those scripts exist, to confirm nothing broke.
-7. **CI hint** — when a CI platform is detected (`.github/workflows`, `.gitlab-ci.yml`, etc.), prints a hint suggesting you re-run with `lpm migrate --ci` to generate a workflow template.
-8. **Summary** — what was done, where backups live, and how to roll back.
+If several supported lockfiles exist, the newest modification time selects the input. There is no source-selection flag.
 
-The migrate flow is non-interactive — every step runs straight through. If `lpm.lock` already exists, pass `--force` to overwrite it.
+Equal timestamps prefer `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`. Other lockfiles stay in place.
 
-## 3. Verify
+Migration writes a staging lockfile, configures `.npmrc`, installs dependencies online, and runs available root `build` and `test` scripts.
 
-If you used `--no-install`, run an online install first:
+**The online install resolves the manifest requirements again.** Migration does not guarantee the exact versions from the previous lockfile.
+
+At a workspace root, installation includes the workspace members. Verification runs the root scripts. Use your usual workspace checks too.
+
+Workspace hooks that request the same install lock fail with a parent-installation conflict. Run those commands after migration.
+
+The command is non-interactive. An existing `lpm.lock` requires `--force`. `--yes` does not imply that flag.
+
+## Review npm compatibility
+
+LPM CLI uses public npm and private registries through `.npmrc`. An LPM.dev Registry account is unnecessary for public npm dependencies.
+
+Migration preserves existing registry routing. Unless `--no-npmrc` is set, it adds a missing `@lpm.dev:registry` mapping.
+
+Simple string-valued npm `overrides` are supported. Nested npm override objects are not equivalent to those simple overrides.
+
+Override precedence is `lpm.overrides`, then `overrides`, then `resolutions`. See [npm compatibility](/docs/packages/npm-compatibility) before translating complex rules.
+
+Single-package installs default to a hoisted layout. Workspaces and default installs with peer conflicts select isolated layout.
+
+The hoisted layout differs from npm's flat tree. Declare every imported package instead of relying on undeclared transitive dependencies.
+
+For a shared linker choice:
+
+```json title="package.json (additional field)"
+{
+  "lpm": { "linker": "isolated" }
+}
+```
+
+Use [lpm install](/docs/packages/install) with `--linker=hoisted` or `--linker=isolated` for a one-run override.
+
+## Separate conversion from installation
+
+For a conversion without dependency installation, verification scripts, or registry configuration:
 
 ```bash
-lpm install
+lpm migrate --no-install --skip-verify --no-npmrc --no-ci --json
 ```
 
-Then run your usual checks:
+`--no-install` alone does not skip verification. Migration has no dedicated `lpm.json` fields.
+
+The staging lockfile cannot support an offline or frozen install. Complete a mutable online install first:
 
 ```bash
-lpm install --offline       # confirm reproducibility from the new lockfile
-lpm test
-lpm lint
-lpm fmt --check
+lpm install --no-frozen-lockfile
 ```
 
-If anything's broken, see [Rollback](#rollback) below.
+The explicit flag also works where `CI=true` normally selects frozen installation.
 
-## 4. Commit
+## Check the result
+
+Run the project's existing checks, then replay the new lockfile:
 
 ```bash
-git add lpm.lock .npmrc package.json
-test ! -f lpm.lockb || git add lpm.lockb
-git rm package-lock.json package-lock.json.backup .npmrc.backup     # if you don't want them committed
-git commit -m "Migrate to LPM CLI"
+lpm run build
+lpm run test
+lpm install --frozen-lockfile
 ```
 
-You probably don't want the `.backup` files in the repo. Add them to `.gitignore`:
+Replace these script names with the checks that your project defines. `lpm run` preserves custom test commands and their arguments.
 
-```text
-*.backup
+After the store contains every required package, you can check offline replay:
+
+```bash
+lpm install --frozen-lockfile --offline
 ```
 
-## Rollback
+`--offline` controls package-network work. Root lifecycle scripts can still contact the network.
 
-If anything goes wrong (or the migration was a mistake):
+Dependency scripts stay denied by default. Review [blocked scripts](/docs/packages/approve-scripts) before authorizing packages that require installation builds.
+
+## Commit the migration
+
+Inspect the complete diff and the resolved dependency versions:
+
+```bash
+git status --short
+git diff
+```
+
+Commit `lpm.lock`, any generated `lpm.lockb`, `.gitattributes`, and the intended manifest, configuration, patch, and CI changes.
+
+Review `.npmrc` before committing it. Store credentials in environment variables or a user-level file, not in the repository.
+
+Keep `.backup` files and `.lpm-migrate-manifest.json` together until you accept the migration. Keep these recovery files out of commits.
+
+Remove the old manager's tracked lockfile only after the team accepts the migration. Do not delete recovery snapshots to clean the Git diff.
+
+For CI, replace the install step with [lpm ci](/docs/guides/ci-cd-setup). Review generated templates before enabling them.
+
+## Roll back or retry
 
 ```bash
 lpm migrate --rollback
 ```
 
-Walks the backups created by the previous run and restores `package-lock.json`, `.npmrc` (if it was touched), and `.gitattributes` to their pre-migration state. Files the migration newly created — `lpm.lock`, `lpm.lockb`, any new `.gitattributes`, and any patch files copied to `patches/` — are removed. `package.json` is only rolled back if the migration mutated it (i.e., when `pnpm.*` blocks were translated; usually not on the npm path). Safe to run repeatedly.
+Rollback restores or removes files recorded in `.lpm-migrate-manifest.json`. Other install changes, `node_modules`, store contents, and script output remain.
 
-## Optional flags
+After rollback, run the previous manager's install command to restore its dependency layout.
 
-| Flag | Effect |
-| --- | --- |
-| `--dry-run` | Parse + convert only, write nothing |
-| `--force` | Overwrite an existing `lpm.lock` |
-| `-y`, `--yes` | Reserved. The flow is non-interactive today, so this flag is a no-op. It does NOT imply `--force`. |
-| `--no-install` | Convert lockfile only, skip the install step |
-| `--skip-verify` | Skip the `build` + `test` verification |
-| `--no-npmrc` | Don't touch `.npmrc` |
-| `--ci` | Also generate a CI workflow template for the detected platform |
-| `--no-ci` | Suppress the CI template hint |
-| `--rollback` | Restore from `.backup` files |
+For an install or verification failure, fix the reported cause before retrying:
 
-## What stays the same
+```bash
+lpm migrate --force
+```
 
-- `package.json` — `dependencies`, `devDependencies`, `scripts`, `workspaces` are read as-is. No renames, no deletions.
-- `node_modules/` — gets rebuilt by the install step. The on-disk shape may change from npm's flat tree to LPM CLI's v2 hoisted layout, or to LPM CLI's isolated layout for workspaces and peer-conflict installs; declared imports continue to work because LPM CLI's resolver respects the same semver semantics npm does.
-- `.npmrc` — any existing `@scope:registry=` lines for private registries survive the migration. The migration additively appends `@lpm.dev:registry=https://lpm.dev/api/registry/` (unless you pass `--no-npmrc`); if your `.npmrc` already declared that scope, the step is a no-op. LPM CLI honors `.npmrc` for routing — see [Registries](/docs/registries).
-
-## What changes
-
-- `package-lock.json` → `lpm.lock`. The default install writes version 13 and removes the temporary binary companion.
-- `node_modules/` layout starts **hoisted** for single packages in LPM CLI's v2 virtual-store layout. **Workspaces auto-flip to isolated** (pnpm-style symlinks) for phantom-dep catching; force hoisted with `lpm install --linker=hoisted` or `package.json > lpm > linker = "hoisted"`.
-- New `.gitattributes` line: `lpm.lockb binary` (so git doesn't try to text-merge the binary lockfile).
-
-## Common pitfalls
-
-- **The lockfile is now strict.** An offline or frozen install rejects a version 12 staging lockfile. Run `lpm install` once after `lpm migrate --no-install`.
-- **Phantom-dep code breaks under isolated layout.** If you imported a package you didn't declare in `dependencies`, npm hoisted it into `node_modules/` and your code worked anyway. LPM CLI's isolated layout doesn't hoist — undeclared imports become hard errors. Add the missing entries to `dependencies`.
-- **Dependency lifecycle scripts don't run on `lpm install` by default.** Bare installs run the root project's lifecycle, including `prepare`, but dependency `postinstall` scripts (esbuild, sharp, etc.) stay blocked until you run `lpm rebuild` and approve the script-running packages with [`lpm approve-scripts`](/docs/packages/approve-scripts).
+Repeated migration retains the first recovery snapshots. Keep them until you no longer need rollback.
 
 ## See also
 
-- [Migrating from pnpm](/docs/guides/migrating-from-pnpm) — same shape, different source lockfile
-- [`lpm migrate`](/docs/packages/migrate) — full flag reference
-- [Registries](/docs/registries) — how `.npmrc` routing works after migration
-- [Lockfile](/docs/packages/lockfile) — what gets committed and why
-- [`lpm install --linker`](/docs/packages/install) — keeping the flat layout if you need to
+- [lpm migrate](/docs/packages/migrate) — flags, input formats, and recovery
+- [Lockfile](/docs/packages/lockfile) — authoritative files and frozen installs
+- [Registries](/docs/registries) — routing and authentication
+- [CI/CD setup](/docs/guides/ci-cd-setup) — reproducible CI installation
