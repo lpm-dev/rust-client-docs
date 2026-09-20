@@ -1,210 +1,224 @@
 ---
 title: CI/CD setup
-description: "Configure LPM CLI for GitHub Actions, GitLab CI, and other CI systems."
+description: Pin LPM CLI, authenticate, install from a committed lockfile, and run project checks in CI.
 ---
 
-This guide covers the moving parts of running LPM CLI in CI: pinning the binary, authenticating reproducibly, gating on quality and security signals, and producing reliable artifacts. We'll go through GitHub Actions in detail; GitLab CI follows the same shape.
-
-## 1. Install LPM CLI in CI
-
-The fastest path is npm — it works everywhere:
-
-```yaml
-- run: npm install -g @lpm-registry/cli
-```
-
-Pin the version explicitly. Don't `@latest` in CI — reproducible builds depend on a fixed toolchain.
-
-For Linux runners that don't have npm bootstrapped, use the standalone installer:
-
-```yaml
-- run: curl -fsSL https://cli.lpm.dev/install | sh
-- run: echo "$HOME/.lpm/bin" >> $GITHUB_PATH
-```
-
-## 2. Authenticate reproducibly
-
-For private packages on lpm.dev, use a read-scoped Registry token.
-
-### Static token
-
-```yaml
-- run: npm install -g @lpm-registry/cli
-- run: lpm fetch
-  env:
-    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
-- run: lpm ci --offline --strict-integrity
-```
-
-Create a read-scoped token and store it as `LPM_TOKEN` in your CI's secret store. LPM CLI reads it directly and routes `@lpm.dev/*` packages without an `.npmrc`; use [`lpm setup ci npmrc`](/docs/infra/setup) only when another npm-compatible client in the job needs Registry authentication. That command must resolve a bearer first and writes the literal only to an atomically replaced, owner-only project file; its JSON output is redacted.
-
-## 3. Reproducible installs
+Use [lpm ci](/docs/packages/install#frozen-lockfile-and-ci) to install a committed dependency graph. Keep authentication, package checks, and publication as explicit steps.
 
 ```bash
-lpm ci --offline --strict-integrity --no-skills --no-editor-setup --no-security-summary
+npm install --global @lpm-registry/cli@0.78.0
+lpm ci --strict-integrity
+lpm run build
+lpm run test
 ```
 
-| Flag                    | What it does in CI                                                                                                                                        |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--offline`             | No network. Replays entirely from `lpm.lock` + the global store. Errors if anything is missing. |
-| `--strict-integrity`    | Refuse to install tarball-URL deps that don't declare an inline SRI. Disables trust-on-first-use for fresh installs.                                      |
-| `--no-skills`           | Skip skills auto-install. Saves time.                                                                                                                     |
-| `--no-editor-setup`     | Compatibility flag. Package skills do not create editor integrations.                                                                                     |
-| `--no-security-summary` | Skip the post-install security report. Pair with `lpm audit` as a separate explicit step.                                                                 |
+The examples pin LPM CLI to `0.78.0`. Update that version through your normal review process. The build and test commands require matching package scripts.
 
-If `lpm ci` fails, the lockfile is missing, stale, or cannot be replayed from the available store. Run `lpm install` locally, commit the updated `lpm.lock`, and commit `lpm.lockb` only when LPM CLI writes it.
+## Commit project configuration
 
-## 4. npm firewall in CI
+Commit `package.json` and `lpm.lock`. If `lpm.json` is present, commit it. When LPM CLI writes `lpm.lockb`, commit it too.
 
-The npm firewall is a network verdict check, so the command that runs it cannot be `--offline`. Use `LPM_NPM_FIREWALL=monitor` or `LPM_NPM_FIREWALL=enforce` for a per-job policy, or run `lpm config firewall --set enforce` on runners where the home directory is intentionally persistent.
+Use `lpm.json` for shared runtime versions, tasks, and publication targets. Registry credentials belong in the CI secret store.
+
+```json title="lpm.json (example task configuration)"
+{
+  "tasks": {
+    "build": {
+      "command": "tsc",
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": ["dist/**"],
+      "cache": true
+    }
+  }
+}
+```
+
+Install TypeScript as a project dependency for this example. Adapt the input and output lists to your build.
+
+## GitHub Actions
+
+```yaml title=".github/workflows/ci.yml"
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --global @lpm-registry/cli@0.78.0
+      - uses: actions/cache@v4
+        with:
+          path: ~/.lpm/store
+          key: lpm-store-${{ runner.os }}-${{ runner.arch }}-0.78.0-${{ hashFiles('lpm.lock') }}
+      - run: lpm ci --strict-integrity
+      - run: lpm run build
+      - run: lpm run test
+```
+
+This example uses public dependencies. Add credentials only to jobs that need protected packages. Pin action revisions and the runtime to your team's approved versions.
+
+A cache miss is valid: the online frozen install downloads the locked packages. `--offline` is unnecessary for lockfile freezing.
+
+## Authenticate protected dependencies
+
+LPM CLI supports public npm, private registries through `.npmrc`, and LPM.dev Registry. An LPM.dev Registry account is unnecessary for public npm.
+
+For LPM.dev Registry, store a read-scoped token in the CI secret store:
 
 ```yaml
-- run: npm install -g @lpm-registry/cli
+- run: lpm ci --strict-integrity
+  env:
+    LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
+```
+
+For npm-compatible private registries, provide endpoint-scoped credentials through `.npmrc`. See [authentication](/docs/infra/authentication) for supported credential sources.
+
+### Use OIDC in the supported workflows
+
+Registry OIDC supports publication, hosted Firewall checks, and credential setup for other npm-compatible clients.
+
+It does not provide general OIDC authentication for `lpm ci` downloads of protected `@lpm.dev/*` packages. Use `LPM_TOKEN` for that workflow.
+
+For an npm-compatible client that needs temporary Registry credentials:
+
+```bash
+lpm setup ci npmrc --oidc
+```
+
+[lpm setup ci npmrc](/docs/infra/setup) writes an owner-only project `.npmrc`. The receiving client uses that file and its own supported install workflow.
+
+Exclude the credential file from artifacts and caches. Writing it does not authenticate LPM CLI's direct Registry downloads.
+
+GitHub Actions needs `permissions: id-token: write` on the trusted job. GitLab supplies `LPM_OIDC_TOKEN` with audience `https://lpm.dev`.
+
+Pull-request triggers do not qualify for this Registry exchange. Configure the required trust before the job runs.
+
+A supplied assertion cannot be reused after exchange. Obtain a fresh assertion for each independent exchange.
+
+## Understand frozen and offline installation
+
+```bash
+lpm ci --strict-integrity --no-skills --no-editor-setup --no-security-summary
+```
+
+| Option | Effect |
+| --- | --- |
+| `lpm ci` | Requires a current, replayable lockfile. |
+| `--strict-integrity` | Requires inline integrity for tarball-URL dependencies instead of first-use trust. |
+| `--offline` | Uses available local package data and fails when required data is missing. |
+| `--no-skills` | Skips package skill installation. |
+| `--no-editor-setup` | Compatibility option. Package skills do not create editor integrations. |
+| `--no-security-summary` | Skips the post-install report. Separate audit commands still work. |
+
+For an intentionally prepared offline job:
+
+```bash
+lpm fetch
+lpm ci --offline --strict-integrity
+```
+
+Keep the populated store available to both commands. Local `file:` and `link:` dependencies also need their source directories.
+
+**Offline is not a network sandbox.** Root lifecycle scripts still run and can access the network. Use a network-restricted runner for an actual egress boundary.
+
+Dependency lifecycle scripts remain subject to [script approval](/docs/packages/approve-scripts). Review required trust entries before committing them.
+
+## Run project and policy checks
+
+For existing project scripts:
+
+```bash
+lpm run build
+lpm run test
+lpm run lint
+```
+
+Explicit [lpm run](/docs/dev/run) preserves your scripts and arguments. [lpm test](/docs/dev/test) and [lpm lint](/docs/dev/lint) can select their own supported runners.
+
+Add the security and license gates that match your policy:
+
+```bash
+lpm audit --fail-on vuln
+lpm licenses --fail-on copyleft,missing
+lpm licenses --deny GPL-3.0 --deny AGPL-3.0
+```
+
+These commands return nonzero when their configured gate fails. See [exit codes](/docs/reference/exit-codes).
+
+[lpm trust diff](/docs/packages/trust) compares the manifest with a local install snapshot. A successful install refreshes that snapshot.
+
+A diff after `lpm ci` therefore does not detect changes against an approved Git revision. Review trust changes against your trusted repository baseline.
+
+## Enforce npm Firewall checks
+
+```yaml
 - run: LPM_NPM_FIREWALL=enforce lpm ci --strict-integrity
   env:
     LPM_TOKEN: ${{ secrets.LPM_TOKEN }}
 ```
 
-`LPM_TOKEN` is used for the firewall verdict API and any lpm.dev package auth in the same run.
+Hosted checks need eligible account coverage and network access. Enforce mode stops when the check is unavailable. Monitor mode warns and continues.
 
-If the workflow deliberately separates an online store warm from an offline replay, put the firewall on the online step and keep the replay offline:
+See [Firewall for npm](/docs/guides/firewall) for scope, policy groups, and offline limitations.
 
-```yaml
-- run: LPM_NPM_FIREWALL=enforce lpm fetch
-- run: lpm ci --offline --strict-integrity
-```
+## Cache reusable data
 
-## 5. Gating
+| Path | Use |
+| --- | --- |
+| `~/.lpm/store` | Downloaded package data for installation. |
+| `~/.lpm/plugins` | Managed tool binaries. Include platform and tool configuration in the cache key. |
+| `~/.lpm/cache/dlx` | Optional cache for temporary package commands. |
 
-The standard gate sequence:
+Cache these directories separately from credentials. Do not cache the entire `~/.lpm` directory or project secret storage.
 
-```yaml
-- run: lpm ci --offline --strict-integrity
-- run: lpm trust diff --assert-none
-- run: lpm audit --fail-on vuln # fail on vulnerabilities (not behavior signals)
-- run: lpm licenses --fail-on copyleft --deny GPL-3.0 # optional license policy gate
-- run: lpm test # forwards vitest/jest exit code
-- run: lpm lint # forwards oxlint exit code
-- run: lpm fmt --check # fails if anything is unformatted
-- run: lpm check # tsc --noEmit
-```
+Regenerate `node_modules` from the lockfile and store. A restored store can still require downloads for another platform or missing package.
 
-Each step exits non-zero on failure — no special handling needed. See [Exit codes](/docs/reference/exit-codes). `lpm trust diff` is informational by default; add `--assert-none` to gate on `trustedDependencies` drift. Use `lpm trust diff --assert-none --json` if you also want the structured diff envelope in CI logs.
+For shared task outputs, configure [remote cache](/docs/infra/remote-cache). Keep task inputs and outputs accurate before enabling cache reuse.
 
-For finer-grained security gates, use [`lpm query`](/docs/packages/query):
+## Publish from a trusted release job
+
+For npm, configure Trusted Publishing, or supply `NPM_TOKEN` only to the publish step:
 
 ```yaml
-- run: lpm query ":vulnerable:not(:built)" --assert-none
-- run: lpm query ":eval:scripts" --assert-none
+- run: lpm publish --npm --check --json
+- run: lpm publish --npm --ignore-scripts --yes --json
+  env:
+    NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 ```
 
-For compliance gates, use [`lpm licenses`](/docs/packages/licenses):
+npm Trusted Publishing uses GitHub Actions runtime identity or `NPM_ID_TOKEN` with audience `npm:registry.npmjs.org`. An available npm token can provide fallback authentication.
 
-```yaml
-- run: lpm licenses --fail-on copyleft,missing
-- run: lpm licenses --deny GPL-3.0 --deny AGPL-3.0
-```
+Build the package before these steps. If the release job intentionally authorizes publish lifecycle scripts, remove `--ignore-scripts`.
 
-## 6. Caching `~/.lpm/`
-
-Cache the content LPM CLI can safely reuse. Do **not** cache `node_modules/`; it is a generated layout that LPM CLI recreates from the lockfile and store.
-
-| Path | Cache key | Use |
-| --- | --- | --- |
-| `~/.lpm/store` | `lpm-store-${{ runner.os }}-${{ hashFiles('lpm.lock') }}` | Package store used by `lpm ci --offline` and `lpm install --offline`. |
-| `~/.lpm/plugins` | `lpm-plugins-${{ runner.os }}-${{ hashFiles('lpm.json') }}` | Managed Oxlint, Biome, and Rolldown plugin binaries used by built-in tools. |
-| `~/.lpm/cache/dlx` | `lpm-dlx-${{ runner.os }}-${{ hashFiles('lpm.lock') }}` | Optional. Speeds up repeated `lpm dlx` / `lpx` calls; entries still expire after their normal TTL. |
-
-The store is the important cache:
-
-```yaml
-- name: Cache LPM CLI store
-  uses: actions/cache@v4
-  with:
-    path: ~/.lpm/store
-    key: lpm-store-${{ runner.os }}-${{ hashFiles('lpm.lock') }}
-    restore-keys: lpm-store-${{ runner.os }}-
-```
-
-If your workflow runs managed tools, cache plugins separately so tool downloads do not share the dependency-store key:
-
-```yaml
-- name: Cache LPM CLI plugins
-  uses: actions/cache@v4
-  with:
-    path: ~/.lpm/plugins
-    key: lpm-plugins-${{ runner.os }}-${{ hashFiles('lpm.json') }}
-    restore-keys: lpm-plugins-${{ runner.os }}-
-```
-
-`lpm install --offline` is fast in benchmarks when the store + lockfile match. On the VitePress docs fixture, up-to-date checks land around 14 ms and warm reinstalls around 387 ms. Caching `~/.lpm/store` turns a cold CI install into a warm one.
-
-The cache key is the lockfile hash. Typical CI runners are short-lived enough that orphan cleanup isn't needed; if you do persist the store across runs and want to bound its size, run `lpm cache prune --apply` periodically.
-
-For persistent self-hosted runners, also clean short-lived caches on your own schedule:
+For LPM.dev Registry, configure a Trusted Publisher on an existing package. GitHub Actions needs `id-token: write` and a matching trusted release identity.
 
 ```bash
-lpm cache clean dlx
-lpm cache prune --apply
+lpm publish --lpm --check --json
+lpm publish --lpm --ignore-scripts --yes --wait --json
 ```
 
-### Share task outputs across runners
+Registry OIDC authentication and Sigstore provenance use different audiences. See [publishing a package](/docs/guides/publishing-a-package) for provenance and GitLab examples.
 
-[Remote task caching](/docs/infra/remote-cache) reuses completed build outputs across CI jobs. Enable it in `lpm.json` for tasks with declared outputs and a deliberate `cacheEnv` list.
+If a post-publish hook or availability wait fails, check the registry before retrying. The version can already be uploaded.
 
-After CLI and dependency installation, use a cache-scoped token on the build step:
+## Troubleshooting
 
-```yaml
-- name: Build with shared task cache
-  run: lpm run build
-  env:
-    NODE_ENV: production
-    LPM_REMOTE_CACHE_TOKEN: ${{ secrets.LPM_REMOTE_CACHE_TOKEN }}
-```
-
-Use `cache:write` for producers. For consumers, use `cache:read` and set `LPM_REMOTE_CACHE_READ_ONLY: "1"`.
-
-Cache scopes do not grant access to private packages. Keep package-install credentials on the install step.
-
-See [Remote task cache — Team and CI setup](/docs/infra/remote-cache#share-with-a-team-and-ci) for the project configuration and organization namespace rules.
-
-## 7. Publishing from CI
-
-```yaml
-- run: lpm publish --provenance --min-score 60 --wait -y
-```
-
-`--provenance` requires OIDC and produces a Sigstore attestation. `--min-score 60` blocks a low local quality score.
-
-`--wait` keeps the job active until the LPM.dev Registry version becomes active under its distribution rules. The default wait limit is 20 minutes.
-
-Some quality points remain pending until Registry analysis. Set the threshold from a representative `lpm publish --check` result. `-y` skips the prompt.
-
-For npm-compatible publish provenance, target npm explicitly:
-
-```yaml
-- run: lpm publish --npm --provenance -y
-```
-
-Generated npm provenance requires public access. LPM CLI's npm default is public; if your config sets restricted access, change it to public or skip generated provenance. A normal npm-only publish does not run the LPM.dev quality scorer, so `--min-score` is not a quality gate for this command; keep the project's lint, test, type-check, and audit jobs explicit in CI.
-
-For multi-registry publishing in one job, configure `lpm.json > publish.registries` and pass nothing — `lpm publish` walks every configured target. Custom npm-compatible registries need an exact registry-scoped token from `lpm login --login-registry <URL> --token <T>`; `NPM_TOKEN` only authenticates `https://registry.npmjs.org`.
-
-## Common pitfalls
-
-- **`@latest` in CI.** Don't pin the binary to floating tags. Reproducible builds need a fixed toolchain.
-- **`lpm install` without `--offline` in CI.** Lets lockfile drift slip through unnoticed.
-- **Combining active npm firewall with `--offline`.** Firewall verdicts need network access. Run the firewall-protected install online, or firewall-gate an online `lpm fetch` before the offline replay.
-- **Forgetting `permissions: id-token: write`** when publishing with OIDC or generated provenance in GitHub Actions.
-- **Caching `node_modules/` instead of `~/.lpm/store/`.** The LPM CLI store is the right cache key — `node_modules` is a layout, the store is content.
-- **Skipping `lpm audit` to "save time".** It's a few hundred ms; the time-not-paid is paid back on the next CVE.
+| Failure | Recovery |
+| --- | --- |
+| Missing or stale lockfile | Run an online [lpm install](/docs/packages/install) locally and review the updated lockfile. |
+| Offline package missing | Populate the matching store online before the offline step. |
+| OIDC exchange rejected | Check the trigger, trust configuration, audience, and assertion reuse. |
+| Build tool missing | Declare it as a project dependency and use the intended runtime. |
+| Workspace selection is wrong | Preview it with [lpm filter](/docs/packages/workspaces). |
 
 ## See also
 
-- [Remote task cache](/docs/infra/remote-cache) — share task results across runners
-- [`lpm setup ci npmrc`](/docs/infra/setup) — generate `.npmrc` for npm-compatible CI clients
-- [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) — frozen lockfile install
-- [`lpm env print --ci`](/docs/dev/env#ci-output) — CI-native env output
-- [`lpm audit`](/docs/packages/audit) — security gating
-- [Exit codes](/docs/reference/exit-codes) — what each non-zero code means
-- [Environment variables](/docs/reference/env-vars) — `LPM_TOKEN`, `LPM_OIDC_TOKEN`
+- [lpm setup](/docs/infra/setup) — CI credentials and workflow setup
+- [Publishing a package](/docs/guides/publishing-a-package) — release workflow
+- [Managing secrets](/docs/guides/managing-secrets) — application variables
+- [Docker deployments](/docs/guides/docker-deploys) — container builds
