@@ -1,11 +1,15 @@
 ---
-title: Compared to npm, pnpm, bun
-description: "Side-by-side defaults across the four JavaScript package managers — security, resolution, developer orchestration, publishing, and platform."
+title: Compared to npm, pnpm, and Bun
+description: Compare package installation, security defaults, development tools, and registry support.
 ---
 
 import { Accordion, Accordions } from "fumadocs-ui/components/accordion";
 
-A factual comparison of default behavior across **npm**, **pnpm**, **bun**, and **lpm**.
+Compare **npm**, **pnpm**, **Bun**, and **LPM CLI** by their defaults and supported workflows.
+
+All four support npm packages and private registries. LPM CLI also coordinates development tools, local infrastructure, and optional LPM.dev Registry services.
+
+The feature tables use the [source snapshots listed below](#source-scope). A dash means no built-in equivalent in that snapshot. External tools can extend each package manager.
 
 ## Benchmarks
 
@@ -67,95 +71,161 @@ All displayed values are medians across 10 measured runs. The dated raw result a
 
 ## Security defaults
 
-| Axis                                                                                                                | npm                                    | pnpm                                                        | bun                                                                            | lpm                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Dependency lifecycle-script sandbox](/docs/packages/install#sandbox)                                               | —                                      | —                                                           | —                                                                              | **Dependency lifecycle-script sandbox:** approved or triage-selected dependency scripts run under macOS Seatbelt, Linux Landlock, or Windows AppContainer. Default mode contains filesystem access while allowing network. Strict mode denies outbound network on macOS and AppContainer; Linux 6.7+ uses Landlock V4 plus seccomp, with AF_UNIX retained for IPC. Older Linux kernels and Windows installs missing the AppContainer helper refuse strict mode unless `allow-degraded = true`. Root-project lifecycle scripts are not sandboxed. |
-| [Dependency lifecycle scripts (`preinstall` / `install` / `postinstall`)](/docs/packages/approve-scripts)            | All scripts run                        | Blocked until approved (`approve-builds` flow)              | Blocked unless in `trustedDependencies`; bun ships a built-in 367-package default trusted list that also runs scripts without approval                                        | Dependencies are blocked by default. Under the opt-in `triage` policy, green verdicts are eligible to auto-run in the sandbox; an optional advisor can approve amber verdicts for the current run; red verdicts remain blocked. The root project's lifecycle runs on bare `lpm install` without the dependency sandbox. |
-| [Registry package signatures](/docs/packages/audit#registry-signatures)                                              | Manual via `npm audit signatures`      | Manual via `pnpm audit signatures`                        | —                                                                              | `lpm audit signatures`; optional install-time fail-closed verification with `lpm config signatures --set true`                                                                        |
-| [Sigstore provenance verification](/docs/packages/security-audit#layer-4-provenance--cooldown)                       | Publish-time provenance support        | Publish-time provenance support                            | —                                                                              | DSSE + Rekor body + Rekor SET + SCT + X.509 chain verified end-to-end on install for provenance bundles served by npmjs                                                              |
-| [Minimum release age (cooldown)](/docs/packages/install#recently-published-packages)                                 | `min-release-age` flag, off by default | 1-day cooldown by default                                   | Off by default                                                                 | Off by default; configurable direct/root or strict transitive cooldown                                                                                                              |
-| [`engines.node` enforcement](/docs/packages/install#engines-enforcement)                                             | Warn only                              | Warn only                                                   | —                                                                              | Validates the selected or `PATH` Node without installing or switching runtimes; hard-fails missing/incompatible required constraints, skips optional-only incompatible packages, persists dependency constraints for warm/frozen/offline replay, and supports warning-only opt-out |
-| [Built-in vulnerability audit](/docs/packages/audit)                                                                 | npm security database                  | Registry-side data                                          | Proxies to npm audit endpoint                                                  | OSV + behavioral analysis + verdict cache                                                                                                                                            |
-| [Approval-gated weakening of security posture](/docs/infra/security)                                             | —                                      | —                                                           | —                                                                              | Weaker CLI flags can require native approval; pulled repo or config-file weakenings are treated as proposals until a short-lived unlock or persistent signed machine approval exists |
-| [Provenance drift detection on republish](/docs/packages/security-audit#layer-4-provenance--cooldown)                | —                                      | Resolve-time trust-rank downgrade refusal (trustedPublisher → provenance → none)                                                           | —                                                                              | Detects publisher-identity drift for stored rich trust bindings; optional `trust-policy = "no-downgrade"` refuses weaker npm publish trust during resolution and requires continued artifact verification after verified lockfile history |
-| Pluggable third-party security scanner protocol (register an npm package as a scanner, run it against the lockfile) | —                                      | —                                                           | `bunfig.toml > [install.security] scanner = "<pkg>"`, invoked by `bun pm scan` | — (built-in triage + audit cover a different surface; not pluggable)                                                                                                                 |
+These defaults apply to dependency packages. Root and workspace lifecycle scripts have separate rules and can still run.
 
-## Resolver, store, and layout
+| Control | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| Dependency lifecycle scripts | Blocked unless approved through `allowScripts` or `npm approve-scripts`. | Blocked unless approved through `allowBuilds` or `pnpm approve-builds`. Unreviewed builds fail the install by default. | Runs scripts for explicitly trusted packages, or its bundled trusted list when no explicit list exists. | Blocked until trusted. [lpm approve-scripts](/docs/packages/approve-scripts) saves approvals. [lpm rebuild](/docs/packages/rebuild) runs eligible scripts. |
+| OS sandbox for dependency scripts | — | — | — | Filesystem restrictions and filtered environment. Outbound network is allowed by default. Strict mode denies it. |
+| Minimum release age | Off. Configurable with `min-release-age` in days. | Prefers versions at least one day old. The default can fall back to younger versions. | Off. Configurable with `minimumReleaseAge` in seconds. | Off. Configurable [release cooldown](/docs/packages/install#recently-published-packages), with direct or strict transitive policy. |
+| Dependency `engines.node` | Warns by default. `engine-strict` can reject mismatches. | Warns by default. `engineStrict` can reject mismatches. | No install-time enforcement. | [Enforced by default](/docs/packages/install#engines-enforcement). Required incompatible dependencies fail. Optional-only incompatible packages are skipped. |
+| Vulnerability audit | `npm audit`. Registry advisory reporting also runs during install by default. | `pnpm audit`, using registry advisory data. | `bun audit`, using registry advisory data. | [lpm audit](/docs/packages/audit), using OSV and source analysis. Automatic post-install audit is opt-in. |
+| Registry signature verification | `npm audit signatures` also verifies available provenance attestations. | `pnpm audit signatures` verifies registry signatures. | — | [lpm audit signatures](/docs/packages/audit#registry-signatures). Install-time signature enforcement is opt-in. |
+| Install-time provenance policy | Attestation verification is a separate audit operation. | Optional `trustPolicy: no-downgrade` compares publication metadata. | — | Saved artifact approvals can trigger provenance verification and publisher-drift checks. Wider verification and no-downgrade policy are opt-in. |
+| Custom install checks | Manifest extension hooks. | pnpmfile hooks. | Optional security scanner package, configured in `bunfig.toml`. | Optional [LPM Firewall](/docs/guides/firewall), source analysis, and local [policy extensions](/docs/infra/policy). |
 
-| Axis                                                                                                               | npm                                | pnpm                                               | bun                                                                 | lpm                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [Resolver](/docs/packages/resolver)                                                                                | Arborist backtracking              | Highest-version + workspace-rooted peer resolution | Tree resolution + backtracking                                      | Greedy-fusion (PubGrub legacy arm available)                                                            |
-| [Package store](/docs/packages/content-addressable-store)                                                           | Content-addressable cache          | Content-addressable, versioned virtual store       | Content-addressable, hardlinked                                     | Content-addressable virtual store; copy-on-write clone/reflink where available, independent-copy fallback |
-| [`node_modules` layout](/docs/packages/install#how-it-works)                                                        | Hoisted                            | **Isolated** (symlinked virtual store)             | Auto: hoisted for single-package, isolated when workspaces detected | Auto: v2 hoisted virtual-store for single packages, isolated for workspaces or default peer-conflict installs |
-| [Phantom-dependency prevention](/docs/reference/package-json-lpm#strictdeps)                                       | Hoisted layout leaks unlisted deps | Isolated by default                                | In isolated mode                                                    | In isolated mode (default for workspaces and peer-conflict installs)                                    |
-| [Lockfile](/docs/packages/lockfile)                                                                                | `package-lock.json` v3             | `pnpm-lock.yaml` v9                                | `bun.lock` (JSONC)                                                  | `lpm.lock` (TOML, authoritative) |
-| [Patched dependencies](/docs/packages/patch)                                                                       | —                                  | `pnpm patch` workflow                              | `bun patch` workflow                                                | Native `patchedDependencies`; reads pnpm's shape for migration                                          |
-| [Dependency overrides](/docs/reference/package-json-lpm#overrides--resolutions)                                    | Yes (`overrides` field, npm 8+)    | Yes                                                | Yes                                                                 | Honors top-level npm `overrides`, Yarn `resolutions`, and `lpm.overrides`; `lpm migrate` translates `pnpm.overrides` |
-| [Native dependency build-artifact cache](/docs/packages/rebuild#native-build-cache)                              | —                                  | Side-effects cache, enabled by default              | —                                                                   | Automatic for eligible strict-sandbox builds on macOS and Linux; content-addressed artifacts are reused only when package graph, platform, Node runtime/ABI, environment, sandbox, and toolchain inputs match |
+A script approval permits execution. It does not prove that a package is safe. Bun's explicit `trustedDependencies` replaces its fallback list. An empty list blocks all dependency scripts.
 
-## Developer orchestration and local infrastructure
+LPM CLI keeps script eligibility separate from execution. Approved scripts run through rebuild or the install [auto-build rules](/docs/packages/install#dependency-scripts). Root-project scripts do not use the dependency sandbox. Sandbox support depends on the operating system. An approved degraded mode can reduce isolation.
 
-This is the most lopsided table — three of the four columns are blank for several rows.
+LPM CLI does not verify every package's provenance by default. Its default scope covers saved artifact approvals, and unavailable evidence is best-effort. Available invalid evidence fails verification. See [signature and provenance configuration](/docs/reference/config-toml#integrity-and-package-verification).
 
-| Axis                                                          | npm                    | pnpm                    | bun                                                      | lpm                                                                                                                                         |
-| ------------------------------------------------------------- | ---------------------- | ----------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Secrets vault (E2E-encrypted, secure-store preferred, cloud sync)](/docs/infra/secrets-vault) | —                      | —                       | Auto-loads `.env`, no vault                              | Per-project and per-environment; prefers the OS secure store with encrypted-file fallback; org sharing, OIDC CI escrow, and client-direct Vercel, Coolify, Fly.io, Railway, and GitHub Actions integrations |
-| [Zero-config dev server orchestrator](/docs/guides/zero-config-dev-server) | —                      | —                       | —                                                        | Auto-installs stale deps, loads env, starts services, opens the browser when ready, and starts LPM CLI's browser webhook inspector when tunneling |
-| [Remote task cache](/docs/dev/task-runner#remote-cache)      | Use Turborepo / Nx     | Use Turborepo / Nx      | Use Turborepo / Nx                                       | Local task cache + hosted remote cache; content hashes always, optional HMAC signing via `remoteCache.signature`, read-only mode, quota / usage status, and env-policy upload guards |
-| [Local HTTPS with dev-only certificate authority](/docs/infra/local-https) | Use `mkcert`           | Use `mkcert`            | Use `mkcert`                                             | Built-in CA: status / trust / uninstall / generate. Picked up automatically by the dev server.                                              |
-| [Local tunneling (public URL to localhost)](/docs/infra/tunneling) | Use `ngrok`            | Use `ngrok`             | Use `ngrok`                                              | Stable claimable domains, webhook capture, replay, and audit log                                                                            |
-| [Managed runtime availability](/docs/dev/node-version-pinning) | —                      | Node version pinning    | Bun is its own runtime                                   | Auto-installed Node and Bun via `lpm.json > runtime`; Node also falls back through `.nvmrc` and `.node-version`                             |
-| [Managed linter / formatter](/docs/dev/builtin-tools)        | —                      | —                       | Formatter exists in the runtime, not the install surface | oxlint + biome as lazy-downloaded plugins, pinned via `lpm.json > tools`                                                                    |
-| [One-off package execution (npx-equivalent)](/docs/dev/dlx)  | `npx`, permanent cache | `pnpm dlx`, 1-day cache | `bunx`                                                   | `lpm dlx` / `lpx`, 1-day cache                                                                                                              |
-| [Built-in bundler](/docs/dev/bundle)                         | —                      | —                       | Yes                                                      | No native bundler; `lpm bundle` uses managed Rolldown, while `lpm pack` wraps project-local tsdown                                            |
-| Built-in test runner                                          | —                      | —                       | Yes                                                      | No native test engine; `lpm test` orchestrates Vitest / Jest / Mocha                                                                        |
+LPM CLI can require [security approval](/docs/infra/security) before accepting weaker settings. Repository configuration cannot silently lower an approved security policy.
 
-## Code and package operations
+pnpm's built-in release-age preference differs from an explicit policy. Setting `minimumReleaseAge` makes strict enforcement the default unless `minimumReleaseAgeStrict` overrides it. Publication metadata ranking and cryptographic provenance verification are different checks.
 
-| Axis                                                                                         | npm                    | pnpm                            | bun                               | lpm                                                                                                               |
-| -------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| [Source-code delivery (copy package files into the project, shadcn-style)](/docs/packages/add) | —                      | —                               | —                                 | `lpm add` — works for any tarball-shipped package on any reachable registry (lpm.dev, npm, private via `.npmrc`)  |
-| [Dependency selector queries (CSS-like syntax over behavioral tags)](/docs/packages/query)    | —                      | —                               | —                                 | `lpm query` — `:eval`, `:scripts:not(:built)`, `:root > :network`, `#express`, `--assert-none` CI gate            |
-| [Dependency-graph visualization](/docs/packages/graph)                                         | `npm ls` (text)        | `pnpm list` (text)              | `bun pm ls` (text)                | `lpm graph` / `lpm ls` — HTML / JSON / dot output, depth filter, `lpm why <pkg>` reverse-lookup                   |
-| [Interactive upgrade picker](/docs/packages/upgrade)                                          | —                      | `pnpm update -i`                | `bun update --interactive`        | `lpm upgrade [pkg...]` (interactive by default on TTY) — targeted upgrades, peer-impact analysis                  |
-| [License inventory and policy gate](/docs/packages/licenses)                                  | third-party tooling    | third-party tooling             | third-party tooling               | `lpm licenses` — local inventory, `--fail-on copyleft,missing`, exact `--deny <LICENSE>` gates                    |
-| Programmable resolution hooks (intercept `readPackage` / `afterAllResolved` at resolve time) | —                      | `.pnpmfile.cjs`                 | —                                 | —                                                                                                                 |
-| [Install-time policy extensions](/docs/infra/policy)                                          | —                      | —                               | —                                 | Local `package.candidate` extensions evaluate resolved packages before fetch/link and return `allow`, `warn`, or `block`; they do not mutate resolution |
-| [Workspaces (monorepo)](/docs/packages/workspaces)                                            | `--workspace` selector | Rich `--filter` pattern syntax  | `--workspace`, `--all-workspaces` | pnpm-style filter grammar                                                                                         |
-| [Catalog version pins for monorepos (one declaration, every member references it)](/docs/packages/workspaces#catalogs) | —                      | `pnpm-workspace.yaml > catalog` | Catalogs in lockfile              | `package.json > catalogs`, plus pnpm-style `pnpm-workspace.yaml` catalogs and cleanup                             |
-| [Workspace-package deploy (extract one member + transitive deps to a deployable dir)](/docs/packages/workspaces#lpm-deploy) | —                      | `pnpm deploy`                   | —                                 | `lpm deploy`                                                                                                      |
-| [Migration from other package managers](/docs/migrating)                                      | —                      | —                               | Reads npm + yarn lockfiles        | One-command lockfile migration from npm / pnpm / Yarn / Bun; pnpm migration also translates overrides, patches, and peer rules             |
-| [Swift Package Manager (SE-0292)](/docs/packages/swift-package-registry)                      | —                      | —                               | —                                 | SE-0292-compatible after LPM CLI configures the scope; certificate/trust setup occurs on the first Swift install; CMS signing is available on a best-effort basis |
+## Installs, storage, and lockfiles
 
-## Publishing and registry
+| Capability | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| Default `node_modules` layout | Hoisted. `linked`, `nested`, and `shallow` are alternatives. | Isolated, with a symlinked virtual store. Hoisted and PnP layouts are alternatives. | New single-package projects use hoisted. New workspaces use isolated. Older Bun lockfiles and npm/Yarn migrations can retain hoisted defaults. | Hoisted for single-package projects. Isolated for workspaces and default installs with peer conflicts. [Configurable linker](/docs/packages/install#how-it-works). |
+| Package storage | Content-addressable download cache. | Content-addressable package store. Hardlinks, reflinks, or copies. | Global package/version cache. Clones, hardlinks, or copies. Optional shared virtual store for isolated installs. | [Content-addressable store](/docs/packages/content-addressable-store). Copy-on-write clones or reflinks where available, with independent copies as fallback. |
+| Lockfile | `package-lock.json`. Normally format 3, with format 4 for patches and manifest extensions. | `pnpm-lock.yaml`, format 9. | Text `bun.lock` for new projects. Existing `bun.lockb` remains supported. | Authoritative TOML `lpm.lock`. Generated `lpm.lockb` companion when the graph supports it. |
+| Frozen install command | `npm ci` | `pnpm install --frozen-lockfile` | `bun ci` | [lpm install --frozen-lockfile](/docs/packages/install#frozen-lockfile-and-ci) |
+| Prepare dependencies for other platforms | `--os`, `--cpu`, and `--libc` override the install target. | `supportedArchitectures` retains optional packages for selected OS, CPU, and libc combinations. | Multiple `--os` and `--cpu` values select optional packages for several targets. | [lpm fetch --platform](/docs/packages/fetch#platform-selection) fills the store for one target from the lockfile, without creating `node_modules`. |
+| Dependency patches | `npm patch add` / `npm patch commit` | `pnpm patch` / `pnpm patch-commit` | `bun patch` / `bun patch --commit` | [lpm patch](/docs/packages/patch) / [lpm patch-commit](/docs/packages/patch#edit-and-commit-a-patch) |
+| Dependency overrides | `overrides` | `overrides` | `overrides` and `resolutions` | npm `overrides`, Yarn `resolutions`, and `lpm.overrides`. |
+| Reusable dependency build artifacts | — | Side-effects cache enabled by default. Optional remote dependency-build cache. | — | Automatic [native build cache](/docs/packages/rebuild#native-build-cache) for eligible strict-sandbox builds on macOS and Linux. |
+| Lockfile migration | Can use Yarn lock data during installation. | `pnpm import` reads npm and Yarn lockfiles. | Imports npm, Yarn, and pnpm lockfiles. `bun pm migrate` can run without installing. | [lpm migrate](/docs/packages/migrate) imports npm, pnpm, Yarn, and Bun lockfiles. |
 
-| Axis                                   | npm                                       | pnpm                           | bun                                  | lpm                                                                                                                                                       |
-| -------------------------------------- | ----------------------------------------- | ------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [First-party hosted registry](/docs/registries) | npmjs.org (public and private packages)   | —                              | —                                    | LPM.dev Registry: private by default, with Pool and Marketplace as explicit opt-ins. Every upload gets validation, quality scoring, OSV vulnerability scanning where dependency data is available, and distribution checks. Pool and Marketplace versions stay pending until mandatory AI publication review approves them, then queue API-doc extraction and optional AI enrichment; private versions are excluded from AI/enrichment processing. |
-| [Sigstore provenance signing on publish](/docs/packages/publish#provenance) | `--provenance` flag                       | Auto in CI when OIDC available | —                                    | `--provenance` flag + auto-OIDC token exchange                                                                                                            |
-| [OIDC trusted-publisher token exchange](/docs/packages/publish#npm-trusted-publishing) | GitHub Actions                            | GitHub Actions + GitLab CI     | —                                    | GitHub Actions + GitLab CI                                                                                                                                |
-| [2FA on publish](/docs/packages/publish#authentication-and-otp) | OTP                                       | OTP                            | `--otp` flag                         | OTP                                                                                                                                                       |
-| [`.npmrc` scope-to-registry routing](/docs/registries#pointing-at-a-private-registry) | Yes                                       | Yes                            | Yes                                  | Yes — mappings are honored for npm-compatible private registries and JSR mirrors; per-origin authentication is supported                                 |
-| [Auth-token storage](/docs/infra/authentication#token-storage) | `.npmrc` plain text                       | `.npmrc` plain text            | `.npmrc` / `bunfig.toml` plain text  | OS keychain preferred; AES-256-GCM encrypted-file fallback; `.npmrc` honored for compatibility                                                            |
-| [Default registry routing](/docs/registries#default-routing) | npmjs.org                                 | npmjs.org                      | npmjs.org                            | npm packages go directly to npmjs.org; native `jsr:` dependencies go to npm.jsr.io; only `@lpm.dev/*` always routes through lpm.dev                       |
+Layout names do not guarantee identical dependency visibility. pnpm privately hoists dependencies by default. LPM CLI's hoisted layout exposes direct dependencies at the root and uses package-local dependency links. See [dependency layouts](/docs/packages/install#how-it-works).
 
-## Platform
+Migration support depends on the source lockfile format and its features. The migration guides describe supported inputs and project changes.
 
-| Axis                          | npm                  | pnpm                            | bun                      | lpm                                                                           |
-| ----------------------------- | -------------------- | ------------------------------- | ------------------------ | ----------------------------------------------------------------------------- |
-| macOS (Intel + Apple Silicon) | Yes                  | Yes                             | Yes                      | Yes                                                                           |
-| Linux (glibc)                 | Yes                  | Yes                             | Yes                      | Yes                                                                           |
-| Linux (musl / Alpine)         | Yes                  | Yes                             | Yes                      | Yes — official x64 binary through npm, the standalone installer, and GitHub Releases; ARM64 requires a source build |
-| Windows x64                   | Yes                  | Yes                             | Yes                      | Yes                                                                           |
-| FreeBSD                       | Yes                  | Yes                             | —                        | —                                                                             |
-| [Self-update](/docs/infra/self-update) | `npm install -g npm` | `pnpm self-update`              | `bun upgrade`            | `lpm self-update` — install-method-aware (npm / Homebrew / Cargo / standalone GitHub Releases); 24-hour banner check |
-| Implementation language       | JavaScript (Node.js) | TypeScript (Rust port underway) | Zig (Rust port underway) | Rust                                                                          |
+Preparing packages for another platform does not make its native build scripts runnable on the host. LPM CLI fetches only packages already present in the lockfile.
+
+## Workspaces and package inspection
+
+| Capability | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| Workspace selection | `--workspace`, `--workspaces` | `--filter`, recursive commands | `--filter`. `bun run --workspaces` | [Workspace filters](/docs/packages/workspaces) and affected-project selection. |
+| Shared version catalogs | — | `catalog` and `catalogs` in `pnpm-workspace.yaml`. | `catalog` and `catalogs` in root `package.json`. | [Catalogs](/docs/packages/catalog) in `package.json` or `pnpm-workspace.yaml`. |
+| Deploy one workspace member | — | `pnpm deploy` | — | [lpm deploy](/docs/packages/workspaces#lpm-deploy) |
+| Dependency queries | `npm query` uses CSS-like selectors. | `pnpm list`, `pnpm why` | `bun pm ls`, `bun why` | [lpm query](/docs/packages/query) adds behavioral selectors and assertion gates. [lpm graph](/docs/packages/graph) exports visual graphs. |
+| Source usage and dependency cleanup | External tools for source-usage analysis. | External tools for source-usage analysis. | `bun install --analyze <files...>` scans imports and adds dependencies. External tools for unused-dependency cleanup. | [lpm tidy](/docs/packages/tidy) finds unused declarations and undeclared imports. `--fix` removes fixable unused declarations and reinstalls. |
+| Package-content comparison | `npm diff` compares published packages or a local project. | External tools. | `bun pm diff` compares package versions, folders, or tarballs. | No general package-content diff command. |
+| License inventory | License metadata in `npm sbom`. | `pnpm licenses list` | `bun pm licenses` | [lpm licenses](/docs/packages/licenses), with copyleft, missing-license, and explicit-denial gates. |
+| Software bill of materials | `npm sbom`, SPDX or CycloneDX. | `pnpm sbom`, SPDX or CycloneDX. | — | [lpm sbom](/docs/packages/sbom), SPDX or CycloneDX. |
+| Interactive upgrades | — | `pnpm update --interactive` | `bun update --interactive` | [lpm upgrade](/docs/packages/upgrade), interactive on a terminal. |
+| Dependency manifest repairs | Declarative `packageExtensions`, or `.npm-extension.mjs` / `.npm-extension.cjs` hooks. | `packageExtensions` adds missing declarations. `.pnpmfile.mjs` / `.pnpmfile.cjs` hooks support programmable transformations. | — | [Policy extensions](/docs/infra/policy) can allow, warn, or block candidates. They do not transform manifests. |
+| Copy package source into a project | — | — | — | [lpm add](/docs/packages/add), for supported registry packages. |
+
+Catalogs share version declarations across workspace members. They differ from overrides, which can replace dependency requirements in the resolved graph.
+
+Source-usage analysis differs from pruning packages that are no longer declared. Static inspection can miss framework conventions or dynamic imports. [Tidy exclusions](/docs/packages/tidy#ignore-intentional-dependencies) preserve intentional dependencies.
+
+## Development tools and infrastructure
+
+Bun includes its own JavaScript runtime, bundler, and test engine. LPM CLI manages runtimes and external tools, then coordinates their execution.
+
+| Capability | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| Package scripts and one-off tools | `npm run`, `npm exec`, `npx` | `pnpm run`, `pnpm exec`, `pnpm dlx` | `bun run`, `bunx` | [lpm run](/docs/dev/run), [lpm exec](/docs/dev/exec), [lpm dlx](/docs/dev/dlx). |
+| Runtime management | Uses the installed Node.js runtime. | Manages Node.js, Bun, and Deno through `pnpm runtime`. | Built-in JavaScript and TypeScript runtime. | Manages Node.js and Bun through [runtime configuration](/docs/dev/node-version-pinning). |
+| Project package-manager version | Uses the invoked npm version. `devEngines` can enforce requirements. | Automatically downloads and uses the requested pnpm version from project metadata. | Uses the invoked Bun version. | Uses the invoked LPM CLI version. |
+| Task dependencies and result caching | Run scripts. Use a separate task-cache tool. | `pnpm pipeline` provides task dependencies and a local result cache. | Parallel and sequential script execution. No task-result cache. | [Task graph and local cache](/docs/dev/task-runner), with optional [remote cache](/docs/infra/remote-cache). |
+| Bundling | Project tooling. | Project tooling. | Built-in `bun build`. | [lpm bundle](/docs/dev/bundle) manages Rolldown. [lpm pack](/docs/dev/pack) runs project-local tsdown. |
+| Standalone executables | Separate Node.js or project tooling. | `pnpm pack-app` embeds a CommonJS entry and Node.js through Node SEA. | `bun build --compile` bundles application code and the Bun runtime, with cross-compilation and embedded assets. | Separate runtime or project tooling. |
+| Test execution | `npm test` runs a package script. | `pnpm test` runs a package script. | Built-in `bun test`. | [lpm test](/docs/dev/test) runs supported project test tools such as Vitest, Jest, and Mocha. |
+| Linting, formatting, and type checking | Project tooling. | Project tooling. | Project tooling. TypeScript execution does not check types. | [lpm lint](/docs/dev/lint) and [lpm fmt](/docs/dev/fmt) manage Oxlint and Biome. [lpm check](/docs/dev/check) runs local `tsc` or managed `tsgo`. |
+| Development server | Project scripts. | Project scripts. | HTML entrypoints and full-stack serving with hot-module replacement. | [lpm dev](/docs/dev/dev) coordinates servers, dependencies, services, environment variables, and readiness. [Port management](/docs/infra/port-management) handles conflicts and supplies service URLs and ports. |
+| Diagnosis and supported repairs | `npm doctor` examines the registry connection, versions, permissions, and cache. | `pnpm doctor` examines installation, filesystem, runtime, and registry state. | No general doctor command. | [lpm doctor](/docs/infra/doctor) examines project, runtime, tool, and security state. `--fix` applies supported repairs. |
+| Skill integration | External tools. | External tools. | External tools. | [lpm skills](/docs/packages/skills) manages standalone skills. Approved LPM.dev package guidance follows selected dependency versions. |
+| Secrets | Environment variables or external tools. | Environment variables or external tools. | Automatic `.env` loading and OS-backed `Bun.secrets` APIs. | [Encrypted environment vault](/docs/infra/secrets-vault), with optional team and cloud synchronization. |
+| Local certificate authority | External tools. | External tools. | External tools. HTTPS serving accepts certificates. | [Local HTTPS](/docs/infra/local-https) with certificate generation and trust management. |
+| Public tunnels to localhost | External tools. | External tools. | External tools. | [Tunneling](/docs/infra/tunneling), domain claims, and webhook inspection through LPM.dev Registry. |
+
+pnpm's optional remote dependency-build cache stores package installation artifacts. It is separate from the local task-result cache in `pnpm pipeline`.
+
+By default, `pnpm run` and `pnpm exec` check installed dependencies and install when needed. `verifyDepsBeforeRun` configures this behavior. The check does not support PnP layouts.
+
+pnpm reads its requested version from `devEngines.packageManager` or `packageManager`. When Corepack invokes pnpm, pnpm leaves version selection to Corepack.
+
+Bun also provides application APIs for PostgreSQL, MySQL/MariaDB, SQLite, Redis, and S3. These APIs run inside application code. They do not provision database servers. Applications launched through npm, pnpm, or LPM CLI can use their selected runtime's APIs and external libraries.
+
+Standalone executables have target and dependency constraints. pnpm's Node SEA workflow requires a supported Node.js version and a CommonJS entry. Bun's cross-compilation also needs dependencies suitable for the target.
+
+LPM CLI's automatic package guidance applies to approved skills on direct LPM.dev Registry dependencies. [Standalone skills](/docs/reference/ai-agent-skills#manage-standalone-skills) have separate installation and update workflows.
+
+LPM CLI's local tools work without an LPM.dev Registry account. Hosted tunnels, environment synchronization, and hosted remote caching require the relevant service access.
+
+## Publishing and registries
+
+All four tools support npm-compatible registries and scoped registry configuration. LPM CLI sends ordinary npm packages to npmjs.org by default. Only `@lpm.dev/*` always routes through LPM.dev Registry. See [registry routing](/docs/registries).
+
+| Capability | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| Publish to an npm-compatible registry | `npm publish` | `pnpm publish` | `bun publish` | [lpm publish](/docs/packages/publish), with registry selection. |
+| Stage a release for approval | `npm stage` | `pnpm stage` | — | [lpm stage](/docs/packages/stage) supports upload, inspection, download, approval, and rejection. |
+| Publish provenance | `--provenance`. Also automatic for eligible trusted publishing. | `--provenance`. Also automatic for eligible trusted publishing. | — | `--provenance`, with supported CI identity. |
+| npm trusted publishing | GitHub Actions, GitLab CI, and CircleCI token exchange. | GitHub Actions identity requests or a supplied `NPM_ID_TOKEN`. | — | GitHub Actions identity requests or a supplied `NPM_ID_TOKEN`, including GitLab CI. |
+| Swift packages | — | — | — | [Swift package installation and registry configuration](/docs/packages/swift-package-registry). |
+| OTP when the registry requires it | Supported. | Supported. | Supported. | Supported. |
+| Registry credential configuration | `.npmrc`, including environment substitution. | Login writes global `config.yaml`. `.npmrc` compatibility remains. | `.npmrc` or `bunfig.toml`, including environment-backed credentials. | OS secure store preferred, encrypted-file fallback, and [`.npmrc` compatibility](/docs/infra/authentication). |
+
+Trusted publishing requires registry-side configuration for the package and CI identity. Token exchange and provenance generation have separate requirements. For example, npm's CircleCI exchange does not automatically generate provenance.
+
+Staged publishing requires a registry that implements the npm staging API. The upload remains separate from approval and public availability.
+
+LPM.dev Registry is an optional publishing destination. Packages are private by default, with Free, Pool, and Marketplace distribution available through explicit settings. See [package distribution](/docs/packages/package-distribution).
+
+pnpm also provides pnpr, an optional registry server for resolution, package delivery, and dependency-build caching. It is separate from the public npm registry.
+
+## Platforms and updates
+
+The source snapshots below include these native binary targets. npm uses Node.js, so its platform support also depends on a compatible Node.js installation.
+
+| Platform | npm | pnpm | Bun | LPM CLI |
+| --- | --- | --- | --- | --- |
+| macOS, Intel and Apple Silicon | Yes | Yes | Yes | Yes |
+| Linux glibc, x64 and ARM64 | Yes | Yes | Yes | Yes |
+| Linux musl, x64 and ARM64 | With a compatible Node.js build. | Yes | Yes | Official x64 binary. ARM64 requires a source build. |
+| Windows x64 | Yes | Yes | Yes | Yes |
+| FreeBSD | With a compatible Node.js build. | x64 | x64 and ARM64 | No official binary. |
+| Self-update | `npm install -g npm` | `pnpm self-update` | `bun upgrade` | [lpm self-update](/docs/infra/self-update), based on the installation method. |
+
+These targets do not imply equal support for every managed tool, sandbox, or infrastructure feature. See [installation](/docs/installation) for LPM CLI requirements.
+
+## Source scope
+
+The feature tables were checked against these source snapshots on September 20, 2026. Versions identify the repository manifests. Upstream branches can include changes newer than the corresponding release.
+
+| Tool | Manifest version | Source revision |
+| --- | --- | --- |
+| npm | 12.0.2 | [`6400533`](https://github.com/npm/cli/tree/6400533ab3d830716964bcf0def42b6c47f3fd70) |
+| pnpm | 12.5.1 | [`070e3b2`](https://github.com/pnpm/pnpm/tree/070e3b2bff31f6a73ca381cca53fbe6dbd859e50) |
+| Bun | 1.4.3 | [`fc297d4`](https://github.com/oven-sh/bun/tree/fc297d4658ebfba68e9810e60ba7e0cb719a6f22) |
+| LPM CLI | 0.78.0 | [`2120105`](https://github.com/lpm-dev/rust-client/tree/212010591d0ef30b53505ffc2d1d0bdd138cc00d) |
+
+Key sources: [npm script policy](https://github.com/npm/cli/blob/6400533ab3d830716964bcf0def42b6c47f3fd70/workspaces/arborist/lib/arborist/rebuild.js#L202), [pnpm configuration](https://github.com/pnpm/pnpm/blob/070e3b2bff31f6a73ca381cca53fbe6dbd859e50/pnpm/crates/config/src/settings.rs), [Bun script trust](https://github.com/oven-sh/bun/blob/fc297d4658ebfba68e9810e60ba7e0cb719a6f22/src/install/lockfile.rs#L3345), and [LPM CLI provenance scope](https://github.com/lpm-dev/rust-client/blob/212010591d0ef30b53505ffc2d1d0bdd138cc00d/crates/lpm-cli/src/commands/install/fetch.rs#L1505).
+
+The benchmark section has its own dated results and tool versions. Its timings do not describe the source snapshots in these feature tables.
 
 ## See also
 
-- [Migrating to LPM CLI](/docs/migrating) — one-command path from any of the above
-- [Secrets vault](/docs/infra/secrets-vault) — the storage and encryption design
-- [Zero-config dev server](/docs/guides/zero-config-dev-server) — what `lpm dev` auto-detects
-- [Tunneling](/docs/infra/tunneling) — public URLs to localhost
-- [Local HTTPS](/docs/infra/local-https) — the dev certificate authority
-- [Package audit](/docs/packages/security-audit) — the audit pipeline
+- [Migrating to LPM CLI](/docs/migrating)
+- [npm compatibility](/docs/packages/npm-compatibility)
+- [Package installation](/docs/packages/install)
+- [Security controls](/docs/packages/security-audit)
+- [Workspace setup](/docs/guides/monorepo-setup)
+- [Publishing to a registry](/docs/guides/publishing-a-package)
