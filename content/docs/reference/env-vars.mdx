@@ -1,166 +1,282 @@
 ---
 title: Environment variables
-description: "Environment variables LPM CLI reads for auth, routing, publishing, diagnostics, and CI."
+description: Configure authentication, installation, publishing, runtimes, remote caching, and diagnostics for one process.
 ---
 
-LPM CLI reads a number of environment variables to override behavior, route auth, or expose diagnostic knobs. Most users never need to touch these — they exist for CI, debugging, recovery, and uncommon workflows.
+Environment variables configure LPM CLI for one process.
+Use them for CI credentials, temporary overrides, and diagnostics. Use [`lpm config`](/docs/infra/config) for persistent user defaults.
 
-Variables are grouped by purpose. Anything marked **diagnostic** is a debug-only escape hatch — not a stable, documented user knob.
+```bash
+LPM_AUDIT_AFTER_INSTALL=true lpm install
+LPM_NO_AUTO_INSTALL=1 lpm run build
+LPM_REMOTE_CACHE_READ_ONLY=true lpm run build
+lpm config list --json
+```
 
-## Script context
-
-LPM CLI supplies these values to package scripts, explicit tasks, root install hooks, and dependency lifecycle scripts.
-
-| Variable | Value |
-| --- | --- |
-| `npm_lifecycle_event` | Current script phase or task name. |
-| `npm_lifecycle_script` | Declared command, without extra CLI arguments. |
-| `npm_package_name` | Current package name, or an empty value if absent. |
-| `npm_package_version` | Current package version, or an empty value if absent. |
-| `npm_package_json` | Absolute path to the current package's manifest. |
-| `INIT_CWD` | Directory where the CLI command started. |
-
-Generated values replace inherited values for the same keys. Workspace scripts and dependency scripts retain the original `INIT_CWD`.
-
-See [npm script execution](/docs/packages/npm-compatibility#script-execution) for hooks and failure behavior.
+These examples use POSIX shell syntax. In PowerShell, set `$env:NAME = "value"` before the command.
+Each variable has its own parser and precedence. Empty values do not have one universal meaning.
+Run and exec commands remove inherited credentials and runtime injection variables from child processes. Dependency lifecycle scripts use a restricted environment.
 
 ## Auth and routing
 
-| Variable                | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_TOKEN`             | Use this token instead of the OS-keychain-stored token. Equivalent to the global `--token <T>` flag and also the highest-priority credential for the LPM.dev Registry MCP server. Useful in CI or editor environments without keychain access.                                                                                                                                                                                                                                                                                          |
-| `LPM_DISABLE_HOST_CLI_AUTH` | Set to `1` or `true` to disable credentials from `gh` and `glab`. Environment tokens and fallback tokens stored by LPM CLI remain available. Useful in automation that must not inherit a local host CLI session. |
-| `LPM_REGISTRY_URL`      | Override the registry URL. Equivalent to `--registry <URL>`. Use only trusted registry endpoints: this controls where package metadata requests and registry-scoped credentials are sent. When inherited by the editor, the MCP server uses an accepted HTTPS or HTTP-loopback URL for registry-scoped keychain lookup; it has no equivalent of the CLI's `--insecure` exception for remote HTTP. Direct non-loopback HTTP in the CLI requires `--insecure`, which does not allow an HTTPS redirect to downgrade to HTTP. |
-| `LPM_OIDC_TOKEN`        | Canonical pre-supplied OIDC token for the `lpm publish` auto-exchange path and `lpm env pull --oidc`. The audience must be `https://lpm.dev`. When set, it takes precedence over the GitHub Actions runtime fetch, so self-hosted runners can opt out of that call. **Does not affect `lpm publish --provenance`** — Sigstore needs an audience-`sigstore` token instead.                                                                                                                                                                                                                         |
-| `LPM_OIDC_POLICY_ID`    | Required server-issued policy selector for `lpm env pull --oidc`. Get the UUID from `lpm env oidc allow` or `lpm env oidc list`. `--policy-id=<uuid>` takes precedence. The value is not a bearer credential, but CI configuration must protect its integrity. It does not affect package publishing. |
-| `LPM_GITLAB_OIDC_TOKEN` | Legacy GitLab alias. Accepted on the registry-exchange and provenance surfaces for back-compat. New setups should mint `LPM_OIDC_TOKEN` (registry exchange) or `SIGSTORE_ID_TOKEN` (provenance).                                                                                                                                                                                                                                                                                                                                          |
-| `SIGSTORE_ID_TOKEN`     | GitLab CI OIDC token with audience `sigstore`, minted via the `id_tokens` block. Drives `lpm publish --provenance` on GitLab. Not used by registry-exchange surfaces (wrong audience).                                                                                                                                                                                                                                                                                                                                                    |
-| `LPM_VAULT_ID`          | Vault ID for `lpm env pull --oidc` only. A non-empty, trimmed value takes precedence over `lpm.json > "vault"` and can bootstrap a checkout with no local vault field. An unset, empty, or whitespace-only value falls back to the local field; the pull fails if neither source is available. Other `lpm env` operations ignore it. See [Environment project identity](/docs/infra/secrets-vault#configure-a-project).                                                                                                                                                                                           |
+LPM CLI supports npm-compatible registries, private registries, and LPM.dev Registry.
+Only `@lpm.dev/*` packages always route through LPM.dev Registry. See [Registry configuration](/docs/registries).
+
+| Variable | Behavior |
+| --- | --- |
+| `LPM_TOKEN` | LPM.dev Registry credential. A nonempty `--token` wins, then a nonempty environment value, then the stored registry-scoped credential. |
+| `LPM_REGISTRY_URL` | LPM.dev Registry endpoint override. `--registry` takes precedence. Direct remote HTTP requires `--insecure`. HTTPS redirects cannot downgrade to HTTP. |
+| `NPM_TOKEN` | Nonempty token for the default npm registry. Takes precedence over its stored token and `.npmrc` credential. |
+| `GITHUB_TOKEN` | GitHub Packages credential before `gh auth` and stored credentials. Also authenticates GitHub release lookups. |
+| `GH_TOKEN` | Fallback for CLI and plugin release lookups when `GITHUB_TOKEN` is absent or blank. Skill downloads prefer `GH_TOKEN`. |
+| `GITLAB_TOKEN`, `CI_JOB_TOKEN` | Default GitLab registry credentials, in that order, before `glab auth` and stored credentials. Custom hosts require exact stored credentials. |
+| `LPM_DISABLE_HOST_CLI_AUTH` | Exact `1`, `true`, or `TRUE` disables `gh` and `glab` credential discovery. Environment and stored credentials remain available. |
+| `LPM_KEY_PASSPHRASE` | Nonempty passphrase for an encrypted registry client key. Takes precedence over the terminal prompt. Non-interactive commands require this value. |
+
+Release lookups send GitHub tokens only to the canonical GitHub API origin.
+A token alias does not apply to every GitHub feature. `NODE_AUTH_TOKEN` is not a direct substitute for `NPM_TOKEN`.
+See [Authentication](/docs/infra/authentication) for registry scopes and credential storage.
+
+### npm configuration paths
+
+| Variable | Behavior |
+| --- | --- |
+| `NPM_CONFIG_USERCONFIG`, `npm_config_userconfig` | Select the user `.npmrc`. Nonempty uppercase takes precedence over lowercase. |
+| `NPM_CONFIG_GLOBALCONFIG`, `npm_config_globalconfig` | Select the global `.npmrc`, with the same alias precedence. |
+| `NPM_CONFIG_PREFIX`, `npm_config_prefix`, `PREFIX` | Help locate the global npm configuration. They do not change `LPM_HOME`. |
+
+Path overrides support home expansion.
+For global npm configuration, the prefix order is the npm environment override, eligible user configuration, `PREFIX`, then the detected Node prefix.
+See [npm compatibility](/docs/packages/npm-compatibility) for `.npmrc` support.
+
+## OIDC credentials
+
+Blank OIDC token and GitHub runtime values act as absent. Nonblank tokens retain their original bytes.
+A selected provider failure stops the operation instead of trying another identity.
+
+| Workflow | Token order | Required audience |
+| --- | --- | --- |
+| LPM.dev Registry exchange | `LPM_OIDC_TOKEN`, GitHub Actions runtime, `LPM_GITLAB_OIDC_TOKEN` | `https://lpm.dev` |
+| npm Trusted Publishing | `NPM_ID_TOKEN`, GitHub Actions runtime | `npm:registry.npmjs.org` |
+| Generated Sigstore provenance | GitHub Actions runtime, `SIGSTORE_ID_TOKEN`, `LPM_GITLAB_OIDC_TOKEN` | `sigstore` |
+
+GitHub Actions supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` with `permissions: id-token: write`.
+Both values must be nonblank. LPM CLI requests the audience for the selected workflow and preserves other endpoint query parameters.
+`LPM_OIDC_TOKEN` does not supply Sigstore provenance or npm Trusted Publishing.
+
+| Variable | Behavior |
+| --- | --- |
+| `LPM_OIDC_POLICY_ID` | Policy UUID for [`lpm env pull --oidc`](/docs/dev/env). `--policy-id` takes precedence. The value must be a UUIDv4. Blank or invalid values fail. |
+| `LPM_VAULT_ID` | Project ID for `lpm env pull --oidc` only. A trimmed, nonblank value overrides `lpm.json > vault`. Blank values use the local field. |
+
+Other environment commands ignore `LPM_VAULT_ID`.
+See [CI setup](/docs/guides/ci-cd-setup), [package publishing](/docs/guides/publishing-a-package), and [environment project identity](/docs/infra/secrets-vault#configure-a-project).
 
 ## npm publish and provenance
 
-These npm-compatible variables are read by [`lpm publish`](/docs/packages/publish#provenance) and `lpm stage publish`. Provenance-file values attach only to npm-compatible targets; `lpm publish` rejects them when an lpm.dev target is active.
+[`lpm publish`](/docs/packages/publish#provenance) and [`lpm stage publish`](/docs/packages/stage) read these npm-compatible aliases:
 
-| Variable | Effect |
+| Variable | Behavior |
 | --- | --- |
-| `NPM_TOKEN` | Token auth for the default npm registry when npm Trusted Publishing is not available. For non-default npm-compatible registries, store an exact registry-scoped token with `lpm login --login-registry <URL> --token <T>`. |
-| `NPM_ID_TOKEN` | Pre-supplied npm Trusted Publishing OIDC token. The audience must be `npm:registry.npmjs.org`. Used for `lpm publish --npm` and `lpm stage publish` against the default npm registry. |
-| `NPM_CONFIG_PROVENANCE` | Exact lowercase `true` enables generated publish provenance. Empty is unset. Other nonempty values disable it. The lowercase alias `npm_config_provenance` is also supported. Conflicting aliases cause an error. See [publish provenance](/docs/packages/publish#provenance). |
-| `NPM_CONFIG_PROVENANCE_FILE` / `npm_config_provenance_file` | Path to a pre-generated Sigstore bundle to attach to npm-compatible publish targets. Relative paths are resolved from the project directory. Mutually exclusive with `NPM_CONFIG_PROVENANCE`. |
+| `NPM_CONFIG_PROVENANCE`, `npm_config_provenance` | Exact lowercase `true` requests generated provenance. Empty acts as absent. Other nonempty values mean false. Conflicting aliases fail. |
+| `NPM_CONFIG_PROVENANCE_FILE`, `npm_config_provenance_file` | Path to an existing Sigstore bundle. Relative paths start at the project directory. Conflicting aliases fail. |
+
+CLI provenance flags and `package.json > publishConfig` take precedence over environment values.
+Empty provenance-file values fail. Relative paths cannot contain `..` or escape the selected project.
+A provenance file cannot combine with a Boolean provenance setting.
+Provenance files attach to npm-compatible targets. [`lpm publish`](/docs/packages/publish) rejects them when an LPM.dev Registry target is active.
 
 ## Filesystem layout
 
-| Variable   | Effect                                                                                                                         |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `LPM_HOME` | Override the LPM CLI root (`~/.lpm` by default). This path contains the store, cache, global installs, user config, and tunnel pins. Use it for hermetic CI runs or local development. It does not move the OS-managed policy used by `lpm security protect`. |
+| Variable | Behavior |
+| --- | --- |
+| `LPM_HOME` | Changes the LPM CLI root from `~/.lpm`. Contains user configuration, stores, caches, global packages, and tunnel pins. |
+
+`LPM_HOME` does not move OS-managed security policy.
+For temporary CI isolation:
+
+```bash
+LPM_HOME="$PWD/.lpm-ci" lpm install --frozen-lockfile
+```
 
 ## Install pipeline
 
-| Variable                       | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_LINKER`                   | `node_modules` layout for installs in this process. Accepts `isolated` (pnpm-style strict-deps) or `hoisted` (LPM CLI's v2 hoisted virtual-store layout). Useful for forcing a specific layout in CI without editing config or per-invocation flags; setting it also opts out of default peer-conflict auto-isolation. Equivalent to `--linker=<value>`. Sits below `--linker` and `~/.lpm/config.toml > linker` in the [precedence chain](/docs/reference/config-toml#exception--linker), and above `package.json > lpm > linker`. Unknown values fail loudly at install time — there is no silent fallback, even on the up-to-date cache fast path. Empty-string (`LPM_LINKER=""`) is treated the same as unset, so an `unset NAME \|\| NAME=""` automation pattern doesn't accidentally pin a layout. |
-| `LPM_VERIFY_REGISTRY_SIGNATURES` | Enables install-time npm registry package signature verification for this process. Accepts truthy values such as `1`, `true`, `yes`, `on`, or `enabled`; otherwise falls back to `~/.lpm/config.toml > signatures`. Persistent equivalent: `lpm config signatures --set true`. |
-| `LPM_NPM_FIREWALL`             | Tighten LPM Firewall verdict checks for npm packages in this process. Accepts `off`, `monitor`, or `enforce`, but cannot weaken a stricter `~/.lpm/config.toml > [firewall].mode` value. `report` remains accepted as a legacy alias for `monitor`. Active modes send LPM.dev Registry auth because the hosted verdict service is an LPM.dev Registry Pro/Org feature; use `LPM_TOKEN` in CI. Persistent equivalent: `lpm config firewall --set monitor\|enforce`.                                                                                 |
-| `LPM_V2_OBJECT_INTEGRITY`      | Override reused v2 store object validation for this process. `source` is the default fast source-identity check; `tree` rehashes expanded files before reuse to detect local store tampering/corruption. Legacy aliases `sri` and `tarball` mean `source`. Persistent equivalent: `lpm config integrity --set source\|tree`. |
-| `LPM_AUDIT_AFTER_INSTALL`      | Toggle [audit after install](/docs/packages/install#audit-after-install) for this process. Accepts `1` / `true` / `yes` / `on` (enable) and `0` / `false` / `no` / `off` (disable). Anything else falls through to `~/.lpm/config.toml > audit-after-install`. Per-invocation overrides: `--audit-after-install` / `--no-audit-after-install`. Findings are informational — they never fail the install.                                                                                                                                                                                                                                                                                                                                                                    |
-| `LPM_CONCURRENT_DOWNLOADS`     | Cap the number of concurrent tarball downloads during install and `lpm fetch`. Integer in `1..=256`; default `24`. Out-of-range or unparseable values warn on stderr and fall back to the default — set this only when you have a measured reason.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `LPM_NO_AUTO_INSTALL`          | Set to `true` to disable automatic managed-runtime installation when a Node or Bun runtime selector is missing locally. It does not affect `package.json > engines.node`, which never installs a runtime.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `LPM_FORCE_TOOL_INSTALL`       | Set to `1` to force re-download a built-in tool even if the binary already exists in the cache. Useful when a downloaded binary has been corrupted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-
-## Standalone installer
-
-These variables are read by the shell installer, not by an installed `lpm` binary.
-
-| Variable | Effect |
+| Variable | Accepted values and precedence |
 | --- | --- |
-| `LPM_INSTALL_CHANNEL` | Release channel to resolve when `LPM_INSTALL_VERSION` is unset. Accepts `stable` (default) or `nightly`. |
-| `LPM_INSTALL_VERSION` | Exact GitHub release tag to install, including the leading `v`. Accepts stable and prerelease tags and skips the moving-channel lookup. |
+| `LPM_LINKER` | `hoisted` or `isolated`. CLI flag, user configuration, nonempty environment value, project value, then automatic selection. Unknown selected values fail. Empty acts as absent. |
+| `LPM_VERIFY_REGISTRY_SIGNATURES` | `1`, `true`, `yes`, `on` enable verification. `0`, `false`, `no`, `off` disable it. Invalid values use saved `signatures`, then false. |
+| `LPM_AUDIT_AFTER_INSTALL` | The same Boolean values. CLI flags win, then a valid environment value, saved `audit-after-install`, then false. Findings do not fail installation. |
+| `LPM_NPM_FIREWALL` | `off`, `monitor`, or `enforce`. `report` aliases `monitor`. Can tighten the user mode but cannot weaken it. Blank or invalid values fail. |
+| `LPM_V2_OBJECT_INTEGRITY` | `source`, `sri`, `tarball`, or empty select source checks. `tree` and unknown nonempty values select expanded-file checks. Overrides saved `integrity`. |
+| `LPM_CONCURRENT_DOWNLOADS` | Integer from 1 to 256 for install and [`lpm fetch`](/docs/packages/fetch). Default 24. Invalid values warn and use the default. Whitespace is not trimmed. |
+| `LPM_WORKSPACE_CONCURRENCY` | Positive integer for recursive workspace installs. The CLI flag wins. Whitespace is trimmed. Invalid or zero values use automatic selection. |
+
+Signature, audit, Firewall, and integrity values accept whitespace and case variations.
+An explicit linker value disables automatic peer-conflict isolation.
+Workspace installation concurrency is separate from the saved concurrency for workspace scripts, tests, and benchmarks.
+See [`lpm install`](/docs/packages/install) and [user configuration](/docs/reference/config-toml).
+
+### CI detection
+
+For frozen-lockfile defaults, installs read `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, and `CIRCLECI`.
+Empty, `0`, and case-insensitive `false` values mean false after whitespace removal. Other values mean true.
+A detected CI environment enables frozen mode when an LPM CLI lockfile exists.
+Other features have separate CI checks. Setting `CI=false` does not universally enable interactive prompts.
+
+## Runtimes and built-in tools
+
+| Variable | Behavior |
+| --- | --- |
+| `LPM_NO_AUTO_INSTALL` | Exact `1` or `true` disables automatic runtime installation. |
+| `LPM_NODE_DIST_BASE_URL` | Base URL for Node archives and checksum files. Does not replace the version index. Requires HTTPS or HTTP loopback, without URL credentials. |
+| `LPM_MANAGED_TOOL_NPM_REGISTRY` | Nonblank npm registry override for managed tool packages. Does not change project dependency routing. |
+| `LPM_FORCE_TOOL_INSTALL` | Exact `1` or `true` forces managed plugin download again. |
+| `LPM_PLUGIN_QUIET` | Exact `1` or `true` hides plugin installation status. Warnings and errors remain visible. |
+| `LPM_NO_UPDATE_CHECK` | Any presence, including empty or `0`, disables the background CLI update check. |
+| `LPM_SANDBOX_HELPER` | Windows sandbox helper path. An existing override takes precedence over the helper beside the executable. |
+| `LPM_MSVC_TARGET` | Windows `vcvarsall` target for native builds. Defaults to the host architecture. |
+
+See [Node version pinning](/docs/dev/node-version-pinning), [built-in tools](/docs/dev/builtin-tools), and [`lpm self-update`](/docs/infra/self-update).
 
 ## Security and recovery overrides
 
-These are intentionally sharp controls. Use them only for recovery, local wrapper testing, or explicit security-policy exceptions.
+| Variable | Behavior |
+| --- | --- |
+| `LPM_PROVENANCE_ENFORCE` | `deny`, `warn`, or `off`. Overrides the provenance posture. Weaker values still require security approval. Unknown values fail. |
+| `LPM_STRICT_SANDBOX` | `1`, `true`, `yes`, or `on` requests strict containment, with whitespace and case variations. False or invalid values do not weaken saved mode. CLI flags win. |
+| `LPM_ALLOW_UNVERIFIED_PLUGINS` | `1` or case-insensitive `true`, without trimming, permits a managed plugin without available checksums. The plugin records this exception. Every reuse requires the same override. |
+| `LPM_OSV_URL` | OSV batch endpoint for audits. Default `https://api.osv.dev/v1/querybatch`. Requires HTTPS or HTTP loopback. Invalid values warn and use the default. |
+| `LPM_BINARY_PATH` | npm launcher only. Runs this native executable instead of the installed platform package. |
 
-| Variable | Scope | Effect |
-| --- | --- | --- |
-| `LPM_PROVENANCE_ENFORCE` | CLI runtime | Sigstore provenance posture for this process: `deny` (default), `warn`, or `off`. `warn` and `off` weaken verification, are surfaced by [`lpm security status`](/docs/infra/security#status-output), and are guarded by the security-approval layer on install/trust mutation paths. Unknown values fail at startup. |
-| `LPM_ALLOW_UNVERIFIED_PLUGINS` | Managed plugins | Set to `1` to install a plugin without checksum verification when neither a bundled nor an upstream `<asset_url>.sha256` is available. The override is recorded on the plugin sidecar; reuse requires this variable on every subsequent invocation. See [Built-in tools — Checksum verification](/docs/dev/builtin-tools#checksum-verification). |
-| `LPM_BINARY_PATH` | npm wrapper | For the `@lpm-registry/cli` JavaScript launcher only: execute this exact native binary instead of the platform package resolved from `optionalDependencies`. Useful for local wrapper testing or emergency recovery, but a polluted environment can replace the executable behind `lpm` / `lpx`. |
-| `LPM_INSTALL_INSECURE` | Standalone installer | Set to `1` for the `curl -fsSL https://cli.lpm.dev/install \| sh` installer to skip all download integrity checks. Emergency-recovery only; installed `lpm` binaries do not read this variable. |
-| `LPM_INSTALL_MIN_VERSION_OVERRIDE` | Standalone installer | Set to `1` to bypass the installer's minimum-version floor when intentionally installing an older release. SHA-256 verification against the downloaded manifest still runs unless `LPM_INSTALL_INSECURE=1` is also set. When both `cosign` and the release bundle are available, the installer additionally authenticates the manifest through Sigstore and fails closed on rejection. |
+See [security approval](/docs/infra/security) and [plugin verification](/docs/dev/builtin-tools#checksum-verification).
+Debug and acceptance-test storage switches are not supported release configuration.
+
+## Standalone installer
+
+The shell installer reads these values. The installed CLI does not use them.
+
+| Variable | Behavior |
+| --- | --- |
+| `LPM_INSTALL_CHANNEL` | `stable` by default, or `nightly`. The installer checks this value even with an explicit version. |
+| `LPM_INSTALL_VERSION` | Exact release tag, including `v`. Skips channel lookup. |
+| `LPM_INSTALL_INSECURE` | Exact `1` skips download integrity checks. |
+| `LPM_INSTALL_MIN_VERSION_OVERRIDE` | Exact `1` bypasses the minimum-version floor. Integrity checks remain active unless separately disabled. |
+
+The normal installer checks SHA-256 against the downloaded manifest.
+When `cosign` and a release bundle are available, it also checks the manifest signature and stops on failure.
+See [Installation](/docs/installation).
 
 ## Remote task cache
 
-| Variable | Effect |
-| --- | --- |
-| `LPM_REMOTE_CACHE` | `1` / `true` enables hosted task cache for cache-enabled tasks even when `lpm.json > remoteCache.enabled` is absent. `0` / `false` disables it for this process. |
-| `LPM_REMOTE_CACHE_TOKEN` | Bearer token for hosted cache reads and writes. Falls back to `LPM_TOKEN` or the token from `lpm login` only when the cache endpoint shares the configured registry origin. Third-party cache hosts require this variable. |
-| `LPM_REMOTE_CACHE_URL` | Override the hosted cache endpoint. Defaults to the configured registry plus `/v8`. Direct HTTP is accepted only for localhost, and an automatically followed HTTPS redirect cannot downgrade to HTTP. Hosts outside the configured registry origin also require `LPM_REMOTE_CACHE_SIGNATURE_KEY`. |
-| `LPM_REMOTE_CACHE_TEAM` | Override the organization slug in `lpm.json > remoteCache.team`. Organization access requires a token scoped to that organization. Without either setting, the token selects its personal or organization namespace. |
-| `LPM_REMOTE_CACHE_SIGNATURE_KEY` | HMAC key for signed remote artifacts. Required when `lpm.json > remoteCache.signature` is `true` or the cache endpoint is outside the configured registry origin. |
-| `LPM_REMOTE_CACHE_READ_ONLY` | `1` / `true` reads hosted artifacts but skips uploads for this process. |
+[`lpm.json > remoteCache`](/docs/reference/lpm-json#remotecache) supplies persistent project configuration.
 
-See [Remote task cache](/docs/infra/remote-cache) for configuration and CI examples.
+| Variable | Behavior |
+| --- | --- |
+| `LPM_REMOTE_CACHE` | Valid Boolean values override `remoteCache.enabled`. Invalid values use the file. |
+| `LPM_REMOTE_CACHE_READ_ONLY` | A true environment value or true `remoteCache.readOnly` blocks uploads. False cannot cancel the file value. |
+| `LPM_REMOTE_CACHE_URL` | Nonblank endpoint override before the project URL and active registry. LPM CLI appends `/v8` unless already present. |
+| `LPM_REMOTE_CACHE_TOKEN` | Nonblank bearer token. Only same-origin cache endpoints can fall back to registry credentials. |
+| `LPM_REMOTE_CACHE_TEAM` | Nonblank organization slug before `remoteCache.team`. Without either value, the token selects the namespace. |
+| `LPM_REMOTE_CACHE_SIGNATURE_KEY` | Nonempty artifact-signing key. Required for `remoteCache.signature = true` and third-party cache origins. |
+
+Cache Booleans accept `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off`, with whitespace and case variations.
+Endpoints require HTTPS or HTTP loopback. HTTPS redirects cannot downgrade to HTTP.
+Third-party cache origins require both an explicit token and a signing key.
+See [Remote task cache](/docs/infra/remote-cache).
 
 ## Triage advisor cache
 
-The [LLM advisor](/docs/packages/security-audit#verdict-cache) stores verdicts at `$LPM_HOME/cache/l4-verdicts.json`. Reuse requires matching package content, script hash, prompt, provider, and provider configuration.
+The [advisor cache](/docs/packages/security-audit#verdict-cache) reuses verdicts for matching package content, scripts, prompts, provider, and provider configuration.
+Ollama model and endpoint changes request a new verdict.
 
-For Ollama, the configured model and endpoint identify the cache. Changing either requests a new decision. The provider binary version does not identify remote model revisions.
-
-| Variable                | Effect                                                                                                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_L4_CACHE`          | Set to `0` to disable the verdict cache entirely (lookups miss, inserts are dropped). Default: enabled. Useful for measurement runs that need the cold-cache round-trip cost. |
-| `LPM_L4_CACHE_PATH`     | Override the cache file location. Defaults to `$LPM_HOME/cache/l4-verdicts.json`.                                                                                             |
-| `LPM_L4_CACHE_TTL_SECS` | Override the verdict TTL in seconds. Default: 30 days. Expired entries are re-classified on next encounter.                                                                   |
+| Variable | Behavior |
+| --- | --- |
+| `LPM_TRIAGE_OLLAMA_MODEL` | Ollama model name. Default `llama3.2`. |
+| `LPM_L4_CACHE` | Enabled when absent. Case-insensitive `1`, `true`, `yes`, or `on` enables it. Every other value disables it. Whitespace is not trimmed. |
+| `LPM_L4_CACHE_PATH` | Literal cache path override. Default `$LPM_HOME/cache/l4-verdicts.json`, then `$HOME/.lpm/cache/l4-verdicts.json`. |
+| `LPM_L4_CACHE_TTL_SECS` | Unsigned integer seconds. Default 30 days. Invalid values use the default. Zero expires entries immediately. |
 
 ## Tunnel
 
-| Variable           | Effect                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_TUNNEL_RELAY` | Override the tunnel relay WebSocket URL (default: `wss://relay.lpm.fyi/connect`). Use only trusted relay endpoints. A different relay changes the broker for tunnel connections. Use this variable for a custom worker, staging, or future regional endpoints. Empty or whitespace-only values use the next precedence level. LPM CLI stores each TLS pin at `$LPM_HOME/relay-pins/<host>`. A new relay host gets a new TOFU pin. Persistent equivalent: `tunnel.relay-url` in `$LPM_HOME/config.toml`. |
+| Variable | Behavior |
+| --- | --- |
+| `LPM_TUNNEL_RELAY` | Nonblank trimmed URL before saved `tunnel.relay-url`, then `wss://relay.lpm.fyi/connect`. Requires `wss://` or loopback `ws://`. |
+| `LPM_HOSTS_FILE` | Nonempty hosts-file path override. Otherwise uses the system hosts file. |
+| `LPM_PROXY_SERVICE_DRY_RUN` | Exact `1`, `true`, `yes`, or `on` previews proxy service operations without applying them. |
+
+An invalid selected relay URL warns and uses the default. It does not retry the saved URL.
+Relay pins use `$LPM_HOME/relay-pins/<host>`.
+See [`lpm tunnel`](/docs/infra/tunnel), [`lpm hosts`](/docs/infra/hosts), and [`lpm proxy`](/docs/infra/proxy).
+
+## Script context
+
+LPM CLI supplies these values to package scripts, explicit tasks, root install hooks, and dependency lifecycle scripts:
+
+| Variable | Value |
+| --- | --- |
+| `npm_lifecycle_event` | Script phase or task name. |
+| `npm_lifecycle_script` | Declared command, without extra CLI arguments. |
+| `npm_package_name`, `npm_package_version` | Current package fields, or empty when absent. |
+| `npm_package_json` | Absolute path to the current package manifest. |
+| `INIT_CWD` | Directory where the CLI command started. |
+
+Generated values replace inherited values. Workspace and dependency scripts retain the original `INIT_CWD`.
+See [npm script execution](/docs/packages/npm-compatibility#script-execution).
+
+## Terminal output
+
+| Variable | Behavior |
+| --- | --- |
+| `FORCE_COLOR` | Exact `0` or `false` disables color. Other nonempty values enable it. Empty acts as absent. |
+| `NO_COLOR` | Any nonempty value disables color unless `FORCE_COLOR` or a CLI color flag overrides it. |
+
+The order is CLI color mode, `FORCE_COLOR`, `NO_COLOR`, then terminal detection.
 
 ## Resolver (advanced)
 
-| Variable            | Effect                                                                                                                                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_RESOLVER`      | `pubgrub` opts out of the default greedy-fusion resolver and uses the legacy PubGrub-with-split-retry resolver. Both speak npm-compatible semver.                                                          |
-| `LPM_GREEDY_FUSION` | `0` disables the fused dispatcher and falls back to the walker-arm orchestration for debugging.                                                                                                            |
-| `LPM_WALKER`        | Walker-dispatch picker. Diagnostic.                                                                                                                                                                        |
-| `LPM_NPM_FANOUT`    | Cap concurrent npm metadata fetches in the resolver.                                                                                                                                                       |
-| `LPM_NPM_ROUTE`     | `direct` or `proxy`. Debug-only override of the npm package routing decision (default routes `@lpm.dev/*` through the LPM.dev Registry worker, everything else direct to `registry.npmjs.org`). Not a stable user knob. |
+These diagnostic controls also work in release builds. Their behavior can change between releases.
+
+| Variable | Behavior |
+| --- | --- |
+| `LPM_RESOLVER` | Exact `pubgrub` selects the alternative resolver. Otherwise uses greedy-fusion. |
+| `LPM_GREEDY_FUSION` | Exact `0` disables fused resolution. |
+| `LPM_WALKER` | Exact `stream` selects streaming dependency traversal. Other values use breadth-first traversal. |
+| `LPM_NPM_FANOUT` | Positive integer limit for concurrent metadata requests, capped at 512. Invalid values use the selected pipeline default. |
+| `LPM_NPM_ROUTE` | Diagnostic `direct` or `proxy` routing override. Use `.npmrc` for normal registry configuration. |
+| `LPM_DEEP_FOLLOWUP` | Default enabled. A value that starts with `0` disables deeper resolver follow-up. This is a toggle, not a numeric depth. |
 
 ## Diagnostic / experimental
 
-These exist for benchmarking and debugging. Don't depend on them in production.
+```bash
+LPM_TIMING_DETAIL=trace lpm install --json
+```
 
-| Variable                   | Effect                                                                         |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `LPM_HTTP`                 | `h1-pool` forces an HTTP/1 connection pool instead of the default HTTP/2 path. |
-| `LPM_STREAM_FETCH`         | Streaming-fetch mode toggle for the install pipeline.                          |
-| `LPM_STORE_VERSION`        | Select the store layout for this process. Unset, empty, `v2`, or `2` uses the default v2 layout. `v3` or `3` explicitly selects the experimental file-level CAS; LPM CLI never selects it automatically from the filesystem or CI environment. `v1` or `1` is the legacy rollback path. Unknown values warn and fall back to v2. |
-| `LPM_TIMING_DETAIL`        | Add env-gated install timing probes to `lpm install --json`. Set to any value for `timing.detail`; set to `trace` to also include slow package buckets and duplicate metadata rankings. Includes cache classification, reusable-object validation, v3 CAS validation, and virtual-store link-task timing. Diagnostic. |
-| `LPM_SERIAL_LINK`          | Disable parallel linking — useful for reproducing race conditions.             |
-| `LPM_TYPOSQUAT_GUARD`      | Diagnostic typosquat analysis toggle. `0`, `false`, `off`, or `disabled` skip suspicious-name analysis only when `~/.lpm/config.toml > typosquat-guard` is absent, `force-security-floor = true` is not active, and managed policy does not own the typosquat floor. Persistent user-facing control: `lpm config typosquat --set default|on|off`. |
-| `LPM_EXPERIMENT_NPM_FIREWALL` | Legacy benchmark alias for `LPM_NPM_FIREWALL`. Prefer the config wizard or `LPM_NPM_FIREWALL` for new runs. |
-| `LPM_EXPERIMENT_NPM_FIREWALL_LOOKUP` | Diagnostic firewall lookup mode. Defaults to package-only; `integrity`, `strict`, or `package-and-integrity` enables the stricter integrity sidecar lookup for data-contract testing. |
-| `LPM_EXPERIMENT_NPM_FIREWALL_CHUNK_SIZE` | Diagnostic firewall verdict chunk size. Defaults to `64`; non-positive or invalid values fall back to the default. |
-| `LPM_MAX_BLOCKING_THREADS` | Cap the tokio blocking-pool size. A/B benching hook for the install hot path.  |
-| `LPM_DEEP_FOLLOWUP`        | Resolver follow-up depth knob.                                                 |
+| Variable | Behavior |
+| --- | --- |
+| `LPM_TIMING` | Adds install timing. Empty, `0`, `false`, and `off` disable it after trimming. Other values enable it. |
+| `LPM_TIMING_DETAIL` | Any value enables detailed install timing. Case-insensitive `trace` adds slow-package and duplicate-metadata details. |
+| `LPM_HTTP` | Exact `h1-pool` selects HTTP/1 pooling instead of the build's default transport. |
+| `LPM_STREAM_FETCH` | Exact `0` disables streaming fetch. |
+| `LPM_SERIAL_LINK` | Exact `1` disables parallel linking. |
+| `LPM_MAX_BLOCKING_THREADS` | Positive integer cap for blocking runtime threads. Zero or invalid values use the runtime default. |
+| `LPM_STORE_VERSION` | Empty, `2`, or `v2` selects the default. `3` or `v3` selects experimental file-level storage. `1` or `v1` selects the legacy layout. Unknown values warn and use v2. |
+| `LPM_TYPOSQUAT_GUARD` | Diagnostic suspicious-name toggle, subject to saved settings and security floors. Prefer [`lpm config typosquat`](/docs/infra/config). |
+| `LPM_EXPERIMENT_NPM_FIREWALL` | Legacy alias for `LPM_NPM_FIREWALL`. The canonical variable takes precedence by presence. |
+| `LPM_EXPERIMENT_NPM_FIREWALL_LOOKUP` | `integrity`, `strict`, `package-and-integrity`, or `package_and_integrity` requests integrity-sidecar lookups. Matching trims whitespace and ignores case. Otherwise uses package-only lookups. |
+| `LPM_EXPERIMENT_NPM_FIREWALL_CHUNK_SIZE` | Positive verdict batch size. Default 64. Invalid values use the default. |
 
-## Test-only / sandboxed environments
-
-| Variable               | Effect                                                                                                                                                                                                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LPM_FORCE_FILE_AUTH`  | Disable the OS keychain for token storage and force the encrypted-file fallback. Used by the test suite; also useful in sandboxed environments where the keychain isn't reachable.                                                                      |
-| `LPM_FORCE_FILE_VAULT` | In debug/test builds, bypass native vault-key storage and force the encrypted-file fallback under `~/.lpm/vaults/` with `~/.lpm/.vault-fallback-key`. Release builds ignore this override and use the platform default. See [Local secret storage](/docs/infra/secrets-vault#local-storage). |
-| `LPM_TEST_*`           | Reserved for the test suite; not user-facing.                                                                                                                                                                                                           |
+Store-version values accept whitespace and case variations.
+Timing Boolean words are case-insensitive. `LPM_TIMING_DETAIL=0` still enables detail.
 
 ## Precedence reminder
 
-For settings that have both a CLI flag and an env var (`--token` / `LPM_TOKEN`, `--registry` / `LPM_REGISTRY_URL`, `--linker` / `LPM_LINKER`), the **CLI flag wins**.
+Environment variables do not override every project or user value.
+For example, saved `linker` beats `LPM_LINKER`, and saved read-only caching remains active with `LPM_REMOTE_CACHE_READ_ONLY=false`.
+Use the rules in each section and [`lpm config list --json`](/docs/infra/config) for supported effective values.
 
 ## See also
 
-- [Global flags](/docs/commands#global-flags) — CLI flags equivalent to several of these vars
-- [`lpm config`](/docs/infra/config) — for persistent CLI defaults instead of env vars
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — file-backed config alternative
+- [Global flags](/docs/commands#global-flags)
+- [User configuration](/docs/reference/config-toml)
+- [Project configuration](/docs/reference/lpm-json)
+- [CI setup](/docs/guides/ci-cd-setup)
