@@ -1,54 +1,317 @@
 ---
 title: lpm.config.json
-description: "Schema reference for the lpm.config.json file shipped at a tarball root to control `lpm add`."
+description: Define source-package prompts, file selection, dependencies, and import rewriting for lpm add.
 ---
 
-`lpm.config.json` is the **package author's** declaration of what `lpm add` should do when delivering this package's source into a consumer project. It lives at the tarball root and turns `lpm add` from a plain copy into a configurable installer — interactive prompts, conditional file copying, conditional dependency injection, import-path rewriting.
-
-The file is **optional**. Without it, `lpm add` is a plain source copy of every file in the tarball. With it, `lpm add` becomes the installer the package author designed.
-
-LPM CLI reads `lpm.config.json` with a 16 MiB limit enforced before JSON parsing. A missing file retains the plain-copy path; an oversized file fails instead of being treated as absent, so it cannot silently change file selection or dependency injection. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits).
-
-LPM.dev Registry reads the physical root `lpm.config.json` from the uploaded tarball. Both the file and its canonical JSON representation have a 128 KiB limit. Invalid JSON, invalid configuration, and non-regular config files cause publication to fail. Metadata supplied separately cannot replace or create the tarball configuration. Other registries can apply different limits.
-
-This page is the schema-by-field reference. For the `lpm add` consumer flow, see [`lpm add`](/docs/packages/add).
-
-## Editor autocomplete
-
-LPM CLI publishes a JSON Schema for `lpm.config.json` at [`https://cli.lpm.dev/schemas/lpm.config.json`](https://cli.lpm.dev/schemas/lpm.config.json). Add a `$schema` line to get inline validation and field completion in any editor that supports JSON Schema:
+Package authors put `lpm.config.json` at the tarball root to configure [`lpm add`](/docs/packages/add).
+It defines consumer choices, source files, import rewriting, and optional dependency installation.
+It works with packages from npm, private registries, and LPM.dev Registry.
 
 ```json title="lpm.config.json"
 {
   "$schema": "https://cli.lpm.dev/schemas/lpm.config.json",
-  "ecosystem": "js"
+  "configSchema": {
+    "theme": {
+      "type": "select",
+      "options": ["light", "dark"],
+      "default": "light",
+      "required": true
+    }
+  },
+  "files": [
+    { "src": "src/component.ts", "dest": "component.ts" },
+    { "src": "src/dark.css", "include": "when", "condition": { "theme": "dark" } }
+  ]
 }
 ```
 
-## `type`
-
-`type` is optional and controls LPM.dev Registry classification. When omitted, the Registry infers the classification from the published contents. The only supported public values are:
-
-| Value | Meaning |
-|---|---|
-| `"package"` | Classify the package as a dependency package in LPM.dev Registry |
-| `"source"` | Classify the package as a source package in LPM.dev Registry |
-
-The CLI and Registry reject undocumented values—including `mcp-server`, `vscode-extension`, `cursor-rules`, `github-action`, and `xcframework`—as well as unknown top-level fields. New types must first become an explicit public contract; they are not accepted speculatively for forward compatibility.
-
-Classification does not switch off this file's install behavior. The presence of a valid `lpm.config.json` always activates LPM CLI's configured `lpm add` path, including when `type` is `"package"`.
-
-Or emit the schema yourself:
+Preview a consumer installation without prompts:
 
 ```bash
-lpm schema lpm.config.json                       # to stdout
-lpm schema lpm.config.json -o config.schema.json # to a file
+lpm add '@acme/components?theme=dark' --path src/ui --yes --dry-run --json
 ```
 
-The schema is hand-authored against the consumer code in the CLI (since the file's surface is partly dynamic — packages declare their own configurable fields). A corpus of real-world fixtures is validated against it on every CLI build, so the schema can't silently drift from the runtime.
+Replace the example package with your published package.
+Quote package names that contain query parameters.
+Remove `--dry-run` to copy the selected files.
 
-The older `https://lpm.dev/schemas/lpm.config.json` URL remains a compatibility alias for existing packages.
+This file configures source delivery. Use [`lpm.json`](/docs/reference/lpm-json) for project tasks, runtimes, and development services.
+Use [`lpm install`](/docs/packages/install) to install dependencies into `node_modules`.
 
-When stdout is an interactive terminal, schema output may use syntax color. Redirected or piped output remains plain pretty-printed JSON, including when color is forced globally.
+## Editor autocomplete
+
+The schema URL is [`https://cli.lpm.dev/schemas/lpm.config.json`](https://cli.lpm.dev/schemas/lpm.config.json).
+The older `https://lpm.dev/schemas/lpm.config.json` URL remains a compatibility alias.
+
+To export the schema from your installed CLI:
+
+```bash
+lpm schema lpm.config.json -o lpm-config.schema.json
+```
+
+[`lpm schema`](/docs/reference/schemas) emits configuration schemas. It does not check a package or run its installation.
+Commands also check selected values, dependency specifications, and file paths.
+
+## Top-level shape
+
+All fields are optional. The smallest valid file is `{}`.
+Unknown fields and unsupported field types are rejected.
+
+| Field | Purpose | Default |
+| --- | --- | --- |
+| `$schema` | Editor schema URL. | Unset. |
+| `type` | LPM.dev Registry package classification. | Inferred from published contents. |
+| `ecosystem` | Source ecosystem: `js` or `swift`. | `js`. |
+| `importAlias` | Author import prefix to rewrite. | Unset. |
+| `configSchema` | Consumer prompt definitions. | No prompts. |
+| `defaultConfig` | Defaults that override field defaults. | `{}`. |
+| `files` | Ordered file selection and destination rules. | Source-selection fallback. |
+| `dependencies` | Dependency lists by selected configuration value. | Package manifest dependencies and peers. |
+
+If the file is absent, [`lpm add`](/docs/packages/add) uses plain source delivery without automatic dependency installation.
+Plain delivery still applies [source-selection fallback](#files).
+A valid configuration file activates configured delivery even with `type: "package"`.
+
+## `type`
+
+| Value | LPM.dev Registry classification |
+| --- | --- |
+| `package` | Dependency package. |
+| `source` | Source package. |
+
+The field affects classification, not source-copy behavior.
+Other values are rejected.
+The Registry infers classification when the field is absent.
+
+## `ecosystem`
+
+```json
+{ "ecosystem": "js" }
+```
+
+| Value | Behavior |
+| --- | --- |
+| `js` | JavaScript or TypeScript source. Framework detection chooses the default destination. |
+| `swift` | Swift source. Swift package targets use `Sources/<target>/`; Xcode projects can use `Packages/LPMComponents/Sources/<target>/`. |
+
+For example, Next.js uses `components/`, and Vite uses `src/components/`.
+Consumers can choose a destination with `--path <DIR>`.
+See [`lpm add`](/docs/packages/add) for Swift target selection.
+
+## `importAlias`
+
+```json
+{ "importAlias": "@/components" }
+```
+
+This string identifies the author import prefix.
+LPM CLI rewrites matching internal imports to the consumer alias or relative destination path.
+The consumer can supply `--alias` or use detected TypeScript path configuration.
+
+Relative internal imports do not require this field.
+They follow the source-to-destination map when files move.
+Bare package imports remain unchanged.
+Mapped `.js`, `.mjs`, `.cjs`, and `.json` imports keep runtime extensions, including explicit `index` paths.
+TypeScript imports retain extension-free behavior.
+
+## `configSchema`
+
+```json
+{
+  "configSchema": {
+    "component": {
+      "type": "select",
+      "label": "Component",
+      "options": ["dialog", { "value": "menu", "label": "Menu component" }],
+      "required": true
+    },
+    "withTests": { "type": "boolean", "default": false }
+  }
+}
+```
+
+Each field defines a prompt and a value for file conditions or dependency selection.
+
+| Field property | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `type` | `string`, `boolean`, or `select` | `string` | Text input, confirmation, or selection prompt. |
+| `label` | string | Field name | Prompt label. |
+| `default` | string, boolean, or number | Unset | Initial value. |
+| `required` | boolean | `false` | Require a nonempty resolved value. |
+| `multiSelect` | boolean | `false` | Allow several selections for a `select` field. |
+| `options` | array | Required for `select` | One or more strings or `{ "value": "...", "label": "..." }` objects. |
+
+Option objects require `value`. An absent label uses that value.
+Resolved booleans and numbers become strings for condition matching.
+Multiple selections become a comma-separated value.
+
+### Defaults and non-interactive use
+
+Explicit query values override `defaultConfig`, which overrides each field's `default`.
+Interactive prompts use the resolved default.
+An optional single-select field without a default starts at **Leave unset**.
+A multi-select field without a default starts empty.
+
+With `--yes` or non-interactive input, LPM CLI applies defaults without prompts.
+A required boolean without a default resolves to `false`.
+A required select with one option can use that option.
+Other unresolved required fields fail before source files are copied.
+
+```bash
+lpm add '@acme/components?component=dialog&withTests=false' --path src/ui --yes
+```
+
+An omitted optional value keeps conditional files whose condition key remains unset, but selects no matching dependencies.
+An explicit empty optional multi-select, such as `?features=`, excludes its conditional files and selects no dependencies.
+Empty values for other optional field types become unset.
+See [Pre-answering prompts](/docs/packages/add#pre-answering-prompts) for encoding and multiple selections.
+
+## `defaultConfig`
+
+```json
+{ "defaultConfig": { "withTests": false, "component": "dialog" } }
+```
+
+Values can be strings, booleans, or numbers.
+They override defaults in the matching `configSchema` entry.
+Explicit consumer query values take precedence over both sources.
+
+## `files`
+
+```json
+{
+  "files": [
+    { "src": "src/index.ts", "dest": "index.ts" },
+    { "src": "src/styles/**", "dest": "styles" },
+    { "src": "src/test.ts", "include": "when", "condition": { "withTests": true } }
+  ]
+}
+```
+
+Rules run in their declared order.
+The selected file list must be nonempty, and destinations must be unique.
+
+| Rule field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `src` | string | Required | Source path or supported glob relative to the tarball root. |
+| `dest` | string | Source-relative path | Destination relative to the consumer install directory. |
+| `include` | `always`, `when`, or `never` | `always` | Copy unconditionally, evaluate conditions, or skip this rule. |
+| `condition` | object | Required for `when` | Expected configuration values as strings, booleans, or numbers. |
+
+Source selectors support trailing `/*` and `/**`.
+For a glob, `dest` is a directory even if one file matches.
+Paths after the fixed glob prefix remain relative to that destination.
+For a single file, a trailing destination slash preserves its filename. Otherwise, `dest` renames the file.
+Unsafe source or destination paths fail before copying.
+
+A `when` rule requires a condition object.
+Every supplied condition key must match. A multi-select matches if any selected value equals the expected value.
+An omitted consumer key does not exclude the file. An explicitly empty multi-select does.
+A `never` rule skips that rule. It does not subtract files selected by another rule.
+
+If `files` is absent, LPM CLI first checks `package.json > lpm > source`.
+Without that legacy selector, fallback copying excludes `package.json`, `lpm.config.json`, and the directories `node_modules`, `.git`, `__tests__`, `test`, and `tests`.
+A declared empty `files` array does not enable fallback.
+See [`lpm add`](/docs/packages/add) for the complete copy workflow.
+
+## `dependencies`
+
+```json
+{
+  "dependencies": {
+    "icons": {
+      "lucide": ["lucide-react"],
+      "heroicons": ["@heroicons/react@^2"]
+    },
+    "withMotion": { "true": ["framer-motion@latest"] }
+  }
+}
+```
+
+The outer key is a configuration field. The next key is a selected value.
+Its array lists dependencies to add to the consumer manifest.
+Multiple selections combine matching lists. Duplicate package names keep the first entry.
+
+| Dependency entry | Saved version |
+| --- | --- |
+| Bare name, such as `react` | Resolve through the registry, then apply consumer save policy. |
+| Exact version, such as `react@19.1.0` | Preserve the exact version. |
+| Range, such as `react@^19` | Preserve the range. |
+| Tag, such as `react@latest` | Resolve the tag. Stable versions use save policy; prereleases save exact versions. |
+| Wildcard, such as `react@*` | Preserve `*`. |
+
+Package-authored dependency entries must refer to registry packages.
+Local workspace, file, Git, and URL specifications are rejected.
+Consumers can still use workspace specifications directly with [`lpm install`](/docs/packages/install).
+See [Save policy](/docs/packages/save-policy) for consumer defaults.
+
+### Registry agnostic
+
+Dependency names follow the consumer registry configuration.
+Public npm packages, private packages from `.npmrc`, and `@lpm.dev/*` packages are supported.
+Only `@lpm.dev/*` packages always route through LPM.dev Registry.
+
+`--pm` selects `lpm`, `npm`, `pnpm`, `yarn`, `bun`, or `auto`.
+The default is `lpm`. The `auto` value detects the project package manager.
+Use `--no-install-deps` to skip dependency installation for one source-copy operation.
+
+### Resolve-then-write, with rollback
+
+Bare names and tags resolve before manifest changes.
+Explicit ranges, versions, and wildcards can fail later during dependency installation.
+A normal command failure restores tracked source changes, manifests, and selected package-manager lockfiles.
+Source tracking and overwrite backups recover with the copied files.
+
+| Path | Recovery |
+| --- | --- |
+| `package.json` | Restore the previous bytes. |
+| `lpm.lock`, `lpm.lockb` | Restore previous bytes or remove newly created files. |
+| Selected package-manager lockfiles | Restore previous bytes or remove newly created files. |
+| Copied source files | Restore previous files and remove newly created files. |
+| `.lpm/install-hash` | Invalidate it so the next install checks project state. |
+
+New directories are removed only if empty.
+After an interruption, later user edits prevent automatic restoration of the affected path.
+A hard stop has narrower recovery than a normal command failure.
+The next add or remove recovers source files, tracking, backups, and staged manifests.
+Dependency lockfiles and `node_modules` can require [`lpm install`](/docs/packages/install).
+
+Recursive Swift copies share source and manifest recovery with the root operation.
+Earlier completed package-manager lockfiles are outside that durable recovery.
+Package skills use separate reconciliation. A skills failure produces a warning after source delivery.
+See [Interruption recovery](/docs/packages/add#updates-and-interruption-recovery).
+
+### Author opt-out of legacy fallback
+
+A declared `dependencies` field disables the manifest fallback, even if no branch matches.
+Use `{ "dependencies": {} }` to declare no automatically installed dependencies.
+
+### Legacy fallback
+
+If `dependencies` is absent, configured delivery reads `dependencies` and `peerDependencies` from the package manifest.
+The declared version specifications follow the same source-package dependency rules.
+A package without `lpm.config.json` does not use this automatic dependency fallback.
+
+## LPM.dev Registry publication limits
+
+LPM CLI accepts configuration files up to 16 MiB.
+LPM.dev Registry applies additional publication limits:
+
+| Item | Limit |
+| --- | --- |
+| Root configuration file and canonical JSON | 128 KiB each. |
+| Labels, option values, option labels, import alias | 200 characters each. |
+| Options in one field | 64. |
+| Source path | 1–512 characters. |
+| Destination path | 512 characters. |
+| File rules | 1,000. |
+| Dependency entry | 200 characters. |
+| Entries in one dependency array | 200. |
+
+The Registry reads the physical configuration file from the uploaded tarball.
+Invalid JSON, invalid configuration, and non-regular configuration files fail publication.
+Separate metadata cannot replace or create that file.
+Other registries can apply different limits.
 
 ## Generate a config with an agent
 
@@ -58,206 +321,18 @@ Install the [`lpm-guide`](https://github.com/lpm-dev/lpm-guide) skill:
 lpm skills add lpm-dev/lpm-guide
 ```
 
-Then ask your coding agent to inspect the package rather than inventing a generic config:
+Ask the agent to inspect the actual package:
 
 ```text
-Use the lpm-guide skill's Source Config workflow to generate lpm.config.json for this package.
-
-Inspect the source tree, package metadata, internal imports, and consumer-facing features. Identify the choices a consumer should make, then create configSchema, defaultConfig, files, conditional dependencies, and importAlias only where the source actually needs them.
-
-Use required fields when including every option would create conflicts. Make lpm add --yes deterministic, include example lpm add commands with query parameters, and validate the result against https://cli.lpm.dev/schemas/lpm.config.json. Do not add fields that are absent from the published schema.
+Use the lpm-guide Source Config workflow to create lpm.config.json.
+Read the source files, package metadata, and internal imports.
+Define only the consumer choices that this package needs.
+Add deterministic non-interactive examples and check the file against the published schema.
 ```
-
-## Top-level shape
-
-```json title="lpm.config.json"
-{
-  "$schema":      "https://cli.lpm.dev/schemas/lpm.config.json",
-  "type":           "source",
-  "ecosystem":    "js",
-  "importAlias":  "@/components",
-  "configSchema": { "<field>": { /* ConfigField */ } },
-  "defaultConfig": { "<field>": "<value>" },
-  "files": [ { "src": "...", "dest": "...", "include": "always" } ],
-  "dependencies": { "<configKey>": { "<value>": ["dep1", "dep2"] } }
-}
-```
-
-Every top-level field is optional. The minimal valid file is `{}`.
-
-## `ecosystem`
-
-```json
-{ "ecosystem": "js" }
-```
-
-| Value | Meaning |
-| --- | --- |
-| `"js"` (default) | JavaScript / TypeScript source. Default install dir resolves via framework detection (Next.js → `components/`, Vite → `src/components/`, etc.). |
-| `"swift"` | Swift source. Default install dir is `Sources/<target>/` for SPM projects, or `Packages/LPMComponents/Sources/<target>/` when an Xcode project is detected. |
-
-Drives the default install-dir resolution. Override via `lpm add --path <dir>`.
-
-## `importAlias`
-
-```json
-{ "importAlias": "@/components" }
-```
-
-The author's import alias prefix used in the source files. `lpm add` needs this field to recognize alias-qualified internal imports and rewrite them to the consumer project's detected `tsconfig.json > paths` alias or explicit `--alias` value.
-
-Mapped `.js`, `.mjs`, `.cjs`, and `.json` imports retain their runtime extensions, including explicit `index` paths. TypeScript import paths retain the existing extension-free behavior.
-
-Relative internal imports do not require `importAlias`. LPM CLI resolves them through the `files` source-to-destination map and can rewrite them when files move or the consumer uses an alias. Bare package imports remain unchanged.
-
-## `configSchema`
-
-```json
-{
-  "configSchema": {
-    "component": {
-      "type": "select",
-      "label": "Which component?",
-      "options": ["dialog", "popover", "menu"],
-      "default": "dialog",
-      "required": true
-    },
-    "withTests": {
-      "type": "boolean",
-      "label": "Include tests?",
-      "default": true
-    }
-  }
-}
-```
-
-Map of configurable field name → field specification. Each entry drives an interactive prompt during `lpm add` and feeds the inline-config map used by `files[].condition` and `dependencies` lookups.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `type` | `"string" \| "boolean" \| "select"` | Default `"string"`. `boolean` produces a confirm prompt; `select` produces a single- or multi-choice list. |
-| `label` | string | Prompt label. Defaults to the field name. |
-| `default` | string \| boolean \| number | Initial value. Native JSON types are accepted; legacy stringified values (`"true"`, `"false"`) are still honored for back-compat. |
-| `required` | boolean | Requires a nonempty value. Non-interactive commands apply defaults, then reject any required field that remains unset. |
-| `multiSelect` | boolean | Only meaningful when `type` is `select`. When `true`, the prompt accepts multiple values; the resolved inline-config value is comma-joined. |
-| `options` | array | Selectable options. Plain strings (`["dialog", "menu"]`) are shorthand for `{value, label}` pairs where both equal the string. Object form: `[{"value": "dialog", "label": "Dialog component"}]`. |
-
-Every `select` field must declare at least one option. Empty or missing `options` is invalid. For an option object, omit `label` to display its `value`.
-
-Interactive prompts and **Configure** initially select the configured default, or all options when no default exists. Non-interactive commands apply declared defaults. Without a default, an omitted field keeps conditional files but does not match conditional dependencies. An explicit empty optional selection (`?components=`) selects nothing. See [pre-answering prompts](/docs/packages/add#pre-answering-prompts) for encoding rules.
-
-## `defaultConfig`
-
-```json
-{ "defaultConfig": { "withTests": true, "component": "dialog" } }
-```
-
-Map of configurable field name → default value, overriding any `default` declared in the matching `configSchema` entry. Useful for sharing common defaults across packages without duplicating the field spec. Same value-type rules as `configSchema.<field>.default` (native booleans, numbers, and strings; legacy stringified values still accepted).
-
-## `files`
-
-```json
-{
-  "files": [
-    { "src": "src/index.ts" },
-    { "src": "src/styles.css", "dest": "styles/" },
-    {
-      "src": "src/test.ts",
-      "include": "when",
-      "condition": { "withTests": true }
-    },
-    { "src": "src/private/internal.ts", "include": "never" }
-  ]
-}
-```
-
-Ordered list of file copy rules. When `files` is omitted, `lpm add` copies every file in the tarball.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `src` | string (required) | Source path or glob (relative to the tarball root). Trailing `/**` and `/*` are supported. |
-| `dest` | string | Destination path (relative to the consumer project's resolved install dir). For a glob, `dest` is always a directory, even with one match. Paths after the fixed glob prefix remain relative to that directory. For a single file, trailing `/` preserves its filename; otherwise `dest` renames it. Omit to keep the source-relative path. |
-| `include` | `"always" \| "when" \| "never"` | Default `"always"`. `"when"` requires every entry in `condition` to match. `"never"` skips. |
-| `condition` | object | Required when `include` is `"when"`. Map of config field name → expected value. Native booleans and numbers are accepted alongside strings. Comma-separated multi-select values match if any element equals the expected value. Missing keys default to "include" (all-by-default). An explicitly empty selection excludes conditional files. |
-
-## `dependencies`
-
-```json
-{
-  "dependencies": {
-    "icons": {
-      "lucide": ["lucide-react"],
-      "heroicons": ["@heroicons/react"]
-    },
-    "withMotion": {
-      "true": ["framer-motion"]
-    }
-  }
-}
-```
-
-Conditional dependency injection map. Outer keys match `configSchema` field names; inner keys match the user's selected value(s) for that field; values are arrays of **dependency entries** added to the consumer's `package.json`. Each entry is either a bare name or a `name@range` spec:
-
-```json
-{
-  "dependencies": {
-    "icons": {
-      "lucide": [
-        "lucide-react",                  // bare → ^resolvedLatest
-        "lucide-react@^0.400.0",         // explicit range, preserved verbatim
-        "lodash@4.17.21",                // explicit exact, preserved verbatim
-        "react@latest",                  // dist-tag → resolved + saved per policy
-        "@lpm.dev/owner.helpers@^1"      // any registry, range preserved
-      ]
-    }
-  }
-}
-```
-
-The save-spec policy mirrors `lpm install <pkg>`:
-
-| Entry shape | What lands in consumer's `package.json` |
-| --- | --- |
-| Bare name (e.g., `"react"`) | `^resolvedLatest` (e.g., `"^18.3.1"`), respecting the consumer's `~/.lpm/config.toml > save-prefix|save-exact` |
-| `name@^range` / `name@~range` etc. | Preserved verbatim |
-| `name@1.2.3` (exact) | Preserved verbatim |
-| `name@latest` / `name@beta` (dist-tag) | Stable resolved → caret default; prerelease resolved → exact (no caret widening) |
-| `name@*` (explicit wildcard) | Preserved as `"*"` (the only path that lands `*` — never the default) |
-
-### Registry agnostic
-
-Names from any registry are accepted — npm-published, private-registry (declared in `.npmrc`), and `@lpm.dev/*` packages all flow through the same path. The package manager `lpm add` was invoked with (`--pm <lpm|npm|pnpm|yarn|bun|auto>`, where `auto` detects the project's existing package manager; default `lpm`) runs the install.
-
-### Resolve-then-write, with rollback
-
-`lpm add` resolves every bare/dist-tag entry against the registry **before** mutating `package.json`. Auth or access errors (a private package the user lacks a token for, an `@lpm.dev` marketplace package without a seat, a misspelled name) abort the whole `lpm add` cleanly — the manifest stays untouched. Without this fail-fast posture, an unresolvable entry would leave a stranded `*` range that the trailing install can't recover.
-
-If resolution succeeds but a later step fails — file copy, manifest mutation, or trailing install (any `--pm`) — `lpm add` rolls back atomically and exits with the underlying error. The transaction snapshots:
-
-| Path | Rollback behavior |
-| --- | --- |
-| Project `package.json` | Bytes restored to pre-`lpm add` state |
-| `lpm.lock`, `lpm.lockb` | Bytes restored, or removed if absent before |
-| Selected PM's lockfile (`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lock` + `bun.lockb`) | Bytes restored, or removed if absent before |
-| Every source file `lpm add` copied into the project | Pre-existing files restored to original bytes; newly-created files deleted |
-| `.lpm/install-hash` | Always invalidated so the next `lpm install` re-derives clean state |
-
-Source tracking and overwrite backups recover with the copied files. Newly created directories are removed only when empty. User edits made after an interruption prevent automatic restoration of that path.
-
-The table describes rollback after an ordinary command failure. After a hard stop, source files, source tracking, backups, and staged manifests recover on the next add or remove. Dependency lockfiles and `node_modules` can still need reconciliation with `lpm install`. See [interruption recovery](/docs/packages/add#updates-and-interruption-recovery).
-
-Recursive Swift source copies share source and manifest recovery with the root add. Package-manager lockfiles from earlier completed steps are outside that durable recovery. Package skills use separate reconciliation; a skills failure produces a warning after source delivery.
-
-### Author opt-out of legacy fallback
-
-Declaring `dependencies` — even with conditional branches that don't match the consumer's config — opts out of the legacy fallback below. An empty match is the author's deliberate signal "no deps for this configuration," not a request to fall back.
-
-### Legacy fallback
-
-When `dependencies` is omitted entirely, `lpm add` falls back to reading `dependencies` + `peerDependencies` from the package's own `package.json` (legacy path). Each entry's declared range carries through and is preserved verbatim. The same registry-agnostic policy applies — every entry, including `@lpm.dev/*`, is installed.
 
 ## See also
 
-- [`lpm add`](/docs/packages/add) — the consumer-side flow
-- [`lpm.json`](./lpm-json) — runtime / task / publish config
-- [JSON Schemas](/docs/reference/schemas) — published schema URLs and `lpm schema`
+- [`lpm add`](/docs/packages/add)
+- [`lpm.json`](/docs/reference/lpm-json)
+- [JSON Schemas](/docs/reference/schemas)
+- [Publishing a package](/docs/guides/publishing-a-package)
