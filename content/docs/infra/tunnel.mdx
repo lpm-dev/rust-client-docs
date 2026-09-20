@@ -237,10 +237,11 @@ lpm tunnel replay --last
 lpm tunnel 3000 --auto-ack
 ```
 
-If LPM CLI cannot reach the local service, it returns `200 OK` and saves the request for later replay.
-The tunnel process must still run.
+If local forwarding fails, LPM CLI saves the request before it returns `200 OK`. The tunnel process must remain open.
 
-> CAUTION: The provider records success even though your local service did not process the request.
+Storage failure, capture saturation, persistence timeout, or forwarding overload returns `503` with `Retry-After: 1`.
+
+> CAUTION: A forwarding failure leaves the processing outcome unknown. Before replay, check for existing side effects to avoid duplicate work.
 
 ### Protect a preview URL
 
@@ -346,7 +347,7 @@ Use only a trusted relay because it receives the tunnel credential.
 | --- | --- | --- |
 | `--org <SLUG>` | `claim`, `unclaim`, `list` | Select or constrain the organization domain scope. |
 | `--tunnel-auth` | Start | Require the generated access token. Pro and Org only. |
-| `--auto-ack` | Start | Return `200 OK` when the local service is unavailable. |
+| `--auto-ack` | Start | Return `200 OK` after durable capture when local forwarding fails. Return `503` if capture fails or forwarding is overloaded. |
 | `--session <NAME>` | Start | Name the capture session. |
 | `--no-inspect` | Start | Disable the browser inspector. Capture continues. |
 | `--inspect-port <PORT>` | Start, `inspect --ui` | Bind the inspector to an exact port. Conflicts with `--no-inspect`. |

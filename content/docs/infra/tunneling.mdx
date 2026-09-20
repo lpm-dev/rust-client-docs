@@ -1,11 +1,20 @@
 ---
 title: Tunneling
-description: "How public tunnel URLs, stable domains, request limits, access protection, and local capture work."
+description: "Connect a public HTTPS URL to a local service, protect access, and capture requests for replay."
 ---
 
 [`lpm tunnel`](/docs/infra/tunnel) connects a public HTTPS URL to one HTTP service on your computer. LPM CLI opens the connection from your computer.
 
 Use a tunnel for webhooks, callbacks, remote-device tests, and temporary previews. A tunnel is a development tool, not permanent application hosting.
+
+```bash
+# Expose an existing HTTP service
+lpm login
+lpm tunnel 3000
+
+# Start the project and expose its primary endpoint
+lpm dev --tunnel
+```
 
 ## How a tunnel works
 
@@ -121,7 +130,9 @@ Claim an organization domain:
 lpm tunnel claim staging.lpm.fyi --org acme
 ```
 
-A claimed subdomain must contain from 3 through 32 lowercase letters, numbers, or hyphens. It must start and end with a letter or number.
+A claimed subdomain contains 3–32 lowercase letters, numbers, or hyphens. It starts and ends with a letter or number.
+
+The third and fourth characters cannot both be hyphens. Account names on `lpm.fyi` are reserved.
 
 Claims are separate for each base domain. For example, `acme.lpm.fyi` and `acme.lpm.llc` use two claim slots.
 
@@ -139,7 +150,7 @@ Tunnel limits apply to the selected personal or organization account.
 | Included requests | 20,000 per UTC month | 100,000 per billing period | 100,000 per billed seat and billing period |
 | Account request rate | 4,000 per minute | 20,000 per minute | 20,000 per billed seat and minute |
 | Per visitor IP | 600 per minute | 600 per minute | 600 per minute |
-| Maximum request body | 10 MB | 100 MB | 100 MB |
+| Maximum request body | 10 MiB | 100 MiB | 100 MiB |
 | Maximum session length | 1 hour | No fixed limit | No fixed limit |
 | Stable domain claims | 0 | 3 | 3 |
 | `--tunnel-auth` | No | Yes | Yes |
@@ -186,9 +197,9 @@ Pro and Org tunnels can add tunnel-level access protection:
 lpm tunnel 3000 acme-api.lpm.llc --tunnel-auth
 ```
 
-LPM CLI creates a token for the session. The startup output shows an `X-Tunnel-Auth` header and a browser URL that contains the token.
+LPM CLI creates a token for the session. Interactive startup shows the public URL and an `X-Tunnel-Auth` header.
 
-Treat the header token and browser URL as secrets. The tunnel service rejects requests that do not contain the correct token.
+Non-interactive human output hides the token. JSON output includes it. Treat that output as secret. The tunnel service rejects requests without the correct token.
 
 ### Free browser interstitial
 
@@ -212,6 +223,8 @@ If no active endpoint exists, pass a port. If multiple endpoints exist, pass the
 
 Do not give a standalone tunnel a framework HTTPS port. Use a plain HTTP child service for tunnel forwarding.
 
+Buffered HTTP responses have a 50 MiB body limit and a 30-second completion deadline. Event streams use the separate behavior described below.
+
 Small HTTP responses can complete during another download, including responses without `Content-Length`.
 If local response buffering reaches its memory limit, the tunnel returns `503` with `Retry-After: 1`.
 If you receive this response, wait at least one second before a retry. Retry automatically only when the request is safe to repeat.
@@ -233,7 +246,7 @@ The tunnel does not retain application events or guarantee exactly-once delivery
 
 ## Request capture and privacy
 
-LPM CLI captures each forwarded request and local response in the current project:
+LPM CLI records forwarded requests and local responses in the current project. Ordinary capture is best effort:
 
 ```text
 <project>/.lpm/inspector.db
@@ -250,7 +263,7 @@ The WebSocket buffer retains up to 5,000 events or 32 MiB.
 Each captured WebSocket frame keeps a 64 KiB preview and records the original frame size. The inspector marks a partial preview as truncated.
 
 For a completed event stream, the inspector retains up to 64 KiB of response data and marks a partial capture.
-An interrupted stream may have no completed capture.
+An interrupted stream can have no completed capture.
 
 The database writer queues up to 256 captures and 64 MiB. If either limit is full, LPM CLI drops new captures.
 
@@ -281,15 +294,24 @@ lpm tunnel 3000 --session stripe-test
 
 ### Auto-acknowledge webhooks
 
-If a webhook endpoint must accept requests while the local service is unavailable, use `--auto-ack`:
+To retain requests for replay after local forwarding fails, use `--auto-ack`:
 
 ```bash
 lpm tunnel 3000 --auto-ack
 ```
 
-LPM CLI returns `200 OK` and saves the request for later replay.
+LPM CLI returns `200 OK` only after the request reaches durable local capture storage. The tunnel process must remain open.
 
-> CAUTION: The provider records the request as successful, but your local service did not process it.
+If storage fails, the capture queue is full, or persistence takes too long, the request receives `503` with `Retry-After: 1`. Forwarding overload also returns `503`. The provider can then retry according to its delivery policy.
+
+An acknowledgment does not trigger automatic replay:
+
+```bash
+lpm tunnel inspect --last 10
+lpm tunnel replay --last --port 3000
+```
+
+> CAUTION: A forwarding failure leaves the application's processing outcome unknown. Before replay, check for existing side effects to avoid duplicate work.
 
 ## Reliability and recovery
 
@@ -325,7 +347,9 @@ LPM CLI stores one certificate pin for each relay host:
 ~/.lpm/relay-pins/<other-host>
 ```
 
-The first connection stores the pin. Later connections to the same host must present the same certificate identity.
+Normal TLS certificate checks still apply. The first connection also stores a hash of the certificate public key.
+
+Later connections must match that key. Certificate renewal with the same public key does not require a new pin.
 
 > CAUTION: Do not remove a pin until you make sure that the relay certificate changed as expected. Removing it trusts the next certificate.
 
@@ -355,7 +379,9 @@ relay-url = "wss://relay-eu.lpm.fyi/connect"
 
 The precedence is `LPM_TUNNEL_RELAY`, `~/.lpm/config.toml`, then the built-in default. An empty value moves to the next source.
 
-Use only a trusted relay endpoint. A relay receives the public traffic that LPM CLI forwards to your local service.
+An override accepts `wss://`, or `ws://` on a loopback host. An invalid override warns and selects the built-in default directly.
+
+Use only a trusted relay endpoint. The selected relay receives your session bearer token and the public traffic for your local service.
 
 Each relay host has a separate certificate pin. A relay override does not reuse the pin for another host.
 
