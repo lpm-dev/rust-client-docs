@@ -6,8 +6,8 @@ description: "Find project, runtime, registry, and environment problems, and app
 Use `lpm doctor` to find project and environment problems. Use `lpm health` to examine one registry.
 
 ```bash
-lpm doctor [--all] [--fix] [-y|--yes] [--json]
-lpm doctor list [--code <CODE>] [--category <SUBSTRING>] [--json]
+lpm doctor [OPTIONS] [COMMAND]
+lpm doctor list [--code <CODE>] [--category <CATEGORY>] [--json]
 lpm doctor sandbox-setup [--project <PATH>] [--metadata-dir <PATH>]... [--tool-dir <PATH>]... [--user-sid <SID>] [--apply | --remove] [-y|--yes] [--json]
 lpm health [--registry <URL>] [--json]
 ```
@@ -31,6 +31,192 @@ The command examines the current directory. It reports failures and warnings, th
 | `lpm doctor list` | Show every check that doctor can report | You need a check code, description, or remediation |
 | `lpm doctor sandbox-setup` | Preview or explicitly apply Windows sandbox permissions | Protected directories prevent sandboxed scripts from running |
 | `lpm health` | Send one health request to the selected registry | You need to know whether the registry responds |
+
+## `lpm.json` behavior
+
+If `lpm.json` exists, doctor reads it automatically. You do not need a separate option.
+
+For example:
+
+```json
+{
+  "runtime": {
+    "node": "22"
+  },
+  "tools": {
+    "biome": "2.5.9"
+  },
+  "tunnel": {
+    "domain": "my-api.lpm.fyi"
+  }
+}
+```
+
+The fast mode checks the JSON structure and every top-level field in the canonical [`lpm.json` schema](/docs/reference/lpm-json). It reports unknown fields as warnings.
+
+It also checks value types and the details of runtime, task, tool, and service fields.
+Unreadable runtime pin files and invalid linker values appear as failed checks. The remaining checks still run.
+
+The fast mode also checks the configured Node.js or Bun version.
+
+The full mode uses `tools` pins for installed lint and format tools. A workspace member can inherit these pins from the project root.
+Doctor reports an unavailable pinned tool without downloading another version.
+
+There is no `doctor` configuration block or flag to ignore `lpm.json` for one run.
+Use `--all` to extend the check set and `--yes` to apply available fixes without a prompt.
+
+The full mode checks the configured tunnel domain. If authentication is available, it also checks ownership and reachability.
+
+Read [lpm tunnel](/docs/infra/tunnel) for the complete tunnel configuration.
+
+## Fast and full checks
+
+`lpm doctor` runs the fast mode by default. This mode reads local project and LPM CLI state.
+
+The fast mode examines:
+
+- Local storage and install state
+- `package.json`, `node_modules`, and lockfiles
+- Dependency synchronization and local dependency paths
+- `lpm.json` structure and runtime pins
+- Node.js and Bun readiness
+- Workspace cycles
+- Policy extensions
+- Local authentication and secret storage
+- Sigstore settings
+
+The fast mode does not contact a registry or tunnel service, or start a background update request. It also does not run lint or format checks.
+
+Use `--all` to add:
+
+- Registry and authentication requests
+- Tunnel ownership and reachability
+- Lint and format checks
+- TypeScript readiness and plugin updates
+- Global-install health
+- Sandbox and script-policy checks
+- Manifest compatibility checks
+- `.gitattributes` and store-orphan checks
+
+```bash
+lpm doctor --all
+```
+
+The full mode can take more time because it runs tools and sends network requests.
+
+## Recipes
+
+### Diagnose the current project
+
+Run doctor from the project root:
+
+```bash
+cd /path/to/project
+lpm doctor
+```
+
+The fast output usually hides passing rows. It keeps the resolved linker mode and active policy extensions for context.
+
+### Run a complete environment check
+
+```bash
+lpm doctor --all
+```
+
+Use this command after a machine change, a toolchain change, or a difficult install failure.
+
+### Use doctor as a CI gate
+
+```bash
+lpm doctor --all --json > doctor-report.json
+```
+
+If a check fails, doctor exits with code `1`. Warnings keep exit code `0`.
+
+The JSON report contains both the summary and every emitted check. Match automation on the stable `code` field.
+
+### Apply supported fixes
+
+Save your project changes before you use `--fix`. Some fixes can change project files or installed dependencies.
+
+```bash
+lpm doctor --fix
+```
+
+`--fix` shows the available actions and asks once before it changes anything.
+Doctor then reruns the selected checks and reports the resulting state.
+
+Use `--all --fix` to include fixes from the full check set:
+
+CAUTION: `--all --fix` can prune the shared store, update installed plugins, and claim a tunnel domain.
+
+```bash
+lpm doctor --all --fix
+```
+
+The full fix mode can also update `.gitattributes` and project formatting.
+
+### Find one check in the catalog
+
+```bash
+lpm doctor list --code node_modules_symlinked
+```
+
+The result explains when the check appears and how to resolve it. The `--code` value is an exact match.
+
+### Find checks by category
+
+```bash
+lpm doctor list --category runtime
+lpm doctor list --category "project state" --json
+```
+
+The category filter is not case-sensitive. It matches any category that contains the supplied text.
+
+### Examine a specific registry
+
+```bash
+lpm health --registry https://registry.example.com
+```
+
+The command reports the registry URL, its health state, and one response-time measurement.
+
+## Automatic fixes
+
+Doctor can apply fixes for selected results. The available fix depends on the emitted check code.
+
+Supported fixes include:
+
+- Install the pinned Node.js version
+- Install the pinned Bun version
+- Run [lpm install](/docs/packages/install) for missing or inconsistent project state
+- Run [lpm fmt](/docs/dev/fmt) for formatting failures
+- Reconcile `lpm.lockb` with `lpm.lock`
+- Add the binary lockfile rule to `.gitattributes`
+- Replace a linked project `node_modules` path with a real directory
+- Prune unreachable entries from the shared store during a full run
+- Claim an available tunnel domain during a full run
+- Update an installed plugin during a full run
+
+`lpm doctor list --json` shows the supported action before a fix run. For each code, `auto_fix` identifies the action or is null.
+
+The JSON field `fixes_applied` lists completed fixes. `fixes_failed` lists unsuccessful actions and their errors.
+After repairs, doctor reruns the same check set. A failed repair keeps the exit code at `1`.
+
+`lpm doctor --fix` runs the selected checks before it changes the project. If automatic fixes exist, doctor shows the planned actions and asks once.
+
+The default response is `No`. If you decline, doctor makes no changes.
+
+`-y` and `--yes` imply `--fix` and skip the confirmation. Use either flag for CI, scripts, or JSON output:
+
+```bash
+lpm doctor --yes
+lpm --json doctor --yes
+```
+
+Without `--yes`, `--fix` returns an error when standard input is not a terminal. It also returns an error with `--json`.
+
+Doctor makes no changes in both cases. If no automatic fix exists, doctor returns the normal result without a prompt.
 
 ## Windows sandbox permission setup
 
@@ -122,184 +308,6 @@ Neither `--apply` nor `--remove` runs on non-Windows platforms.
 | `--yes`, `-y` | Confirm changes without an interactive prompt. Required for non-interactive changes. |
 | `--json` | Return structured output. Does not grant permission to apply changes. |
 
-## Fast and full checks
-
-`lpm doctor` runs the fast mode by default. This mode reads local project and LPM CLI state.
-
-The fast mode examines:
-
-- Local storage and install state
-- `package.json`, `node_modules`, and lockfiles
-- Dependency synchronization and local dependency paths
-- `lpm.json` structure and runtime pins
-- Node.js and Bun readiness
-- Workspace cycles
-- Policy extensions
-- Local authentication and secret storage
-- Sigstore settings
-
-The fast mode does not contact a registry or tunnel service. It also does not run lint or format checks.
-
-Use `--all` to add:
-
-- Registry and authentication requests
-- Tunnel ownership and reachability
-- Lint and format checks
-- TypeScript readiness and plugin updates
-- Global-install health
-- Sandbox and script-policy checks
-- Manifest compatibility checks
-- `.gitattributes` and store-orphan checks
-
-```bash
-lpm doctor --all
-```
-
-The full mode can take more time because it runs tools and sends network requests.
-
-## Recipes
-
-### Diagnose the current project
-
-Run doctor from the project root:
-
-```bash
-cd /path/to/project
-lpm doctor
-```
-
-The fast output usually hides passing rows. It keeps the resolved linker mode and active policy extensions for context.
-
-### Run a complete environment check
-
-```bash
-lpm doctor --all
-```
-
-Use this command after a machine change, a toolchain change, or a difficult install failure.
-
-### Use doctor as a CI gate
-
-```bash
-lpm doctor --all --json > doctor-report.json
-```
-
-If a check fails, doctor exits with code `1`. Warnings keep exit code `0`.
-
-The JSON report contains both the summary and every emitted check. Match automation on the stable `code` field.
-
-### Apply fixes and run doctor again
-
-Save your project changes before you use `--fix`. Some fixes can change project files or installed dependencies.
-
-```bash
-lpm doctor --fix
-lpm doctor
-```
-
-`--fix` applies supported fixes immediately. It does not ask for confirmation.
-
-The first run reports the original check results. Run doctor again to make sure that the fixes resolved the problems.
-
-Use `--all --fix` to include fixes from the full check set:
-
-CAUTION: `--all --fix` can prune the shared store, update installed plugins, and claim a tunnel domain.
-
-```bash
-lpm doctor --all --fix
-lpm doctor --all
-```
-
-The full fix mode can also update `.gitattributes` and project formatting.
-
-### Find one check in the catalog
-
-```bash
-lpm doctor list --code node_modules_symlinked
-```
-
-The result explains when the check appears and how to resolve it. The `--code` value is an exact match.
-
-### Find checks by category
-
-```bash
-lpm doctor list --category runtime
-lpm doctor list --category "project state" --json
-```
-
-The category filter is not case-sensitive. It matches any category that contains the supplied text.
-
-### Examine a specific registry
-
-```bash
-lpm health --registry https://registry.example.com
-```
-
-The command reports the registry URL, its health state, and one response-time measurement.
-
-## `lpm.json` behavior
-
-If `lpm.json` exists, doctor reads it automatically. You do not need a separate option.
-
-For example:
-
-```json
-{
-  "runtime": {
-    "node": "22"
-  },
-  "tunnel": {
-    "domain": "my-api.lpm.fyi"
-  }
-}
-```
-
-The fast mode checks the JSON structure and every top-level field in the canonical [`lpm.json` schema](/docs/reference/lpm-json). It reports unknown fields as warnings.
-
-It also checks value types and the details of runtime, task, tool, and service fields.
-
-The fast mode also checks the configured Node.js or Bun version.
-
-The full mode checks the configured tunnel domain. If authentication is available, it also checks ownership and reachability.
-
-Read [lpm tunnel](/docs/infra/tunnel) for the complete tunnel configuration.
-
-## Automatic fixes
-
-Doctor can apply fixes for selected results. The available fix depends on the emitted check code.
-
-Supported fixes include:
-
-- Install the pinned Node.js version
-- Install the pinned Bun version
-- Run [lpm install](/docs/packages/install) for missing or inconsistent project state
-- Run `lpm fmt` for formatting failures
-- Reconcile `lpm.lockb` with `lpm.lock`
-- Add the binary lockfile rule to `.gitattributes`
-- Replace a linked project `node_modules` path with a real directory
-- Prune unreachable entries from the shared store during a full run
-- Claim an available tunnel domain during a full run
-- Update an installed plugin during a full run
-
-`lpm doctor list --json` shows the supported action before a fix run. For each code, `auto_fix` identifies the action or is null.
-
-The JSON field `fixes_applied` lists the fixes that doctor completed successfully.
-
-`lpm doctor --fix` runs the selected checks before it changes the project. If automatic fixes exist, doctor shows the planned actions and asks once.
-
-The default response is `No`. If you decline, doctor makes no changes.
-
-`-y` and `--yes` imply `--fix` and skip the confirmation. Use either flag for CI, scripts, or JSON output:
-
-```bash
-lpm doctor --yes
-lpm --json doctor --yes
-```
-
-Without `--yes`, `--fix` returns an error when standard input is not a terminal. It also returns an error with `--json`.
-
-Doctor makes no changes in both cases. If no automatic fix exists, doctor returns the normal result without a prompt.
-
 ## Check catalog
 
 This catalog explains every check that `lpm doctor` can report. The tables group related codes so that you can find a result quickly.
@@ -314,208 +322,228 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 
 ### Infrastructure
 
-| Code                        | Severity | Description                                                                                                                                                               |
+| Code | Severity | Description |
 | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registry_reachable`        | pass     | The configured registry responds to its health endpoint.                                                                                                                  |
-| `registry_unreachable`      | fail     | The configured registry did not respond. **Fix:** Examine the network, firewall rules, and registry status page.                                                         |
-| `global_store_accessible`   | pass     | The shared content-addressable store at `~/.lpm/store/` resolves.                                                                                                         |
-| `global_store_inaccessible` | fail     | LPM CLI cannot locate or read the shared package store. **Fix:** Make sure that `$HOME` is set and `~/.lpm/store/` is writable. Then run `lpm install`.                    |
+| `registry_reachable` | pass | The configured registry responds to its health endpoint. |
+| `registry_unreachable` | fail | The configured registry did not respond. **Fix:** Examine the network, firewall rules, and registry status page. |
+| `global_store_accessible` | pass | The shared content-addressable store at `~/.lpm/store/` resolves. |
+| `global_store_inaccessible` | fail | LPM CLI cannot locate or read the shared package store. **Fix:** Make sure that `$HOME` is set and `~/.lpm/store/` is writable. Then run [lpm install](/docs/packages/install). |
 
 ### Auth
 
-| Code                     | Severity | Description                                                                                                                                                                                                                                               |
+| Code | Severity | Description |
 | ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth_valid`             | pass     | A registry auth token is present and `whoami` succeeds.                                                                                                                                                                                                   |
+| `auth_valid` | pass | A registry auth token is present and `whoami` succeeds. |
 | `auth_invalid` | fail | The registry rejected the selected credential. **Fix:** Replace or unset `LPM_TOKEN` if it supplies the token. For a rejected saved login, run [`lpm login`](/docs/infra/login#if-the-registry-rejects-lpm_token). |
-| `auth_missing`           | fail     | No registry auth token is configured. **Fix:** Run `lpm login`.                                                                                                                                                                                           |
-| `auth_storage_keychain`  | pass     | LPM CLI stores authentication material for this registry in the OS keychain.                                                                                                                                                                              |
-| `auth_storage_fallback`  | warn     | LPM CLI stores authentication material in encrypted files instead of the OS keychain. **Fix:** Unlock or repair the keychain. Then run `lpm login` again.                                                                                                |
-| `vault_storage_keychain` | pass     | On macOS, vault secrets are unlocked through the OS Keychain.                                                                                                                                                                                             |
+| `auth_missing` | fail | No registry auth token is configured. **Fix:** Run [lpm login](/docs/infra/login). |
+| `auth_storage_keychain` | pass | LPM CLI stores authentication material for this registry in the OS keychain. |
+| `auth_storage_fallback` | warn | LPM CLI stores authentication material in encrypted files instead of the OS keychain. **Fix:** Unlock or repair the keychain. Then run [lpm login](/docs/infra/login) again. |
+| `vault_storage_keychain` | pass | On macOS, vault secrets are unlocked through the OS Keychain. |
 | `vault_storage_native` | pass | On Linux and Windows, vault blobs use an encrypted local key that the OS secure store protects. |
 | `vault_storage_fallback` | warn | Vault secrets use the fallback key at `~/.lpm/.vault-fallback-key`. Processes from the same user can read this key. **Fix:** Unlock or repair the OS secure store. |
 | `vault_storage_unavailable` | fail | Encrypted vault files exist, but LPM CLI cannot access either local key. **Fix:** Unlock the secure store. If necessary, restore the fallback key from backup. |
+| `auth_unverified` | warn | The credential could not be checked because the registry request failed. |
+| `vault_storage_native_with_fallback` | warn | The native secure store works, but a local fallback key also exists. |
 
 ### Policy extensions
 
 | Code | Severity | Description |
 | --- | --- | --- |
 | `policy_extensions_not_configured` | pass | No active install-time policy extensions are configured in `~/.lpm/config.toml`. |
-| `policy_extensions_configured` | pass | One or more active install-time policy extensions are configured. **Inspect:** Run `lpm policy status` or `lpm policy doctor`. |
+| `policy_extensions_configured` | pass | One or more active install-time policy extensions are configured. **Inspect:** Run [lpm policy status](/docs/infra/policy) or [lpm policy doctor](/docs/infra/policy). |
 | `policy_extension_report_mode` | warn | A configured policy extension is report-only. **Fix:** If the policy is ready to block installs, set `mode = "enforce"`. |
 | `policy_extension_command_unavailable` | fail | A configured policy extension command cannot be found or executed. **Fix:** Install the executable or fix `[policy.extensions.<name>].command`. |
-| `policy_extension_config_invalid` | fail | Policy extension configuration is malformed. **Fix:** Repair the `[policy.extensions]` table, then rerun `lpm policy doctor`. |
+| `policy_extension_config_invalid` | fail | Policy extension configuration is malformed. **Fix:** Repair the `[policy.extensions]` table, then rerun [lpm policy doctor](/docs/infra/policy). |
 
 ### Project state
 
-| Code                            | Severity | Description                                                                                                                                                                                                                     |
+| Code | Severity | Description |
 | ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `package_json_present`          | pass     | A readable `package.json` exists in the project directory.                                                                                                                                                                      |
-| `package_json_missing`          | fail     | No `package.json` exists in the project directory. **Fix:** Run `lpm init`, or `cd` into your project root before running doctor.                                                                                               |
-| `linker_mode_resolved`          | pass     | Shows the selected linker mode and its source: CLI, global configuration, environment, package, workspace, or default.                                                                                                        |
-| `node_modules_isolated_healthy` | pass     | `node_modules/` exists and is backed by an isolated `.lpm/wrappers/` store.                                                                                                                                                     |
-| `node_modules_hoisted_healthy`  | pass     | `node_modules/` exists and uses the hoisted layout.                                                                                                                                                                             |
-| `node_modules_virtual_healthy`  | pass     | `node_modules/` symlinks point into the active global virtual store.                                                                                                                                                            |
-| `node_modules_symlinked`        | fail     | The project-level `node_modules` path is a symlink or directory junction. **Fix:** Run `lpm doctor --fix`, then run `lpm install`.                                                                                              |
-| `v2_store_orphans`              | pass/warn | The v2 or v3 store has no orphans, or reports entries that no project uses. **Fix:** Run `lpm cache prune`, then run `lpm cache prune --apply`.                                                                           |
-| `node_modules_mixed_layout`     | warn     | Both isolated and hoisted layout state are present in `node_modules/`. **Fix:** Re-run `lpm install` to converge on the configured linker layout.                                                                               |
-| `node_modules_no_store`         | warn     | `node_modules/` exists but no LPM CLI-owned store is present. **Fix:** Run `lpm install` to rebuild the layout under LPM CLI ownership.                                                                                         |
-| `node_modules_legacy_layout`    | warn     | An older LPM CLI layout is on disk and a one-time migration is pending. **Fix:** Run `lpm install` to migrate to the current layout.                                                                                            |
-| `node_modules_missing`          | fail     | `node_modules/` is missing — dependencies have not been installed. **Fix:** Run `lpm install`.                                                                                                                                  |
-| `lockfile_present`              | pass     | `lpm.lock` is present at the project root.                                                                                                                                                                                      |
-| `lockfile_missing`              | warn     | No `lpm.lock` was found at the project root. **Fix:** Run `lpm install` — it generates the lockfile alongside `node_modules/`.                                                                                                  |
-| `lockfile_binary_valid`         | pass     | `lpm.lockb` matches `lpm.lock` and parses cleanly.                                                                                                                                                                              |
-| `lockfile_binary_missing`       | warn     | `lpm.lockb` is missing while `lpm.lock` is present and the graph fits the binary format. **Fix:** Run `lpm doctor --fix` to regenerate, or run `lpm install`.                                                                   |
-| `lockfile_binary_stale`         | warn     | `lpm.lockb` does not match the contents of `lpm.lock`, or stale binary bytes remain for a TOML-only graph. **Fix:** Run `lpm doctor --fix` to reconcile, or run `lpm install`.                                                  |
-| `lockfile_binary_corrupt`       | warn     | `lpm.lockb` does not parse as a valid binary lockfile. **Fix:** Run `lpm doctor --fix` to reconcile from `lpm.lock`.                                                                                                            |
-| `gitattributes_lockb_marked`    | pass     | `.gitattributes` marks `lpm.lockb` as binary.                                                                                                                                                                                   |
-| `gitattributes_lockb_unmarked`  | warn     | `.gitattributes` does not mark `lpm.lockb` as binary. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`.                                                                                                                |
-| `gitattributes_missing`         | warn     | No `.gitattributes` file exists, so Git can treat `lpm.lockb` as text. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`.                                                                                              |
-| `deps_sync_clean`               | pass     | `lpm.lock` and `package.json` agree on the declared dependency set.                                                                                                                                                             |
-| `deps_sync_drift`               | warn     | `lpm.lock` and `package.json` disagree — manifest changes have not been resolved. **Fix:** Run `lpm install` to reconcile.                                                                                                      |
-| `local_source_dir_ok`           | pass     | A `file:` / `link:` dependency points at a directory with a readable `package.json`.                                                                                                                                            |
-| `local_source_tarball_ok`       | pass     | A `file:` dependency points at a readable tarball.                                                                                                                                                                              |
-| `local_source_dir_no_pkg`       | fail     | A `file:` / `link:` dependency points at a directory with no `package.json`. **Fix:** Add `package.json` to the local path or update the dep target.                                                                            |
-| `local_source_invalid_type`     | fail     | A `file:` / `link:` dependency points at an unexpected file type. **Fix:** Re-target the dependency at a directory or a tarball file.                                                                                           |
-| `local_source_link_to_file`     | fail     | A `link:` dependency points at a file instead of a directory. **Fix:** Use a project directory. Use `file:` for tarballs.                                                                                                        |
-| `local_source_unreadable`       | fail     | LPM CLI cannot read a `file:` or `link:` target. **Fix:** Restore the target or correct its permissions. Then run `lpm install`.                                                                                                  |
+| `package_json_present` | pass | A readable `package.json` exists in the project directory. |
+| `package_json_missing` | fail | No `package.json` exists in the project directory. **Fix:** Run [lpm init](/docs/packages/init), or `cd` into your project root before running doctor. |
+| `linker_mode_resolved` | pass | Shows the selected linker mode and its source: CLI, global configuration, environment, package, workspace, or default. |
+| `node_modules_isolated_healthy` | pass | `node_modules/` exists and is backed by an isolated `.lpm/wrappers/` store. |
+| `node_modules_hoisted_healthy` | pass | `node_modules/` exists and uses the hoisted layout. |
+| `node_modules_virtual_healthy` | pass | `node_modules/` symlinks point into the active global virtual store. |
+| `node_modules_symlinked` | fail | The project-level `node_modules` path is a symlink or directory junction. **Fix:** Run `lpm doctor --fix`, then run [lpm install](/docs/packages/install). |
+| `v2_store_orphans` | pass/warn | The v2 or v3 store has no orphans, or reports entries that no project uses. **Fix:** Run [lpm cache prune](/docs/packages/cache), then run `lpm cache prune --apply`. |
+| `node_modules_mixed_layout` | warn | Both isolated and hoisted layout state are present in `node_modules/`. **Fix:** Re-run [lpm install](/docs/packages/install) to converge on the configured linker layout. |
+| `node_modules_no_store` | warn | `node_modules/` exists but no LPM CLI-owned store is present. **Fix:** Run [lpm install](/docs/packages/install) to rebuild the layout under LPM CLI ownership. |
+| `node_modules_legacy_layout` | warn | An older LPM CLI layout is on disk and a one-time migration is pending. **Fix:** Run [lpm install](/docs/packages/install) to migrate to the current layout. |
+| `node_modules_missing` | fail | `node_modules/` is missing — dependencies have not been installed. **Fix:** Run [lpm install](/docs/packages/install). |
+| `lockfile_present` | pass | `lpm.lock` is present at the project root. |
+| `lockfile_missing` | warn | No `lpm.lock` was found at the project root. **Fix:** Run [lpm install](/docs/packages/install) — it generates the lockfile alongside `node_modules/`. |
+| `lockfile_binary_valid` | pass | `lpm.lockb` matches `lpm.lock` and parses cleanly. |
+| `lockfile_binary_missing` | warn | `lpm.lockb` is missing while `lpm.lock` is present and the graph fits the binary format. **Fix:** Run `lpm doctor --fix` to regenerate, or run [lpm install](/docs/packages/install). |
+| `lockfile_binary_stale` | warn | `lpm.lockb` does not match the contents of `lpm.lock`, or stale binary bytes remain for a TOML-only graph. **Fix:** Run `lpm doctor --fix` to reconcile, or run [lpm install](/docs/packages/install). |
+| `lockfile_binary_corrupt` | warn | `lpm.lockb` does not parse as a valid binary lockfile. **Fix:** Run `lpm doctor --fix` to reconcile from `lpm.lock`. |
+| `gitattributes_lockb_marked` | pass | `.gitattributes` marks `lpm.lockb` as binary. |
+| `gitattributes_lockb_unmarked` | warn | `.gitattributes` does not mark `lpm.lockb` as binary. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`. |
+| `gitattributes_missing` | warn | No `.gitattributes` file exists, so Git can treat `lpm.lockb` as text. **Fix:** Run `lpm doctor --fix` or add `lpm.lockb binary`. |
+| `deps_sync_clean` | pass | `lpm.lock` and `package.json` agree on the declared dependency set. |
+| `deps_sync_drift` | warn | `lpm.lock` and `package.json` disagree — manifest changes have not been resolved. **Fix:** Run [lpm install](/docs/packages/install) to reconcile. |
+| `local_source_dir_ok` | pass | A `file:` / `link:` dependency points at a directory with a readable `package.json`. |
+| `local_source_tarball_ok` | pass | A `file:` dependency points at a readable tarball. |
+| `local_source_dir_no_pkg` | fail | A `file:` / `link:` dependency points at a directory with no `package.json`. **Fix:** Add `package.json` to the local path or update the dep target. |
+| `local_source_invalid_type` | fail | A `file:` / `link:` dependency points at an unexpected file type. **Fix:** Re-target the dependency at a directory or a tarball file. |
+| `local_source_link_to_file` | fail | A `link:` dependency points at a file instead of a directory. **Fix:** Use a project directory. Use `file:` for tarballs. |
+| `local_source_unreadable` | fail | LPM CLI cannot read a `file:` or `link:` target. **Fix:** Restore the target or correct its permissions. Then run [lpm install](/docs/packages/install). |
+| `package_json_invalid` | fail | The manifest is unreadable or invalid. Repair it before installing. |
+| `linker_config_invalid` | fail | A linker configuration value is invalid. Repair the source named in the detail. |
+| `store_orphan_analysis_unavailable` | warn | Doctor could not determine which store entries are unused. |
+| `lockfile_corrupt` | fail | The lockfile cannot be read safely. Restore a valid copy or regenerate it. |
+| `gitattributes_unreadable` | warn | The attributes file cannot be read safely. Repair it and retain valid existing rules. |
 
 ### lpm.json
 
-| Code                       | Severity | Description                                                                                                                            |
+| Code | Severity | Description |
 | -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `lpm_json_valid`           | pass     | Doctor accepts the `lpm.json` syntax and recognized fields.                                                                            |
-| `lpm_json_schema_warnings` | warn     | Doctor reports an unknown field or an incorrect value type. **Fix:** Review the detail and the [`lpm.json` reference](/docs/reference/lpm-json). |
-| `lpm_json_invalid_syntax`  | fail     | `lpm.json` is not valid JSON. **Fix:** Fix the JSON syntax error reported in `detail`.                                                 |
-| `lpm_json_not_object`      | fail     | `lpm.json`'s top-level value is not an object. **Fix:** Replace with a JSON object literal `{ ... }`.                                  |
-| `lpm_json_unreadable`      | fail     | LPM CLI cannot read `lpm.json`. **Fix:** Correct the file permissions. Then run doctor again.                                            |
+| `lpm_json_valid` | pass | Doctor accepts the `lpm.json` syntax and recognized fields. |
+| `lpm_json_schema_warnings` | warn | Doctor reports an unknown field or an incorrect value type. **Fix:** Review the detail and the [`lpm.json` reference](/docs/reference/lpm-json). |
+| `lpm_json_invalid_syntax` | fail | `lpm.json` is not valid JSON. **Fix:** Fix the JSON syntax error reported in `detail`. |
+| `lpm_json_not_object` | fail | `lpm.json`'s top-level value is not an object. **Fix:** Replace with a JSON object literal `{ ... }`. |
+| `lpm_json_unreadable` | fail | LPM CLI cannot read `lpm.json`. **Fix:** Correct the file permissions. Then run doctor again. |
 
 ### Runtime
 
-| Code                     | Severity  | Description                                                                                                                                                                                                                                               |
+| Code | Severity | Description |
 | ------------------------ | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node_engine_compatible` | pass      | The first Node on the constructed script `PATH` satisfies `package.json > engines.node`.                                                                                                                                                                  |
-| `node_engine_mismatch`   | fail/warn | The first Node on the script `PATH` violates `package.json > engines.node`. Strict mode fails, and non-strict mode warns. **Fix:** Select a compatible runtime, relax the constraint, or disable strictness in the project or user configuration. |
-| `node_managed_match`     | pass      | A managed Node install matches the pinned spec.                                                                                                                                                                                                           |
-| `node_pinned_unmet`      | warn      | A pinned Node version has no matching managed install. The first Node on script `PATH` can differ. **Fix:** Run `lpm use node@<version>`.                                                                                                   |
-| `node_missing_pinned`    | fail      | Project pins a Node version and the constructed script `PATH` cannot resolve Node. **Fix:** Run `lpm use node@<version>` to install the pinned version.                                                                                                    |
-| `node_system_unpinned`   | pass      | No Node version is pinned, and the script `PATH` resolves Node. **Fix:** For reproducible runs, pin a version in `lpm.json > runtime.node`.                                                                                                               |
-| `node_missing_unpinned`  | fail      | No Node version is pinned and the constructed script `PATH` cannot resolve Node. **Fix:** Install Node via `lpm use node@22` (or your preferred version).                                                                                                  |
-| `bun_managed_match`      | pass      | A managed Bun install matches `lpm.json > runtime.bun`.                                                                                                                                                                                                    |
-| `bun_pinned_unmet`       | warn      | Project pins a Bun version but no managed Bun install matches. **Fix:** Run `lpm use bun@<version>` to install and pin the managed version.                                                                                                               |
-| `bun_missing_pinned`     | fail      | Project pins a Bun version and no Bun is reachable. **Fix:** Run `lpm use bun@<version>` to install the pinned version.                                                                                                                                   |
+| `node_engine_compatible` | pass | The selected runtime satisfies `package.json > engines.node`. |
+| `node_engine_mismatch` | fail/warn | The selected managed runtime or trusted system runtime violates `engines.node`. Strict mode fails. Other modes warn. Select a compatible runtime with [lpm use](/docs/dev/use). |
+| `node_managed_match` | pass | A managed Node install matches the pinned spec. |
+| `node_pinned_unmet` | warn | A pinned Node version has no matching managed install. The first Node on trusted system `PATH` can differ. **Fix:** Run `lpm use node@<version>`. |
+| `node_missing_pinned` | fail | Project pins a Node version and the trusted system `PATH` cannot resolve Node. **Fix:** Run `lpm use node@<version>` to install the pinned version. |
+| `node_system_unpinned` | pass | No Node version is pinned, and the trusted system `PATH` resolves Node. **Fix:** For reproducible runs, pin a version in `lpm.json > runtime.node`. |
+| `node_missing_unpinned` | fail | No Node version is pinned and the trusted system `PATH` cannot resolve Node. **Fix:** Install Node via `lpm use node@22` (or your preferred version). |
+| `bun_managed_match` | pass | A managed Bun install matches `lpm.json > runtime.bun`. |
+| `bun_pinned_unmet` | warn | Project pins a Bun version but no managed Bun install matches. **Fix:** Run `lpm use bun@<version>` to install and pin the managed version. |
+| `bun_missing_pinned` | fail | Project pins a Bun version and no Bun is reachable. **Fix:** Run `lpm use bun@<version>` to install the pinned version. |
+| `node_config_invalid` | fail | A Node.js pin file cannot be read. Repair the file; other checks continue. |
 
 ### Tunnel
 
-| Code                           | Severity | Description                                                                                                                                                   |
+| Code | Severity | Description |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tunnel_active`                | pass     | The configured domain is claimed by your account and responds to a request.                                                                                   |
-| `tunnel_idle`                  | pass     | The configured domain is claimed by your account, but no tunnel is active.                                                                                    |
-| `tunnel_unauthenticated`       | pass     | A tunnel domain is configured, but no authentication is available. **Fix:** Run `lpm login` to examine ownership.                                             |
-| `tunnel_unverified`            | pass     | The registry request for domain ownership failed. **Fix:** Run `lpm health`. Then run doctor again.                                                          |
-| `tunnel_not_claimed`           | warn     | Your account does not own the configured tunnel domain. **Fix:** Run `lpm doctor --all --fix`, claim the domain, or change it.                              |
-| `tunnel_owned_by_other`        | warn     | A different account owns the configured tunnel domain. **Fix:** Choose a different domain.                                                                    |
-| `tunnel_unreachable`           | warn     | Your account owns the domain, but the domain does not respond. **Fix:** Examine DNS and tunnel state.                                                         |
-| `tunnel_unknown_base`          | warn     | The LPM.dev Registry does not recognize the configured base domain. **Fix:** Use a supported base domain or contact the registry team.                        |
-| `tunnel_domain_no_dot`         | warn     | Configured tunnel domain has no dot separating subdomain from base. **Fix:** Set the full domain: `<subdomain>.lpm.fyi` or `<subdomain>.lpm.llc`.             |
-| `tunnel_domain_empty_label`    | warn     | Configured tunnel domain has an empty label, for example `..lpm.fyi`. **Fix:** Remove the empty label.                                                        |
-| `tunnel_domain_label_too_long` | warn     | A label in the configured tunnel domain exceeds 63 characters (DNS limit). **Fix:** Shorten the offending label.                                              |
-| `tunnel_domain_too_long`       | warn     | Total tunnel domain length exceeds the DNS limit. **Fix:** Shorten the domain.                                                                                |
-| `tunnel_subdomain_length`      | warn     | Tunnel subdomain length is outside the allowed range. **Fix:** Pick a subdomain between the documented bounds.                                                |
-| `tunnel_subdomain_chars`       | warn     | Tunnel subdomain contains characters outside the allowed alphabet. **Fix:** Use only lowercase letters, digits, and hyphens.                                  |
-| `tunnel_subdomain_hyphen`      | warn     | Tunnel subdomain starts or ends with a hyphen. **Fix:** Subdomains must start and end with an alphanumeric character.                                         |
+| `tunnel_active` | pass | The configured domain is claimed by your account and responds to a request. |
+| `tunnel_idle` | pass | The configured domain is claimed by your account, but no tunnel is active. |
+| `tunnel_unauthenticated` | pass | A tunnel domain is configured, but no authentication is available. **Fix:** Run [lpm login](/docs/infra/login) to examine ownership. |
+| `tunnel_unverified` | warn | The registry request for domain ownership failed. **Fix:** Run `lpm health`. Then run doctor again. |
+| `tunnel_not_claimed` | warn | Your account does not own the configured tunnel domain. **Fix:** Run `lpm doctor --all --fix`, claim the domain, or change it. |
+| `tunnel_owned_by_other` | warn | A different account owns the configured tunnel domain. **Fix:** Choose a different domain. |
+| `tunnel_unreachable` | warn | Your account owns the domain, but the domain does not respond. **Fix:** Examine DNS and tunnel state. |
+| `tunnel_unknown_base` | warn | The LPM.dev Registry does not recognize the configured base domain. **Fix:** Use a supported base domain or contact the registry team. |
+| `tunnel_domain_no_dot` | warn | Configured tunnel domain has no dot separating subdomain from base. **Fix:** Set the full domain: `<subdomain>.lpm.fyi` or `<subdomain>.lpm.llc`. |
+| `tunnel_domain_empty_label` | warn | Configured tunnel domain has an empty label, for example `..lpm.fyi`. **Fix:** Remove the empty label. |
+| `tunnel_domain_label_too_long` | warn | A label in the configured tunnel domain exceeds 63 characters (DNS limit). **Fix:** Shorten the offending label. |
+| `tunnel_domain_too_long` | warn | Total tunnel domain length exceeds the DNS limit. **Fix:** Shorten the domain. |
+| `tunnel_subdomain_length` | warn | Tunnel subdomain length is outside the allowed range. **Fix:** Pick a subdomain between the documented bounds. |
+| `tunnel_subdomain_chars` | warn | Tunnel subdomain contains characters outside the allowed alphabet. **Fix:** Use only lowercase letters, digits, and hyphens. |
+| `tunnel_subdomain_hyphen` | warn | Tunnel subdomain starts or ends with a hyphen. **Fix:** Subdomains must start and end with an alphanumeric character. |
 
 ### Code quality
 
-| Code               | Severity | Description                                                                                                                      |
+| Code | Severity | Description |
 | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `lint_clean`       | pass     | Oxlint reports no issues for the project.                                                                                        |
-| `lint_warnings`    | warn     | Oxlint reported warnings for the project. **Fix:** Run `lpm lint` to inspect, then address.                                      |
-| `lint_errors`      | fail     | Oxlint reported errors for the project. **Fix:** Run `lpm lint` and fix the reported errors.                                     |
-| `lint_unparseable` | warn     | Doctor cannot parse the Oxlint output. **Fix:** Run `lpm lint` to see the raw output.                                             |
-| `fmt_clean`        | pass     | Biome reports the project formatting is clean.                                                                                   |
-| `fmt_unformatted`  | warn     | Biome found files that need reformatting. **Fix:** Run `lpm fmt` to apply formatting.                                            |
-| `fmt_other_issue`  | warn     | Biome reported a parse or configuration error. **Fix:** Run `lpm fmt --check` to see the raw Biome output.                    |
+| `lint_clean` | pass | Oxlint reports no issues for the project. |
+| `lint_warnings` | warn | Oxlint reported warnings for the project. **Fix:** Run `lpm lint` to inspect, then address. |
+| `lint_errors` | fail | Oxlint reported errors for the project. **Fix:** Run `lpm lint` and fix the reported errors. |
+| `lint_unparseable` | warn | Doctor cannot parse the Oxlint output. **Fix:** Run `lpm lint` to see the raw output. |
+| `fmt_clean` | pass | Biome reports the project formatting is clean. |
+| `fmt_unformatted` | warn | Biome found files that need reformatting. **Fix:** Run [lpm fmt](/docs/dev/fmt) to apply formatting. |
+| `fmt_other_issue` | warn | Biome reported a parse or configuration error. **Fix:** Run `lpm fmt --check` to see the raw Biome output. |
 
 ### TypeScript
 
-| Code                              | Severity | Description                                                                                                                                                     |
+| Code | Severity | Description |
 | --------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `typescript_healthy`              | pass     | Project-local `tsc` resolves through the `node_modules/.bin` chain.                                                                                             |
-| `typescript_missing_for_tsconfig` | warn     | `tsc` is reachable only from the system `PATH`. The project has no local install. **Fix:** Run `lpm install -D typescript`.                           |
-| `typescript_unavailable`          | fail     | `tsc` is not reachable for a directory with `tsconfig.json`. **Fix:** If `typescript` is declared, run `lpm install`. Otherwise, run `lpm install -D typescript`. |
+| `typescript_healthy` | pass | Project-local `tsc` resolves through the `node_modules/.bin` chain. |
+| `typescript_missing_for_tsconfig` | warn | `tsc` is reachable only from the system `PATH`. The project has no local install. **Fix:** Run `lpm install -D typescript`. |
+| `typescript_unavailable` | fail | `tsc` is not reachable for a directory with `tsconfig.json`. **Fix:** If `typescript` is declared, run [lpm install](/docs/packages/install). Otherwise, run `lpm install -D typescript`. |
 
 ### Plugin
 
-| Code                      | Severity | Description                                                                                                      |
+| Code | Severity | Description |
 | ------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `plugin_up_to_date`       | pass     | An installed plugin is at the latest known version.                                                              |
-| `plugin_update_available` | warn     | A newer version of an installed plugin is available upstream. **Fix:** Run `lpm plugin update <name>` to update. |
+| `plugin_up_to_date` | pass | An installed plugin is at the latest known version. |
+| `plugin_update_available` | warn | A newer version of an installed plugin is available upstream. **Fix:** Run `lpm plugin update <name>` to update. |
+
+| `plugin_pin_unavailable` | warn | The pinned tool is unavailable or lacks a valid verification receipt. Run the tool command to install that version. |
 
 ### Workspace
 
-| Code                | Severity | Description                                                                                                                           |
+| Code | Severity | Description |
 | ------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspace_acyclic` | pass     | No dependency cycles among workspace members.                                                                                         |
-| `workspace_cycle`   | fail     | A dependency cycle exists among workspace members. **Fix:** Break the cycle by removing or restructuring the offending workspace dep. |
+| `workspace_acyclic` | pass | No dependency cycles among workspace members. |
+| `workspace_cycle` | fail | A dependency cycle exists among workspace members. **Fix:** Break the cycle by removing or restructuring the offending workspace dep. |
 
 ### Global installs
 
-| Code                             | Severity | Description                                                                                                                                                  |
+| Code | Severity | Description |
 | -------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `global_manifest_valid`          | pass     | `~/.lpm/global/manifest.toml` parses and is structurally valid.                                                                                              |
-| `global_manifest_absent`         | pass     | No global install manifest is present (no global installs yet).                                                                                              |
-| `global_manifest_corrupt`        | fail     | `~/.lpm/global/manifest.toml` is unreadable or malformed. **Fix:** Inspect and repair the file, or reinstall affected global packages.                       |
+| `global_manifest_valid` | pass | `~/.lpm/global/manifest.toml` parses and is structurally valid. |
+| `global_manifest_absent` | pass | No global install manifest is present (no global installs yet). |
+| `global_manifest_corrupt` | fail | `~/.lpm/global/manifest.toml` is unreadable or malformed. **Fix:** Inspect and repair the file, or reinstall affected global packages. |
 | `global_manifest_structurally_invalid` | fail | The global manifest contains invalid package roots, aliases, or tombstones. **Fix:** Repair the affected rows or reinstall the affected global packages. |
-| `global_bin_on_path`             | pass     | `~/.lpm/bin` is on the current `PATH`.                                                                                                                        |
-| `global_bin_off_path`            | warn     | `~/.lpm/bin` is not on the current `PATH`. **Fix:** Add `~/.lpm/bin` to the shell `PATH`.                                                                    |
-| `global_shims_clean`             | pass     | Every shim in `~/.lpm/bin` belongs to a recorded global install.                                                                                             |
-| `global_shims_no_dir`            | pass     | Global bin directory does not yet exist.                                                                                                                     |
-| `global_shims_orphans`           | warn     | Files exist in `~/.lpm/bin` without a matching manifest entry. **Fix:** Remove the orphan files, or run `lpm install --global` to re-register.               |
-| `global_shims_unreadable`        | warn     | LPM CLI cannot read the global binary directory. **Fix:** Correct its permissions. Then run doctor again.                                                    |
-| `global_shim_targets_healthy`    | pass     | On macOS and Linux, each manifest-owned shim points to the expected global package binary.                                                                   |
-| `global_shim_targets_stale`      | warn     | On macOS and Linux, a manifest-owned shim has a missing or incorrect target. **Fix:** Run `lpm install -g <pkg>` again.                                       |
-| `global_install_roots_empty`     | pass     | No global installs are recorded.                                                                                                                             |
-| `global_install_roots_healthy`   | pass     | Every global install root exists and carries a ready marker.                                                                                                 |
-| `global_install_roots_unhealthy` | fail     | One or more global install roots are missing or incomplete. **Fix:** Reinstall the affected globals (`lpm install --global <pkg>`).                          |
-| `global_trusted_deps_valid`      | pass     | `~/.lpm/global/trusted-dependencies.json` parses cleanly.                                                                                                    |
-| `global_trusted_deps_absent`     | pass     | No host-global trusted-dependencies file is present yet.                                                                                                     |
-| `global_trusted_deps_corrupt`    | fail     | `~/.lpm/global/trusted-dependencies.json` is unreadable, malformed, or uses a newer schema. **Fix:** Repair or delete it, then re-approve globals as needed. |
+| `global_bin_on_path` | pass | `~/.lpm/bin` is on the current `PATH`. |
+| `global_bin_off_path` | warn | `~/.lpm/bin` is not on the current `PATH`. **Fix:** Add `~/.lpm/bin` to the shell `PATH`. |
+| `global_shims_clean` | pass | Every shim in `~/.lpm/bin` belongs to a recorded global install. |
+| `global_shims_no_dir` | pass | Global bin directory does not yet exist. |
+| `global_shims_orphans` | warn | Files exist in `~/.lpm/bin` without a matching manifest entry. **Fix:** Remove the orphan files, or run `lpm install --global` to re-register. |
+| `global_shims_unreadable` | warn | LPM CLI cannot read the global binary directory. **Fix:** Correct its permissions. Then run doctor again. |
+| `global_shim_targets_healthy` | pass | Manifest-owned global commands and aliases point to their expected targets. Covers Unix links and Windows command shims. |
+| `global_shim_targets_stale` | warn | Global commands or aliases are missing or point to unexpected targets. This includes a missing global binary directory. Reinstall the affected global package. |
+| `global_install_roots_empty` | pass | No global installs are recorded. |
+| `global_install_roots_healthy` | pass | Every global install root exists and carries a ready marker. |
+| `global_install_roots_unhealthy` | fail | One or more global install roots are missing or incomplete. **Fix:** Reinstall the affected globals (`lpm install --global <pkg>`). |
+| `global_trusted_deps_valid` | pass | `~/.lpm/global/trusted-dependencies.json` parses cleanly. |
+| `global_trusted_deps_absent` | pass | No host-global trusted-dependencies file is present yet. |
+| `global_trusted_deps_corrupt` | fail | `~/.lpm/global/trusted-dependencies.json` is unreadable, malformed, or uses a newer schema. **Fix:** Repair or delete it, then re-approve globals as needed. |
 
 ### Sandbox + scripts
 
-| Code                           | Severity | Description                                                                                                                                                                                                                                                                           |
+| Code | Severity | Description |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sandbox_available`            | pass     | The OS sandbox backend used by lifecycle scripts is available.                                                                                                                                                                                                                        |
+| `sandbox_available` | pass | The OS sandbox backend used by lifecycle scripts is available. |
 | `sandbox_setup_required` | warn | Protected project or temporary-directory ancestors need sandbox metadata access. **Fix:** Use [Windows sandbox permission setup](#windows-sandbox-permission-setup). |
-| `sandbox_helper_missing`       | warn     | On Windows, `lpm-sandbox-helper.exe` is not next to `lpm.exe`. Strict mode cannot deny network access. **Fix:** Reinstall `@lpm-registry/cli`. If the helper is elsewhere, set `LPM_SANDBOX_HELPER=<path>`. |
-| `sandbox_degraded`             | warn     | Strict mode is engaged but the host kernel forced the V1 fallback (filesystem containment only — no outbound network denial). **Fix:** Upgrade to kernel 6.7+ and unset `[sandbox] allow-degraded`, or drop back to default via `lpm config sandbox --set default`.                   |
-| `sandbox_disabled_by_user`     | warn     | Sandbox is persistently disabled via `[sandbox] mode = "none"`. Lifecycle scripts run with no containment, including credential env vars. **Fix:** Restore via `lpm config sandbox --set default` (or `--set strict`).                                                                |
+| `sandbox_helper_missing` | warn | On Windows, `lpm-sandbox-helper.exe` is not next to `lpm.exe`. Strict mode cannot deny network access. **Fix:** Reinstall `@lpm-registry/cli`. If the helper is elsewhere, set `LPM_SANDBOX_HELPER=<path>`. |
+| `sandbox_degraded` | warn | The host provides reduced containment. Linux may lack network blocking; Windows may use Low IL. Review the detail and your approved sandbox configuration. |
+| `sandbox_disabled_by_user` | warn | An approved configuration disables containment. Dependency scripts have normal user access. Restore the default through [lpm config](/docs/infra/config). |
 | `sandbox_config_approval_required` | fail | The requested sandbox configuration is weaker than the approved security floor. **Fix:** Approve the change or restore `default` or `strict` mode. |
-| `sandbox_kernel_too_old`       | warn     | Linux kernel is too old to support Landlock at the required ABI. **Fix:** Upgrade the kernel, or accept that lifecycle scripts run unsandboxed.                                                                                                                                       |
-| `sandbox_unsupported_platform` | warn     | No supported sandbox backend exists for this platform. **Fix:** Lifecycle scripts will not be sandboxed on this platform — review with `lpm approve-scripts`.                                                                                                                         |
-| `sandbox_probe_failed`         | fail     | The sandbox probe errored unexpectedly. **Fix:** File a bug with the `detail` text.                                                                                                                                                                                                   |
-| `policy_force_security_floor`  | warn     | An override lowers the default script-policy floor. **Fix:** Make sure that the override matches the project security requirements.                                                                                                                                                   |
+| `sandbox_kernel_too_old` | warn | The kernel cannot provide the requested sandbox. Scripts stop unless an approved configuration allows a supported fallback. Upgrade the kernel or review [sandbox configuration](/docs/infra/config). |
+| `sandbox_unsupported_platform` | warn | No supported sandbox exists on this platform. Scripts that require containment stop. Use a supported host or an approved change to sandbox configuration. |
+| `sandbox_probe_failed` | fail | The sandbox probe errored unexpectedly. **Fix:** File a bug with the `detail` text. |
+| `policy_force_security_floor` | warn | `force-security-floor = true` suspends approvals and keeps the security floor active. Review [security controls](/docs/infra/security). |
 
 ### Sigstore provenance
 
-| Code                        | Severity | Description                                                                                                                                                           |
+| Code | Severity | Description |
 | --------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sigstore_verify_enforced`  | pass     | Sigstore provenance verification is fail-closed. Rejected attestations refuse the install or approval.                                                                |
-| `sigstore_verify_warn_mode` | warn     | Sigstore verification only warns and does not block installs. **Fix:** Unset `LPM_PROVENANCE_ENFORCE` (or set it to `deny`), or run `lpm config sigstore --set deny`. |
-| `sigstore_verify_disabled`  | warn     | Sigstore verification is disabled entirely. **Fix:** Re-enable deny mode via `LPM_PROVENANCE_ENFORCE=deny` or `lpm config sigstore --set deny`.                       |
+| `sigstore_verify_enforced` | pass | Sigstore provenance verification is fail-closed. Rejected attestations refuse the install or approval. |
+| `sigstore_verify_warn_mode` | warn | Warn mode is requested. It applies only when security approvals and managed policy permit it. |
+| `sigstore_verify_disabled` | warn | Disabled verification is requested. It applies only when security approvals and managed policy permit it. |
+| `sigstore_config_approval_required` | fail | The requested verification mode needs approval or conflicts with managed policy. Restore the approved mode or follow the reported remediation. |
 
 ### Manifest compat
 
-| Code                          | Severity | Description                                                                                                                                                                                                                                                                          |
+| Code | Severity | Description |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `unsupported_override_values` | warn     | Top-level `overrides` or `resolutions` values are not strings, so LPM CLI ignores them. **Fix:** Use string targets and parent selectors such as `parent>dependency`.                                                                                                                   |
-| `pnpm_overrides_drift`        | warn     | Entries in `pnpm.overrides` that LPM CLI is not honoring through `lpm.overrides`, top-level `overrides`, or `resolutions`. **Fix:** Run `lpm migrate` to translate, or mirror the entries verbatim in `lpm.overrides`.                                                               |
-| `pnpm_patches_drift`          | warn     | LPM CLI cannot bind some `pnpm.patchedDependencies` entries. **Fix:** Run `lpm patch`. Alternatively, mirror a patch only after it applies cleanly.                                                                                                                                        |
-| `pnpm_peer_rules_drift`       | warn     | Sub-key entries (`ignoreMissing`, `allowedVersions`, `allowAny`) that LPM CLI is not honoring via `lpm.peerDependencyRules`. **Fix:** Run `lpm migrate` (the planner translates selector keys 1:1) or mirror the rules under `lpm.peerDependencyRules`.                              |
-| `engines_npm_ignored`         | warn     | `engines.npm` is declared but LPM CLI is not the npm CLI and does not enforce its constraint. **Fix:** Remove the field, or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` are enforced.                                                                               |
-| `engines_pnpm_ignored`        | warn     | LPM CLI does not enforce the `engines.pnpm` version. **Fix:** Remove the field or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` remain active.                                                                                                                      |
-| `engines_yarn_ignored`        | warn     | LPM CLI does not enforce the `engines.yarn` version. **Fix:** Remove the field or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` remain active.                                                                                                                      |
-| `engines_bun_ignored`         | warn     | LPM CLI does not enforce the `engines.bun` version. **Fix:** Use `lpm.json > runtime.bun` for managed Bun. LPM CLI still enforces `engines.node` and `engines.lpm`.                                                                                                                   |
+| `unsupported_override_values` | warn | Top-level `overrides` or `resolutions` values are not strings, so LPM CLI ignores them. **Fix:** Use string targets and parent selectors such as `parent>dependency`. |
+| `pnpm_overrides_drift` | warn | Entries in `pnpm.overrides` that LPM CLI is not honoring through `lpm.overrides`, top-level `overrides`, or `resolutions`. **Fix:** Run [lpm migrate](/docs/packages/migrate) to translate, or mirror the entries verbatim in `lpm.overrides`. |
+| `pnpm_patches_drift` | warn | LPM CLI cannot bind some `pnpm.patchedDependencies` entries. **Fix:** Run `lpm patch`. Alternatively, mirror a patch only after it applies cleanly. |
+| `pnpm_peer_rules_drift` | warn | Some pnpm peer rules are not active in LPM CLI. Use [lpm migrate](/docs/packages/migrate) or configure `lpm.peerDependencyRules`. |
+| `engines_npm_ignored` | warn | LPM CLI ignores `engines.npm`. It still enforces `engines.node` and `engines.lpm`. |
+| `engines_pnpm_ignored` | warn | LPM CLI does not enforce the `engines.pnpm` version. **Fix:** Remove the field or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` remain active. |
+| `engines_yarn_ignored` | warn | LPM CLI does not enforce the `engines.yarn` version. **Fix:** Remove the field or accept that LPM CLI ignores it. `engines.node` and `engines.lpm` remain active. |
+| `engines_bun_ignored` | warn | LPM CLI does not enforce the `engines.bun` version. **Fix:** Use `lpm.json > runtime.bun` for managed Bun. LPM CLI still enforces `engines.node` and `engines.lpm`. |
+
+### Incomplete probes
+
+| Code | Severity | Recovery |
+| --- | --- | --- |
+| `lint_probe_failed` | warn | Repair or reinstall the selected lint tool, then retry. |
+| `fmt_probe_failed` | warn | Repair or reinstall the selected formatter, then retry. |
+| `plugin_update_check_failed` | warn | Check network access, then retry the full report. |
+| `workspace_discovery_failed` | fail | Repair workspace configuration before relying on workspace results. |
 
 ## JSON output and exit codes
 
@@ -536,6 +564,7 @@ lpm doctor --all --json
   "failed": 1,
   "warnings": 0,
   "fixes_applied": [],
+  "fixes_failed": [],
   "checks": [
     {
       "code": "node_modules_missing",
@@ -561,6 +590,7 @@ Use these fields for automation:
 | `passed`, `failed`, `warnings` | Result counts |
 | `checks` | All emitted results |
 | `fixes_applied` | Fixes that doctor applied |
+| `fixes_failed` | Failed repairs, with `action` and `error` |
 
 Match on `checks[].code`. The `check` and `detail` text can change.
 
@@ -570,7 +600,7 @@ Doctor uses these exit codes:
 | --- | --- |
 | No failures | `0` |
 | Warnings without failures | `0` |
-| One or more failures | `1` |
+| A check or repair failed | `1` |
 
 ## Registry health
 
@@ -592,15 +622,16 @@ lpm health --json
 
 The command does not collect repeated measurements. The `response_time_ms` value is the time for one request.
 
-Human and JSON output have different behavior for an unhealthy response:
+Both output modes return a nonzero exit code for an unhealthy response or a failed request:
 
 | Registry result | Human output | JSON output |
 | --- | --- | --- |
 | Healthy | Exit code `0` | `healthy: true`, exit code `0` |
-| Registry reports unhealthy | Nonzero exit code | `success: true`, `healthy: false`, exit code `0` |
+| Registry reports unhealthy | Nonzero exit code | `success: false`, `error`, and `error_code`; nonzero exit code |
 | Request fails | Nonzero exit code | Nonzero exit code |
 
-For JSON automation, read `healthy`. Do not use `success` or the exit code as the only health signal.
+A successful JSON response has `success: true` and `healthy: true`.
+The health request has a five-second deadline and does not retry.
 
 ## Recovery
 
@@ -625,7 +656,7 @@ lpm doctor
 
 The fix removes only the link entry. It creates a real `node_modules` directory and does not change the linked target.
 
-Do not run `lpm cache prune` or `lpm store clean` for this error. The global store is not the cause.
+Do not run [lpm cache prune](/docs/packages/cache) or `lpm store clean` for this error. The global store is not the cause.
 
 ### Resolve registry or authentication failures
 
@@ -668,7 +699,8 @@ lpm doctor list --code <CODE>
 | `-y`, `--yes` | Imply `--fix` and skip the confirmation prompt |
 | `--json` | Print structured output |
 
-If you use `lpm doctor list`, doctor ignores `--all`, `--fix`, and `--yes`.
+`--all` and `--fix` apply only to the diagnostic run, not to its subcommands.
+The catalog also ignores `--yes`. Sandbox setup uses `--yes` to approve an explicit `--apply` or `--remove`.
 
 ### `lpm doctor list`
 
@@ -692,4 +724,5 @@ If you use `lpm doctor list`, doctor ignores `--all`, `--fix`, and `--yes`.
 - [Configure tunnel domains](/docs/infra/tunnel)
 - [Manage the package store](/docs/infra/store)
 - [Manage policy extensions](/docs/infra/policy)
+- [Update LPM CLI](/docs/infra/self-update)
 - [Review global flags](/docs/commands#global-flags)
