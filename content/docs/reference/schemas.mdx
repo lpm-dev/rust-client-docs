@@ -1,71 +1,104 @@
 ---
 title: JSON Schemas
-description: "Published and locally emitted JSON Schemas for lpm.json and lpm.config.json."
+description: Use editor schemas or export configuration schemas from your installed CLI version.
 ---
 
+[`lpm schema`](/docs/reference/schemas) exports JSON Schemas for LPM CLI configuration files.
+Use a published schema for editor completion, or export a local copy that matches your installed CLI version.
+
 ```bash
-lpm schema lpm.json
-lpm schema lpm.config.json
-lpm schema lpm.json -o schema.json
+lpm schema <KIND> [-o <PATH>]
 ```
 
-LPM CLI ships JSON Schemas for the two JSON config files it owns: `lpm.json` and `lpm.config.json`. Use the published URLs for editor autocomplete, or use `lpm schema` to emit the schema from the exact CLI version installed on your machine.
+| Kind | Configuration |
+| --- | --- |
+| `lpm.json` | Project runtimes, tasks, services, environments, and publish targets. |
+| `lpm.config.json` | Source-package prompts, file selection, and dependency rules for [`lpm add`](/docs/packages/add). |
 
-## Published URLs
+The command emits a schema. It does not check a project file against that schema.
 
-| File | Canonical schema URL | Compatibility alias |
-| --- | --- | --- |
-| `lpm.json` | `https://cli.lpm.dev/schemas/lpm.json` | `https://lpm.dev/schemas/lpm.json` |
-| `lpm.config.json` | `https://cli.lpm.dev/schemas/lpm.config.json` | `https://lpm.dev/schemas/lpm.config.json` |
+## Quickstart
 
-Use the canonical `cli.lpm.dev` URL in new files:
+Add the schema URL to your project file:
 
 ```json title="lpm.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json"
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "runtime": { "node": "22" }
 }
 ```
 
+An editor with JSON Schema support can suggest fields and report invalid values.
+The `$schema` field does not change command behavior or require an online schema download during normal CLI use.
+
+## Published URLs
+
+| File | Canonical URL | Compatibility alias |
+| --- | --- | --- |
+| `lpm.json` | [cli.lpm.dev/schemas/lpm.json](https://cli.lpm.dev/schemas/lpm.json) | [lpm.dev/schemas/lpm.json](https://lpm.dev/schemas/lpm.json) |
+| `lpm.config.json` | [cli.lpm.dev/schemas/lpm.config.json](https://cli.lpm.dev/schemas/lpm.config.json) | [lpm.dev/schemas/lpm.config.json](https://lpm.dev/schemas/lpm.config.json) |
+
+Use the canonical `cli.lpm.dev` URLs in new files.
+For a source package:
+
 ```json title="lpm.config.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.config.json"
+  "$schema": "https://cli.lpm.dev/schemas/lpm.config.json",
+  "files": [{ "src": "src/**" }]
 }
 ```
 
 ## Emit Locally
 
+Print a schema without prompts:
+
 ```bash
 lpm schema lpm.json
 lpm schema lpm.config.json
 ```
 
-Without `-o`, LPM CLI pretty-prints the schema to stdout. With `-o` / `--out`, it writes the pretty-printed JSON to that path:
+Save local schemas for a pinned CLI version:
 
 ```bash
-lpm schema lpm.json -o lpm.schema.json
-lpm schema lpm.config.json --out lpm-config.schema.json
+mkdir -p schemas
+lpm schema lpm.json -o schemas/lpm.json
+lpm schema lpm.config.json --out schemas/lpm.config.json
 ```
 
-`lpm schema` accepts only these two kinds:
+`--out` replaces an existing file. It does not create parent directories.
+The output is formatted JSON.
+Interactive terminal output can use color. File and redirected output remain plain JSON.
 
-| Kind | Source of truth |
-| --- | --- |
-| `lpm.json` | Auto-derived from the typed Rust struct that parses `lpm.json`. |
-| `lpm.config.json` | Hand-authored alongside the `lpm add` consumer code, with drift tests against the published copy. |
+To use a local schema, set a relative path in the configuration file:
 
-Unknown kinds fail with a message listing the supported values.
+```json title="lpm.json"
+{ "$schema": "./schemas/lpm.json" }
+```
+
+## Schema checks and command checks
+
+Schemas check field shapes and supported constraints.
+Commands also check project state and relationships that a schema cannot express.
+For example, development services must not form dependency cycles or claim conflicting hostnames.
+
+The public schema can describe a newer CLI version than the one installed locally.
+If editor results differ from your CLI, export its schema and use that copy.
+[`lpm doctor`](/docs/infra/doctor) also reports unknown project configuration fields.
+See each configuration reference for runtime checks and recovery steps.
 
 ## Flags
 
 | Flag | Effect |
 | --- | --- |
-| `-o <PATH>`, `--out <PATH>` | Write the schema to a file instead of stdout. |
+| `-o <PATH>`, `--out <PATH>` | Write the schema to this file instead of stdout. |
 
-Plus the [global flags](/docs/commands#global-flags).
+See [global flags](/docs/commands#global-flags).
+An unsupported kind fails with the list of accepted kinds.
+A missing parent directory or an unwritable output path causes a write error.
 
 ## See also
 
-- [`lpm.json`](/docs/reference/lpm-json) - runtime, tasks, services, tunnel, env, and publish config
-- [`lpm.config.json`](/docs/reference/lpm-config-json) - source-package installer config
-- [`lpm add`](/docs/packages/add) - consumer flow for packages that ship `lpm.config.json`
-- [`lpm dev`](/docs/dev/dev) - common `lpm.json` consumer
+- [`lpm.json`](/docs/reference/lpm-json)
+- [`lpm.config.json`](/docs/reference/lpm-config-json)
+- [`lpm add`](/docs/packages/add)
+- [`lpm doctor`](/docs/infra/doctor)
