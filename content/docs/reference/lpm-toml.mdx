@@ -1,116 +1,170 @@
 ---
 title: lpm.toml
-description: "Project-level CLI defaults and sandbox posture committed to the repo."
+description: Configure project save rules, workspace execution, dependency checks, and lifecycle sandbox defaults.
 ---
 
-`lpm.toml` is an **optional** TOML file that sits next to `package.json`. It pins per-project defaults for behaviors that aren't part of publishable package metadata — most notably the [save policy](/docs/packages/save-policy) and the project sandbox posture.
-
-LPM CLI reads this file with a 16 MiB limit enforced before TOML parsing. Missing remains equivalent to no project-level config; an oversized file fails with its path and byte limit instead of falling through to user defaults. See [local configuration size limits](/docs/project-setup#local-configuration-size-limits) for the complete scope and exclusions.
-
-The file is intentionally separate from `package.json > lpm` because these keys are tool behavior, not publishable metadata. Mixing them into the manifest creates avoidable diff churn whenever someone tweaks a personal preference. Keeping them in `lpm.toml` lets each team decide whether to commit the file or `.gitignore` it.
-
-## Today's keys
+`lpm.toml` stores project defaults for LPM CLI. Use it for dependency save rules, workspace commands, and lifecycle sandbox settings.
 
 ```toml title="lpm.toml"
-save-prefix = "^"     # one of "^", "~", or "" (empty for exact, no prefix)
-save-exact  = false   # bool; true forces exact regardless of save-prefix
+save-exact = true
 
 [workspace]
-concurrency = 4       # positive integer; caps workspace run/test/bench fan-out
+concurrency = 4
+```
+
+With this configuration, [lpm install](/docs/packages/install) saves exact versions. Workspace [lpm run](/docs/dev/run) commands run at most four packages concurrently.
+
+## Location and scope
+
+Place the file beside the relevant `package.json`. Commit it to share defaults with the team.
+
+Workspace execution reads the workspace root's file. Package save rules use the install target's file. No general parent-directory merge combines these files.
+
+| File | Purpose |
+| --- | --- |
+| `lpm.toml` | Project defaults described here |
+| [package.json > lpm](/docs/reference/package-json-lpm) | Dependency layout, resolution, and lifecycle policy |
+| [lpm.json](/docs/reference/lpm-json) | Runtime, tasks, development services, publishing, and environments |
+| [config.toml](/docs/reference/config-toml) | User defaults across projects |
+
+A missing file supplies no project overrides. Consumers reject malformed TOML and invalid values for the fields they read.
+Unknown fields do not activate behavior. LPM CLI limits this file to 16 MiB before parsing.
+
+Use [lpm config](/docs/infra/config) to inspect effective values and their sources:
+
+```bash
+lpm config list --json
+```
+
+The generic configuration setter writes the user file. Edit `lpm.toml` directly for project defaults.
+
+## Save policy
+
+```toml
+save-prefix = "~"
+save-exact = false
+```
+
+| Key | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `save-prefix` | `"^"`, `"~"`, or `""` | `"^"` | Prefix for newly saved resolved versions. An empty string saves exact versions. |
+| `save-exact` | Boolean | `false` | Save exact versions regardless of `save-prefix`. |
+
+For save-policy booleans, the strings `"true"`, `"1"`, and `"yes"` mean true. `"false"`, `"0"`, and `"no"` mean false.
+Use native TOML booleans in new files.
+
+Each key resolves independently: project file, user file, then its default.
+Explicit save flags override that configuration for one invocation:
+
+```bash
+lpm install react --exact
+lpm install react --tilde
+lpm install react --save-prefix '^'
+```
+
+Explicit ranges, existing dependency entries, and catalogs have additional rules. See [Save policy](/docs/packages/save-policy).
+
+## Workspace execution and changed files
+
+```toml
+[workspace]
+concurrency = 4
 changed-files-ignore-pattern = ["**/README.md", "docs/**"]
 test-pattern = ["**/*.test.js", "**/*.spec.ts"]
+```
 
+| Key under `workspace` | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `concurrency` | Positive integer | Available host parallelism | Maximum concurrent packages for workspace run, test, and bench commands. |
+| `changed-files-ignore-pattern` | String or string array | `[]` | Ignore matching Git-diff paths before selecting affected packages. |
+| `test-pattern` | String or string array | `[]` | Treat matching changed files as test-only changes. |
+
+A test-only package remains selected. Its change does not seed the reverse dependency closure for affected-package selection.
+
+Concurrency resolves from `--workspace-concurrency`, this file, user `workspace-concurrency`, then available host parallelism.
+A positive decimal string is also accepted in either configuration file.
+
+CLI pattern flags append to project patterns for the current invocation. They do not replace those lists.
+
+```bash
+lpm run build --all --workspace-concurrency 2
+lpm run test --affected --changed-files-ignore-pattern 'docs/**'
+```
+
+See [Workspaces](/docs/packages/workspaces) for Git-ref filters and package selection.
+
+## Sandbox
+
+```toml
 [sandbox]
-mode = "default"      # "default" | "strict" | "none"
+mode = "strict"
 allow-degraded = false
+```
 
+| Key under `sandbox` | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `mode` | `"default"`, `"strict"`, or `"none"` | `"default"` | Requested dependency lifecycle sandbox mode. |
+| `allow-degraded` | Boolean | `false` | Permit a reduced sandbox when the host cannot provide the requested containment. |
+
+Mode precedence is CLI flags, true `LPM_STRICT_SANDBOX`, project file, user file, then the default.
+False or invalid environment values do not override a configured mode.
+`--strict-sandbox` and `--paranoid` request strict mode. `--no-sandbox` requests no sandbox.
+
+`allow-degraded` accepts the same boolean strings as [save policy](#save-policy).
+
+The project file proposes a posture. It cannot authorize weaker protection than the approved machine floor.
+An unauthorized reduction fails with `security_approval_required`. Managed policy can prohibit the reduction entirely.
+
+Use [lpm security](/docs/infra/security) for an approved temporary exception. Use [lpm config](/docs/infra/config) for a persistent machine change.
+
+## Tidy ignores
+
+```toml
 [tidy]
 ignore-unused = ["eslint-config-next"]
 ignore-phantom = ["virtual:*"]
 ignore-paths = ["generated/**"]
+```
 
+| Key under `tidy` | Matches | Behavior |
+| --- | --- | --- |
+| `ignore-unused` | Package-name globs | Suppress matching unused dependency findings. |
+| `ignore-phantom` | Package-name globs | Suppress matching undeclared-import findings. |
+| `ignore-paths` | Project-relative source paths | Exclude matching source files from import analysis. |
+
+Each key accepts a string or string array and defaults to `[]`.
+These project-only rules apply to [lpm tidy](/docs/packages/tidy) report and fix modes.
+They do not grant lifecycle trust or alter dependency resolution.
+
+```bash
+lpm tidy --json
+```
+
+## Typosquat policy
+
+```toml
 [[policy.typosquat.allow]]
 package = "axois"
 similar-to = "axios"
 reason = "Intentional internal compatibility package"
 ```
 
-| Key | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `save-prefix` | `"^"` \| `"~"` \| `""` | `"^"` | Prefix applied when `lpm install <pkg>` saves to `package.json`. `*` is **not** accepted. |
-| `save-exact` | bool | `false` | Force exact saves regardless of `save-prefix`. |
-| `workspace.concurrency` | positive integer | available parallelism | Project default for concurrent workspace members in `lpm run`, `lpm test`, and `lpm bench` workspace mode. |
-| `workspace.changed-files-ignore-pattern` | string or string array | `[]` | Project default for git-diff paths to ignore before `[git-ref]` filters or `--affected` map changed files to members. CLI `--changed-files-ignore-pattern` entries append to this list. |
-| `workspace.test-pattern` | string or string array | `[]` | Project default for changed files treated as test-only. Test-only packages stay selected, but they do not seed dependent fan-out for `[git-ref]` reverse closures or `--affected`. CLI `--test-pattern` entries append to this list. |
-| `sandbox.mode` | `"default"` \| `"strict"` \| `"none"` | `"default"` | Project-default lifecycle-script sandbox posture. CLI flags still win per invocation. |
-| `sandbox.allow-degraded` | bool | `false` | Allow degraded sandbox fallback for this repo on hosts that cannot provide the full posture. |
-| `tidy.ignore-unused` | string or string array | `[]` | Suppress [`lpm tidy`](/docs/packages/tidy) unused-dependency findings by package-name glob. |
-| `tidy.ignore-phantom` | string or string array | `[]` | Suppress `lpm tidy` phantom-import findings by package-name glob. |
-| `tidy.ignore-paths` | string or string array | `[]` | Ignore source imports from matching project-relative path globs during `lpm tidy`. |
-| `policy.typosquat.allow[]` | table array | `[]` | Reviewable exceptions for intentional suspicious direct package names. Each entry needs `package`, `reason`, and optionally `similar-to`. |
+| Entry field | Required | Behavior |
+| --- | --- | --- |
+| `package` | Yes | Exact direct dependency name to allow. |
+| `similar-to` | No | Restrict the exception to this detected popular-package match. |
+| `reason` | Yes | Nonempty explanation for the exception. |
 
-Invalid values (`save-prefix = "*"`, `save-prefix = ">="`, etc.) are rejected at load time with a clear error pointing at the offending file. Unknown keys are accepted silently for forward compatibility.
-
-## Precedence
-
-### Save policy
-
-Save policy resolves in this order, highest first:
-
-1. **CLI flag** — `--exact`, `--tilde`, or `--save-prefix '<p>'` on the install command
-2. **`./lpm.toml`** — this file
-3. **`~/.lpm/config.toml`** — user-level fallback
-4. **Built-in default** — `save-prefix = "^"`, `save-exact = false`
-
-See [Save policy](/docs/packages/save-policy) for the full table of how each combination flows into `package.json`.
-
-### Workspace concurrency
-
-Workspace package fan-out for `lpm run`, `lpm test`, and `lpm bench` resolves in this order, highest first:
-
-1. **CLI flag** — `--workspace-concurrency <N>`
-2. **`./lpm.toml > [workspace].concurrency`** — this file
-3. **`~/.lpm/config.toml > workspace-concurrency`** — user-level fallback
-4. **Built-in default** — available host parallelism
-
-### Git-diff workspace filters
-
-`changed-files-ignore-pattern` and `test-pattern` under `[workspace]` are project defaults for workspace selections that read git changes: `[git-ref]` filter atoms and `--affected`. CLI flags append to the project lists for the current invocation.
-
-### Sandbox
-
-Sandbox mode resolves in this order, highest first:
-
-1. **CLI flag** — `--no-sandbox`, `--strict-sandbox`, or `--paranoid`
-2. **`LPM_STRICT_SANDBOX`** — strict-mode env override
-3. **`./lpm.toml > [sandbox]`** — this file
-4. **`~/.lpm/config.toml > [sandbox]`** — user-level fallback
-5. **Built-in default** — `mode = "default"`, `allow-degraded = false`
-
-If this repo asks for a weaker sandbox than the machine currently allows, install or rebuild does **not** silently obey the file. It fails with `error_code: "security_approval_required"` and points you at [`lpm security unlock`](/docs/infra/security#temporary-unlocks) instead.
-
-### Tidy ignores
-
-`[tidy]` keys are project-local only. They affect [`lpm tidy`](/docs/packages/tidy) report and fix mode; `ignore-unused` and `ignore-phantom` match package names, while `ignore-paths` matches project-relative source paths before imports are analyzed.
-
-### Typosquat policy
-
-`policy.typosquat.allow` is the committed exception list for suspicious direct package names. It is consulted by [`lpm install`](/docs/packages/install#typosquat-guard) and [`lpm add`](/docs/packages/add) before network access or manifest mutation.
-
-```toml title="lpm.toml"
-[[policy.typosquat.allow]]
-package = "crossenv"
-similar-to = "cross-env"
-reason = "Internal migration package kept for compatibility"
-```
-
-`package` is the exact direct dependency name to allow. `similar-to` narrows the exception to the popular package LPM CLI detected; omit it only when the same local name may intentionally resemble more than one popular package. `reason` is required so the exception is reviewable in code review.
+Malformed policy sections, empty package names, and non-string match constraints fail before installation.
+The list defaults to empty. When typosquat checks are active, [lpm install](/docs/packages/install) and [lpm add](/docs/packages/add) consult these exceptions.
+`similar_to` is a compatibility alias for `similar-to`. Use only one form.
+Omitting `similar-to` allows the named package regardless of which popular package it resembles.
 
 ## See also
 
-- [`~/.lpm/config.toml`](/docs/reference/config-toml) — user-level CLI defaults (broader surface)
-- [`package.json` "lpm" key](/docs/reference/package-json-lpm) — publishable / project-shared LPM CLI config
-- [`lpm security`](/docs/infra/security) — temporary approvals and floor status
-- [`lpm.json`](/docs/reference/lpm-json) — dev-server, task-runner, and publish config
-- [`lpm tidy`](/docs/packages/tidy) — dependency hygiene report and prune command
-- [Save policy](/docs/packages/save-policy) — full rules and edge cases
+- [Save policy](/docs/packages/save-policy)
+- [Workspaces](/docs/packages/workspaces)
+- [lpm tidy](/docs/packages/tidy)
+- [lpm security](/docs/infra/security)
+- [User configuration](/docs/reference/config-toml)
+- [Environment variables](/docs/reference/env-vars)
