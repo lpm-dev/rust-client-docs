@@ -112,14 +112,19 @@ Conversion writes a version 12 staging `lpm.lock` and, when the graph permits it
 It also adds the binary lockfile rule to `.gitattributes`.
 
 The default online [lpm install](/docs/packages/install) resolves the final package instances and writes the current version 13 TOML lockfile.
-This install can change `node_modules` and run the root install lifecycle.
+Run migration from the workspace root. A member-directory invocation fails before conversion or backups.
+
+`--rollback` still accepts an older member-local recovery inventory.
+
+At a workspace root, this install includes the root and workspace members. It runs each target's install lifecycle once.
+The online install resolves manifest requirements again and can change the imported versions and `node_modules`.
 Dependency lifecycle scripts remain subject to the [script policy](/docs/packages/install#lifecycle-scripts).
 
 If you use `--no-install`, run [lpm install](/docs/packages/install) before an offline or frozen install:
 
 ```bash
 lpm migrate --no-install --skip-verify
-lpm install
+lpm install --no-frozen-lockfile
 ```
 
 An install failure makes migration fail. The converted files and backups remain available for a retry or rollback.
@@ -175,7 +180,7 @@ With `--json`, stdout contains one result or error object. Install diagnostics, 
 | Bitbucket Pipelines | `bitbucket-pipelines.lpm.yml` |
 
 Detection uses this table order. Without a detected platform, the command does not generate a template.
-Without `--ci`, it only shows a template hint. `--no-ci` suppresses both the hint and generation, including when `--ci` is present.
+Without `--ci`, it shows a hint to repeat migration with `--force --ci`. That command repeats installation and verification too. `--no-ci` suppresses both the hint and generation, including when `--ci` is present.
 
 GitLab jobs install the CLI and dependencies in each job environment.
 The templates run both `build` and `test`. Review their scripts, credentials, and trigger rules before use.
@@ -188,7 +193,7 @@ lpm migrate --rollback
 ```
 
 Migration keeps `.backup` files and `.lpm-migrate-manifest.json` so rollback can restore original managed files and remove newly created ones.
-This includes converted lockfiles, `.gitattributes`, translated manifests, copied patches, changed `.npmrc` files, and generated CI templates.
+This includes converted lockfiles, prior workspace-member lockfiles, `.gitattributes`, translated manifests, copied patches, changed `.npmrc` files, and generated CI templates.
 Repeated migrations preserve the first snapshots until rollback or manual cleanup.
 
 Rollback covers these managed files. It does not undo `node_modules`, store changes, or arbitrary files changed by install, build, or test scripts.
@@ -218,6 +223,12 @@ Keep the backup files and manifest together until you accept the migration.
 | `--json` | Write one JSON result or error to stdout. |
 
 See [Global flags](/docs/commands#global-flags) for shared options.
+
+## Commands inside workspace hooks
+
+Workspace lifecycle hooks cannot start another command that needs the same install lock. The child command fails with a parent-installation conflict.
+
+Run these commands after installation. Commands that need no install lock, such as `lpm --help`, remain available inside hooks.
 
 ## See also
 
