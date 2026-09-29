@@ -14,58 +14,71 @@ The feature tables use the [source snapshots listed below](#source-scope). A das
 
 ## Benchmarks
 
-Install benchmarks use the tracked VitePress docs fixture, a real-world workspace graph with 535 packages.
+Install benchmarks use a T3 application fixture with 25 direct dependencies and development dependencies, including Next.js, React, tRPC, and Drizzle.
 
-| Benchmark                     | <PackageManagerLabel manager="npm">npm</PackageManagerLabel> | <PackageManagerLabel manager="pnpm">pnpm</PackageManagerLabel> | <PackageManagerLabel manager="bun">Bun</PackageManagerLabel> | <PackageManagerLabel manager="lpm">LPM CLI</PackageManagerLabel> | <PackageManagerLabel manager="firewall">LPM Firewall enabled</PackageManagerLabel> |
-| ----------------------------- | --------: | ------: | ------: | -------: | -------------------------: |
-| Cold install, equal footing ¹ | 17,354ms | 6,125ms | 2,455ms | 2,945ms |                    3,043ms |
-| Warm install ¹                |  3,819ms | 3,301ms |   451ms | **387ms** |                   **324ms** |
-| Up-to-date install ¹          |    282ms |   522ms |    77ms |  **14ms** |                    **14ms** |
+All values are median wall times from ten measured runs. Lower is better. **Bold** marks the lowest median in each row.
+
+| Benchmark | <PackageManagerLabel manager="npm">npm</PackageManagerLabel> | <PackageManagerLabel manager="pnpm">pnpm</PackageManagerLabel> | <PackageManagerLabel manager="bun">Bun</PackageManagerLabel> | <PackageManagerLabel manager="lpm">LPM CLI</PackageManagerLabel> |
+| --- | ---: | ---: | ---: | ---: |
+| First install | 13,787.5ms | 4,174ms | 1,825ms | **1,594.5ms** |
+| Fresh / warm | 3,318.5ms | 355ms | 191.5ms | **66ms** |
+| CI cold | 2,655.5ms | 3,455.5ms | 1,538ms | **1,374.5ms** |
+| CI warm | 2,293ms | 329.5ms | 186.5ms | **102ms** |
+| Installed / cache gone | 667.5ms | **10ms** | 19ms | 12ms |
+| Up to date | 440.5ms | **10ms** | 19ms | 12ms |
+
+See [install benchmarks](/docs/benchmarks) for peak memory, more package managers, and the full methodology.
 
 Dev command benchmarks measure already-installed local scripts, local bins, and built-in tools.
 
-| Benchmark                        | <PackageManagerLabel manager="npm">npm / npx / tsx</PackageManagerLabel> | <PackageManagerLabel manager="pnpm">pnpm</PackageManagerLabel> | <PackageManagerLabel manager="bun">bun / bunx</PackageManagerLabel> | <PackageManagerLabel manager="lpm">LPM CLI</PackageManagerLabel> |
-| -------------------------------- | --------------: | ------: | ---------: | -------: |
-| Trivial echo script ²            |            74ms |   161ms |       15ms | **10ms** |
-| Node startup + tiny script ²     |           101ms |   185ms |       33ms | **27ms** |
-| Local bin: `esbuild --version` ² |           144ms |   174ms |       27ms | **21ms** |
-| Run TSX app, warm cache ³        |           112ms |       — |       19ms | **41ms** |
-| `lpm lint` vs `npx oxlint` ⁴     |           273ms |       — |          — |  **3ms** |
-| `lpm fmt` vs `npx biome` ⁴       |           340ms |       — |          — |  **3ms** |
+| Benchmark | <PackageManagerLabel manager="npm">npm</PackageManagerLabel> | <PackageManagerLabel manager="pnpm">pnpm</PackageManagerLabel> | <PackageManagerLabel manager="bun">Bun</PackageManagerLabel> | <PackageManagerLabel manager="lpm">LPM CLI</PackageManagerLabel> |
+| --- | ---: | ---: | ---: | ---: |
+| Package script: `echo hi` | 67.51ms | 13.63ms | **5.49ms** | 10.68ms |
+| Node startup + tiny script | 88.00ms | 34.02ms | **26.44ms** | 30.21ms |
+| Local bin: `esbuild --version` | 133.51ms | 22.23ms | **8.16ms** | 11.92ms |
+| Run TSX app, warm cache | 200.36ms | 87.84ms | **6.21ms** | 47.37ms |
+| Lint 20 JS files (Oxlint) | 162.43ms | 50.71ms | 37.01ms | **16.57ms** |
+| Format check, 20 JS files (Biome) | 158.74ms | 46.56ms | 33.68ms | **15.47ms** |
+
+Measured on **September 28, 2026**, on an **Apple M5 Pro with 48 GiB RAM**.
 
 <Accordions>
   <Accordion title="What each row measures">
 
-All displayed values are medians across 10 measured runs. The dated raw result artifacts are linked with each benchmark group below.
+**First install** — no lockfile, a cold dependency cache, and no installed tree.
 
-**Cold install** — a fresh project with no package-manager cache, lockfile, or `node_modules/`; cleanup happens outside the timer. [Install results — July 10, 2026](https://github.com/lpm-dev/rust-client/blob/main/bench/perf-results/readme-install-vitepress-20260710T140139.md).
+**Fresh / warm** — no lockfile, a warm dependency cache, and no installed tree.
 
-**Warm install** — cache and lockfile already exist, so the package manager rebuilds `node_modules/`.
+**CI cold** — an existing lockfile, a cold dependency cache, and no installed tree.
 
-**Up-to-date install** — nothing changed, so the package manager checks state and exits.
+**CI warm** — an existing lockfile, a warm dependency cache, and no installed tree.
 
-**Trivial echo script** — the cost of invoking an already-installed `package.json` script that runs `echo hi` through each package manager. [Script and local-bin results — July 10, 2026](https://github.com/lpm-dev/rust-client/blob/main/bench/perf-results/readme-run-bin-20260710T214708Z.md).
+**Installed / cache gone** — an existing lockfile and installed tree, with the dependency cache removed. LPM CLI retains its backing content store because installed symlinks depend on it.
 
-**Node startup + tiny script** — the cost of invoking an already-installed `package.json` script that starts Node and performs a tiny stdout write.
+**Up to date** — an existing lockfile, a warm dependency cache, and an installed tree. No project files changed.
 
-**Local bin row** — the cost of invoking an already-installed `node_modules/.bin` entry.
+**Package script: `echo hi`** — a `package.json` script that runs `echo hi` through each package manager.
 
-**Run TSX app** — warm-cache execution of a generated 10-module TSX ESM app. [TSX results — July 10, 2026](https://github.com/lpm-dev/rust-client/blob/main/bench/perf-results/readme-exec-runtime-20260710T141510.md).
+**Node startup + tiny script** — a package script that starts Node.js and writes a short line to standard output.
 
-**Managed tools** — `lpm lint` and `lpm fmt` use cached managed tools instead of paying `npx` resolution overhead. [Built-in tool results — July 11, 2026](https://github.com/lpm-dev/rust-client/blob/main/bench/perf-results/readme-builtin-tools-20260711T205110Z.md).
+**Local bin: `esbuild --version`** — the package manager runs the installed esbuild executable to print its version.
+
+**Run TSX app, warm cache** — ten imported modules return JSX objects through a small local React-compatible runtime. Bun and LPM CLI run the TSX entry directly. npm and pnpm use their execution commands to run local `tsx`.
+
+**Lint 20 JS files (Oxlint)** — twenty valid JavaScript modules. [lpm lint](/docs/dev/lint) uses managed Oxlint. The other managers run the same version as a local tool.
+
+**Format check, 20 JS files (Biome)** — the same twenty modules, already formatted, with no writes. [lpm fmt --check](/docs/dev/fmt) uses managed Biome. The other managers run local `biome format` with the same version.
 
   </Accordion>
   <Accordion title="Methodology">
 
-**¹ Install benchmarks** — Generated by `bench/scripts/run-install-readiness.mjs` with `--samples 10 --fixtures vitepress --managers lpm,bun,pnpm,npm --modes cold,warm,up-to-date --lpm-firewall-modes off,report`. Each run uses an isolated temporary project, `HOME`, package-manager cache, and `LPM_HOME`; samples are round-robin interleaved to reduce live-network bias. Dependency lifecycle scripts are disabled for all package managers.
+**Install benchmarks** use [`run-t3-install-six-states.mjs`](https://github.com/lpm-dev/rust-client/blob/main/bench/scripts/run-t3-install-six-states.mjs). Preparation and cache cleanup occur outside the measured interval. Each manager has an isolated home and cache. Dependency lifecycle scripts stay disabled. The CI labels describe the initial files and cache. Each manager uses its normal install command and its own lockfile.
 
-**LPM Firewall monitor mode** — The LPM Firewall enabled column runs the same LPM CLI install with `LPM_NPM_FIREWALL=report`. In the cold install row, LPM CLI checked 535 package versions before materializing package bytes.
+**Dev command benchmarks** use [`run-dev-command-suite.mjs`](https://github.com/lpm-dev/rust-client/blob/main/bench/scripts/run-dev-command-suite.mjs). Each command has two warmups before ten measured runs. Setup and tool downloads occur outside the measured interval. Wall time includes process startup and output handling. All displayed commands completed successfully. Invalid-file checks confirmed that lint and format commands inspected the source files.
 
-**² Script and local-bin benchmarks** — Generated by `bench/scripts/run-bin-benchmark.mjs` with 10 measured iterations after 2 warmups. Dependency installation is setup-only and not timed. Tool versions: `lpm 0.67.0`, `npm 10.9.4`, `npx 10.9.4`, `pnpm 11.3.0`, `bun 1.3.14`, `bunx 1.3.14`.
+**Versions** — LPM CLI 0.78.0, npm 12.1.0, pnpm 12.6.0, Bun 1.4.2, and Node.js 24.19.0. Dev tools: esbuild 0.28.2, tsx 4.23.15, Oxlint 1.79.0, and Biome 2.5.9.
 
-**³ TSX benchmark** — Generated by `bench/scripts/exec-runtime-benchmark.mjs` against a generated 10-module TSX ESM app with 10 measured iterations after 2 warmups. The `npm / npx / tsx` column is `tsx`; the `bun / bunx` column is `bun`.
-
-**⁴ Built-in tool benchmarks** — Generated with `RUNS=10 LPM_BIN=target/release/lpm-rs BENCH_WORK_DIR=/tmp/lpm-readme-builtin-tools-work-20260711T205110Z ./bench/run.sh builtin-tools`. [Raw artifact — July 11, 2026](https://github.com/lpm-dev/rust-client/blob/main/bench/perf-results/readme-builtin-tools-20260711T205110Z.md).
+These small dev workloads emphasize startup and command overhead. They do not predict lint or format throughput on a large application.
 
   </Accordion>
 </Accordions>
