@@ -1,5 +1,19 @@
 import { cn } from "@/lib/cn";
 
+// https://github.com/unjs/upm/blob/16ad722f616e5ddb7b55f67440d75b4d1a1c2c09/.github/logo.svg
+export function UpmIcon() {
+  return (
+    <svg
+      viewBox="0 0 197.9 67.5"
+      aria-hidden="true"
+      className="h-5 w-6 shrink-0"
+      fill="currentColor"
+    >
+      <path d="M51.3 0V54H12.5L0 41.5V0H18.7V37.8H32.6V0ZM58.8 67.5V0H97.7L111 13.3V40.7L97.7 54H77.5V67.5ZM92.3 15.4H77.5V38.6H92.3ZM117.6 0H185.1L197.9 12.7V54H179.6V15H166.7V54H148.8V15H136V54H117.6Z" />
+    </svg>
+  );
+}
+
 export function NpmIcon({ className }: { className?: string }) {
   return (
     <svg
