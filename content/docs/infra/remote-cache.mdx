@@ -37,6 +37,7 @@ This example assumes a `build` script in `package.json` that writes to `dist/`. 
     "build": {
       "cache": true,
       "cacheEnv": ["NODE_ENV"],
+      "cachePortable": true,
       "outputs": ["dist/**"]
     }
   }
@@ -205,6 +206,43 @@ Without `cacheEnv`, all inherited variables visible to the task affect its key. 
 An empty list excludes all inherited variables from the key. Use it only for a task whose output does not depend on those variables.
 
 Project-loaded variables, including dotenv and local secrets, always affect the key. `cacheEnv` does not change the task's environment or its upload eligibility.
+
+### Share relocatable outputs across machines
+
+For a task whose outputs work after a checkout moves, set `cachePortable` to `true`:
+
+```json title="lpm.json task fragment"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cachePortable": true,
+      "cacheEnv": ["NODE_ENV", "BUILD_TARGET"],
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+The default is `false`. Enable this option only when generated files and replayed logs remain useful in another checkout.
+Build tools that embed absolute checkout paths can require the default identity.
+
+With this option, LPM CLI hashes npm package and invocation paths relative to the workspace.
+The task still receives the real `npm_package_json` and `INIT_CWD` paths.
+Different relative package or invocation locations remain distinct. Invocation paths outside the workspace remain absolute.
+
+Recognized native Node and Bun executables use content identity, so identical installations can share artifacts.
+Runtime launchers and version-manager shims retain location-sensitive identity.
+For portable reuse, select a managed runtime or put the native executable directly on the task PATH.
+The cache separates operating systems, CPU architectures, and Linux libc families.
+Runtime binaries with different contents remain distinct, even if they report the same version.
+
+`cachePortable` does not filter inherited variables. Select every variable that affects output with `cacheEnv`.
+Values loaded from project files or local secrets remain inputs, including machine-specific paths.
+Declare external files and tool configuration in `inputs` when the task reads them.
+Prerequisite tasks also need portable identities for reuse across checkouts.
+
+Portable identities use separate entries. Existing entries remain available to tasks that keep the default.
 
 ### Bypass caching for one run
 
