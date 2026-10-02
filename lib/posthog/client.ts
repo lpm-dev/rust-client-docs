@@ -1,19 +1,11 @@
 import type { PostHog } from "posthog-js";
+import {
+  getLandingAttribution,
+  normalizeAnalyticsProperties,
+} from "@/lib/posthog/attribution";
 
 let posthogPromise: Promise<PostHog | null> | null = null;
 
-/**
- * Lazily loads and initializes PostHog on first call.
- *
- * Always initializes with `persistence: "memory"` so anonymous per-session
- * tracking works without a consent prompt. When the user explicitly grants
- * consent (`localStorage.cookie_consent === "granted"`) persistence is
- * upgraded to `localStorage+cookie` for cross-session identity and session
- * recording.
- *
- * Shares the same PostHog project as lpm.dev — segment by `$host` when you
- * need docs-only views.
- */
 export function getPostHogClient(): Promise<PostHog | null> {
   if (typeof window === "undefined") return Promise.resolve(null);
   const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -22,8 +14,13 @@ export function getPostHogClient(): Promise<PostHog | null> {
   if (!posthogPromise) {
     posthogPromise = import("posthog-js")
       .then(({ default: posthog }) => {
-        const hasFullConsent =
-          window.localStorage.getItem("cookie_consent") === "granted";
+        let hasFullConsent = false;
+        try {
+          hasFullConsent =
+            window.localStorage.getItem("cookie_consent") === "granted";
+        } catch {
+          /* Storage may be unavailable. */
+        }
 
         posthog.init(key, {
           api_host: "/a",
@@ -34,6 +31,25 @@ export function getPostHogClient(): Promise<PostHog | null> {
           person_profiles: "identified_only",
           capture_exceptions: true,
           persistence: hasFullConsent ? "localStorage+cookie" : "memory",
+          cookieless_mode: hasFullConsent ? undefined : "always",
+          before_send: (event) =>
+            event
+              ? {
+                  ...event,
+                  properties: normalizeAnalyticsProperties(
+                    event.properties,
+                    window.location.hostname,
+                  ),
+                  ...(event.$set_once
+                    ? {
+                        $set_once: normalizeAnalyticsProperties(
+                          event.$set_once,
+                          window.location.hostname,
+                        ),
+                      }
+                    : {}),
+                }
+              : null,
           disable_session_recording: !hasFullConsent,
           session_recording: {
             maskAllInputs: true,
@@ -41,6 +57,12 @@ export function getPostHogClient(): Promise<PostHog | null> {
           disable_surveys: true,
         });
 
+        posthog.register({
+          ...getLandingAttribution(),
+          app: "cli",
+          attribution_version: 2,
+          analytics_mode: hasFullConsent ? "consented" : "cookieless",
+        });
         return posthog;
       })
       .catch(() => {

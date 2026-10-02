@@ -2,7 +2,12 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
+import {
+  getLandingAttribution,
+  safeAnalyticsUrl,
+} from "@/lib/posthog/attribution";
 import { getPostHogClient } from "@/lib/posthog/client";
+import { observeConversionLinks } from "@/lib/posthog/conversions";
 
 /**
  * Schedules a callback when the browser is idle, with a maximum wait timeout.
@@ -28,17 +33,22 @@ function scheduleWhenIdle(fn: () => void, timeout: number): () => void {
 function PostHogPageviewTracker() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
 
   useEffect(() => {
+    getLandingAttribution();
     let cancelled = false;
     const cancelIdle = scheduleWhenIdle(() => {
       void getPostHogClient().then((posthog) => {
         if (cancelled || !posthog) return;
 
         let url = window.origin + pathname;
-        const qs = searchParams.toString();
+        const qs = queryString;
         if (qs) url += `?${qs}`;
-        posthog.capture("$pageview", { $current_url: url });
+        posthog.capture("$pageview", {
+          $current_url: safeAnalyticsUrl(url),
+          app: "cli",
+        });
       });
     }, 2000);
 
@@ -46,14 +56,14 @@ function PostHogPageviewTracker() {
       cancelled = true;
       cancelIdle();
     };
-  }, [pathname, searchParams]);
+  }, [pathname, queryString]);
 
   return null;
 }
 
 /**
- * PostHog provider for cli.lpm.dev. Anonymous-by-default (memory persistence)
- * so we don't need a consent banner for Phase A. Docs has no authenticated
+ * PostHog provider for cli.lpm.dev. Cookieless by default
+ * with no browser identifiers before consent. Docs has no authenticated
  * user surface — identification happens on lpm.dev where users log in.
  */
 export default function PostHogProvider({
@@ -61,6 +71,8 @@ export default function PostHogProvider({
 }: {
   children: React.ReactNode;
 }) {
+  useEffect(observeConversionLinks, []);
+
   return (
     <>
       <Suspense>

@@ -12,6 +12,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CopyButton } from "../../app/(home)/_components/copy-button";
 
+const trackConversion = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/posthog/conversions", () => ({ trackConversion }));
+
 function setClipboard(
   clipboard: { writeText: ReturnType<typeof vi.fn> } | undefined,
 ) {
@@ -24,6 +27,7 @@ function setClipboard(
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  trackConversion.mockReset();
   setClipboard(undefined);
   vi.restoreAllMocks();
 });
@@ -47,6 +51,10 @@ describe("CopyButton", () => {
         "curl -fsSL https://cli.lpm.dev/install | sh",
       );
       expect(button.textContent).toBe("Copied ✓");
+      expect(trackConversion).toHaveBeenCalledWith(
+        "cli_install_command_copied",
+        { placement: "homepage", install_method: "shell" },
+      );
     });
     expect(screen.getByRole("status").textContent).toBe(
       "Install command copied to clipboard.",
@@ -65,6 +73,7 @@ describe("CopyButton", () => {
 
     await waitFor(() => expect(button.textContent).toBe("Copy failed"));
     expect(button.textContent).not.toContain("Copied");
+    expect(trackConversion).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toBe(
       "Could not copy the install command. Select it and copy it manually.",
     );

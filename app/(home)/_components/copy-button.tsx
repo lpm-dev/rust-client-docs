@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { trackConversion } from "@/lib/posthog/conversions";
 
 const INSTALL_CMD = "curl -fsSL https://cli.lpm.dev/install | sh";
 const RESET_MS = 1600;
@@ -25,6 +26,10 @@ export function CopyButton() {
         throw new Error("Clipboard API unavailable");
       }
       await navigator.clipboard.writeText(INSTALL_CMD);
+      trackConversion("cli_install_command_copied", {
+        placement: "homepage",
+        install_method: "shell",
+      });
     } catch {
       nextState = "error";
     }
