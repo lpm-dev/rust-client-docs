@@ -164,8 +164,9 @@ export const FOOTER: { heading: string; links: FootLink[] }[] = [
         label: "LPM Firewall",
         href: "https://firewall.lpm.dev",
       },
+      { label: "LPM Vault", href: "https://vault.lpm.dev" },
       { label: "GitHub", href: githubUrl },
-      { label: "X/LPM_dev_", href: "https://x.com/LPM_dev_" },
+      { label: "X", href: "https://x.com/LPM_dev_" },
     ],
   },
 ];

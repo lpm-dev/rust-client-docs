@@ -12,8 +12,19 @@ function FooterLink({
   className?: string;
 }) {
   if (href.startsWith("http")) {
+    const isLpmSite = [
+      "https://lpm.dev",
+      "https://firewall.lpm.dev",
+      "https://vault.lpm.dev",
+    ].includes(new URL(href).origin);
+
     return (
-      <a href={href} target="_blank" rel="noreferrer" className={className}>
+      <a
+        href={href}
+        target="_blank"
+        rel={isLpmSite ? "noopener" : "noopener noreferrer"}
+        className={className}
+      >
         {children}
       </a>
     );
@@ -78,9 +89,11 @@ function FooterIcon({ label }: { label: string }) {
       return <LpmMark color="#1D9F4F" />;
     case "LPM Firewall":
       return <LpmMark color="#F2270C" />;
+    case "LPM Vault":
+      return <LpmMark color="#5D42C5" />;
     case "GitHub":
       return <GitHubMark />;
-    case "X/LPM_dev_":
+    case "X":
       return <XMark />;
     default:
       return null;
