@@ -80,6 +80,7 @@ const INSTALLER_REDIRECTS = ["/install", "/install.sh"].map((source) => ({
   permanent: false,
 }));
 const LEGACY_DOCS_REDIRECTS = [
+  ["/docs/packages/ci", "/docs/packages/install"],
   ["/docs/reference/lockb-format", "/docs/reference/lockfile-format"],
   ["/docs/packages/free-distribution", "/docs/packages/package-distribution"],
   ["/docs/configuration/config-toml", "/docs/reference/config-toml"],

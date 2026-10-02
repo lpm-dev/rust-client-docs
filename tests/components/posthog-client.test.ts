@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   init: vi.fn(),
+  register: vi.fn(),
 }));
 
 vi.mock("posthog-js", () => ({
-  default: { init: mocks.init },
+  default: { init: mocks.init, register: mocks.register },
 }));
 
 const originalKey = process.env.NEXT_PUBLIC_POSTHOG_KEY;
@@ -63,6 +64,25 @@ afterEach(() => {
 });
 
 describe("getPostHogClient", () => {
+  it("uses daily cookieless identity before consent", async () => {
+    const { getPostHogClient } = await import("../../lib/posthog/client");
+    await getPostHogClient();
+    expect(mocks.init).toHaveBeenCalledWith(
+      "test-key",
+      expect.objectContaining({
+        cookieless_mode: "always",
+        persistence: "memory",
+        disable_session_recording: true,
+      }),
+    );
+  });
+  it("initializes when storage is blocked", async () => {
+    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { getPostHogClient } = await import("../../lib/posthog/client");
+    await expect(getPostHogClient()).resolves.not.toBeNull();
+  });
   it("resolves safely after failure and retries on the next call", async () => {
     mocks.init
       .mockImplementationOnce(() => {

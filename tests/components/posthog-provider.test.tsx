@@ -71,7 +71,8 @@ describe("PostHogProvider", () => {
     await act(async () => second.resolve({ capture }));
     expect(capture).toHaveBeenCalledTimes(1);
     expect(capture).toHaveBeenCalledWith("$pageview", {
-      $current_url: `${window.origin}/docs/second?q=search`,
+      $current_url: `${window.origin}/docs/second`,
+      app: "cli",
     });
   });
 });
