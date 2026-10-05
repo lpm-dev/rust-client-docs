@@ -820,6 +820,17 @@
           },
           "maxItems": 32,
           "uniqueItems": true
+        },
+        "groups": {
+          "description": "Relationships between declared variables.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/VarGroup"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "maxProperties": 128
         }
       },
       "additionalProperties": false
@@ -897,6 +908,75 @@
             }
           ]
         },
+        "min": {
+          "description": "Inclusive exact integer bound. Serialized as decimal text for lossless metadata.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max": {
+          "description": "Inclusive exact integer bound. Serialized as decimal text for lossless metadata.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minLength": {
+          "description": "Minimum Unicode scalar count.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maxLength": {
+          "description": "Maximum Unicode scalar count.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocols": {
+          "description": "Allowed lowercase URL schemes, without a colon.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9+.-]{0,255}$"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "requiredWhen": {
+          "description": "Require a nonempty value when another declared variable satisfies this predicate.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequiredWhen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "description": {
           "description": "Human-readable description (shown in error messages and .env.example).",
           "type": [
@@ -968,6 +1048,77 @@
         "variable"
       ]
     },
+    "NumericBound": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "string",
+          "pattern": "^[+-]?[0-9]{1,19}$"
+        }
+      ]
+    },
+    "LengthBound": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]{1,10}$"
+        }
+      ]
+    },
+    "RequiredWhen": {
+      "description": "Exactly one predicate is accepted. Presence means a nonempty effective value.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EqualityCondition"
+        },
+        {
+          "$ref": "#/$defs/PresenceCondition"
+        }
+      ]
+    },
+    "EqualityCondition": {
+      "type": "object",
+      "properties": {
+        "variable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+        },
+        "equals": {
+          "type": "string",
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variable",
+        "equals"
+      ]
+    },
+    "PresenceCondition": {
+      "type": "object",
+      "properties": {
+        "variable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+        },
+        "present": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variable",
+        "present"
+      ]
+    },
     "EmptyPolicy": {
       "description": "Empty values can trigger defaults, remain subject to validation, or be rejected.",
       "type": "string",
@@ -975,6 +1126,37 @@
         "missing",
         "allow",
         "reject"
+      ]
+    },
+    "VarGroup": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/VarGroupMode"
+        },
+        "vars": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "vars"
+      ]
+    },
+    "VarGroupMode": {
+      "type": "string",
+      "enum": [
+        "allOrNone",
+        "exactlyOne",
+        "atLeastOne"
       ]
     },
     "EnvironmentsConfig": {

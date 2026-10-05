@@ -312,6 +312,10 @@ This schema checks variables before scripts, development services, executable fi
 | `client` | boolean | `false` | Allow browser exposure under a public prefix. |
 | `ci` | string | `"secret"` | Select GitHub Actions `secret` or `variable` storage, independently of `client`. |
 | `description` | string | Unset | Details for errors and generated `.env.example` files. |
+| `min`, `max` | integer or decimal string | Unset | Inclusive bounds for `integer` or `port` values. |
+| `minLength`, `maxLength` | unsigned integer or decimal string | Unset | Bounds on the Unicode scalar count. |
+| `protocols` | string[] | Unset | Allowed lowercase URL schemes, without a colon. Requires `format: "url"`. |
+| `requiredWhen` | object | Unset | Require a nonempty value when another declared variable matches a predicate. |
 
 Browser-visible names must use `NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`, `GATSBY_`, or `NUXT_PUBLIC_`.
 Add project prefixes through `envSchema.clientPrefixes`, for example `["APP_"]`.
@@ -341,6 +345,54 @@ Errors escape terminal control characters.
 
 Use `--no-env-check` to skip value checks and defaults for one invocation. Invalid declarations always stop the command.
 The flag does not make invalid environment inheritance valid.
+
+### Constraints and relationships
+
+Numeric bounds cover the signed 64-bit range.
+Local bounds accept integer numbers or decimal strings, such as `"9007199254740993"`.
+Cloud metadata requires decimal strings for every bound. The server rejects numeric bounds because JSON parsing can round fractional values.
+`min` cannot exceed `max`. Port bounds must permit at least one value from 1 through 65535.
+
+Length constraints count Unicode scalars. For example, `é` counts as one scalar; `e` plus a combining accent counts as two.
+`minLength` cannot exceed `maxLength`. Each length bound ranges from 0 through 4294967295.
+URL schemes are case-insensitive in values. A `protocols` declaration contains 1–32 unique lowercase schemes.
+
+```json
+{
+  "envSchema": {
+    "vars": {
+      "AUTH_MODE": { "default": "password", "enum": ["password", "oauth"] },
+      "PASSWORD": { "secret": true, "minLength": 12, "requiredWhen": { "variable": "AUTH_MODE", "equals": "password" } },
+      "OAUTH_TOKEN": { "secret": true },
+      "CALLBACK_URL": { "format": "url", "protocols": ["https"] },
+      "RETRY_COUNT": { "format": "integer", "min": "0", "max": "10", "default": "3" }
+    },
+    "groups": {
+      "credentials": { "mode": "exactlyOne", "vars": ["PASSWORD", "OAUTH_TOKEN"] }
+    }
+  }
+}
+```
+
+A condition declares exactly one predicate: `equals: "value"` or `present: true|false`.
+Its `variable` must refer to a declared variable.
+Presence means a nonempty effective value. `present: false` matches absent and empty values.
+Equality with `""` matches an explicit empty value; it does not match absence.
+Conditions can inspect secret presence. They cannot compare a secret source with a plaintext equality literal.
+
+LPM injects every valid default before it evaluates conditions or groups.
+Self-references and cycles use these final values; conditions do not recursively require other variables.
+Unconditional and conditional requirements both require nonempty values, including with `empty: "allow"`.
+
+A group supports `allOrNone`, `exactlyOne`, or `atLeastOne`.
+Group membership counts nonempty values, including defaults. Every member must be unique and declared.
+A schema permits 128 named groups and 4096 total group members.
+Group names follow the variable-name rules.
+Group definitions round-trip through cloud metadata under `envSchemaConfig.groups`.
+
+`lpm env check` reports distinct failed variables in its valid count.
+Its JSON errors identify each failed group with separate `group` and `mode` fields.
+Generated examples describe scalar constraints, conditions, and groups.
 
 ## `environments`
 
