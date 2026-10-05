@@ -306,15 +306,26 @@ This schema checks variables before scripts, development services, executable fi
 | `format` | string | Unset | `url`, `email`, `port`, `boolean`, `integer`, `hostname`, or `ip`. |
 | `pattern` | string | Unset | Regex pattern. Use `^` and `$` for a complete-value match. |
 | `enum` | string[] | Unset | Allowed values. |
-| `default` | string | Unset | Value for an unset variable. Must pass every declared check. |
+| `default` | string | Unset | Value for a missing variable. Must pass every declared check, even when another value is set. |
+| `empty` | string | `"missing"` | Treat an empty value as `missing`, `allow` it through validation, or `reject` it. |
 | `secret` | boolean | `false` | Redact the value in schema errors and logs. |
 | `client` | boolean | `false` | Mark the variable for integrations that support client exposure. |
 | `description` | string | Unset | Details for errors and generated `.env.example` files. |
 
 Variable names contain 1–256 ASCII letters, numbers, or underscores.
 The first character must be a letter or underscore.
-Invalid names, patterns, or defaults stop the command before a child process starts.
+Unknown fields, duplicate variable definitions, invalid names, invalid patterns, and invalid defaults stop the command before a child process starts.
+A schema supports at most 4096 variables. Schema text permits tabs and line breaks. It rejects other C0 controls, DEL, and C1 controls.
+
+Cloud project metadata must also fit within 256 KiB of UTF-8 JSON. Compact rules fit at the count limit; long descriptions, patterns, or literal values can reach the byte limit earlier.
+Secret rules cannot contain literal `default` or `enum` values. Store those values with `lpm env set` or in environment files.
 An empty default cannot satisfy a required variable.
+With `empty: "missing"`, an explicit empty value triggers a default. Without a default, it still overrides an inherited parent value.
+With `empty: "allow"`, the empty value passes through the declared format, pattern, and enum checks. Required values must still be non-empty.
+With `empty: "reject"`, an empty value fails even when a default exists.
+The `url` format requires an absolute URL with a host and valid syntax. It accepts credential-bearing database URLs.
+The `email` format accepts an ASCII dot-atom mailbox and a dotted DNS hostname. Quoted and international mailboxes are unsupported.
+NUL bytes are invalid in all project environment values.
 Errors escape terminal control characters.
 
 Use `--no-env-check` to skip this check for one invocation.
