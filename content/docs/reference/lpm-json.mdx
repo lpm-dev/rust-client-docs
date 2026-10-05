@@ -333,7 +333,7 @@ Unknown fields, duplicate variable definitions, invalid names, invalid patterns,
 A schema supports at most 4096 variables. Schema text permits tabs and line breaks. It rejects other C0 controls, DEL, and C1 controls.
 
 Cloud project metadata must also fit within 256 KiB of UTF-8 JSON. Compact rules fit at the count limit; long descriptions, patterns, or literal values can reach the byte limit earlier.
-Secret rules cannot contain literal `default` or `enum` values. Store those values with `lpm env set` or in environment files.
+Secret rules cannot contain literal `default`, `defaultsIn`, or `enum` values. Store those values with `lpm env set` or in environment files.
 An empty default cannot satisfy a required variable.
 With `empty: "missing"`, an explicit empty value triggers a default. Without a default, it still overrides an inherited parent value.
 With `empty: "allow"`, the empty value passes through the declared format, pattern, and enum checks. Required values must still be non-empty.
@@ -380,7 +380,7 @@ Presence means a nonempty effective value. `present: false` matches absent and e
 Equality with `""` matches an explicit empty value; it does not match absence.
 Conditions can inspect secret presence. They cannot compare a secret source with a plaintext equality literal.
 
-LPM injects every valid default before it evaluates conditions or groups.
+LPM CLI injects every valid default before it evaluates conditions or groups.
 Self-references and cycles use these final values; conditions do not recursively require other variables.
 Unconditional and conditional requirements both require nonempty values, including with `empty: "allow"`.
 
@@ -393,6 +393,69 @@ Group definitions round-trip through cloud metadata under `envSchemaConfig.group
 `lpm env check` reports distinct failed variables in its valid count.
 Its JSON errors identify each failed group with separate `group` and `mode` fields.
 Generated examples describe scalar constraints, conditions, and groups.
+
+### Environment, stage, and service scopes
+
+Use `requiredIn` for context-specific requirements and `defaultsIn` for context-specific defaults.
+
+```json
+{
+  "envSchema": {
+    "vars": {
+      "API_TOKEN": {
+        "secret": true,
+        "requiredIn": [{ "environment": ["production"], "stage": ["runtime"], "service": ["api"] }]
+      },
+      "PORT": {
+        "format": "port",
+        "default": "3000",
+        "defaultsIn": [{ "when": { "stage": ["test"] }, "value": "4000" }]
+      }
+    }
+  }
+}
+```
+
+Each selector contains one or more dimensions: `environment`, `stage`, or `service`.
+All declared dimensions must match. Within one dimension, any listed name can match.
+An omitted dimension matches every value. Service selectors require a service context.
+Environment names use the resolved canonical identity, after aliases.
+
+Stages are `development`, `build`, `runtime`, `ci`, and `test`.
+`dev` and `development` scripts use `development`; `build`, `ci`, and `test` scripts use their named stage.
+Colon suffixes preserve the stage: `build:api` uses `build`.
+Pre-hooks and post-hooks use the original script stage. Other scripts, executable files, and [`lpm exec`](/docs/dev/exec) use `runtime`.
+Auto-detected runners for `lpm test` use `test`, including workspace members.
+Development services use `development` and their configured service name. CI print and export use `ci`.
+
+`required: true`, `requiredWhen`, and `requiredIn` add requirements independently.
+A matching scoped default takes precedence over the global default.
+Two scoped defaults cannot match the same context, even if their values are equal.
+Every default must satisfy its scalar rules. Empty defaults cannot satisfy an active requirement.
+Supplied values must satisfy their rules even when no scope matches.
+Secret rules cannot contain `defaultsIn` literals.
+
+Each rule permits 32 required selectors and 32 scoped defaults.
+Each environment or service dimension permits 32 unique names; a stage dimension permits five unique stages.
+Names use ASCII letters, digits, hyphens, underscores, and dots, with a 64-character limit.
+Empty names, `..`, and `__index__` are invalid.
+The complete schema permits 4096 selectors and 16384 dimension entries.
+Equivalent required selectors are duplicates, regardless of list order.
+
+```bash
+lpm env check --env=production --stage=runtime --service=api --json
+lpm env print --env=development --stage=test --format=json
+```
+
+`check` and `print` merge the selected service's static `env` values before validation.
+Development services also validate generated ports and peer URLs before they start.
+Script validation includes inherited declared values, explicit overrides, runner metadata, and the child process PATH.
+The CLI validates the main script environment before a pre-hook starts, then validates each hook's final values.
+
+Without a selection or configured default, files load from `.env` and `.env.local`.
+Explicit `--env=default` also loads `.env.default` and `.env.default.local`.
+A configured default mapping or declared default environment selects its own files.
+Generated examples describe scopes and keep scoped values in comments; they do not choose a context-specific assignment.
 
 ## `environments`
 
