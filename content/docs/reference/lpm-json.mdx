@@ -281,6 +281,12 @@ For example, `lpm run dev` loads `.env.development`.
 An explicit `--env` overrides `tasks.<name>.env`, which overrides this mapping.
 The flag also applies to [`lpm dev`](/docs/dev/dev).
 
+Paths such as `.env.unit` derive the canonical environment name from the suffix, so script aliases can contain colons.
+Custom paths such as `config/unit.env` use the alias itself as the canonical environment name.
+That alias must contain only letters, digits, hyphens, underscores, or dots, with at most 64 bytes.
+For a script named `test:unit`, use `tasks["test:unit"].env: "unit"` and `env.unit: "config/unit.env"`.
+`env check` reports invalid canonical names alongside the remaining environments.
+
 Configured files must remain inside the project directory, including after symlink resolution.
 See [Environment loading](/docs/dev/env) for file order, encrypted values, and inherited variables.
 
@@ -306,19 +312,256 @@ This schema checks variables before scripts, development services, executable fi
 | `format` | string | Unset | `url`, `email`, `port`, `boolean`, `integer`, `hostname`, or `ip`. |
 | `pattern` | string | Unset | Regex pattern. Use `^` and `$` for a complete-value match. |
 | `enum` | string[] | Unset | Allowed values. |
-| `default` | string | Unset | Value for an unset variable. Must pass every declared check. |
+| `default` | string | Unset | Value for a missing variable. Must pass every declared check, even when another value is set. |
+| `empty` | string | `"missing"` | Treat an empty value as `missing`, `allow` it through validation, or `reject` it. |
 | `secret` | boolean | `false` | Redact the value in schema errors and logs. |
-| `client` | boolean | `false` | Mark the variable for integrations that support client exposure. |
+| `client` | boolean | `false` | Allow browser exposure under a public prefix. |
+| `ci` | string | `"secret"` | Select GitHub Actions `secret` or `variable` storage, independently of `client`. |
 | `description` | string | Unset | Details for errors and generated `.env.example` files. |
+| `min`, `max` | integer or decimal string | Unset | Inclusive bounds for `integer` or `port` values. |
+| `minLength`, `maxLength` | unsigned integer or decimal string | Unset | Bounds on the Unicode scalar count. |
+| `protocols` | string[] | Unset | Allowed lowercase URL schemes, without a colon. Requires `format: "url"`. |
+| `requiredWhen` | object | Unset | Require a nonempty value when another declared variable matches a predicate. |
+
+Browser-visible names must use `NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `REACT_APP_`, `EXPO_PUBLIC_`, `GATSBY_`, or `NUXT_PUBLIC_`.
+Add project prefixes through `envSchema.clientPrefixes`, for example `["APP_"]`.
+Custom prefixes must be unique portable names ending in `_`; at most 32 are supported.
+Framework prefixes remain enforced. The `REACT_APP_` prefix is case-insensitive, matching Create React App. Names with a public prefix must declare `client: true`.
+A rule cannot combine `secret: true` with `client: true` or `ci: "variable"`.
+
+Use `lpm env print --client-only --format json` to print declared browser-visible values.
+This command requires a non-empty schema and excludes undeclared and server values.
+Cloud metadata preserves root exposure policy under `envSchemaConfig` alongside the variable rules.
 
 Variable names contain 1–256 ASCII letters, numbers, or underscores.
 The first character must be a letter or underscore.
-Invalid names, patterns, or defaults stop the command before a child process starts.
+Unknown fields, duplicate variable definitions, invalid names, invalid patterns, and invalid defaults stop the command before a child process starts.
+A schema supports at most 4096 variables. Schema text permits tabs and line breaks. It rejects other C0 controls, DEL, and C1 controls.
+
+Cloud project metadata must also fit within 256 KiB of UTF-8 JSON. Compact rules fit at the count limit; long descriptions, patterns, or literal values can reach the byte limit earlier.
+Secret rules cannot contain literal `default`, `defaultsIn`, or `enum` values. Store those values with `lpm env set` or in environment files.
 An empty default cannot satisfy a required variable.
+With `empty: "missing"`, an explicit empty value triggers a default. Without a default, it still overrides an inherited parent value.
+With `empty: "allow"`, the empty value passes through the declared format, pattern, and enum checks. Required values must still be non-empty.
+With `empty: "reject"`, an empty value fails even when a default exists.
+The `url` format requires an absolute URL with a host and valid syntax. It accepts credential-bearing database URLs.
+The `email` format accepts an ASCII dot-atom mailbox and a dotted DNS hostname. Quoted and international mailboxes are unsupported.
+NUL bytes are invalid in all project environment values.
 Errors escape terminal control characters.
 
-Use `--no-env-check` to skip this check for one invocation.
+Use `--no-env-check` to skip value checks and defaults for one invocation. Invalid declarations always stop the command.
 The flag does not make invalid environment inheritance valid.
+
+### Constraints and relationships
+
+Numeric bounds cover the signed 64-bit range.
+Local bounds accept integer numbers or decimal strings, such as `"9007199254740993"`.
+
+`min` cannot exceed `max`. Port bounds must permit at least one value from 1 through 65535.
+
+Length constraints count Unicode scalars. For example, `é` counts as one scalar; `e` plus a combining accent counts as two.
+`minLength` cannot exceed `maxLength`. Each length bound ranges from 0 through 4294967295.
+URL schemes are case-insensitive in values. A `protocols` declaration contains 1–32 unique lowercase schemes.
+
+```json
+{
+  "envSchema": {
+    "vars": {
+      "AUTH_MODE": { "default": "password", "enum": ["password", "oauth"] },
+      "PASSWORD": { "secret": true, "minLength": 12, "requiredWhen": { "variable": "AUTH_MODE", "equals": "password" } },
+      "OAUTH_TOKEN": { "secret": true },
+      "CALLBACK_URL": { "format": "url", "protocols": ["https"] },
+      "RETRY_COUNT": { "format": "integer", "min": "0", "max": "10", "default": "3" }
+    },
+    "groups": {
+      "credentials": { "mode": "exactlyOne", "vars": ["PASSWORD", "OAUTH_TOKEN"] }
+    }
+  }
+}
+```
+
+A condition declares exactly one predicate: `equals: "value"` or `present: true|false`.
+Its `variable` must refer to a declared variable.
+Presence means a nonempty effective value. `present: false` matches absent and empty values.
+Equality with `""` matches an explicit empty value; it does not match absence.
+Conditions can inspect secret presence. They cannot compare a secret source with a plaintext equality literal.
+
+LPM CLI injects every valid default before it evaluates conditions or groups.
+Self-references and cycles use these final values; conditions do not recursively require other variables.
+Unconditional and conditional requirements both require nonempty values, including with `empty: "allow"`.
+
+A group supports `allOrNone`, `exactlyOne`, or `atLeastOne`.
+Group membership counts nonempty values, including defaults. Every member must be unique and declared.
+A schema permits 128 named groups and 4096 total group members.
+Group names follow the variable-name rules.
+Group definitions round-trip through cloud metadata under `envSchemaConfig.groups`.
+
+`lpm env check` reports distinct failed variables in its valid count.
+Its JSON errors identify each failed group with separate `group` and `mode` fields.
+Generated examples describe scalar constraints, conditions, and groups.
+
+### Environment, stage, and service scopes
+
+Use `requiredIn` for context-specific requirements and `defaultsIn` for context-specific defaults.
+
+```json
+{
+  "envSchema": {
+    "vars": {
+      "API_TOKEN": {
+        "secret": true,
+        "requiredIn": [{ "environment": ["production"], "stage": ["runtime"], "service": ["api"] }]
+      },
+      "PORT": {
+        "format": "port",
+        "default": "3000",
+        "defaultsIn": [{ "when": { "stage": ["test"] }, "value": "4000" }]
+      }
+    }
+  }
+}
+```
+
+Each selector contains one or more dimensions: `environment`, `stage`, or `service`.
+All declared dimensions must match. Within one dimension, any listed name can match.
+An omitted dimension matches every value. Service selectors require a service context.
+Environment names use the resolved canonical identity, after aliases.
+
+When `services` contains configured names, the CLI requires each service selector to name one of those services.
+This applies to `requiredIn`, `defaultsIn`, and command service selections.
+Without configured services, names can describe abstract service contexts.
+This admission rule uses project configuration in the CLI.
+The shared app engine and server WASM validate selector names and structure, but do not receive the configured service inventory.
+
+
+Stages are `development`, `build`, `runtime`, `ci`, and `test`.
+`dev` and `development` scripts use `development`; `build`, `ci`, and `test` scripts use their named stage.
+Colon suffixes preserve the stage: `build:api` uses `build`.
+Pre-hooks and post-hooks use the original script stage. Other scripts, executable files, and [`lpm exec`](/docs/dev/exec) use `runtime`.
+Auto-detected runners for `lpm test` use `test`, including workspace members.
+Development services use `development` and their configured service name. CI print and export use `ci`.
+
+`required: true`, `requiredWhen`, and `requiredIn` add requirements independently.
+A matching scoped default takes precedence over the global default.
+Two scoped defaults cannot match the same context, even if their values are equal.
+Every default must satisfy its scalar rules. Empty defaults cannot satisfy an active requirement.
+Supplied values must satisfy their rules even when no scope matches.
+Secret rules cannot contain `defaultsIn` literals.
+
+Each rule permits 32 required selectors and 32 scoped defaults.
+Each environment or service dimension permits 32 unique names; a stage dimension permits five unique stages.
+Names use ASCII letters, digits, hyphens, underscores, and dots, with a 64-character limit.
+Empty names, `..`, and `__index__` are invalid.
+The complete schema permits 4096 selectors and 16384 dimension entries.
+Equivalent required selectors are duplicates, regardless of list order.
+
+```bash
+lpm env check --env=production --stage=runtime --service=api --json
+lpm env print --env=development --stage=test --format=json
+```
+
+`check` and `print` merge the selected service's static `env` values before validation.
+Development services also validate generated ports and peer URLs before they start.
+Script validation includes inherited declared values, explicit overrides, runner metadata, and the child process PATH.
+The CLI validates the main script environment before a pre-hook starts, then validates each hook's final values.
+
+Without a selection or configured default, files load from `.env` and `.env.local`.
+Explicit `--env=default` also loads `.env.default` and `.env.default.local`.
+A configured default mapping or declared default environment selects its own files.
+Generated examples describe scopes and keep scoped values in comments; they do not choose a context-specific assignment.
+
+### Reusable fragments and presets
+
+`extends` imports schema fragments from this project or built-in presets.
+Fragment paths are relative to the document that imports them.
+Each fragment uses the same fields as `envSchema`.
+
+```json
+{
+  "envSchema": {
+    "extends": ["preset:node", "schemas/database.json"],
+    "vars": {
+      "NEXT_PUBLIC_API_URL": { "format": "url", "client": true }
+    },
+    "overrides": {
+      "DATABASE_URL": { "format": "url", "secret": true, "required": true }
+    }
+  }
+}
+```
+
+The imported `schemas/database.json` can contain:
+
+```json
+{
+  "vars": {
+    "DATABASE_URL": { "format": "url", "secret": true }
+  }
+}
+```
+
+`overrides` replaces the complete inherited rule.
+Keep every required security and validation field in the replacement.
+`groupOverrides` replaces complete inherited groups.
+An override must name an inherited declaration.
+Use `vars` and `groups` for new local declarations.
+
+Different sources cannot declare the same variable or group without an explicit override.
+A shared fragment imported through multiple paths contributes each declaration once.
+Root client prefixes combine with imported prefixes.
+Repeated prefixes within one document are invalid.
+
+Presets are bundled with the CLI and work offline.
+`preset:node` declares the optional `NODE_ENV` enum.
+`preset:nextjs` also declares the optional `NEXT_RUNTIME` enum.
+`preset:vite` inherits the Node preset.
+Presets contain no credentials, required values, or defaults.
+
+Imports must stay inside the project directory.
+Absolute paths, parent escapes, symbolic links, nonregular files, and import cycles are invalid.
+Import paths use forward slashes. Backslashes, control characters, and `: < > " | ? *` are invalid.
+Each path component must avoid trailing dots, trailing spaces, and Windows reserved names such as `CON` or `NUL`.
+Reserved names are case-insensitive and remain invalid with extensions, including `con.json` and `Nul.txt`.
+Different import paths that identify the same file, including hard links, fail with `env.source_alias`.
+Dependencies under a symbolic-link `node_modules` directory cannot serve as fragments.
+Copy the fragment into the project or use a dependency layout with regular directories.
+Limits include 32 imports per document, 64 documents, 256 edges, and 16 import levels.
+Each fragment and the effective schema permit 2 MiB.
+The complete source graph permits 8 MiB of unique fragment content and 65,536 merge visits.
+Existing variable, group, scope, and pattern limits still apply.
+
+```bash
+lpm env schema
+lpm env schema --json
+```
+
+`schema` checks declarations and imports without loading environment values.
+JSON results include stable diagnostic codes, source pointers, declaration origins, and a content fingerprint.
+Diagnostics omit value literals.
+
+Imported files participate in task cache keys and watch reloads, including files outside configured task inputs.
+Publishing and cloud sync use the resolved schema.
+The package archive contains a flattened `envSchema`, even when package filters exclude its fragments.
+Author files stay unchanged.
+The native app uses the same Rust engine and rejects source changes during an edit.
+Description edits update the authored file that declares the effective rule, including a local fragment.
+These edits preserve unrelated bytes, indentation, and any UTF-8 BOM.
+Preset declarations and installed fragments under `node_modules` are read-only in the app.
+Add a root `overrides` entry to edit their descriptions.
+The app cannot rename inherited keys or keys referenced by another fragment.
+Edit those declarations in their source files first.
+
+### Typed runtime generation
+
+`lpm env generate` creates typed JavaScript modules from the resolved schema.
+The server module contains every declared rule. The client module contains only browser-visible rules.
+Both modules expose `createEnv(input)` and `getEnv()`.
+They validate raw strings before conversion and use the selected environment, stage, and service context.
+
+Integer output uses `bigint`, port output uses `number`, and boolean output uses `boolean`.
+Other output uses strings. Optional values can be `undefined`.
+Validation errors contain stable codes without input values.
+See [runtime generation](/docs/dev/env#generate-typed-runtime-modules) for adapters, startup calls, and freshness checks.
 
 ## `environments`
 

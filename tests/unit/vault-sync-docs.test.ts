@@ -20,3 +20,16 @@ describe("vaultSync documentation", () => {
     expect(vaultGuide).toMatch(/remov\w+.*rollback.*account[- ]binding/is);
   });
 });
+
+const envGuide = readFileSync("content/docs/dev/env.mdx", "utf8");
+
+describe("env metadata warning recovery", () => {
+  it("explains successful value sync, last valid schema retention, and client upgrade recovery", () => {
+    expect(envGuide).toContain("env_metadata_dropped");
+    expect(envGuide).toContain("last valid schema");
+    expect(envGuide).toMatch(/older clients.*sync.*values/i);
+    expect(envGuide).toMatch(/dashboard.*banner/i);
+    expect(envGuide).toContain("lpm env schema --json");
+    expect(envGuide).toContain("lpm env check");
+  });
+});

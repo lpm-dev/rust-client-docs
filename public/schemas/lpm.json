@@ -141,7 +141,7 @@
       "description": "Environment variable schema for validation.\nDefines required vars, formats, patterns, defaults, and secrets.\ne.g., `{\"envSchema\": {\"vars\": {\"DATABASE_URL\": {\"required\": true, \"format\": \"url\"}}}}`",
       "anyOf": [
         {
-          "$ref": "#/$defs/EnvSchema"
+          "$ref": "#/$defs/EnvSchemaDefinition"
         },
         {
           "type": "null"
@@ -796,11 +796,12 @@
       },
       "additionalProperties": false
     },
-    "EnvSchema": {
-      "description": "The full env schema: a map of variable names to their rules.\n\nDeserialized from `lpm.json`:\n```json\n{ \"envSchema\": { \"vars\": { \"DATABASE_URL\": { \"required\": true, \"format\": \"url\" } } } }\n```",
+    "EnvSchemaDefinition": {
+      "description": "A local schema document. Overrides replace complete inherited declarations.",
       "type": "object",
       "properties": {
         "vars": {
+          "description": "Variable declarations authored in this document.",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/EnvVarRule"
@@ -808,7 +809,62 @@
           "default": {},
           "propertyNames": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
-          }
+          },
+          "maxProperties": 4096
+        },
+        "clientPrefixes": {
+          "description": "Additional public prefixes. Matching variables must declare client: true.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:_|[A-Za-z_][A-Za-z0-9_]{0,254}_)$"
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "groups": {
+          "description": "Relations between declared variables, checked against their effective values.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/VarGroup"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "maxProperties": 128
+        },
+        "extends": {
+          "description": "Relative fragments or offline built-in presets: preset:node, preset:nextjs, preset:vite.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "overrides": {
+          "description": "Complete replacement rules for variables inherited from imports.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvVarRule"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "maxProperties": 4096
+        },
+        "groupOverrides": {
+          "description": "Complete replacement groups for relations inherited from imports.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/VarGroup"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "maxProperties": 128
         }
       },
       "additionalProperties": false
@@ -840,7 +896,8 @@
             "string",
             "null"
           ],
-          "default": null
+          "default": null,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
         },
         "enum": {
           "description": "Allowlist of valid values.",
@@ -849,8 +906,10 @@
             "null"
           ],
           "items": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
           },
+          "minItems": 1,
           "default": null
         },
         "default": {
@@ -859,7 +918,8 @@
             "string",
             "null"
           ],
-          "default": null
+          "default": null,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
         },
         "secret": {
           "description": "Whether this variable contains sensitive data (fully redacted in errors and logs).",
@@ -871,16 +931,154 @@
           "type": "boolean",
           "default": false
         },
+        "ci": {
+          "description": "GitHub Actions storage classification, independent of browser visibility.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CiStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min": {
+          "description": "Inclusive exact integer bound. Serialized as decimal text for lossless metadata.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max": {
+          "description": "Inclusive exact integer bound. Serialized as decimal text for lossless metadata.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minLength": {
+          "description": "Minimum Unicode scalar count.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maxLength": {
+          "description": "Maximum Unicode scalar count.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocols": {
+          "description": "Allowed lowercase URL schemes, without a colon.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9+.-]{0,255}$"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "requiredWhen": {
+          "description": "Require a nonempty value when another declared variable satisfies this predicate.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequiredWhen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requiredIn": {
+          "description": "Additional contexts in which this value must be nonempty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeSelector"
+          },
+          "maxItems": 32
+        },
+        "defaultsIn": {
+          "description": "Context-specific literal defaults, evaluated before the global default.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopedDefault"
+          },
+          "maxItems": 32
+        },
         "description": {
           "description": "Human-readable description (shown in error messages and .env.example).",
           "type": [
             "string",
             "null"
           ],
-          "default": null
+          "default": null,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+        },
+        "empty": {
+          "description": "Treatment of an explicitly empty value. Missing preserves the child override.",
+          "$ref": "#/$defs/EmptyPolicy",
+          "default": "missing"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "secret": {
+                "const": true
+              }
+            },
+            "required": [
+              "secret"
+            ]
+          },
+          "then": {
+            "properties": {
+              "defaultsIn": {
+                "maxItems": 0
+              },
+              "default": {
+                "type": "null"
+              },
+              "enum": {
+                "type": "null"
+              },
+              "client": {
+                "const": false
+              },
+              "ci": {
+                "enum": [
+                  "secret",
+                  null
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "VarFormat": {
       "description": "Built-in format validators for common value types.",
@@ -893,6 +1091,207 @@
         "integer",
         "hostname",
         "ip"
+      ]
+    },
+    "CiStorage": {
+      "description": "Storage namespace used when synchronizing to GitHub Actions.",
+      "type": "string",
+      "enum": [
+        "secret",
+        "variable"
+      ]
+    },
+    "NumericBound": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "string",
+          "pattern": "^[+-]?[0-9]{1,19}$"
+        }
+      ]
+    },
+    "LengthBound": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]{1,10}$"
+        }
+      ]
+    },
+    "RequiredWhen": {
+      "description": "Exactly one predicate is accepted. Presence means a nonempty effective value.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EqualityCondition"
+        },
+        {
+          "$ref": "#/$defs/PresenceCondition"
+        }
+      ]
+    },
+    "EqualityCondition": {
+      "type": "object",
+      "properties": {
+        "variable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+        },
+        "equals": {
+          "type": "string",
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variable",
+        "equals"
+      ]
+    },
+    "PresenceCondition": {
+      "type": "object",
+      "properties": {
+        "variable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+        },
+        "present": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "variable",
+        "present"
+      ]
+    },
+    "ScopeSelector": {
+      "description": "Dimensions use AND; values within one dimension use OR.",
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!__index__$)(?!.*\\.\\.)[A-Za-z0-9_.-]{1,64}$"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "stage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EnvStage"
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "service": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?!__index__$)(?!.*\\.\\.)[A-Za-z0-9_.-]{1,64}$"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "environment"
+          ]
+        },
+        {
+          "required": [
+            "stage"
+          ]
+        },
+        {
+          "required": [
+            "service"
+          ]
+        }
+      ]
+    },
+    "EnvStage": {
+      "description": "The lifecycle stage supplied by the calling command.",
+      "type": "string",
+      "enum": [
+        "development",
+        "build",
+        "runtime",
+        "ci",
+        "test"
+      ]
+    },
+    "ScopedDefault": {
+      "description": "Select a literal default for one bounded context rectangle.",
+      "type": "object",
+      "properties": {
+        "when": {
+          "$ref": "#/$defs/ScopeSelector"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "when",
+        "value"
+      ]
+    },
+    "EmptyPolicy": {
+      "description": "Empty values can trigger defaults, remain subject to validation, or be rejected.",
+      "type": "string",
+      "enum": [
+        "missing",
+        "allow",
+        "reject"
+      ]
+    },
+    "VarGroup": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/VarGroupMode"
+        },
+        "vars": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,255}$"
+          },
+          "minItems": 1,
+          "maxItems": 4096,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "vars"
+      ]
+    },
+    "VarGroupMode": {
+      "type": "string",
+      "enum": [
+        "allOrNone",
+        "exactlyOne",
+        "atLeastOne"
       ]
     },
     "EnvironmentsConfig": {
