@@ -470,6 +470,75 @@ Explicit `--env=default` also loads `.env.default` and `.env.default.local`.
 A configured default mapping or declared default environment selects its own files.
 Generated examples describe scopes and keep scoped values in comments; they do not choose a context-specific assignment.
 
+### Reusable fragments and presets
+
+`extends` imports schema fragments from this project or built-in presets.
+Fragment paths are relative to the document that imports them.
+Each fragment uses the same fields as `envSchema`.
+
+```json
+{
+  "envSchema": {
+    "extends": ["preset:node", "schemas/database.json"],
+    "vars": {
+      "NEXT_PUBLIC_API_URL": { "format": "url", "client": true }
+    },
+    "overrides": {
+      "DATABASE_URL": { "format": "url", "secret": true, "required": true }
+    }
+  }
+}
+```
+
+The imported `schemas/database.json` can contain:
+
+```json
+{
+  "vars": {
+    "DATABASE_URL": { "format": "url", "secret": true }
+  }
+}
+```
+
+`overrides` replaces the complete inherited rule.
+Keep every required security and validation field in the replacement.
+`groupOverrides` replaces complete inherited groups.
+An override must name an inherited declaration.
+Use `vars` and `groups` for new local declarations.
+
+Different sources cannot declare the same variable or group without an explicit override.
+A shared fragment imported through multiple paths contributes each declaration once.
+Root client prefixes combine with imported prefixes.
+Repeated prefixes within one document are invalid.
+
+Presets are bundled with the CLI and work offline.
+`preset:node` declares the optional `NODE_ENV` enum.
+`preset:nextjs` also declares the optional `NEXT_RUNTIME` enum.
+`preset:vite` inherits the Node preset.
+Presets contain no credentials, required values, or defaults.
+
+Imports must stay inside the project directory.
+Absolute paths, parent escapes, symbolic links, nonregular files, and import cycles are invalid.
+Limits include 32 imports per document, 64 documents, 256 edges, and 16 import levels.
+Each fragment and the effective schema permit 2 MiB.
+The complete source graph permits 8 MiB of unique fragment content and 65,536 merge visits.
+Existing variable, group, scope, and pattern limits still apply.
+
+```bash
+lpm env schema
+lpm env schema --json
+```
+
+`schema` checks declarations and imports without loading environment values.
+JSON results include stable diagnostic codes, source pointers, declaration origins, and a content fingerprint.
+Diagnostics omit value literals.
+
+Imported files participate in task cache keys and watch reloads, including files outside configured task inputs.
+Publishing and cloud sync use the resolved schema.
+The package archive contains a flattened `envSchema`, even when package filters exclude its fragments.
+Author files stay unchanged.
+The native app uses the same Rust engine and rejects source changes during an edit.
+
 ## `environments`
 
 ```json
