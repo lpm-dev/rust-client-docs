@@ -1,0 +1,466 @@
+---
+title: Source packages
+description: Prepare editable source packages with file mappings, consumer choices, and dependencies for lpm add.
+---
+
+A source package delivers editable files into an application through [`lpm add`](/docs/packages/add).
+Use it for components, helpers, or starter files that consumers customize and commit with their project.
+
+The package contains `package.json`, source files, and a root [`lpm.config.json`](/docs/reference/lpm-config-json).
+This configuration defines which files consumers receive, their destinations, and their dependencies.
+Consumers keep ownership of the copied files.
+
+Source packages work through npm, private registries, and LPM.dev Registry.
+Only `@lpm.dev/*` packages always use LPM.dev Registry. See [Registries](/docs/registries).
+
+## Quickstart
+
+Create the package in [Prepare the package](#prepare-the-package). Then run the local publication check:
+
+```bash
+lpm publish --npm --check
+```
+
+After publication, add the package from a receiving project:
+
+```bash
+lpm add @acme/source-button
+```
+
+Replace `@acme/source-button` with your published package name.
+The interactive wizard asks for the install directory and suggests a destination for your project.
+For configurable packages, it also asks for package choices.
+
+### The three files that control this workflow
+
+| File | Purpose |
+| --- | --- |
+| `package.json` | Package name, version, archive contents, and default consumer dependencies. |
+| `lpm.config.json` | Source selection, destinations, prompts, import aliases, and conditional dependencies. |
+| [`lpm.json`](/docs/reference/lpm-json) | Optional project tasks and publication targets. It has no source-delivery block. |
+
+The two `files` fields have separate purposes.
+`package.json > files` selects the contents of the published archive.
+`lpm.config.json > files` selects files from that archive for the consumer project.
+
+## Prepare the package
+
+Create this directory structure:
+
+```text
+source-button/
+├── package.json
+├── lpm.config.json
+└── src/
+    ├── button.jsx
+    └── button.css
+```
+
+Define the package identity and published files:
+
+```json title="package.json"
+{
+  "name": "@acme/source-button",
+  "version": "1.0.0",
+  "description": "A button delivered as editable React source.",
+  "license": "MIT",
+  "files": ["lpm.config.json", "src"],
+  "dependencies": {
+    "clsx": "^2.1.1"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  }
+}
+```
+
+Use a package name that you can publish. Choose the license that applies to your source.
+
+Define the delivery rules:
+
+```json title="lpm.config.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.config.json",
+  "type": "source",
+  "files": [
+    { "src": "src/button.jsx", "dest": "button.jsx" },
+    { "src": "src/button.css", "dest": "button.css" }
+  ]
+}
+```
+
+The `type` field identifies source packages on LPM.dev Registry.
+A valid configuration file activates configured source delivery regardless of this field.
+
+Add the component and stylesheet:
+
+```jsx title="src/button.jsx"
+"use client";
+
+import { clsx } from "clsx";
+
+export function Button({ className, ...props }) {
+  return <button className={clsx("source-button", className)} {...props} />;
+}
+```
+
+```css title="src/button.css"
+.source-button {
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: #111827;
+  color: #ffffff;
+  cursor: pointer;
+}
+```
+
+This example delivers source directly. It needs no compiled `dist/` directory.
+Include each helper and asset that the copied component needs.
+
+If `publishConfig.directory` selects another publication directory, put the configuration and source files inside that directory.
+Paths in `lpm.config.json` refer to the published package root.
+
+## Map files into the consumer project
+
+The consumer chooses a base destination through `--path` or the detected project layout.
+Each `dest` is relative to that base destination.
+
+If the consumer chooses `src/components/source-button` in the wizard, the files appear here:
+
+```text
+src/components/source-button/
+├── button.jsx
+└── button.css
+```
+
+Use explicit mappings for a small package.
+For a directory, use a supported selector such as `{ "src": "src/helpers/**", "dest": "helpers" }`.
+Trailing `/*` and `/**` selectors are supported. See [File rules](/docs/reference/lpm-config-json#files).
+
+Selected destinations must be unique and remain inside the receiving project.
+A `never` rule skips its own selection. It does not exclude files that another rule selects.
+
+Relative internal imports follow the source-to-destination mappings.
+If your source uses an import prefix such as `@/components`, declare it with `importAlias`:
+
+```json
+{ "importAlias": "@/components" }
+```
+
+LPM CLI detects the consumer alias from project configuration.
+Consumers can override it for one run with `--alias`.
+See [Import aliases](/docs/reference/lpm-config-json#importalias).
+
+## Offer a configurable variant
+
+Add the animation dependency to the author's package for local development:
+
+```bash
+lpm install 'motion@^12'
+```
+
+Add an animated alternative:
+
+```jsx title="src/animated-button.jsx"
+"use client";
+
+import { clsx } from "clsx";
+import { motion } from "motion/react";
+
+export function Button({ className, ...props }) {
+  return (
+    <motion.button
+      className={clsx("source-button", className)}
+      whileTap={{ scale: 0.97 }}
+      {...props}
+    />
+  );
+}
+```
+
+Replace the delivery configuration with this complete variant configuration:
+
+```json title="lpm.config.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.config.json",
+  "type": "source",
+  "configSchema": {
+    "variant": {
+      "type": "select",
+      "label": "Button variant",
+      "options": ["basic", "animated"],
+      "default": "basic",
+      "required": true
+    }
+  },
+  "files": [
+    {
+      "src": "src/button.jsx",
+      "dest": "button.jsx",
+      "include": "when",
+      "condition": { "variant": "basic" }
+    },
+    {
+      "src": "src/animated-button.jsx",
+      "dest": "button.jsx",
+      "include": "when",
+      "condition": { "variant": "animated" }
+    },
+    { "src": "src/button.css", "dest": "button.css" }
+  ],
+  "dependencies": {
+    "variant": {
+      "basic": ["react@^18.0.0 || ^19.0.0", "clsx@^2.1.1"],
+      "animated": ["react@^18.0.0 || ^19.0.0", "clsx@^2.1.1", "motion@^12"]
+    }
+  }
+}
+```
+
+`configSchema` defines consumer prompts. It supports `string`, `boolean`, and `select` fields.
+It uses the LPM CLI prompt format. It is separate from the JSON Schema that checks `lpm.config.json`.
+
+Each selected variant delivers one component as `button.jsx`.
+The required field and default also make unattended installation deterministic.
+
+Explicit package query values override `defaultConfig`, which overrides the field's `default`.
+An unset optional condition key keeps its conditional files.
+Give variant fields explicit defaults so their file selection stays predictable.
+
+After publication, consumers can choose the variant in the wizard:
+
+```bash
+lpm add @acme/source-button
+```
+
+The **Button variant** prompt offers `basic` and `animated`, with `basic` as the default.
+The wizard then asks for the install directory.
+
+Consumers can also answer the variant question in the package argument:
+
+```bash
+lpm add '@acme/source-button?variant=animated'
+```
+
+This command skips the variant question. The remaining wizard prompts still apply.
+Quote package arguments that contain query values.
+See [Pre-answer prompts](/docs/packages/add#pre-answer-prompts) for encoding and multiple selections.
+
+## Declare consumer dependencies
+
+The quickstart configuration omits `dependencies`.
+For configured packages, LPM CLI then reads `dependencies` and `peerDependencies` from the package manifest.
+It does not copy the author's `devDependencies` into the consumer manifest.
+
+The receiving project needs `package.json` before automatic dependency installation.
+The default package manager is LPM CLI.
+
+A declared `dependencies` map replaces the manifest fallback completely.
+Each matching branch must include the shared dependencies that its source needs.
+If no branch matches, LPM CLI does not fall back to the manifest.
+
+Consumers can skip dependency changes for one run:
+
+```bash
+lpm add @acme/source-button --no-install-deps
+```
+
+For a package that needs no consumer dependencies, set `"dependencies": {}` in `lpm.config.json`.
+This explicit field disables the package manifest fallback.
+
+## Check and publish the package
+
+Add the published schema URL for editor completion, or export the schema from your installed CLI:
+
+```bash
+lpm schema lpm.config.json -o lpm-config.schema.json
+```
+
+[`lpm schema`](/docs/reference/schemas) exports a schema. It does not check your package against that schema.
+
+Run the local publication check from the package directory:
+
+```bash
+lpm publish --npm --check
+```
+
+The check prepares the package and checks its configuration without lifecycle scripts, registry requests, or uploads.
+If your publication scripts generate files, generate those files before this check.
+This check does not exercise consumer file selection or dependency installation.
+
+If the root `lpm.config.json` is valid, [`lpm publish`](/docs/packages/publish) includes it automatically.
+This rule also applies without a matching entry in `package.json > files`.
+The explicit list in this guide also includes it for other npm-compatible publication tools.
+
+Preview and publish with an explicit registry target.
+For LPM.dev Registry, use a publication name such as `@lpm.dev/acme.source-button`.
+The configuration below supplies that name for this package.
+
+```bash
+# npm: preview, then publish
+lpm publish --npm --dry-run --ignore-scripts
+lpm publish --npm --ignore-scripts
+
+# LPM.dev Registry: preview, then publish
+lpm publish --lpm --dry-run --ignore-scripts
+lpm publish --lpm --ignore-scripts
+```
+
+`--ignore-scripts` skips package publication scripts.
+Without a target flag, [`lpm publish`](/docs/packages/publish) uses the targets in `lpm.json`.
+Without configured targets, it defaults to LPM.dev Registry.
+
+Alternatively, save both targets and their publication names in [`lpm.json`](/docs/reference/lpm-json#publish):
+
+```json title="lpm.json"
+{
+  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "publish": {
+    "registries": ["lpm", "npm"],
+    "lpm": {
+      "name": "@lpm.dev/acme.source-button"
+    },
+    "npm": {
+      "name": "@acme/source-button"
+    }
+  }
+}
+```
+
+Replace `acme` with your account or organization slug.
+The registry names can differ. The source manifest keeps its original name.
+With this configuration, commands without target flags use both registries:
+
+```bash
+lpm publish --check
+lpm publish --dry-run --ignore-scripts
+lpm publish --ignore-scripts
+```
+
+`--npm` or `--lpm` overrides the configured target list for one run.
+Consumers use the published name with [`lpm add`](/docs/packages/add):
+
+```bash
+lpm add @lpm.dev/acme.source-button
+```
+
+LPM.dev Registry uses private distribution by default. See [Package distribution](/docs/packages/package-distribution).
+Registry previews and publication require credentials and access. See [Publishing a package](/docs/guides/publishing-a-package).
+
+## Test the consumer workflow
+
+From a separate React project, run the wizard:
+
+```bash
+lpm add @acme/source-button
+```
+
+For the configurable package, choose a variant.
+Enter `src/components/source-button` as the install directory.
+For the minimal package, the wizard has no variant question.
+
+To select a specific version and variant, use:
+
+```bash
+lpm add '@acme/source-button@1.0.0?variant=animated'
+```
+
+The wizard still asks for the install directory.
+Import the copied component from your application.
+Load `button.css` through the application's normal stylesheet entry point.
+Run the application build and its tests for each supported variant.
+
+Use registry names, versions, or tags for [`lpm add`](/docs/packages/add).
+Local directories, tarballs, and shadcn registry JSON URLs are not source-delivery targets.
+
+To test an update, publish a new version.
+Then run the command again with the same destination.
+Unchanged tracked files update automatically. Edited files require interactive confirmation or `--force` to overwrite.
+`--yes` alone preserves edited files in unattended commands.
+See [Updates and file conflicts](/docs/packages/add#updates-and-file-conflicts).
+
+### Preview or automate delivery
+
+To inspect the planned files, add `--dry-run`:
+
+```bash
+lpm add @acme/source-button --dry-run
+```
+
+The wizard still asks for choices and the install directory.
+The preview downloads the package without project changes or dependency installation.
+
+For unattended use, supply the choices and directory explicitly:
+
+```bash
+lpm add '@acme/source-button@1.0.0?variant=animated' \
+  --path src/components/source-button \
+  --yes \
+  --dry-run \
+  --json
+```
+
+Remove `--dry-run` to apply the selection.
+
+| Flag | Purpose |
+| --- | --- |
+| `--path <DIR>` | Supply the install directory instead of the wizard prompt. |
+| `--yes` | Skip prompts and use package defaults for unanswered choices. |
+| `--dry-run` | Preview file actions without project changes or dependency installation. |
+| `--json` | Skip prompts, apply defaults, and print machine-readable output. |
+
+See [`lpm add`](/docs/packages/add#flags) for the complete flag reference.
+
+## Prompts for your agent
+
+### Prepare an existing package
+
+Copy this prompt into your agent:
+
+```text
+Prepare this repository as an editable source package for lpm add.
+Read the actual source, package metadata, internal imports, and assets first.
+List the files and external dependencies that each delivered feature needs.
+Use https://cli.lpm.dev/docs/packages/source-packages for the author workflow.
+Use https://cli.lpm.dev/docs/reference/lpm-config-json for the configuration contract.
+Create lpm.config.json at the published package root.
+Set $schema to https://cli.lpm.dev/schemas/lpm.config.json.
+Include lpm.config.json and the required source files in package.json files.
+Map source files to unique destinations inside the consumer directory.
+Define only consumer choices that the existing source supports.
+Give conditional variant fields explicit defaults for unattended installation.
+If you declare conditional dependencies, include every dependency that each branch needs.
+Use supported import rewriting for internal imports.
+Keep source delivery separate from project configuration in lpm.json.
+Add a local publication check and consumer recipes for every variant.
+Report unsupported requirements before changing the design.
+Do not publish the package.
+```
+
+### Review a prepared package
+
+```text
+Review this package for lpm add source delivery.
+Read the actual source and lpm.config.json.
+Compare the configuration with https://cli.lpm.dev/schemas/lpm.config.json.
+Make sure that every selected file exists in the published package.
+Make sure that each supported choice selects files with unique destinations.
+Make sure that selected files include their internal imports and required assets.
+Make sure that each dependency branch includes its shared dependencies.
+Run lpm publish --npm --check --json.
+For a published test version, preview every variant in a separate consumer project.
+Exercise real delivery, application builds, and updates after an intentional local edit.
+Record the commands, selected files, and failures.
+Report missing behavior instead of adding unsupported configuration fields.
+Do not publish the package.
+```
+
+## See also
+
+- [`lpm add`](/docs/packages/add) — deliver and update source files
+- [`lpm remove`](/docs/packages/remove) — remove tracked source files
+- [`lpm.config.json`](/docs/reference/lpm-config-json) — the complete configuration reference
+- [JSON Schemas](/docs/reference/schemas) — editor schemas and local exports
+- [`lpm publish`](/docs/packages/publish) — publication targets and checks
+- [Package distribution](/docs/packages/package-distribution) — LPM.dev Registry access modes
