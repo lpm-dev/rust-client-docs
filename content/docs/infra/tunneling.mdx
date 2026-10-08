@@ -336,7 +336,7 @@ At that limit, the tunnel stops and asks you to start a new session.
 | Bare `lpm tunnel` cannot select an endpoint | No active endpoint exists, or multiple endpoints exist | Pass the intended port |
 | The inspector port is busy | An explicit `--inspect-port` is already in use | Select another port or omit the flag |
 | Tunnel authentication fails | The saved login session is unavailable or expired | Run `lpm login`, then start the tunnel again |
-| The relay certificate pin does not match | The relay certificate changed or the connection is unsafe | Make sure that the certificate change is expected before you replace the pin |
+| LPM CLI cannot verify the relay key | The key lacks valid approval, or the connection is unsafe | Update LPM CLI, then retry. If the error continues, contact the relay operator |
 
 ### Relay certificate pins
 
@@ -347,18 +347,29 @@ LPM CLI stores one certificate pin for each relay host:
 ~/.lpm/relay-pins/<other-host>
 ```
 
-Normal TLS certificate checks still apply. The first connection also stores a hash of the certificate public key.
+Normal TLS certificate and hostname checks apply before LPM CLI accepts a key.
+For `relay.lpm.fyi`, each connection attempt requires a signed list of approved public keys, even when the saved pin matches.
+LPM CLI verifies the signature, publisher, relay host, and validity window before it stores the pin.
 
-Later connections must match that key. Certificate renewal with the same public key does not require a new pin.
+If a saved key changes, LPM CLI connects automatically when the new key has valid approval.
+Certificate renewal with the same public key does not require a new pin. Each connection still requires valid approval.
+An old `~/.lpm/relay-pin` file migrates automatically after successful verification.
 
-> CAUTION: Do not remove a pin until you make sure that the relay certificate changed as expected. Removing it trusts the next certificate.
+Removing a key from the approval list blocks new connections with that key after LPM CLI receives the updated list.
+An earlier signed list remains valid until its expiration, for a maximum of seven days. Key removal does not close established tunnels.
 
-If the certificate change is expected, remove the exact pin that the error names. Then connect again:
+Unknown keys, invalid certificates, and invalid or expired approval lists stop the command immediately.
+If the error asks for an update, run:
 
 ```bash
-rm ~/.lpm/relay-pins/relay.lpm.fyi
+lpm self-update
 lpm tunnel 3000
 ```
+
+If the error continues, contact the relay operator. Do not delete a saved pin to bypass verification.
+If the approval service is unavailable, retry the command when the network is available.
+
+Other relay hosts retain per-host trust on first use. Automatic signed rotation applies only to `relay.lpm.fyi`.
 
 ## Advanced relay configuration
 
