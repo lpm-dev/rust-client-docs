@@ -7,6 +7,8 @@ description: "Connect a public HTTPS URL to a local service, protect access, and
 
 Use a tunnel for webhooks, callbacks, remote-device tests, and temporary previews. A tunnel is a development tool, not permanent application hosting.
 
+Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
+
 ```bash
 # Expose an existing HTTP service
 lpm login
@@ -42,7 +44,7 @@ The tunnel lasts while the LPM CLI process remains open. When the process stops,
 | Goal | Workflow |
 | --- | --- |
 | Use the same domain for a project | Add `tunnel.domain` to `lpm.json`, then run `lpm dev` |
-| Get an assigned domain for one development run | Run `lpm dev --tunnel` |
+| Use your Pro account domain for one development run | Run `lpm dev --tunnel` |
 | Expose an existing local port | Run `lpm tunnel <port>` |
 | Expose the only active `lpm dev` endpoint | Run `lpm tunnel` |
 | Use a claimed domain for one development run | Run `lpm dev --domain <domain>` |
@@ -93,16 +95,10 @@ The LPM.dev Registry provides two tunnel base domains:
 
 | Base domain | Availability | Use |
 | --- | --- | --- |
-| `lpm.fyi` | Free, Pro, and Org | Free random domains and stable claims |
+| `lpm.fyi` | Pro and Org | Pro account domains and stable claims |
 | `lpm.llc` | Pro and Org | Stable claims |
 
 Run `lpm tunnel domains` to list the base domains that are currently enabled.
-
-### Free random domains
-
-A Free tunnel receives a random 10-character subdomain on `lpm.fyi`. The subdomain contains lowercase letters and numbers.
-
-The domain lasts for one tunnel session. A new connection receives a new random domain.
 
 ### Pro personal domains
 
@@ -114,7 +110,9 @@ A Pro user can also claim up to three stable domains. Claims can use `lpm.fyi`, 
 
 An Org account can claim up to three stable domains. The claim belongs to the organization, not to the member who uses it.
 
-Organization owners and administrators can manage organization claims. Any eligible member can connect with a claimed organization domain.
+Organization owners and administrators can manage organization claims. Any eligible member can use an organization domain by naming it, for example `lpm tunnel 3000 staging.lpm.fyi`. A personal Pro plan isn't required. Without a domain, a Pro member gets their personal account hostname.
+
+After organization billing lapses, members can't use its claims, and LPM.dev Registry releases them. Personal claims are released when a Pro plan ends.
 
 ### Claim a stable domain
 
@@ -142,23 +140,24 @@ See the [stable-domain commands](/docs/infra/tunnel#stable-domains) for listing,
 
 ## Plans and limits
 
-Tunnel limits apply to the selected personal or organization account.
+Tunnels need a Pro plan or an organization plan. An organization tunnel uses one of the organization's claimed domains. Limits apply to the selected personal or organization account.
 
-| Limit | Free | Pro | Org |
-| --- | --- | --- | --- |
-| Concurrent tunnels | 1 | 3 | 3 |
-| Included requests | 20,000 per UTC month | 100,000 per billing period | 100,000 per billed seat and billing period |
-| Account request rate | 4,000 per minute | 20,000 per minute | 20,000 per billed seat and minute |
-| Per visitor IP | 600 per minute | 600 per minute | 600 per minute |
-| Maximum request body | 10 MiB | 100 MiB | 100 MiB |
-| Maximum session length | 1 hour | No fixed limit | No fixed limit |
-| Stable domain claims | 0 | 3 | 3 |
-| `--tunnel-auth` | No | Yes | Yes |
-| After the included allowance | Hard stop | Proportional overage | Proportional overage |
+| Limit | Pro | Org |
+| --- | --- | --- |
+| Concurrent tunnels | 3 | 3 |
+| Included requests | 100,000 per billing period | 100,000 per billed seat and billing period |
+| Account request rate | 20,000 per minute | 20,000 per billed seat and minute |
+| Per visitor IP | 600 per minute | 600 per minute |
+| Maximum request body | 100 MiB | 100 MiB |
+| Stable domain claims | 3 | 3 |
+| `--tunnel-auth` | Yes | Yes |
+| After the included allowance | Proportional overage | Proportional overage |
 
 The Org concurrent-tunnel and domain-claim limits apply across all members and base domains. These limits do not increase with the seat count.
 
-The startup output reports the active plan, session expiry, limits, request usage, and overage state.
+The startup output reports the active plan, limits, request usage, and overage state.
+
+When an account's plan stops including tunnels, such as after a downgrade or when organization billing lapses, the relay closes the account's open tunnels, usually within a minute.
 
 ### Request usage
 
@@ -168,9 +167,7 @@ One accepted HTTP request counts once. If the local service returns an error or 
 
 A successful public WebSocket upgrade also counts once.
 
-Messages on an open WebSocket do not consume more tunnel requests. Rejected authentication, interstitial pages, and rejected oversized requests do not count.
-
-Free usage resets at the start of each UTC month. A Free tunnel stops accepting requests after the account uses its included allowance.
+Messages on an open WebSocket do not consume more tunnel requests. Rejected authentication and rejected oversized requests do not count.
 
 Pro and Org usage follows the billing period. Paid overage costs $1 for each 100,000 requests and uses proportional billing.
 
@@ -191,7 +188,7 @@ The local `inspect`, `replay`, and `log` actions do not require a login. These a
 
 A tunnel URL accepts public requests by default. Application authentication remains the responsibility of your local service.
 
-Pro and Org tunnels can add tunnel-level access protection:
+Tunnels can add tunnel-level access protection:
 
 ```bash
 lpm tunnel 3000 acme-api.lpm.llc --tunnel-auth
@@ -200,16 +197,6 @@ lpm tunnel 3000 acme-api.lpm.llc --tunnel-auth
 LPM CLI creates a token for the session. Interactive startup shows the public URL and an `X-Tunnel-Auth` header.
 
 Non-interactive human output hides the token. JSON output includes it. Treat that output as secret. The tunnel service rejects requests without the correct token.
-
-### Free browser interstitial
-
-The first browser visit to a Free random domain shows a **Visit Site** page. This page reduces phishing abuse on temporary domains.
-
-The page appears only for requests that accept HTML. API clients and webhook providers reach the local service without this page.
-
-After the visitor continues, the browser receives a host-only cookie for that domain and session. The cookie expires with the session.
-
-The interstitial is not application authentication. It does not restrict API or webhook access.
 
 ## Local HTTP and public HTTPS
 
@@ -231,14 +218,15 @@ If you receive this response, wait at least one second before a retry. Retry aut
 
 The relay refreshes account limits before their cached validity ends, so routine refreshes can run while requests continue.
 Expired or invalidated account limits require a successful check before the relay forwards another request.
-If that check fails, the relay returns `503` with `Tunnel quota service unavailable`. Retry only requests that are safe to repeat.
+If the check finds that the account's plan no longer includes tunnels, the relay closes the account's tunnels, and visitors get `404`.
+If the check fails, the relay returns `503` with `Tunnel quota service unavailable`. Retry only requests that are safe to repeat.
 
 ## Server-sent events
 
 Responses with `Content-Type: text/event-stream` reach visitors as the local service sends data.
 The tunnel waits up to 30 seconds for response headers. An open event stream can continue beyond 30 seconds.
 Slow readers limit forwarding, and a visitor disconnect closes the local request.
-Tunnel revocation and the Free-session deadline still close active streams.
+Tunnel revocation and the end of tunnel access still close active streams.
 This behavior requires a relay that supports streamed responses.
 
 LPM CLI forwards `Last-Event-ID` when an SSE client reconnects. Your local service must retain event history and resume after that ID.
@@ -323,15 +311,14 @@ An established tunnel retries a capacity rejection while its previous connection
 The CLI makes up to 10 retries with backoff. A connection that lasts at least 60 seconds resets the retry count.
 
 Sleep or a network change can close active HTTP, SSE, and WebSocket connections. Applications must reconnect their streams after tunnel recovery.
-A recovered Free tunnel can receive a new random URL. Use the URL from the latest successful connection.
+A recovered tunnel keeps a claimed domain. An account hostname follows your current username, so use the URL from the latest successful connection.
 
-Credential renewal keeps a healthy tunnel connected without resetting the Free one-hour limit.
-At that limit, the tunnel stops and asks you to start a new session.
+Credential renewal keeps a healthy tunnel connected.
 
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
 | The public URL stops | The LPM CLI process stopped | Start the tunnel again |
-| A Free URL stops after one hour | The Free session expired | Start a new session and use the new random URL |
+| The tunnel stops because the account can't run it | The plan doesn't include tunnels, or organization billing is inactive | Upgrade at [lpm.dev pricing](https://lpm.dev/pricing), name an organization's claimed domain, or ask an organization owner to update billing |
 | A request cannot reach the local service | The service is stopped or uses another port | Start the service or select the correct port |
 | Bare `lpm tunnel` cannot select an endpoint | No active endpoint exists, or multiple endpoints exist | Pass the intended port |
 | The inspector port is busy | An explicit `--inspect-port` is already in use | Select another port or omit the flag |

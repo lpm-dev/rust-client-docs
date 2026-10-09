@@ -24,6 +24,7 @@ lpm tunnel 3000
 
 The command prints a public URL and forwards requests to `http://127.0.0.1:3000/`.
 Keep the command open while you use the URL. Press `q` or `Ctrl+C` to stop it.
+Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
 
 ### Choose an action
 
@@ -87,7 +88,7 @@ For an assigned URL, omit `tunnel.domain` and run:
 lpm dev --tunnel
 ```
 
-Free accounts receive a random `lpm.fyi` hostname. Personal Pro accounts default to their account hostname.
+A Pro account uses its account hostname, `<username>.lpm.fyi`. An organization member without Pro must name one of the organization's claimed domains.
 
 ### Select a service in a multi-service project
 
@@ -150,7 +151,7 @@ Remote startup and domain management require a saved session from [lpm login](/d
 They do not accept `--token`, `LPM_TOKEN`, or standalone CI tokens for the hosted service.
 Local `inspect`, `replay`, and `log` actions work without a login.
 
-LPM CLI renews the session credential before it expires. Renewal preserves the public URL, active connections, and original Free-session deadline.
+LPM CLI renews the session credential before it expires. Renewal preserves the public URL and active connections.
 Older relays refresh through reconnection, which can close active requests and WebSockets.
 
 Revoking a login session also closes its active tunnels after LPM.dev Registry processes the revocation.
@@ -168,7 +169,7 @@ lpm tunnel list
 lpm tunnel 3000 preview.lpm.fyi
 ```
 
-Current bases are `lpm.fyi` and `lpm.llc`. Free accounts use random `lpm.fyi` URLs but cannot claim stable names.
+Current bases are `lpm.fyi` and `lpm.llc`.
 
 The label must contain 3–32 lowercase letters, numbers, or hyphens. It must start and end with a letter or number.
 Two hyphens in positions 3 and 4 are invalid. Account hostnames on `lpm.fyi` are reserved.
@@ -245,7 +246,7 @@ Storage failure, capture saturation, persistence timeout, or forwarding overload
 
 ### Protect a preview URL
 
-Pro and Org tunnels support an access token:
+Tunnels support an access token:
 
 ```bash
 lpm tunnel 3000 preview.lpm.fyi --tunnel-auth
@@ -301,11 +302,12 @@ If the database is corrupt, stop its users, repair or move the database, then re
 
 ## Plans and limits
 
-| Tunnel account | Default domain | Session limit | Concurrent tunnels | Stable claims | Access token |
-| --- | --- | --- | --- | --- | --- |
-| Free personal | Random `lpm.fyi` | 1 hour | 1 | 0 | No |
-| Pro personal | Account hostname | No fixed limit | 3 | 3 | Yes |
-| Org | Claimed organization domain | No fixed limit | 3 | 3 | Yes |
+Tunnels need a Pro plan, or an organization plan through one of the organization's claimed domains. Without either, startup stops with `plan_required` and a link to [lpm.dev pricing](https://lpm.dev/pricing).
+
+| Tunnel account | Default domain | Concurrent tunnels | Stable claims | Access token |
+| --- | --- | --- | --- | --- |
+| Pro personal | Account hostname | 3 | 3 | Yes |
+| Org | None (name a claimed domain) | 3 | 3 | Yes |
 
 Organization concurrency and claim limits apply across the organization, not per seat.
 Startup shows current limits and request usage. See [Request usage and overage](/docs/infra/tunneling#request-usage) for account allowances.
@@ -324,13 +326,15 @@ Startup emits a JSON object after each successful connection. Temporary failures
 Read this output as a sequence of JSON objects, not one document.
 
 Temporary authentication-service and domain-lookup outages retry. Relay restarts and abnormal transport closures also retry.
-Invalid credentials, denied ownership, and an expired Free session stop the command with an error.
+Invalid credentials, denied ownership, and an account whose plan doesn't include tunnels stop the command with an error.
+When an account's plan stops including tunnels, the relay closes the account's open tunnels, usually within a minute, and the command stops.
+In JSON output, these refusals have `error_code` `tunnel_access`, with the relay's code in `error.relay_code`, such as `plan_required` or `billing_inactive`.
 A normal relay replacement closes the older tunnel successfully.
 
 The retry budget is ten attempts. Delays start at two seconds and increase to thirty seconds, plus jitter.
 A healthy connection of at least sixty seconds resets the budget.
 
-After reconnection, use the latest `tunnel_url`. A Free tunnel can receive a new URL.
+A claimed domain stays the same across reconnections. An account hostname follows your current username. Use the `tunnel_url` from the latest connection.
 Applications must reconnect their SSE and WebSocket streams.
 An established tunnel retries temporary capacity conflicts during recovery. A new tunnel stops when the account is already at its limit.
 
@@ -346,7 +350,7 @@ Use only a trusted relay because it receives the tunnel credential.
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--org <SLUG>` | `claim`, `unclaim`, `list` | Select or constrain the organization domain scope. |
-| `--tunnel-auth` | Start | Require the generated access token. Pro and Org only. |
+| `--tunnel-auth` | Start | Require the generated access token. |
 | `--auto-ack` | Start | Return `200 OK` after durable capture when local forwarding fails. Return `503` if capture fails or forwarding is overloaded. |
 | `--session <NAME>` | Start | Name the capture session. |
 | `--no-inspect` | Start | Disable the browser inspector. Capture continues. |
