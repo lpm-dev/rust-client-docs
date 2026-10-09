@@ -24,6 +24,7 @@ lpm tunnel 3000
 
 The command prints a public URL and forwards requests to `http://127.0.0.1:3000/`.
 Keep the command open while you use the URL. Press `q` or `Ctrl+C` to stop it.
+Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
 
 ### Choose an action
 
@@ -301,12 +302,12 @@ If the database is corrupt, stop its users, repair or move the database, then re
 
 ## Plans and limits
 
-Tunnels need a Pro plan, or an organization plan through one of the organization's claimed domains. Startup without one stops with `plan_required` and a link to [lpm.dev pricing](https://lpm.dev/pricing).
+Tunnels need a Pro plan, or an organization plan through one of the organization's claimed domains. Without either, startup stops with `plan_required` and a link to [lpm.dev pricing](https://lpm.dev/pricing).
 
 | Tunnel account | Default domain | Concurrent tunnels | Stable claims | Access token |
 | --- | --- | --- | --- | --- |
 | Pro personal | Account hostname | 3 | 3 | Yes |
-| Org | None: name a claimed organization domain | 3 | 3 | Yes |
+| Org | None (name a claimed domain) | 3 | 3 | Yes |
 
 Organization concurrency and claim limits apply across the organization, not per seat.
 Startup shows current limits and request usage. See [Request usage and overage](/docs/infra/tunneling#request-usage) for account allowances.
@@ -326,13 +327,14 @@ Read this output as a sequence of JSON objects, not one document.
 
 Temporary authentication-service and domain-lookup outages retry. Relay restarts and abnormal transport closures also retry.
 Invalid credentials, denied ownership, and an account whose plan doesn't include tunnels stop the command with an error.
-When an account's plan stops including tunnels, the relay closes its open tunnels and the command stops.
+When an account's plan stops including tunnels, the relay closes the account's open tunnels, usually within a minute, and the command stops.
+In JSON output, these refusals have `error_code` `tunnel_access`, with the relay's code in `error.relay_code`, such as `plan_required` or `billing_inactive`.
 A normal relay replacement closes the older tunnel successfully.
 
 The retry budget is ten attempts. Delays start at two seconds and increase to thirty seconds, plus jitter.
 A healthy connection of at least sixty seconds resets the budget.
 
-The public URL stays the same across reconnections.
+A claimed domain stays the same across reconnections. An account hostname follows your current username. Use the `tunnel_url` from the latest connection.
 Applications must reconnect their SSE and WebSocket streams.
 An established tunnel retries temporary capacity conflicts during recovery. A new tunnel stops when the account is already at its limit.
 

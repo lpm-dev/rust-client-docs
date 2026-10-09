@@ -7,6 +7,8 @@ description: "Connect a public HTTPS URL to a local service, protect access, and
 
 Use a tunnel for webhooks, callbacks, remote-device tests, and temporary previews. A tunnel is a development tool, not permanent application hosting.
 
+Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
+
 ```bash
 # Expose an existing HTTP service
 lpm login
@@ -42,7 +44,7 @@ The tunnel lasts while the LPM CLI process remains open. When the process stops,
 | Goal | Workflow |
 | --- | --- |
 | Use the same domain for a project | Add `tunnel.domain` to `lpm.json`, then run `lpm dev` |
-| Get an assigned domain for one development run | Run `lpm dev --tunnel` |
+| Use your Pro account domain for one development run | Run `lpm dev --tunnel` |
 | Expose an existing local port | Run `lpm tunnel <port>` |
 | Expose the only active `lpm dev` endpoint | Run `lpm tunnel` |
 | Use a claimed domain for one development run | Run `lpm dev --domain <domain>` |
@@ -108,7 +110,9 @@ A Pro user can also claim up to three stable domains. Claims can use `lpm.fyi`, 
 
 An Org account can claim up to three stable domains. The claim belongs to the organization, not to the member who uses it.
 
-Organization owners and administrators can manage organization claims. Any eligible member can connect with a claimed organization domain, with or without a personal Pro plan. Without Pro, a member must name the domain.
+Organization owners and administrators can manage organization claims. Any eligible member can use an organization domain by naming it, for example `lpm tunnel 3000 staging.lpm.fyi`. A personal Pro plan isn't required. Without a domain, a Pro member gets their personal account hostname.
+
+After organization billing lapses, members can't use its claims, and LPM.dev Registry releases them. Personal claims are released when a Pro plan ends.
 
 ### Claim a stable domain
 
@@ -136,7 +140,7 @@ See the [stable-domain commands](/docs/infra/tunnel#stable-domains) for listing,
 
 ## Plans and limits
 
-Tunnels need a Pro plan, or an organization plan through one of the organization's claimed domains. Limits apply to the selected personal or organization account.
+Tunnels need a Pro plan or an organization plan. An organization tunnel uses one of the organization's claimed domains. Limits apply to the selected personal or organization account.
 
 | Limit | Pro | Org |
 | --- | --- | --- |
@@ -153,7 +157,7 @@ The Org concurrent-tunnel and domain-claim limits apply across all members and b
 
 The startup output reports the active plan, limits, request usage, and overage state.
 
-When an account's plan stops including tunnels, such as after a downgrade or when organization billing lapses, the relay closes its open tunnels.
+When an account's plan stops including tunnels, such as after a downgrade or when organization billing lapses, the relay closes the account's open tunnels, usually within a minute.
 
 ### Request usage
 
@@ -184,7 +188,7 @@ The local `inspect`, `replay`, and `log` actions do not require a login. These a
 
 A tunnel URL accepts public requests by default. Application authentication remains the responsibility of your local service.
 
-Pro and Org tunnels can add tunnel-level access protection:
+Tunnels can add tunnel-level access protection:
 
 ```bash
 lpm tunnel 3000 acme-api.lpm.llc --tunnel-auth
@@ -214,7 +218,7 @@ If you receive this response, wait at least one second before a retry. Retry aut
 
 The relay refreshes account limits before their cached validity ends, so routine refreshes can run while requests continue.
 Expired or invalidated account limits require a successful check before the relay forwards another request.
-If the check finds that the account's plan no longer includes tunnels, the relay returns `403` and closes the account's tunnels.
+If the check finds that the account's plan no longer includes tunnels, the relay closes the account's tunnels, and visitors get `404`.
 If the check fails, the relay returns `503` with `Tunnel quota service unavailable`. Retry only requests that are safe to repeat.
 
 ## Server-sent events
@@ -307,14 +311,14 @@ An established tunnel retries a capacity rejection while its previous connection
 The CLI makes up to 10 retries with backoff. A connection that lasts at least 60 seconds resets the retry count.
 
 Sleep or a network change can close active HTTP, SSE, and WebSocket connections. Applications must reconnect their streams after tunnel recovery.
-A recovered tunnel keeps its public URL.
+A recovered tunnel keeps a claimed domain. An account hostname follows your current username, so use the URL from the latest successful connection.
 
 Credential renewal keeps a healthy tunnel connected.
 
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
 | The public URL stops | The LPM CLI process stopped | Start the tunnel again |
-| The tunnel stops with `plan_required` | The account's plan doesn't include tunnels | Upgrade at [lpm.dev pricing](https://lpm.dev/pricing), or connect with an organization's claimed domain |
+| The tunnel stops because the account can't run it | The plan doesn't include tunnels, or organization billing is inactive | Upgrade at [lpm.dev pricing](https://lpm.dev/pricing), name an organization's claimed domain, or ask an organization owner to update billing |
 | A request cannot reach the local service | The service is stopped or uses another port | Start the service or select the correct port |
 | Bare `lpm tunnel` cannot select an endpoint | No active endpoint exists, or multiple endpoints exist | Pass the intended port |
 | The inspector port is busy | An explicit `--inspect-port` is already in use | Select another port or omit the flag |
