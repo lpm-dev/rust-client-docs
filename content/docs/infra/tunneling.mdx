@@ -20,7 +20,7 @@ lpm dev --tunnel
 
 ```text
 public client
-    │ HTTPS or WebSocket
+    │ HTTPS
     ▼
 LPM.dev Registry tunnel service
     │ open tunnel connection
@@ -33,7 +33,7 @@ your local service
 
 Public visitors use HTTPS. LPM CLI forwards each request to the local service and returns the local response.
 
-Public WebSocket connections use the same route. You do not need to open an inbound port on your router or firewall.
+Public browser WebSockets are unavailable. HTTP and server-sent events are supported. You do not need to open an inbound router port.
 
 The tunnel lasts while the LPM CLI process remains open. When the process stops, the public URL stops forwarding requests.
 
@@ -93,16 +93,12 @@ The LPM.dev Registry provides two tunnel base domains:
 
 | Base domain | Availability | Use |
 | --- | --- | --- |
-| `lpm.fyi` | Free, Pro, and Org | Free random domains and stable claims |
+| `lpm.fyi` | Pro and Org | Account domains and stable claims |
 | `lpm.llc` | Pro and Org | Stable claims |
 
 Run `lpm tunnel domains` to list the base domains that are currently enabled.
 
-### Free random domains
-
-A Free tunnel receives a random 10-character subdomain on `lpm.fyi`. The subdomain contains lowercase letters and numbers.
-
-The domain lasts for one tunnel session. A new connection receives a new random domain.
+Free accounts have no public tunnels. Public tunnels require a verified paid monthly Pro or Org subscription.
 
 ### Pro personal domains
 
@@ -142,44 +138,54 @@ See the [stable-domain commands](/docs/infra/tunnel#stable-domains) for listing,
 
 ## Plans and limits
 
-Tunnel limits apply to the selected personal or organization account.
+Tunnel allowances belong to the selected personal or organization account. All its tunnels share these allowances.
 
 | Limit | Free | Pro | Org |
 | --- | --- | --- | --- |
-| Concurrent tunnels | 1 | 3 | 3 |
-| Included requests | 20,000 per UTC month | 100,000 per billing period | 100,000 per billed seat and billing period |
-| Account request rate | 4,000 per minute | 20,000 per minute | 20,000 per billed seat and minute |
-| Per visitor IP | 600 per minute | 600 per minute | 600 per minute |
-| Maximum request body | 10 MiB | 100 MiB | 100 MiB |
-| Maximum session length | 1 hour | No fixed limit | No fixed limit |
-| Stable domain claims | 0 | 3 | 3 |
+| Public tunnels | No | Yes | Yes |
+| Concurrent tunnels | 0 | 3 | 3 shared |
+| HTTP requests per paid period | 0 | 50,000 | 50,000 per paid seat, pooled |
+| Busy object time per paid period | 0 | 50 hours | 50 hours per paid seat, pooled |
+| Inbound relay messages per paid period | 0 | 1,000,000 | 1,000,000 per paid seat, pooled |
+| Transfer per paid period | 0 | 10 GiB | 10 GiB per paid seat, pooled |
+| New connection attempts per paid period | 0 | 1,000 | 1,000 per paid seat, pooled |
+| Account HTTP rate | — | 1,000/minute | 1,000 plus 500 per additional seat, maximum 10,000/minute |
+| Per visitor IP | — | 600/minute | 600/minute |
+| Maximum request body | — | 10 MiB | 10 MiB |
+| Idle connection lifetime | — | No fixed limit | No fixed limit |
+| Stable domain claims | 0 | 3 | 3 shared |
 | `--tunnel-auth` | No | Yes | Yes |
-| After the included allowance | Hard stop | Proportional overage | Proportional overage |
+| Public browser WebSockets | No | No | No |
 
-The Org concurrent-tunnel and domain-claim limits apply across all members and base domains. These limits do not increase with the seat count.
+Busy time includes the aggregate active time of tunnel objects. A stream consumes busy time while it remains open.
+Relay messages include protocol messages that the relay processes. Transfer includes uploads and responses across the relay.
+An idle connection can remain open without a fixed lifetime limit. Background work still consumes its applicable allowances.
 
-The startup output reports the active plan, session expiry, limits, request usage, and overage state.
+Connection attempts include reconnects and attempted replacements. Routine credential renewals do not consume new connection attempts.
+The connection allowance stays separate from extra usage bundles. A bundle does not add connection attempts.
 
-### Request usage
+The Org concurrency and claim limits stay at three across all members, seats and base domains.
+Paid allowances follow the verified monthly service period. The seat count stays fixed for that paid grant.
 
-The included allowance belongs to the account, not to each tunnel. Multiple tunnels consume the same account allowance.
+### Request usage and extra bundles
 
-One accepted HTTP request counts once. If the local service returns an error or is unavailable, the request still counts.
+One accepted HTTP request counts once. A local-service error still counts as an accepted request.
+Rejected requests do not consume the HTTP allowance. They can still cause relay work and trigger service protection limits.
 
-A successful public WebSocket upgrade also counts once.
+Extra usage is disabled by default. An account owner must approve a finite monthly spending cap before extra usage can start.
+Use the personal or organization tunnel dashboard to approve the cap.
 
-Messages on an open WebSocket do not consume more tunnel requests. Rejected authentication, interstitial pages, and rejected oversized requests do not count.
+Each $6 bundle adds 50,000 HTTP requests, 50 busy hours, 1,000,000 inbound relay messages and 10 GiB transfer.
+One exhausted resource activates a bundle. The other three resources receive that bundle's allowance too.
+The bill uses the largest resource excess, so simultaneous use of four resources does not create four charges.
+Prices and spending caps exclude applicable tax.
 
-Free usage resets at the start of each UTC month. A Free tunnel stops accepting requests after the account uses its included allowance.
+For example, a $6 cap authorizes at most one extra bundle. The service stops new work when any authorized resource allowance ends.
+Quota exhaustion also closes active requests and connections. You can restart after the next paid period or a permitted cap increase.
+Disabling extra usage preserves accrued charges and stops further extra usage.
 
-Pro and Org usage follows the billing period. Paid overage costs $1 for each 100,000 requests and uses proportional billing.
-
-Complimentary Pro accounts without a subscription receive the Pro allowance each UTC calendar month. These accounts retain Pro domain and connection limits.
-They stop accepting requests at the included allowance because paid overage requires a subscription.
-
-Paid overage is enabled by default. You can disable it in the personal or organization tunnel dashboard.
-
-If paid overage is disabled, the tunnel stops accepting requests at the included allowance. A change to overage affects only future requests.
+The service can return `503` during maintenance or a shared cost shutdown, even when your account has remaining allowance.
+The dashboard and startup output show your account's usage and approved cap.
 
 ## Authentication and access protection
 
@@ -201,16 +207,6 @@ LPM CLI creates a token for the session. Interactive startup shows the public UR
 
 Non-interactive human output hides the token. JSON output includes it. Treat that output as secret. The tunnel service rejects requests without the correct token.
 
-### Free browser interstitial
-
-The first browser visit to a Free random domain shows a **Visit Site** page. This page reduces phishing abuse on temporary domains.
-
-The page appears only for requests that accept HTML. API clients and webhook providers reach the local service without this page.
-
-After the visitor continues, the browser receives a host-only cookie for that domain and session. The cookie expires with the session.
-
-The interstitial is not application authentication. It does not restrict API or webhook access.
-
 ## Local HTTP and public HTTPS
 
 An explicit port always selects `http://127.0.0.1:<port>/`. The public tunnel URL still uses HTTPS.
@@ -223,10 +219,10 @@ If no active endpoint exists, pass a port. If multiple endpoints exist, pass the
 
 Do not give a standalone tunnel a framework HTTPS port. Use a plain HTTP child service for tunnel forwarding.
 
-Buffered HTTP responses have a 50 MiB body limit and a 30-second completion deadline. Event streams use the separate behavior described below.
+HTTP responses stream to the visitor with a 50 MiB body limit and a 30-second completion deadline. Event streams have a separate deadline.
 
 Small HTTP responses can complete during another download, including responses without `Content-Length`.
-If local response buffering reaches its memory limit, the tunnel returns `503` with `Retry-After: 1`.
+If forwarding capacity is full, the tunnel returns `503` with `Retry-After: 1`.
 If you receive this response, wait at least one second before a retry. Retry automatically only when the request is safe to repeat.
 
 The relay refreshes account limits before their cached validity ends, so routine refreshes can run while requests continue.
@@ -236,10 +232,9 @@ If that check fails, the relay returns `503` with `Tunnel quota service unavaila
 ## Server-sent events
 
 Responses with `Content-Type: text/event-stream` reach visitors as the local service sends data.
-The tunnel waits up to 30 seconds for response headers. An open event stream can continue beyond 30 seconds.
+The tunnel waits up to 30 seconds for response headers. An event stream can continue for up to 30 minutes.
 Slow readers limit forwarding, and a visitor disconnect closes the local request.
-Tunnel revocation and the Free-session deadline still close active streams.
-This behavior requires a relay that supports streamed responses.
+Tunnel revocation, resource exhaustion and service protection limits also close active streams.
 
 LPM CLI forwards `Last-Event-ID` when an SSE client reconnects. Your local service must retain event history and resume after that ID.
 The tunnel does not retain application events or guarantee exactly-once delivery.
@@ -258,12 +253,8 @@ Protect the database as sensitive development data. Do not commit it to source c
 
 Live capture memory has fixed limits. The request buffer retains up to 1,000 requests or 64 MiB.
 
-The WebSocket buffer retains up to 5,000 events or 32 MiB.
-
-Each captured WebSocket frame keeps a 64 KiB preview and records the original frame size. The inspector marks a partial preview as truncated.
-
-For a completed event stream, the inspector retains up to 64 KiB of response data and marks a partial capture.
-An interrupted stream can have no completed capture.
+Streamed response captures retain up to 64 KiB of preview data. The inspector marks incomplete or truncated captures.
+A partial response cannot prove that the local application completed its work.
 
 The database writer queues up to 256 captures and 64 MiB. If either limit is full, LPM CLI drops new captures.
 
@@ -322,16 +313,14 @@ During that grace period, a suspected disconnect produces a temporary retry resp
 An established tunnel retries a capacity rejection while its previous connection expires. A new tunnel still stops at the active-tunnel limit.
 The CLI makes up to 10 retries with backoff. A connection that lasts at least 60 seconds resets the retry count.
 
-Sleep or a network change can close active HTTP, SSE, and WebSocket connections. Applications must reconnect their streams after tunnel recovery.
-A recovered Free tunnel can receive a new random URL. Use the URL from the latest successful connection.
-
-Credential renewal keeps a healthy tunnel connected without resetting the Free one-hour limit.
-At that limit, the tunnel stops and asks you to start a new session.
+Sleep or a network change can close active HTTP and SSE connections. Applications must reconnect their streams after tunnel recovery.
+Credential renewal preserves a healthy paid connection. New connections consume the monthly connection allowance.
 
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
 | The public URL stops | The LPM CLI process stopped | Start the tunnel again |
-| A Free URL stops after one hour | The Free session expired | Start a new session and use the new random URL |
+| Tunnel startup requires payment | The account has no eligible paid subscription | Use a paid Pro or Org account |
+| New connections stop at the monthly cap | The account consumed its connection allowance | Wait for the next paid period |
 | A request cannot reach the local service | The service is stopped or uses another port | Start the service or select the correct port |
 | Bare `lpm tunnel` cannot select an endpoint | No active endpoint exists, or multiple endpoints exist | Pass the intended port |
 | The inspector port is busy | An explicit `--inspect-port` is already in use | Select another port or omit the flag |

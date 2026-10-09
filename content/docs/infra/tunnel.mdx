@@ -87,7 +87,7 @@ For an assigned URL, omit `tunnel.domain` and run:
 lpm dev --tunnel
 ```
 
-Free accounts receive a random `lpm.fyi` hostname. Personal Pro accounts default to their account hostname.
+Personal Pro accounts default to their account hostname. Free accounts have no public tunnels.
 
 ### Select a service in a multi-service project
 
@@ -141,7 +141,7 @@ lpm dev
 lpm tunnel
 ```
 
-The tunnel forwards HTTP requests and WebSocket connections, including streaming responses and HMR.
+The tunnel forwards HTTP requests and server-sent events. Public browser WebSockets, including WebSocket-based HMR, are unavailable.
 The local child must use plain HTTP. For trusted local browser TLS, use [lpm dev --https](/docs/dev/dev#local-https-and-lan-access).
 
 ## Authentication
@@ -150,8 +150,7 @@ Remote startup and domain management require a saved session from [lpm login](/d
 They do not accept `--token`, `LPM_TOKEN`, or standalone CI tokens for the hosted service.
 Local `inspect`, `replay`, and `log` actions work without a login.
 
-LPM CLI renews the session credential before it expires. Renewal preserves the public URL, active connections, and original Free-session deadline.
-Older relays refresh through reconnection, which can close active requests and WebSockets.
+LPM CLI renews the session credential before it expires. Renewal preserves the public URL and active connections.
 
 Revoking a login session also closes its active tunnels after LPM.dev Registry processes the revocation.
 Run [lpm login](/docs/infra/login) again before restarting the tunnel.
@@ -168,7 +167,7 @@ lpm tunnel list
 lpm tunnel 3000 preview.lpm.fyi
 ```
 
-Current bases are `lpm.fyi` and `lpm.llc`. Free accounts use random `lpm.fyi` URLs but cannot claim stable names.
+Current bases are `lpm.fyi` and `lpm.llc`. Public tunnels and stable claims require a paid Pro or Org account.
 
 The label must contain 3–32 lowercase letters, numbers, or hyphens. It must start and end with a letter or number.
 Two hyphens in positions 3 and 4 are invalid. Account hostnames on `lpm.fyi` are reserved.
@@ -303,12 +302,14 @@ If the database is corrupt, stop its users, repair or move the database, then re
 
 | Tunnel account | Default domain | Session limit | Concurrent tunnels | Stable claims | Access token |
 | --- | --- | --- | --- | --- | --- |
-| Free personal | Random `lpm.fyi` | 1 hour | 1 | 0 | No |
+| Free personal | No public tunnel | — | 0 | 0 | No |
 | Pro personal | Account hostname | No fixed limit | 3 | 3 | Yes |
 | Org | Claimed organization domain | No fixed limit | 3 | 3 | Yes |
 
 Organization concurrency and claim limits apply across the organization, not per seat.
-Startup shows current limits and request usage. See [Request usage and overage](/docs/infra/tunneling#request-usage) for account allowances.
+Startup shows HTTP usage, busy hours, relay messages, transfer, connections and the spending cap.
+Each paid seat includes 50,000 HTTP requests, 50 busy hours, 1,000,000 relay messages, 10 GiB transfer and 1,000 connection attempts per month.
+See [Plans and limits](/docs/infra/tunneling#plans-and-limits) for pooled Org allowances and optional $6 extra usage bundles.
 
 ## JSON and recovery
 
@@ -324,14 +325,13 @@ Startup emits a JSON object after each successful connection. Temporary failures
 Read this output as a sequence of JSON objects, not one document.
 
 Temporary authentication-service and domain-lookup outages retry. Relay restarts and abnormal transport closures also retry.
-Invalid credentials, denied ownership, and an expired Free session stop the command with an error.
+Invalid credentials, denied ownership, unpaid access and exhausted monthly allowances stop the command with an error.
 A normal relay replacement closes the older tunnel successfully.
 
 The retry budget is ten attempts. Delays start at two seconds and increase to thirty seconds, plus jitter.
 A healthy connection of at least sixty seconds resets the budget.
 
-After reconnection, use the latest `tunnel_url`. A Free tunnel can receive a new URL.
-Applications must reconnect their SSE and WebSocket streams.
+After reconnection, use the latest `tunnel_url`. Applications must reconnect their SSE streams.
 An established tunnel retries temporary capacity conflicts during recovery. A new tunnel stops when the account is already at its limit.
 
 ### Use another relay
