@@ -148,12 +148,16 @@ Tunnels need a Pro plan or an organization plan. An organization tunnel uses one
 | Included requests | 100,000 per billing period | 100,000 per billed seat and billing period |
 | Account request rate | 20,000 per minute | 20,000 per billed seat and minute |
 | Per visitor IP | 600 per minute | 600 per minute |
-| Maximum request body | 100 MiB | 100 MiB |
+| Maximum request body | 11.5 MiB | 11.5 MiB |
 | Stable domain claims | 3 | 3 |
 | `--tunnel-auth` | Yes | Yes |
 | After the included allowance | Proportional overage | Proportional overage |
 
 The Org concurrent-tunnel and domain-claim limits apply across all members and base domains. These limits do not increase with the seat count.
+
+A request body must arrive within two minutes. A larger body gets `413`, and a slower one `408`. A body also gets `413` when its headers are too large to relay with it, which only happens near the size limit. If many large uploads are in flight on the relay at once, a new one can get `503` with `Retry-After: 5`.
+
+A public WebSocket message larger than about 12 MiB closes that socket with code `1009`.
 
 The startup output reports the active plan, limits, request usage, and overage state.
 
@@ -165,9 +169,9 @@ The included allowance belongs to the account, not to each tunnel. Multiple tunn
 
 One accepted HTTP request counts once. If the local service returns an error or is unavailable, the request still counts.
 
-A successful public WebSocket upgrade also counts once.
+A public WebSocket upgrade also counts once, including one the local service refuses.
 
-Messages on an open WebSocket do not consume more tunnel requests. Rejected authentication and rejected oversized requests do not count.
+Messages on an open WebSocket do not consume more tunnel requests. Rejected authentication does not count, and neither does a request whose declared `Content-Length` is over the body limit. The relay accepts a request before it reads the body, so a request counts once accepted, even if its body then turns out too large, too slow or incomplete.
 
 Pro and Org usage follows the billing period. Paid overage costs $1 for each 100,000 requests and uses proportional billing.
 
