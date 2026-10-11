@@ -291,7 +291,7 @@ The LPM.dev Registry applies these included storage limits:
 | Organization | 25 GiB per seat |
 | Enterprise | No fixed quota in the Enterprise plan |
 
-The CLI and LPM.dev Registry accept archives up to 100 MiB (104,857,600 bytes). LPM CLI skips uploading a larger archive and builds the task as usual.
+The LPM.dev Registry accepts archives up to 100 MiB (104,857,600 bytes). LPM CLI skips uploading a larger archive to it and builds the task as usual. With a [custom cache endpoint](#custom-cache-endpoints), LPM CLI uploads and restores archives up to 500 MiB.
 
 Restore also applies these limits to the archive contents:
 
@@ -309,17 +309,27 @@ To fit new uploads within the storage limit, the Registry can evict the least re
 
 ### Request limits
 
-The LPM.dev Registry limits the remote cache requests of each Pro account, and of each organization seat:
+The LPM.dev Registry limits the remote cache requests of each Pro account, and of each organization seat, Enterprise included:
 
-| Requests | Per minute | Per day |
+| Limit | Per minute | Per day |
 | --- | --- | --- |
+| Requests of any kind | 3,000 | 300,000 |
 | Uploads | 300 | 15,000 |
-| Cache hits, as downloads and existence checks | 1,500 | 150,000 |
+| Uploaded data | - | 50 GiB |
+| Cache hits | 1,500 | 150,000 |
 | Downloaded data | - | 50 GiB |
 
-An organization's daily limits grow with every seat. Its per-minute limits grow with its seats up to five, to 1,500 uploads and 7,500 cache hits a minute. A cache miss doesn't count.
+- Every request counts against the request limits, including lookups that miss and status checks.
+- Uploads also count against the upload limits, and cache hits against the cache-hit limits. A cache hit is a download, or an existence check, that finds the artifact.
+- An organization's limits grow with every seat, except its uploads a minute, which grow with up to five seats: 1,500 uploads a minute.
+- An account sends at most 8 uploads at once, whatever its seats.
+- An account whose plan has no remote cache gets 30 requests a minute and 1,000 a day.
 
-A request past a limit gets HTTP 429 with a `Retry-After` header. LPM CLI then skips that kind of request, lookups or uploads, for the rest of the run, and builds tasks as it would without a remote cache.
+Each window starts with the first request it counts, not at a set time of day.
+
+A request past a limit gets HTTP 429 with a `Retry-After` header that gives the seconds until the limit resets. LPM CLI then skips that kind of request until then, and builds tasks as it would without a remote cache. A lookup limit pauses uploads too, since a task that skipped its lookup would likely upload an artifact the cache already holds. The CLI warns once for each kind of limit.
+
+Turborepo receives a per-minute limit as HTTP 429, and a daily limit as HTTP 403 with the code `remote_caching_over_limit`.
 
 ### Inspect usage
 
@@ -358,6 +368,17 @@ Project-loaded environment values also affect the key. Different dotenv or local
 Make sure that the task declares `cache: true` and `outputs`. Inspect warnings for a read-only token, missing signing key, secret-looking variable, or artifact size limit.
 
 If read-only mode is enabled, uploads are skipped by design. A local hit also avoids task execution and does not upload an existing local result.
+
+### A request limit is reached
+
+LPM CLI warns `Remote cache limit reached` with the limit it reached and how long it skips remote requests. Tasks still run, and the CLI uses the remote cache again once the limit resets. See [Request limits](#request-limits).
+
+Concurrent runs, such as parallel CI jobs, share the account's limits. To spend fewer requests:
+
+- Give jobs that only consume results [read-only access](#read-only-consumers), so they don't upload.
+- Cache only tasks that take longer to run than to download. Each cached task costs a lookup on every run, and an upload on every miss.
+
+The Registry can also answer an upload with HTTP 429 and `Retry-After: 1` while another upload holds the account's cache. LPM CLI then skips uploads for a second.
 
 ### The server rejects access
 
