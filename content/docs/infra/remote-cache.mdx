@@ -62,7 +62,7 @@ export NODE_ENV=production
 
 The token permits cache reads and writes. Supply it through the shell or CI environment, outside committed project configuration.
 
-For the configured Registry origin, LPM CLI can also use `LPM_TOKEN` or credentials from [`lpm login`](/docs/infra/login). Those credentials must permit cache access.
+For the configured Registry origin, LPM CLI can also use `LPM_TOKEN`, when it's a token that permits cache access. Credentials from [`lpm login`](/docs/infra/login) don't permit cache access.
 
 ### 3. Run the task
 
@@ -319,15 +319,16 @@ The LPM.dev Registry limits the remote cache requests of each Pro account, and o
 | Cache hits | 2,000 | 75,000 |
 | Downloaded data | - | 40 GiB |
 
-- Every request whose token may use the account's cache for it counts against its request limits, including lookups that miss and status checks. A query for several artifacts at once counts one request for each different artifact.
+- Every request whose token may use the account's cache for it counts against its request limits, including lookups that miss and status checks. A query for several artifacts at once counts one request for each different artifact; one with more than the window has left is refused and counts as one refused request instead.
 - Uploads also count against the upload limits, and cache hits against the cache-hit limits. A cache hit is a download, or an existence check, that finds the artifact. An upload the Registry refuses before receiving it doesn't count as an upload, and neither does one of content the cache already holds, recognized by the checksum LPM CLI sends.
 - An organization's daily limits grow with every seat. Its limits a minute grow with up to ten seats, and its uploads a minute with up to five: 1,500 uploads a minute.
 - An account can have 4 uploads in flight for each seat, at least 8 and at most 16, across the Registry, and 8 uploads and downloads together for each seat, at least 32 and at most 64, on each Registry server. A Registry server that is half full shares its places equally among the accounts using it, and keeps a few places for accounts using few. With every place taken, it answers as busy until a place frees.
 - An upload or download that takes longer than 10 seconds plus a second for every 128 KiB, or longer than 2 minutes, is cut off. LPM CLI gives each remote cache request 30 seconds anyway. After an interrupted download the task runs as on a miss, and the hit and its bytes still count.
 - An upload that stops partway, such as when its connection drops, holds its artifact for at most 5 minutes.
 - An account whose plan has no remote cache gets 30 requests a minute and 1,000 a day.
-- A request the Registry refuses counts against the account its token belongs to, with a limit of its own: 60 a minute and 2,000 a day, whatever the seats. That includes a request the token may not make, such as an upload with a read-only token or a request for another account's cache, and a request that isn't valid. It doesn't count against the request limits above.
-- A token that isn't valid gets the same HTTP 401 for a minute. After 60 tokens that aren't valid from one address in a minute, or from one IPv6 /64, or 240 from one IPv6 /48, the Registry answers that address with HTTP 429 for the rest of the minute. It still checks one token from there every 2 seconds, and lets through a token that recently worked.
+- A request the Registry refuses counts against limits of its own instead of the request limits above, whatever the seats: 60 a minute and 2,000 a day for its token, and 600 a minute and 20,000 a day for the token's account. That includes a request the token may not make, such as an upload with a read-only token or a request for another account's cache, and a request that isn't valid. Once one of these limits is spent, the Registry answers the token's requests of the same kind, such as its uploads, with HTTP 429 for up to a minute without checking them; its other requests go on. These limits never answer as `over_limit`, so Turborepo keeps its cache on.
+- With a token that can only read the cache, run Turborepo with `--remote-cache-read-only`. LPM CLI stops uploading for the run after its first refused upload, and stops using the remote cache for the run after a refused lookup.
+- A token that isn't valid gets the same HTTP 401 for a minute. After 60 tokens that aren't valid from one address in a minute, or from one IPv6 /64, or 240 from one IPv6 /48, the Registry answers that address with HTTP 429 for the rest of the minute. It still checks one token from there every 2 seconds, and lets through a token that worked in the last day.
 
 Each window starts with the first request it counts, not at a set time of day.
 
