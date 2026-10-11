@@ -313,19 +313,20 @@ The LPM.dev Registry limits the remote cache requests of each Pro account, and o
 
 | Limit | Per minute | Per day |
 | --- | --- | --- |
-| Requests of any kind | 3,000 | 300,000 |
-| Uploads | 300 | 15,000 |
-| Uploaded data | - | 50 GiB |
-| Cache hits | 1,500 | 150,000 |
-| Downloaded data | - | 50 GiB |
+| Requests of any kind | 3,000 | 120,000 |
+| Uploads | 300 | 5,000 |
+| Uploaded data | - | 15 GiB |
+| Cache hits | 2,000 | 75,000 |
+| Downloaded data | - | 40 GiB |
 
-- Every request whose token may use the account's cache for it counts against its request limits, including lookups that miss and status checks. A query for several artifacts at once counts one request for each different artifact. A request the Registry refuses before it knows the account, such as an upload with a read-only token, doesn't count.
+- Every request whose token may use the account's cache for it counts against its request limits, including lookups that miss and status checks. A query for several artifacts at once counts one request for each different artifact. A request the token may not make, such as an upload with a read-only token or a request for another account's cache, counts against the account the token belongs to.
 - Uploads also count against the upload limits, and cache hits against the cache-hit limits. A cache hit is a download, or an existence check, that finds the artifact. An upload the Registry refuses before receiving it doesn't count as an upload, and neither does one of content the cache already holds, recognized by the checksum LPM CLI sends.
 - An organization's daily limits grow with every seat. Its limits a minute grow with up to ten seats, and its uploads a minute with up to five: 1,500 uploads a minute.
-- An account can have 4 uploads in flight for each seat, at least 8 and at most 16, and 8 uploads and downloads together for each seat, at least 32 and at most 64, on each Registry server. A Registry server with every place taken answers for a moment as busy.
+- An account can have 4 uploads in flight for each seat, at least 8 and at most 16, across the Registry, and 8 uploads and downloads together for each seat, at least 32 and at most 64, on each Registry server. A Registry server that is half full shares its places equally among the accounts using it, and keeps a few places for every account. With every place taken, it answers for a moment as busy.
 - An upload or download that takes longer than 10 seconds plus a second for every 128 KiB, or longer than 2 minutes, is cut off. LPM CLI gives each remote cache request 30 seconds anyway. After an interrupted download the task runs as on a miss, and the hit and its bytes still count.
 - An upload that stops partway, such as when its connection drops, holds its artifact for at most 5 minutes.
 - An account whose plan has no remote cache gets 30 requests a minute and 1,000 a day.
+- After 60 requests with tokens that aren't valid in a minute, the Registry answers requests from that address with HTTP 429 for the rest of the minute, except those with a token that recently worked.
 
 Each window starts with the first request it counts, not at a set time of day.
 
@@ -382,7 +383,7 @@ Concurrent runs, such as parallel CI jobs, share the account's limits. To spend 
 - Give jobs that only consume results [read-only access](#read-only-consumers), so they don't upload.
 - Cache only tasks that take longer to run than to download. Each cached task costs a lookup on every run, and an upload on every miss.
 
-The Registry also answers with HTTP 429 and `Retry-After: 1` when the account has as many uploads or downloads in flight as it may, when the Registry server is busy, or while another upload holds its cache. LPM CLI sends a refused lookup or upload once more after one to one and a half seconds, and notes `remote cache is busy; skipping some uploads for a moment` (or lookups) if it skips some anyway. An upload of an artifact another upload is still storing gets HTTP 409, and LPM CLI leaves it to that upload.
+The Registry also answers with HTTP 429 and `Retry-After: 1` when the account has as many uploads or downloads in flight as it may, or while another upload holds its cache, and with `Retry-After: 2` when the Registry server is busy. LPM CLI sends a refused lookup or upload once more after the wait, plus up to half of it again, and notes `remote cache is busy; skipping some uploads for a moment` (or lookups) if it skips some anyway. An upload of an artifact another upload is still storing gets HTTP 409, and LPM CLI leaves it to that upload.
 
 ### The server rejects access
 
