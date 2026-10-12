@@ -283,20 +283,26 @@ Run history commands from the directory that started the tunnel.
 Captured data can contain full bodies, cookies, authorization headers, and signature headers.
 Before it creates the database, LPM CLI adds `inspector.db*` to `.lpm/.gitignore`, unless the file already ignores the capture files, so git ignores the database, its `-wal` and `-shm` files and LPM CLI's `inspector.db-lock` wherever the project sits in a repository. A later negation that could name a capture file, such as `!*.db` or `!Inspector.db`, undoes the rule, so LPM CLI adds it again after it. LPM CLI leaves `.lpm/.gitignore` as it is when git doesn't read it as a file, being a link or not a regular file, when it's larger than 16 MiB, or when it can't be written: read-only, or on Unix another user's.
 
-The capture files are owner-only on Unix and inherit project ACLs on Windows:
+The capture files are owner-only on Unix and inherit project ACLs on Windows. `lpm tunnel` and `lpm dev --tunnel`, which record captures, make them so:
 
-- On Unix, `.lpm` must be your own, and LPM CLI makes it writable by you alone.
-- On Unix, a capture database other users could open, as earlier LPM CLI releases or a checkout can leave it, is replaced with an owner-only copy, so a handle opened before can't read later captures. While another process has it open, LPM CLI stops and asks you to end other `lpm tunnel` and `lpm dev` runs in the project first.
-- LPM CLI refuses a linked `.lpm` directory, a linked capture file, a capture file with other hard links or, on Unix, another user's, and a database with triggers or views, which it never creates. A cloned repository could supply any of these.
+- On Unix, `.lpm` must be your own. LPM CLI makes it writable by you alone, and on macOS removes its extended ACL entries, which can grant access its mode doesn't show and pass to the files created in it.
+- On Unix, a capture database other users could read, as earlier LPM CLI releases or a checkout can leave it, is replaced with an owner-only copy, so a handle opened before can't read later captures. Other users could read it when its mode lets its group or anyone read it, or on macOS when it has an extended ACL. LPM CLI first checks the database for damage, its full-text index included, and refuses a damaged one. While another process has the database open, LPM CLI stops and asks you to close it, such as other `lpm tunnel` and `lpm dev` runs in the project, and retry.
+- A filesystem without Unix modes, such as FAT, exFAT or a Windows drive mounted in WSL, shows every file open to other users, which a copy wouldn't change. The tunnel keeps the database, and its capture warning says the database is open to other users.
 
-Errors opening, reading or writing the database are I/O errors, `io` in `--json` output.
+`lpm tunnel inspect`, `log` and `replay`, and `inspect --ui`, read the captures without changing any file's access, so they work while a tunnel records to the database. When other users could read it, they warn; the next `lpm tunnel` or `lpm dev --tunnel` run in the project makes it owner-only where the filesystem keeps Unix modes.
 
-At each start, the capture warning asks git how it treats the capture files. It asks inside `.lpm`, so a repository of its own there, such as a submodule, answers for the files it keeps. Outside a repository, or when git doesn't answer within two seconds, the warning says nothing of git.
+Run as root, as in a container over a mounted checkout, LPM CLI accepts capture files of the project directory's owner and its own, and gives the files it creates to the project directory's owner.
 
-- When git ignores them, the warning says so.
+LPM CLI refuses a linked `.lpm` directory, a linked capture file, a capture file with other hard links, on Unix a `.lpm` directory or capture file of another user's, and a database holding anything LPM CLI never creates, such as triggers, views, checks or extra indexes. A cloned repository could supply any of these. Move the file aside and retry.
+
+Opening the capture files waits up to 10 seconds while another LPM CLI run opens them, then stops. Errors opening, reading or writing the database are I/O errors, `io` in `--json` output.
+
+At each start, the capture warning asks git how it treats the capture files: the project's repository about the files it tracks, and git inside `.lpm` about the files a repository of its own there tracks, such as a submodule, and the files no rule ignores. It asks both at once. Outside a repository, or when git doesn't answer within two seconds, the warning says nothing of git.
+
+- When git ignores them and no repository tracks them, the warning says so.
 - When git doesn't ignore them, the warning names them. Add `inspector.db*` to `.lpm/.gitignore`. Git doesn't read a linked `.lpm/.gitignore`, or one that isn't a file, so replace it with a file that holds the rule.
-- When git tracks them, the warning names them and gives the command to stop tracking them, such as `git -C .lpm rm --cached -- inspector.db`. An ignore rule doesn't stop a tracked file from being committed. Captures already committed stay in the repository's history and every clone of it, so rotate the credentials they held: webhook signing secrets, authorization tokens and session cookies. For a public repository, rewrite its history too.
-- When git refuses to work inside `.lpm`, as when `.lpm` looks like a bare repository, the warning reports what the project's repository says, and that it couldn't ask inside `.lpm`.
+- When a repository tracks them, the warning names them and gives the command for each repository to stop tracking them: `git rm --cached -- .lpm/inspector.db` for the project's, or `git -C .lpm rm --cached -- inspector.db` for one of `.lpm`'s own. An ignore rule doesn't stop a tracked file from being committed. Captures already committed stay in the repository's history and every clone of it, so rotate the credentials they held: webhook signing secrets, authorization tokens and session cookies. For a public repository, rewrite its history too.
+- When git refuses to work inside `.lpm`, as when `.lpm` looks like a bare repository, the warning reports what the project's repository says, and asks you to check that git ignores and doesn't track `inspector.db*`.
 
 The warning names files whose names hold only letters, digits, `.`, `_`, `-` and `/`, and counts the rest. When it can't name every tracked file, its command covers all the capture files.
 
@@ -312,9 +318,10 @@ Status filters accept `2xx`, `3xx`, `4xx`, `5xx`, `error`, `err`, or an HTTP sta
 Provider filters are case-insensitive.
 
 `log --clear` deletes captured requests and completed sessions. Active sessions remain available for new captures.
+The deleted captures are overwritten in the database, and its write-ahead log, which still holds them, is emptied. If another LPM CLI run is reading the database at that moment, the log is removed instead once the last run using the database stops.
 It cannot combine with filters or a count limit. `inspect --ui` cannot combine with CLI capture filters or JSON output.
 
-If the database is corrupt, stop its users, repair or move the database, then retry.
+If LPM CLI reports the database damaged, move `.lpm/inspector.db` aside and retry. LPM CLI starts a new one.
 
 ## Plans and limits
 
