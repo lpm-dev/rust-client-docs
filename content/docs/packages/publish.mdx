@@ -245,28 +245,35 @@ Run [`lpm install`](/docs/packages/install) before publication. Missing bundles,
 
 The `package/` prefix leaves 255 components for a project-relative path. Target-specific rewrites and bundled dependencies use the same limits. Other registries can impose smaller limits.
 
-LPM.dev Registry accepts compressed tarballs up to 100 MiB, and publish requests up to 150 MiB: the tarball in base64 with the package's metadata. A publish that includes LPM.dev Registry refuses a larger one before any target is published. A `--provenance` publish adds its Sigstore bundle to the request twice, about 10 KB each, so that check keeps 1 MiB of the limit free for it.
+LPM.dev Registry accepts compressed tarballs up to 100 MiB. It accepts publish requests up to 150 MiB, which hold the tarball in base64 with the metadata of the package. If a publish includes LPM.dev Registry, LPM CLI refuses a larger tarball before it publishes to any target. A `--provenance` publish adds its Sigstore bundle to the request two times, about 10 KB each. As a result, LPM CLI keeps 1 MiB of the limit free for it.
 
 ## When LPM.dev Registry refuses a publish
 
-A publish to LPM.dev Registry and another target asks LPM.dev Registry first, with the size of the tarball it's sent. It stops before any target publishes when LPM.dev Registry refuses the publish for good, for permission, payment or size (HTTP 402, 403 or 413):
+A publish to LPM.dev Registry and another target first asks LPM.dev Registry, and sends the size of the tarball. If LPM.dev Registry refuses the publish for good, for permission, payment, or size (HTTP 402, 403, or 413), the publish stops before any target publishes. These refusals are for:
 
-- the account's storage, private-package limit or billing
-- an organization's 2FA rule or IP allowlist
-- a scope the account doesn't own
-- the tarball's size
-- the token's permission
+- The storage, private-package limit, or billing of the account
+- The 2FA rule or IP allowlist of an organization
+- A scope that the account does not own
+- The size of the tarball
+- The permission of the token
 
-Other answers are left to each target's own upload:
+Each target handles other answers at its own upload. One of these answers is a version that LPM.dev Registry already has, for example after a partial publish. LPM.dev Registry gives the `VERSION_EXISTS` code, or an older LPM.dev Registry gives only its message. The LPM.dev target then reports that answer and does not upload. The other targets publish.
 
-- A version LPM.dev Registry already has, as after a partial publish. It says so by its `VERSION_EXISTS` code, or an older LPM.dev Registry by its message alone. The LPM.dev target then reports that answer without uploading, and the other targets publish.
-- A request it can't read, an unknown package, a rate limit, a server error, or an answer that can't be read. A rate limit, a timeout or a server error is retried first.
+Each target also handles these answers at its own upload:
 
-The same publish then settles LPM.dev Registry's second factor before any target publishes, unless LPM.dev Registry already has the version. With 2FA on, it asks for the code. Under `--json` without `--otp`, it publishes none. A malformed `--otp`, or a token LPM.dev Registry refuses, stops it there too.
+- A request that LPM.dev Registry cannot read
+- An unknown package
+- A rate limit
+- A server error
+- An answer that LPM CLI cannot read
 
-When the account can't be read, as while LPM.dev Registry is unavailable, the other targets still publish. The LPM.dev target tries again and reports its own result.
+After a rate limit, a timeout, or a server error, LPM CLI tries the request again first.
 
-The question counts the tarball. At the upload, LPM.dev Registry also counts what it derives from the tarball: the README and skill content, and for a Swift package its source archive, raw `Package.swift` and manifest bundle. So a publish within that much of the limit can still be refused at its upload. API docs and LLM context, which it derives later, count toward storage too. `--dry-run` asks the same question and fails on any refusal.
+Before any target publishes, the same publish then completes the second factor of LPM.dev Registry, unless LPM.dev Registry already has the version. If 2FA is on, it asks for the code. With `--json` and no `--otp`, it publishes to no target. A malformed `--otp`, or a token that LPM.dev Registry refuses, also stops it at this point.
+
+If LPM CLI cannot read the account, for example while LPM.dev Registry is unavailable, the other targets still publish. The LPM.dev target tries again and reports its own result.
+
+This first question counts the tarball. At the upload, LPM.dev Registry also counts the content that it derives from the tarball: the README, skill content, and for a Swift package, its source archive, raw `Package.swift`, and manifest bundle. As a result, LPM.dev Registry can still refuse a publish at its upload if the publish is within that much of the limit. API docs and LLM context, which it derives later, also count toward storage. `--dry-run` asks the same question and fails on any refusal.
 
 ## Credentials and OTP
 
