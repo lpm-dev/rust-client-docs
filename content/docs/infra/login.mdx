@@ -7,6 +7,8 @@ Use these commands to authenticate private installs and publishing, check your a
 
 ```bash
 lpm login [--npm | --github | --gitlab | --login-registry <URL>] [--token <TOKEN>] [--save-env-token]
+lpm login --device [--json]
+lpm login --complete <LOGIN_ID> [--json]
 lpm whoami
 lpm logout [--npm] [--github] [--gitlab] [--logout-registry <URL>] [--all] [--revoke]
 ```
@@ -53,7 +55,9 @@ lpm login
 
 Complete authentication in the browser, then select **Authorize CLI**. The local callback must complete within two minutes.
 
-If the browser does not open, copy the displayed URL into a browser. JSON mode suppresses this manual URL.
+The browser must run on the CLI host. If it does not open, copy the displayed URL into that host's browser.
+
+For SSH, containers, or authorization from another device, use `lpm login --device`.
 
 LPM CLI verifies and saves the returned session. Future protected commands can refresh its access token automatically.
 
@@ -76,6 +80,80 @@ lpm whoami --registry https://registry.example.com
 `--registry` selects the browser-login service. `--login-registry` instead stores a token for an npm-compatible registry.
 
 The authorization-code exchange has a 30-second timeout and refuses redirects. If it fails, correct the registry connection and restart login.
+
+## Authorize another host
+
+Run this command on the host that needs credentials:
+
+```bash
+lpm login --device
+```
+
+Open the displayed link on your computer or phone. Check that the request code matches the CLI output.
+Complete sign-in and MFA, then select **Authorize CLI**.
+
+The CLI polls the registry and saves the session on the requesting host. This flow needs outbound HTTPS access only.
+It does not open a browser or require a callback port on that host.
+
+The request expires after ten minutes. After browser approval, complete sign-in within 60 seconds.
+Select **Decline CLI access** to stop the request without creating credentials.
+
+If the CLI stops before approval, resume with its displayed login ID:
+
+```bash
+lpm login --complete <LOGIN_ID>
+```
+
+Use the same host, user, `LPM_HOME`, and `--registry` value. If approval expires or credential delivery fails, start a new request.
+The CLI removes completed requests and requests whose denial it receives.
+It removes expired records when you complete a request or start another device sign-in.
+
+These modes require a registry server that supports cross-device sign-in. The local browser flow remains available for older servers.
+
+### Web, desktop, and mobile clients
+
+Start a request on the execution host:
+
+```bash
+lpm login --device --json
+```
+
+The command returns one JSON object, then exits.
+If a valid session exists, it returns the completed login result instead.
+Otherwise, it returns a pending request:
+
+```json
+{
+  "success": true,
+  "status": "authorization_pending",
+  "login_id": "<LOGIN_ID>",
+  "registry": "https://lpm.dev",
+  "verification_uri": "https://lpm.dev/cli/login?...",
+  "request_code": "<REQUEST_CODE>",
+  "expires_at": 1790763000,
+  "interval": 3
+}
+```
+
+Display `verification_uri` and `request_code` in the client. Keep the private request record on the execution host.
+The output contains no access token, refresh token, or private verifier.
+
+After browser approval, complete the request on that host:
+
+```bash
+lpm login --complete <LOGIN_ID> --json
+```
+
+Each JSON completion call polls once. A pending result includes the same login ID and a polling interval in seconds.
+Wait at least `interval` seconds before another call. `expires_at` is a Unix timestamp in seconds.
+A completed result uses the normal login fields: `success`, `username`, `registry`, `storage_backend`, and `storage_degraded`.
+
+Rate limits return `rate_limited`. Temporary server failures return an error and preserve the request for another call.
+Declined or consumed requests return an error and remove the local request record.
+
+Plain `lpm login --json` reuses a valid saved session. Without that session, it returns instructions for the device flow.
+
+For unattended CI jobs, pass `LPM_TOKEN` directly to protected commands. The device flow still requires a person to approve access.
 
 ## Sign in to npm
 
@@ -276,6 +354,8 @@ For CI, remove or replace the token in the job's secret configuration.
 
 | Flag | Effect |
 | --- | --- |
+| `--device` | Authorize this host from any browser. With `--json`, return a pending request and exit. |
+| `--complete <LOGIN_ID>` | Resume a device request on this host. With `--json`, poll once. |
 | `--npm` | Select npm authentication. |
 | `--github` | Select GitHub Packages authentication. |
 | `--gitlab` | Select GitLab Packages authentication. |
