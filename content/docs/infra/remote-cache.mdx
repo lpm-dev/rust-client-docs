@@ -291,7 +291,7 @@ The LPM.dev Registry applies these included storage limits:
 | Organization | 25 GiB per seat |
 | Enterprise | No fixed quota in the Enterprise plan |
 
-The CLI and LPM.dev Registry accept archives up to 500 MiB (524,288,000 bytes).
+The LPM.dev Registry accepts archives up to 100 MiB (104,857,600 bytes), and refuses an empty upload. With a custom cache endpoint, LPM CLI uploads and restores archives up to 500 MiB (524,288,000 bytes).
 
 Restore also applies these limits to the archive contents:
 
@@ -303,7 +303,7 @@ Restore also applies these limits to the archive contents:
 
 A compressed archive can fit the upload limit but exceed an extraction limit. A rejected download becomes a cache miss.
 
-Default retention is 14 days, and a download refreshes the retention period.
+Default retention is 14 days, and a download refreshes the retention period. An expired artifact counts toward usage until the Registry removes it, normally within minutes.
 
 To fit new uploads within the storage limit, the Registry can evict the least recently accessed artifacts. Cache storage is temporary.
 
@@ -314,15 +314,61 @@ lpm cache status
 lpm cache status --json
 ```
 
-The dashboard's **Settings → Billing** page shows remote-cache usage, retention, and overage controls for the selected account.
+The dashboard's **Settings → Billing** page shows remote-cache usage, retention, and overage controls for the selected account. Usage includes uploads in progress, at their full size from when they start.
 
-Overage is off by default. Enabling it permits uploads above the included quota, subject to any account overage cap.
+### Overage
 
-An organization owner or administrator controls its overage setting.
+Overage is off by default. If you turn it on, the account can keep more cache than its plan includes, up to a cap that you set. Overage needs a Pro or organization subscription with active billing. Only the owner of an organization can change its overage setting, as for its other billing settings.
+
+A cap above 100 GiB needs paid invoices that cover it. For example, after you pay a $25 invoice, the cap can be up to 250 GiB. Only money that Stripe collects counts, so an invoice that a credit balance paid does not increase the limit. The billing page shows the current limit. You can always lower the cap or turn overage off.
+
+| Overage setting | Value |
+| --- | --- |
+| Price | $0.20 for each GiB kept 30 days, metered daily |
+| Default cap | 100 GiB |
+| Highest cap | 10,000 GiB |
+| Cap above 100 GiB | Up to 10 GiB for each dollar of the subscription's largest paid invoice |
+| Most a month can cost | The highest cap set during the month × $0.20 |
+
+> **CAUTION:** Set the cap before you turn overage on. When you turn overage on, the cache keeps the included cache plus the cap, and LPM removes anything above that within minutes. A trim deletes artifacts permanently, least recently used first. You cannot restore them. Their tasks run again on the next cache miss.
+
+### What the cache keeps
+
+This table describes an account with overage turned on.
+
+| Situation | Overage | What the cache keeps |
+| --- | --- | --- |
+| Billing is active | Billed | The included cache plus the cap. |
+| You turn overage off or lower the cap | Off, or billed up to the new cap | LPM trims it to the new limit. |
+| The allowance becomes smaller, for example for an organization with fewer seats | Billed | LPM trims it to the new limit. |
+| A payment failed: the first three days of the billing grace | Off, not billed | What it holds, up to the cap. It cannot grow. |
+| A payment failed: the rest of the billing grace | Off, not billed | LPM trims it to the included quota. |
+| A payment failed within 27 days after the start of the last three-day hold | Off, not billed | LPM trims it to the included quota at once. |
+| The failed payment succeeds | Billed | The included cache plus the cap. |
+| Stripe paused the subscription | Off, not billed | An organization: as for a failed payment. A Pro account moves to Hobby, as in the next row. |
+| A Pro account moves to Hobby while you can still pay its subscription, for example when a grace ends unpaid | Off until you pay the subscription | LPM trims it to what Pro includes. |
+| The subscription ends, also by a cancellation | Off, and a new subscription leaves it off | LPM trims it at once to the included quota. An account that moves to Hobby keeps what Pro includes. |
+| The account is on Hobby | Off | Nothing that the account can use. LPM removes artifacts when they expire. |
+
+The billing page and the payment-failed email say whether a failed payment keeps the cache for three days or trims it at once. You can turn overage on only while billing is active. After a failed payment, you can turn it on when the payment succeeds. After a cancellation, you can turn it on with a new subscription.
+
+If you pay the invoice of a paused subscription, the subscription stays paused. To resume it, email support@lpm.dev. Overage resumes with the subscription.
+
+### When LPM pauses remote caching
+
+If LPM pauses or disables remote caching for an account, overage is off, and LPM bills nothing. This does not apply to an organization whose billing lapsed. LPM does not trim a cache that the account cannot use. A trim that was due runs when caching resumes.
+
+For a trim that LPM scheduled when overage billing started, LPM sends an email first. The trim runs at least a week after that email. Until then, the cache keeps what it holds, but it cannot grow. Uploads replace its least recently used artifacts.
+
+LPM does not send the email if overage with a cap keeps the whole cache, because the trim then removes nothing. LPM turned your overage off when billing started. If you turn overage on again with a cap before the email goes, LPM also does not send it. The billing page shows what overage keeps.
+
+If you ask for a trim sooner, because you turn overage off or lower the cap, the trim runs when you ask. If LPM cannot deliver the email, the trim runs on the date that the email gives. A trim scheduled for an account on Hobby runs on its date, because the account cannot use its cache. Artifacts still expire after the retention period.
+
+### Remote status
 
 | Remote status | Meaning |
 | --- | --- |
-| `enabled` | Remote caching is available within the account's limits. |
+| `enabled` | Remote caching is available within the account's limits, or a billing grace holds the cache above them until the hold ends. |
 | `disabled` | The plan or account configuration disables remote caching. |
 | `paused` | Remote access is paused, including after organization billing lapses. |
 | `over_limit` | Usage exceeds the allowed storage. Existing artifacts remain readable, and uploads first attempt eviction. |
