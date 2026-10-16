@@ -24,6 +24,7 @@ lpm tunnel 3000
 
 The command prints a public URL and forwards requests to `http://127.0.0.1:3000/`.
 Keep the command open while you use the URL. Press `q` or `Ctrl+C` to stop it.
+Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
 
 ### Choose an action
 
@@ -46,7 +47,7 @@ Aliases: `release` for `unclaim`, `ls` for `list`, and `logs` for `log`.
 ## Project configuration
 
 For a repeatable workflow, add a claimed domain to `lpm.json` and use [`lpm dev`](/docs/dev/dev).
-First, claim the hostname with an eligible account:
+First, claim the hostname with your Pro plan. For a domain of an organization, an owner or administrator adds `--org <slug>`:
 
 ```bash
 lpm tunnel claim preview.lpm.fyi
@@ -87,7 +88,7 @@ For an assigned URL, omit `tunnel.domain` and run:
 lpm dev --tunnel
 ```
 
-Free accounts receive a random `lpm.fyi` hostname. Personal Pro accounts default to their account hostname.
+A Pro account uses its account hostname, `<username>.lpm.fyi`. The lpm.dev username must be a valid hostname label: lowercase letters, digits, and hyphens, at most 63 characters. If it is not, the tunnel stops with `domain_required`. Set a username, or name a domain that you claimed. An organization member without Pro must name one of the claimed domains of the organization.
 
 ### Select a service in a multi-service project
 
@@ -150,7 +151,7 @@ Remote startup and domain management require a saved session from [lpm login](/d
 They do not accept `--token`, `LPM_TOKEN`, or standalone CI tokens for the hosted service.
 Local `inspect`, `replay`, and `log` actions work without a login.
 
-LPM CLI renews the session credential before it expires. Renewal preserves the public URL, active connections, and original Free-session deadline.
+LPM CLI renews the session credential before it expires. Renewal preserves the public URL and active connections.
 Older relays refresh through reconnection, which can close active requests and WebSockets.
 
 Revoking a login session also closes its active tunnels after LPM.dev Registry processes the revocation.
@@ -168,7 +169,7 @@ lpm tunnel list
 lpm tunnel 3000 preview.lpm.fyi
 ```
 
-Current bases are `lpm.fyi` and `lpm.llc`. Free accounts use random `lpm.fyi` URLs but cannot claim stable names.
+Current bases are `lpm.fyi` and `lpm.llc`.
 
 The label must contain 3–32 lowercase letters, numbers, or hyphens. It must start and end with a letter or number.
 Two hyphens in positions 3 and 4 are invalid. Account hostnames on `lpm.fyi` are reserved.
@@ -245,7 +246,7 @@ Storage failure, capture saturation, persistence timeout, or forwarding overload
 
 ### Protect a preview URL
 
-Pro and Org tunnels support an access token:
+Tunnels support an access token:
 
 ```bash
 lpm tunnel 3000 preview.lpm.fyi --tunnel-auth
@@ -281,7 +282,6 @@ History lives in `.lpm/inspector.db` under the command directory.
 Run history commands from the directory that started the tunnel.
 
 Captured data can contain full bodies, cookies, authorization headers, and signature headers.
-Add `.lpm/inspector.db*` to `.gitignore`. Database files use mode `0600` on Unix and inherit project ACLs on Windows.
 
 ```bash
 lpm tunnel inspect                       # newest 20 captures
@@ -295,17 +295,116 @@ Status filters accept `2xx`, `3xx`, `4xx`, `5xx`, `error`, `err`, or an HTTP sta
 Provider filters are case-insensitive.
 
 `log --clear` deletes captured requests and completed sessions. Active sessions remain available for new captures.
+LPM CLI overwrites the deleted captures in the database. It also empties the write-ahead log, which still holds them. If another LPM CLI run reads the database at that time, the log keeps the captures until the last run that uses the database stops. SQLite then removes the log. If root ran the tunnel in the project of another user, SQLite empties the log instead.
 It cannot combine with filters or a count limit. `inspect --ui` cannot combine with CLI capture filters or JSON output.
 
-If the database is corrupt, stop its users, repair or move the database, then retry.
+### Keep captures private
+
+On Unix, LPM CLI keeps captures only in a project whose path no other user can change. Another user can try to rename `.lpm`, or a directory above it, while the capture files open. If that is possible, the user can make LPM CLI write captures to a different location, or read them. LPM CLI examines each directory from `/` to the project, and follows links:
+
+- The directory must be yours or root's.
+- Only you, or a group that is yours alone, can write to it. Such a group is your primary group, has your name, and has no other members.
+- Others can write to a sticky directory, for example `/tmp`. Such a directory is safe if the entry in it on the path is yours or root's.
+- On Linux, LPM CLI refuses a directory whose access control list can let others write to it. On macOS, LPM CLI refuses a directory whose access control list lets others add, remove, or rename its entries.
+
+If a directory does not meet these rules, LPM CLI names the directory and stops. This also applies to history commands. Keep the project under directories that only you can change.
+
+On Unix, only the owner can read and write the capture files. On Windows, they inherit the ACLs of the project. `lpm tunnel` and `lpm dev --tunnel` record captures, and set this access:
+
+- On Unix, `.lpm` must be your own. LPM CLI makes it writable only by you. On macOS, LPM CLI also removes its extended ACL entries. These entries can give access that its mode does not show, and pass that access to the files created in it.
+- On Unix, if other users can read a capture database, LPM CLI replaces it with a copy that only the owner can read. A handle that another user opened before then cannot read later captures. Earlier LPM CLI releases or a checkout can leave a database readable. Other users can read it if its mode lets its group or anyone read it. On macOS, they can also read it if it has an extended ACL.
+- In some locations, file modes do not keep other users out, and a copy does not change that. One is a filesystem without Unix modes, for example FAT, exFAT, or a Windows drive mounted in WSL. Such a filesystem shows every file as open to other users. The other is a macOS volume that ignores ownership, as external drives and disk images do by default. On such a volume, every user owns every file, whatever its mode. In these locations, the tunnel keeps the database, and its capture warning says that the database is open to other users.
+
+Before LPM CLI makes the owner-only copy:
+
+- LPM CLI makes sure that the database is not damaged, its full-text index included. It refuses a damaged database.
+- If another process has the database open, LPM CLI stops and asks you to close that process and try again. That process can be `lpm tunnel inspect --ui`, or another `lpm tunnel` or `lpm dev` run in the project.
+- Before LPM CLI opens the database, it makes sure that there is enough free disk space. The copy needs about the size of the database, plus its `-wal` file, plus 64 KiB. A large `-wal` file needs a little more. The `-wal` file is the write-ahead log of the database. LPM CLI folds it into the database before it makes the copy. The 64 KiB is for the shared-memory file of SQLite.
+- APFS refuses writes while it still reports about 2% of the volume as free, up to about 32 MiB. LPM CLI counts that space, and a little more, as used.
+- If there is not enough room, or if the disk fills during the copy, LPM CLI says how much room it needs and stops. The captures stay in the database and its `-wal` file. The database stays open to other users until a retry replaces it. To move the database aside instead, see [Recover the capture database](#recover-the-capture-database).
+
+`lpm tunnel inspect`, `log`, `replay`, and `inspect --ui` read the captures and do not change the access of any file. As a result, they work while a tunnel records to the database. If other users can read the database, these commands show a warning. The next `lpm tunnel` or `lpm dev --tunnel` run in the project makes the database owner-only, where file modes keep other users out. On a macOS volume that ignores ownership, no run can do this. The warning then says to keep the project on a volume that keeps ownership.
+
+### Run as root
+
+On 64-bit Linux, if another user owns the project, root opens its capture files as that user. This occurs, for example, in a container over a mounted checkout. As a result, that user cannot make root write where the user cannot write, also if the user replaces `.lpm` while a tunnel starts.
+
+- The files that root creates belong to that user, in the primary group of the user. A user that the system does not know, for example the host user in a container, gets the group of the project. If the group of the project is root's, the user gets group 65534.
+- If `.lpm` is root's and no other user can change it, root first gives it to that user. Root also gives that user the capture files that root made there. This occurs, for example, after `lpm install` ran as root. Root gives only regular files that have no other hard links.
+- If root still owns a capture file after that, for example one in a `.lpm` of that user, the tunnel stops. The error names the file. Give the file to that user with `chown`, or remove it.
+- When the last run stops, SQLite empties the write-ahead log and keeps the empty file.
+- If the process cannot act as that user, LPM CLI stops and says so. This occurs without the `CAP_SETUID` and `CAP_SETGID` capabilities, or in a user namespace that does not map the user.
+
+On macOS and other systems, root stops for any project that another user owns. Run the tunnel as the owner of the project, without `sudo`. In a project that root owns, the runs of root are the same as the runs of any user.
+
+### Keep captures out of git
+
+Before LPM CLI creates the database, it adds `inspector.db*` to `.lpm/.gitignore`, unless the file already ignores the capture files. Then git ignores the database, its `-wal` and `-shm` files, and the `inspector.db-lock` file of LPM CLI, wherever the project is in a repository. A later negation that can name a capture file, for example `!*.db` or `!Inspector.db`, cancels the rule. In that case, LPM CLI adds the rule again after the negation. LPM CLI does not change `.lpm/.gitignore` in these cases:
+
+- Git does not read it as a file, because it is a link or not a regular file.
+- It is larger than 16 MiB.
+- LPM CLI cannot write it, because it is read-only or, on Unix, another user's.
+
+At each start, the capture warning asks git how it treats the capture files. It asks the repository of the project which capture files it tracks. At the same time, it asks git inside `.lpm` which files a repository of `.lpm` itself tracks, for example a submodule. It also asks which files no rule ignores.
+
+Git itself says whether the project is in a repository, and whether `.lpm` has a repository of its own. If the project is not in a repository, and git refuses a repository inside `.lpm`, that repository belongs to `.lpm`.
+
+LPM CLI reads the `.git` entries of the project and the directories above it only if git cannot run or answer, or stops its search. Git stops at a filesystem boundary. It also stops at a `.git` file that it cannot read, that is larger than 1 MiB, or that does not point at a repository. LPM CLI reads `.lpm/.git` only if git cannot run or answer inside `.lpm`. LPM CLI follows the rules of git 2.53.
+
+A `.git` directory, or a link to one, belongs to a repository if two things are true. Its `HEAD` names a branch or a commit, and it has `objects` and `refs` directories. The `.git` directory of a worktree names the directory that has them in a `commondir` file. LPM CLI reads a `.git` file, or a link to one, only if it is 1 MiB or less. The file belongs to a repository if its content after `gitdir: ` is the path of such a directory. The final line breaks of the content do not count.
+
+Outside any repository, the warning says nothing about git if neither query answers. Inside a repository, a query is unanswered if it cannot run or takes more than two seconds. A query that stops at a filesystem boundary or a broken `.git` file is also unanswered. The query of the project is also unanswered if git refuses it, as git refuses a repository that another user owns. A query of git inside `.lpm` that finds no repository is unanswered too. The warning then says which repository did not answer. It asks you to make sure that git ignores the capture files and does not track them. If the other query answers, the warning also reports what it found, for example tracked files.
+
+- If git ignores the capture files and no repository tracks them, the warning says so.
+- If git does not ignore them, the warning names them. Add `inspector.db*` to `.lpm/.gitignore`. Git does not read a linked `.lpm/.gitignore`, or one that is not a file. Replace such an entry with a file that holds the rule.
+- Git refuses to work inside `.lpm` if `.lpm` looks like a bare repository, or holds a repository that another user owns. In that case, the warning reports what the repository of the project says, if the project is in one. It asks you to make sure that git ignores `inspector.db*` and does not track it.
+
+The warning names files whose names hold only letters, digits, `.`, `_`, `-`, and `/`. It counts the other files. If it cannot name every tracked file, its command covers all the capture files, without regard to case. The command for the repository of the project does the same if only git in `.lpm` answered, because the repository can spell `.lpm` differently: `git rm --cached -- ":(glob,icase).lpm/inspector.db*"`.
+
+### Remove committed captures
+
+If a repository tracks capture files, the warning names them. It gives the command that stops the tracking for each repository: `git rm --cached -- .lpm/inspector.db` for the repository of the project, or `git -C .lpm rm --cached -- inspector.db` for a repository of `.lpm` itself. An ignore rule does not prevent the commit of a tracked file.
+
+Captures that you already committed stay in the history of the repository, and in every clone of it. Rotate the credentials that they hold: webhook signing secrets, authorization tokens, and session cookies. Rotate them first, because a rewrite of the history does not change clones and forks that others already have.
+
+For a public repository, also remove the captures from its history.
+
+> **CAUTION:** Back up the repository before you rewrite its history. A rewrite changes the ID of every commit after the first commit that it changes. Everyone with a clone must clone again, or reset to the new history. Open pull requests can break, and you must then create them again.
+
+### Recover the capture database
+
+LPM CLI refuses some capture files and stops. A cloned repository can supply any of these:
+
+- A linked `.lpm` directory, or on Unix, a `.lpm` directory that another user owns
+- A linked capture file, a capture file with other hard links, or on Unix, a capture file that another user owns
+- A database that holds anything that LPM CLI never creates, for example triggers, views, check constraints, or extra indexes
+- A database that SQLite reports as damaged
+
+If LPM CLI refuses the `.lpm` directory, move the directory aside and try again. If it refuses a capture file or a damaged database, move the database aside with its `-wal`, `-shm`, and `-journal` files. Then try again. LPM CLI starts a new database.
+
+The moved files hold captures, so keep them private. Move them into a directory that only you can read, outside every repository. Keep the suffix of each file after the name of the database, so that SQLite still finds the files together:
+
+```bash
+mkdir -p -m 700 ~/lpm-old-captures/my-project
+for suffix in "" -wal -shm -journal; do
+  if [ -e ".lpm/inspector.db$suffix" ]; then mv ".lpm/inspector.db$suffix" ~/lpm-old-captures/my-project/; fi
+done
+```
+
+If LPM CLI did not warn that other users can read the database, you can keep the files in `.lpm` instead. Give each file a name that starts with `inspector.db`, for example `inspector.db.old` and `inspector.db.old-wal`, so that `.lpm/.gitignore` still ignores it. Delete the files when you no longer need their captures.
+
+The `-wal` file can hold captures that the database does not have yet. If LPM CLI finds the `-wal`, `-shm`, and `-journal` files without a database, it removes them, unless it refuses them as above.
+
+If another LPM CLI run opens the capture files, LPM CLI waits up to 10 seconds, then stops. An error when LPM CLI opens, reads, or writes the database is an I/O error, `io` in `--json` output.
 
 ## Plans and limits
 
-| Tunnel account | Default domain | Session limit | Concurrent tunnels | Stable claims | Access token |
-| --- | --- | --- | --- | --- | --- |
-| Free personal | Random `lpm.fyi` | 1 hour | 1 | 0 | No |
-| Pro personal | Account hostname | No fixed limit | 3 | 3 | Yes |
-| Org | Claimed organization domain | No fixed limit | 3 | 3 | Yes |
+Tunnels need a Pro plan, or an organization plan through one of the claimed domains of the organization. If you have neither, startup stops with `plan_required` and shows a link to [lpm.dev pricing](https://lpm.dev/pricing).
+
+| Tunnel account | Default domain | Concurrent tunnels | Stable claims | Access token |
+| --- | --- | --- | --- | --- |
+| Pro personal | Account hostname | 3 | 3 | Yes |
+| Org | None (name a claimed domain) | 3 | 3 | Yes |
 
 Organization concurrency and claim limits apply across the organization, not per seat.
 Startup shows current limits and request usage. See [Request usage and overage](/docs/infra/tunneling#request-usage) for account allowances.
@@ -324,13 +423,15 @@ Startup emits a JSON object after each successful connection. Temporary failures
 Read this output as a sequence of JSON objects, not one document.
 
 Temporary authentication-service and domain-lookup outages retry. Relay restarts and abnormal transport closures also retry.
-Invalid credentials, denied ownership, and an expired Free session stop the command with an error.
+Invalid credentials, denied ownership, and an account whose plan does not include tunnels stop the command with an error.
+If the plan of an account no longer includes tunnels, the relay closes the open tunnels of the account, usually within a minute. Then the command stops.
+In JSON output, these refusals have the `error_code` `tunnel_access`. The `error.relay_code` field gives the code from the relay, for example `plan_required` or `billing_inactive`.
 A normal relay replacement closes the older tunnel successfully.
 
 The retry budget is ten attempts. Delays start at two seconds and increase to thirty seconds, plus jitter.
 A healthy connection of at least sixty seconds resets the budget.
 
-After reconnection, use the latest `tunnel_url`. A Free tunnel can receive a new URL.
+A claimed domain stays the same across reconnections. An account hostname follows your current username. Use the `tunnel_url` from the latest connection.
 Applications must reconnect their SSE and WebSocket streams.
 An established tunnel retries temporary capacity conflicts during recovery. A new tunnel stops when the account is already at its limit.
 
@@ -357,7 +458,7 @@ Use only a trusted relay because it receives the tunnel credential.
 | Flag | Applies to | Effect |
 | --- | --- | --- |
 | `--org <SLUG>` | `claim`, `unclaim`, `list` | Select or constrain the organization domain scope. |
-| `--tunnel-auth` | Start | Require the generated access token. Pro and Org only. |
+| `--tunnel-auth` | Start | Require the generated access token. |
 | `--auto-ack` | Start | Return `200 OK` after durable capture when local forwarding fails. Return `503` if capture fails or forwarding is overloaded. |
 | `--session <NAME>` | Start | Name the capture session. |
 | `--no-inspect` | Start | Disable the browser inspector. Capture continues. |

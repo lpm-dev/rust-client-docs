@@ -62,7 +62,7 @@ export NODE_ENV=production
 
 The token permits cache reads and writes. Supply it through the shell or CI environment, outside committed project configuration.
 
-For the configured Registry origin, LPM CLI can also use `LPM_TOKEN` or credentials from [`lpm login`](/docs/infra/login). Those credentials must permit cache access.
+For the configured Registry origin, LPM CLI can also use `LPM_TOKEN`, if that token permits cache access. It can also use your [`lpm login`](/docs/infra/login) credentials. Login credentials read and write your personal cache. The cache of an organization needs one of its tokens.
 
 ### 3. Run the task
 
@@ -291,7 +291,7 @@ The LPM.dev Registry applies these included storage limits:
 | Organization | 25 GiB per seat |
 | Enterprise | No fixed quota in the Enterprise plan |
 
-The CLI and LPM.dev Registry accept archives up to 500 MiB (524,288,000 bytes).
+The LPM.dev Registry accepts archives up to 100 MiB (104,857,600 bytes), and refuses an empty upload. LPM CLI does not upload a larger archive to it, and builds the task as usual. With a [custom cache endpoint](#custom-cache-endpoints), LPM CLI uploads and restores archives up to 500 MiB (524,288,000 bytes).
 
 Restore also applies these limits to the archive contents:
 
@@ -303,9 +303,68 @@ Restore also applies these limits to the archive contents:
 
 A compressed archive can fit the upload limit but exceed an extraction limit. A rejected download becomes a cache miss.
 
-Default retention is 14 days, and a download refreshes the retention period.
+Default retention is 14 days, and a download refreshes the retention period. An expired artifact counts toward usage until the Registry removes it, normally within minutes.
 
 To fit new uploads within the storage limit, the Registry can evict the least recently accessed artifacts. Cache storage is temporary.
+
+### Request limits
+
+The LPM.dev Registry limits the remote cache requests of each Pro account, and of each organization seat, Enterprise included:
+
+| Limit | Per minute | Per day |
+| --- | --- | --- |
+| Requests of any kind | 3,000 | 100,000 |
+| Uploads | 300 | 4,000 |
+| Uploaded data | - | 12 GiB |
+| Cache hits | 2,000 | 50,000 |
+| Downloaded data | - | 40 GiB |
+| Of which downloaded through the Registry | - | 5 GiB |
+
+- Each request whose token can use the cache of the account counts against its request limits. This includes lookups that miss, and status checks. A query for several artifacts counts one request for each different artifact. If a query asks for more than the window has left, the Registry refuses it, and it counts as one request.
+- Uploads also count against the upload limits, and cache hits count against the cache-hit limits. A cache hit is a download, or an existence check, that finds the artifact. An upload that the Registry refuses before it receives the upload does not count as an upload. An upload of content that the cache already holds does not count either. The Registry knows such content from the checksum that LPM CLI sends. The Registry then makes sure that storage still holds the content, and this counts as a cache hit. If storage lost the content, the Registry stores it again. When the account has no cache hits left, the Registry stores such an upload, and counts it, as any other upload.
+- The daily limits of an organization increase with each seat. Its per-minute limits increase with up to ten seats. Its uploads per minute increase with up to five seats, to 1,500 uploads a minute.
+- Across the Registry, an account can have 4 uploads in progress for each seat, at least 8 and at most 16. On each Registry server, it can have 8 uploads and downloads together for each seat, at least 32 and at most 64. When a Registry server is half full, it shares its places equally among the accounts that use it. It also keeps a few places for accounts that use few. When every place is taken, the server answers that it is busy until a place becomes free.
+- The Registry stops an upload, or a download through the Registry, that takes longer than 10 seconds plus one second for each 128 KiB. It also stops one that takes longer than 2 minutes. LPM CLI gives each remote cache request 30 seconds in any case. After an interrupted download, the task runs as on a miss, and the hit and its bytes still count.
+- If an upload stops before it is complete, for example because its connection drops, the upload holds its artifact for 5 minutes or less.
+- An account whose plan has no remote cache gets 30 requests a minute and 1,000 a day. The Registry counts these separately from its requests before its plan changed. An organization whose billing lapsed gets HTTP 402 for each request except status checks, which report `paused`. While the Registry finds out again whether the lapse continues, other requests get a short HTTP 429 with `Retry-After: 1`.
+- When the Registry refuses a request, its answer gives the reason. For example, an upload with a read-only token, or a request for the cache of another account, gets HTTP 403. A request that is not valid gets HTTP 400. A refused request counts against its own limits, not the request limits above, for any number of seats. For its token, these limits are 30 a minute and 1,000 a day. For the account of the token, they are 120 a minute and 5,000 a day. When one of these limits is spent, the Registry still answers each request as before. A token reaches only the cache of its own account. If `slug` or `teamId` names any other account, the request gets HTTP 403, also if that account does not exist. If only one of `slug` and `teamId` names the account of the token, the request gets HTTP 400.
+- If a token can only read the cache, run Turborepo with `--remote-cache-read-only`. Without this flag, Turborepo turns off its remote cache for the run after its first refused upload.
+- After its first refused upload, LPM CLI does not upload for the rest of the run. After a refused lookup, LPM CLI does not use the remote cache for the rest of the run. The same occurs when the billing of the organization lapses. If the cache has no room for an upload, LPM CLI skips only that upload. The cache makes room, so a later upload can fit.
+- If the small body of a lookup or event report does not arrive in 30 seconds, the request gets HTTP 408.
+
+Each window starts with the first request it counts, not at a set time of day.
+
+A request past a limit gets HTTP 429 with a `Retry-After` header. The header gives the seconds until the limit resets. Until then, LPM CLI skips that kind of request, and builds tasks as it does without a remote cache. A lookup limit also pauses uploads, because a task that skipped its lookup can upload an artifact that the cache already holds. The CLI warns once a run for each kind of limit.
+
+A wait of 5 seconds or less usually means one of two things: the Registry is busy for a short time, or the window of a minute is about to reset. LPM CLI sends such a lookup or upload one more time after the wait. It adds up to half the wait, so that refused requests do not all return at the same time. It does not send the request again if that kind of request was paused in the meantime. If LPM CLI still skips some requests, it shows a note once a run for each kind: `remote cache is busy; skipping some uploads for a moment` (or lookups). It keeps the limit warning for a longer limit.
+
+Turborepo receives a per-minute limit as HTTP 429, and a daily limit as HTTP 403 with the code `remote_caching_over_limit`.
+
+#### Download host
+
+LPM CLI and Turborepo download a cache hit from the download host of the cache, `cache-dl.lpm.dev`. They use a link that the Registry gives in its answer. The link works for one minute.
+
+> **CAUTION:** Allow `cache-dl.lpm.dev` and `lpm.dev` in your CI firewall. If you do not, every cache hit fails to download, and the task runs again.
+
+- The host refuses a request with HTTP 403 if the request has an `Origin`, `Forwarded`, `X-Forwarded-Host`, or similar header. If a TLS-inspecting proxy adds such a header, every cache hit becomes a miss.
+- LPM CLI reports a failed download without its link, because the link works as a credential for that minute.
+- Turborepo downloads a signed artifact through the Registry instead. Other clients and older LPM CLI releases do this too. These downloads count against the 5 GiB a day of downloads through the Registry.
+- Some clients, Turborepo among them, upload an artifact without a content hash. LPM CLI treats such an artifact as a miss, and replaces it with its own.
+
+#### Revoked tokens
+
+- The Registry examines a token at most once a minute on each server. As a result, a revoked token can continue to work for up to a minute.
+- When LPM CLI refreshes an `lpm login` session, the previous access token of the session becomes invalid in five minutes or less. Any older token becomes invalid at once, or in that minute on a server that examined it.
+
+#### Tokens that fail
+
+- A token that is not valid gets the same HTTP 401 for one minute.
+- Each Registry server counts, on its own, the new tokens from each address that are not valid or whose requests it refuses. A request counts as refused if it is over the request limits of its account. It also counts if the answer says that the billing of the organization lapsed. It counts too if it goes to a cache that cannot serve it, status checks included. A new token counts too if the server tells it to wait while the server examines the limits of its account.
+- After 60 such tokens in a minute from one IPv4 address or IPv6 /64, the server answers that address with HTTP 429. This continues for the rest of the minute. The limit is 240 from one IPv6 /48, and 960 from one /32. After 1,200 from all addresses together, the server answers every address with HTTP 429.
+- The server still examines one token every 2 seconds from an address that it holds. While it holds every address, it examines one token every 2 seconds in total.
+- The server lets through a token whose requests it served in the last day. It also lets through a token that another server served in the last 23 hours, while the Registry can read the pass of that token. The pass ends when the token becomes invalid, or when the server refuses one of its requests as above. A status check counts as served only if the cache of its account serves reads: `enabled` or `over_limit`.
+- New tokens that the server still examines also count toward the 60, until the server answers their requests. While 60 are in progress from one address, a further new token gets HTTP 429 with `Retry-After: 1` ("Too many new tokens from this address are being checked"). The server still examines one token every 2 seconds.
+- Tokens that LPM.dev creates have a mark that only LPM.dev can make. The server counts them separately from other tokens: 60 a minute from one IPv4 address or IPv6 /48. A flood of made-up tokens can hold up every address, but it does not hold up these tokens. Tokens that LPM.dev created before it started to mark them count with the others.
 
 ### Inspect usage
 
@@ -314,15 +373,61 @@ lpm cache status
 lpm cache status --json
 ```
 
-The dashboard's **Settings → Billing** page shows remote-cache usage, retention, and overage controls for the selected account.
+The dashboard's **Settings → Billing** page shows remote-cache usage, retention, and overage controls for the selected account. Usage includes uploads in progress, at their full size from when they start.
 
-Overage is off by default. Enabling it permits uploads above the included quota, subject to any account overage cap.
+### Overage
 
-An organization owner or administrator controls its overage setting.
+Overage is off by default. If you turn it on, the account can keep more cache than its plan includes, up to a cap that you set. Overage needs a Pro or organization subscription with active billing. Only the owner of an organization can change its overage setting, as for its other billing settings.
+
+A cap above 100 GiB needs paid invoices that cover it. For example, after you pay a $25 invoice, the cap can be up to 250 GiB. Only money that Stripe collects counts, so an invoice that a credit balance paid does not increase the limit. The billing page shows the current limit. You can always lower the cap or turn overage off.
+
+| Overage setting | Value |
+| --- | --- |
+| Price | $0.20 for each GiB kept 30 days, metered daily |
+| Default cap | 100 GiB |
+| Highest cap | 10,000 GiB |
+| Cap above 100 GiB | Up to 10 GiB for each dollar of the subscription's largest paid invoice |
+| Most a month can cost | The highest cap set during the month × $0.20 |
+
+> **CAUTION:** Set the cap before you turn overage on. When you turn overage on, the cache keeps the included cache plus the cap, and LPM removes anything above that within minutes. A trim deletes artifacts permanently, least recently used first. You cannot restore them. Their tasks run again on the next cache miss.
+
+### What the cache keeps
+
+This table describes an account with overage turned on.
+
+| Situation | Overage | What the cache keeps |
+| --- | --- | --- |
+| Billing is active | Billed | The included cache plus the cap. |
+| You turn overage off or lower the cap | Off, or billed up to the new cap | LPM trims it to the new limit. |
+| The allowance becomes smaller, for example for an organization with fewer seats | Billed | LPM trims it to the new limit. |
+| A payment failed: the first three days of the billing grace | Off, not billed | What it holds, up to the cap. It cannot grow. |
+| A payment failed: the rest of the billing grace | Off, not billed | LPM trims it to the included quota. |
+| A payment failed within 27 days after the start of the last three-day hold | Off, not billed | LPM trims it to the included quota at once. |
+| The failed payment succeeds | Billed | The included cache plus the cap. |
+| Stripe paused the subscription | Off, not billed | An organization: as for a failed payment. A Pro account moves to Hobby, as in the next row. |
+| A Pro account moves to Hobby while you can still pay its subscription, for example when a grace ends unpaid | Off until you pay the subscription | LPM trims it to what Pro includes. |
+| The subscription ends, also by a cancellation | Off, and a new subscription leaves it off | LPM trims it at once to the included quota. An account that moves to Hobby keeps what Pro includes. |
+| The account is on Hobby | Off | Nothing that the account can use. LPM removes artifacts when they expire. |
+
+The billing page and the payment-failed email say whether a failed payment keeps the cache for three days or trims it at once. You can turn overage on only while billing is active. After a failed payment, you can turn it on when the payment succeeds. After a cancellation, you can turn it on with a new subscription.
+
+If you pay the invoice of a paused subscription, the subscription stays paused. To resume it, email support@lpm.dev. Overage resumes with the subscription.
+
+### When LPM pauses remote caching
+
+If LPM pauses or disables remote caching for an account, overage is off, and LPM bills nothing. This does not apply to an organization whose billing lapsed. LPM does not trim a cache that the account cannot use. A trim that was due runs when caching resumes.
+
+For a trim that LPM scheduled when overage billing started, LPM sends an email first. The trim runs at least a week after that email. Until then, the cache keeps what it holds, but it cannot grow. Uploads replace its least recently used artifacts.
+
+LPM does not send the email if overage with a cap keeps the whole cache, because the trim then removes nothing. LPM turned your overage off when billing started. If you turn overage on again with a cap before the email goes, LPM also does not send it. The billing page shows what overage keeps.
+
+If you ask for a trim sooner, because you turn overage off or lower the cap, the trim runs when you ask. If LPM cannot deliver the email, the trim runs on the date that the email gives. A trim scheduled for an account on Hobby runs on its date, because the account cannot use its cache. Artifacts still expire after the retention period.
+
+### Remote status
 
 | Remote status | Meaning |
 | --- | --- |
-| `enabled` | Remote caching is available within the account's limits. |
+| `enabled` | Remote caching is available within the account's limits, or a billing grace holds the cache above them until the hold ends. |
 | `disabled` | The plan or account configuration disables remote caching. |
 | `paused` | Remote access is paused, including after organization billing lapses. |
 | `over_limit` | Usage exceeds the allowed storage. Existing artifacts remain readable, and uploads first attempt eviction. |
@@ -345,9 +450,24 @@ Make sure that the task declares `cache: true` and `outputs`. Inspect warnings f
 
 If read-only mode is enabled, uploads are skipped by design. A local hit also avoids task execution and does not upload an existing local result.
 
+### A request limit is reached
+
+LPM CLI shows the warning `Remote cache limit reached`, with the limit and how long it skips remote requests. Tasks still run, and the CLI uses the remote cache again when the limit resets. See [Request limits](#request-limits).
+
+Concurrent runs, for example parallel CI jobs, share the limits of the account. To use fewer requests, give [read-only access](#read-only-consumers) to jobs that only consume results, so that they do not upload. Also cache only tasks that take longer to run than to download. Each cached task costs a lookup on every run, and an upload on every miss.
+
+The Registry also answers with HTTP 429 and `Retry-After: 1` in these cases:
+
+- The account has as many uploads or downloads in progress as it can have.
+- Another upload holds the cache of the account.
+- The Registry finds out again whether the limits of the account still apply.
+- From one address, as many new tokens are in progress as the server lets through. See [Tokens that fail](#tokens-that-fail).
+
+When a Registry server is busy, it answers with HTTP 429 and `Retry-After: 2`. LPM CLI sends a refused lookup or upload one more time after the wait, plus up to half the wait. If it still skips some requests, it shows `remote cache is busy; skipping some uploads for a moment` (or lookups). An upload of an artifact that another upload still stores gets HTTP 409, and LPM CLI leaves the artifact to that upload.
+
 ### The server rejects access
 
-Make sure that the token has `cache:read`, `cache:write`, or `admin` permission. Uploads require `cache:write` or `admin`.
+Make sure that the token has `cache:read`, `cache:write`, or `admin` permission. Uploads require `cache:write` or `admin`. Credentials from `lpm login` read and write your personal cache only.
 
 For an organization, use a token scoped to the selected organization. Inspect the account's plan and billing state with [`lpm cache status`](/docs/packages/cache#status).
 
