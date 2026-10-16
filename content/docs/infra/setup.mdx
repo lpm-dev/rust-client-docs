@@ -111,6 +111,8 @@ The command replaces its previous generated block. On Unix, LPM CLI sets the fil
 
 A tracked or symlinked `.npmrc` stops setup before token changes. Remove `.npmrc` from Git tracking before retrying.
 
+Setup also stops when Git reaches a `.git` file that it can't use, such as one that points to a missing repository. Git can't then tell whether `.npmrc` is tracked. Repair or remove that `.git` file before retrying.
+
 CAUTION: Do not commit this `.npmrc` file. The file contains a literal bearer token.
 
 This command does not add `.npmrc` to `.gitignore`. CI runners usually remove the workspace after the job.
@@ -185,9 +187,20 @@ The command changes two project files:
 
 Existing `.npmrc` lines stay unchanged. A custom default registry also stays unchanged.
 
+A tracked or symlinked `.npmrc` stops setup before token changes. So does a `.git` file that Git can't use, such as one that points to a missing repository, because Git can't then tell whether `.npmrc` is tracked.
+
 CAUTION: The `.npmrc` file contains a token. Keep the file outside version control.
 
 Run `lpm setup local` again before the token expires. The command writes a replacement and retires the previous project token.
+
+Token limits:
+
+- An account holds up to 100 active tokens that it created, project tokens included. At this limit, `lpm setup local` fails for a new project, or for a project whose token expired, until you revoke a token in [Registry token settings](https://lpm.dev/dashboard/settings/tokens). At the limit, you can still replace the token of a project if that token is active.
+- LPM.dev deletes expired and revoked tokens 30 days later.
+- A user creates 10 tokens a minute or fewer, `lpm setup local` included. Token creation on the dashboard shares this limit. Above it, the command fails with HTTP 429, and it works again when the minute ends.
+- From one IPv4 address or IPv6 /64, `lpm setup local` creates, replaces, and revokes project tokens 100 times a minute or fewer for each action. Above that, it fails with HTTP 429 before it changes a token.
+
+LPM.dev does not limit how often you revoke tokens in [Registry token settings](https://lpm.dev/dashboard/settings/tokens). As a result, no person who holds a token can stop you from revoking it. A revoked token can continue to work for up to a minute, until the caches of the Registry drop it. For each user, the first 20 revocations a minute, across the dashboard, the API, and `lpm setup local`, also remove the token from the caches at once.
 
 The command uses the current directory. It does not configure every workspace member automatically.
 
