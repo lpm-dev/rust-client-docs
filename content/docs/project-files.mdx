@@ -77,18 +77,18 @@ LPM CLI creates `.lpm/` with owner-only permissions on Unix and refuses a symbol
 | `xcode-backups/` | `project.pbxproj` as it was before the last Xcode project edit by LPM CLI | For recovery on this machine. |
 | `release-apply/`, rollback and restore staging directories | Recovery state of interrupted releases, workspace installs, and task cache restores | It only applies to this machine. |
 | `graph.html` | The view that `lpm graph --format html` writes | Regenerated on demand. |
-| Lock files | Locks that serialize installs, publishes, and `lpm.json` updates | They coordinate processes on this machine. |
+| Lock files | Locks that serialize installs, publishes, migrations, and `lpm.json` updates | They coordinate processes on this machine. |
 
 ### If Git already tracks files in `.lpm/`
 
-Files committed before `.lpm/` ignored itself stay tracked, because ignore rules don't untrack files. [`lpm doctor --all`](/docs/infra/doctor#project-state) reports them as `project_state_tracked` and names up to three. Untrack them once and commit:
+Files committed before `.lpm/` ignored itself stay tracked, because ignore rules don't untrack files. [`lpm doctor --all`](/docs/infra/doctor#project-state) reports them as `project_state_tracked`, names up to three, and gives a command that untracks them from any directory. On a case-insensitive file system, Git can track the directory under another spelling, such as `.LPM/`; the check counts those files, and the command uses Git's spelling. Untrack them once and commit:
 
 ```bash
 git rm -r --cached .lpm
 git commit -m "Stop tracking .lpm"
 ```
 
-The files stay on disk, and `.lpm/` keeps them out of later commits. Until you untrack them, [`lpm cert`](/docs/infra/cert) refuses to write the project's private key into `.lpm/certs/` while Git tracks a file there.
+The files stay on disk, and `.lpm/` keeps them out of later commits. Until you untrack them, [`lpm cert`](/docs/infra/cert) refuses to write the project's private key into `.lpm/certs/` while Git tracks a file there, or while Git can't tell whether it does. Env sync commands refuse a `.lpm/env-sync.json` that Git tracks; see [env sync state](/docs/reference/lpm-json#env-sync-state).
 
 ### `.gitignore` entries from earlier releases
 
@@ -123,17 +123,17 @@ Some commands write real secrets into project files. Before a secret reaches dis
 
 For a file inside the project, or elsewhere in a Git work tree, LPM CLI does this:
 
-1. It refuses a destination that Git tracks and names the fix, `git rm --cached -- <file>`. `import` and `init` only read their files, so a tracked source file is a warning.
+1. It refuses a destination that Git tracks, including one that Git tracks under another case on a case-insensitive file system, such as `.ENV` for `.env`. It names a command that untracks it from any directory, such as `git -C <directory> rm --cached -- .ENV`. `import` and `init` only read their files, so a tracked source file is a warning.
 2. If Git doesn't already ignore the file, it appends an anchored rule for that exact path, such as `/.env.production`, and checks that Git now ignores the file. The rule goes to the project's `.gitignore`, or for a file outside the project, such as one at a monorepo's root, to the `.gitignore` at the root of the work tree that holds it. Commands for CI use the repository's `.git/info/exclude`, which leaves the work tree clean.
 3. It writes the file atomically with owner-only permissions: `0600` on Unix, without access list entries that the directory would pass on on macOS, and a protected access list on Windows. It refuses to write through a linked parent directory.
 
-Outside a Git repository, LPM CLI still adds the `.gitignore` rule, so the file stays ignored after you create a repository. A rule that it can't write there is a warning. When Git can't be run at all, LPM CLI writes the file with a warning that it couldn't confirm that Git ignores it; commands that use `.gitignore` still add the rule. A file in no Git work tree, outside the project, is written owner-only without changes to any ignore file. JSON output lists warnings in `warnings`.
+Outside a Git repository, LPM CLI still adds the `.gitignore` rule, so the file stays ignored after you create a repository. A rule that it can't write there is a warning. When Git can't be run at all, LPM CLI writes the file with a warning that it couldn't confirm that Git ignores it; commands that use `.gitignore` still add the rule. A file in no Git work tree, outside the project, is written owner-only without changes to any ignore file. When Git can't tell whether a work tree holds such a file, for example because of a `.git` file that points nowhere, the commands that stop above stop, and the others write it with a warning. JSON output lists warnings in `warnings`.
 
 ## Which directory is the project
 
 Commands that keep project state, such as `lpm env`, `lpm dev`, `lpm tunnel`, and `lpm cert`, act on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`. The search stops before your home directory. Package commands such as `lpm add`, `lpm remove`, and `lpm publish` use the nearest `package.json`, as `lpm install` does.
 
-LPM CLI prints the directory that it chose when it isn't the current one. File paths that you type, such as `lpm env export local.env`, `lpm add <package> --path widgets`, or `lpm skills add ./team-skills`, stay relative to the directory where you ran the command.
+LPM CLI prints the directory that it chose when it isn't the current one. File paths that you type, such as `lpm env export local.env`, `lpm env generate --out-dir src/env`, `lpm add <package> --path widgets`, `lpm publish --provenance-file bundle.sigstore`, or `lpm skills add ./team-skills`, stay relative to the directory where you ran the command. `lpm release publish --provenance-file` is the exception: each released package has its own bundle, so a relative path names a file in each package's directory. Paths in `package.json` and `lpm.json` are relative to the project.
 
 Without a project around it, a command uses the current directory. Commands that write project state refuse a directory whose `.lpm` would be the LPM home, such as your home directory. Account actions that use no project, such as `lpm env pair`, `unpair`, `ls-remote`, and `rotate-sharing-key`, run in any directory.
 

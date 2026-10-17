@@ -149,7 +149,7 @@ Change-file entries override the `--bump` fallback for matching packages. A sele
 
 Identical repeated entries are accepted. Conflicting entries cause an error, including conflicts between exact versions or prerelease bumps. File order does not choose the bump.
 
-Change files do not select packages. After `apply` writes the manifests, it removes the entries for the packages it released and deletes a change file with no entries left. Entries for other packages stay for a later release. If a change file changed during the release, `apply` leaves it alone and names it in the error. Remove the applied entries from it yourself.
+Change files do not select packages. With the manifests, `apply` removes the entries for the packages it released and deletes a change file with no entries left, in the same recoverable operation, so an interrupted release neither loses its entries nor applies them twice. Entries for other packages stay for a later release. If a change file changed during the release, `apply` releases nothing and names the file; run the release again.
 
 `plan` and `apply --dry-run` show which change files the release would update or remove. JSON output lists them in `change_files`, each with `path`, `applied`, and `remaining` entry counts.
 
@@ -225,9 +225,9 @@ Scripts run in a sandbox with outbound network access denied. A package director
 
 ## Recover an interrupted release
 
-`apply` records the original manifests before replacement and coordinates its writes with installs, version changes, and publishing. Preview commands also take a project lock.
+`apply` records the original manifests and change files before replacement and coordinates its writes with installs, version changes, and publishing. Preview commands also take a project lock.
 
-If a write stops partway through, retry the same `apply` command. An incomplete operation restores its manifests before the new operation starts. If completion recovery data remains, an identical retry reports recovery without another bump. After successful cleanup, another `apply` command starts a new version bump.
+If a write stops partway through, retry the same `apply` command. An incomplete operation restores its manifests and change files before the new operation starts. If completion recovery data remains, an identical retry reports recovery without another bump. After successful cleanup, another `apply` command starts a new version bump.
 
 ```bash
 lpm release apply --filter core --bump major
@@ -322,7 +322,7 @@ Available on all three commands:
 | `--publish-registry <URL>` | Select a custom npm-compatible registry. |
 | `--provenance` | Require generated Sigstore provenance. |
 | `--no-provenance` | Disable provenance for this run. |
-| `--provenance-file <PATH>` | Attach an existing Sigstore bundle. The selection must contain only npm-compatible targets. |
+| `--provenance-file <PATH>` | Attach an existing Sigstore bundle. A relative path names a file in each released package's directory. The selection must contain only npm-compatible targets. |
 
 The three provenance flags are mutually exclusive. All commands support `--json` and the other [global flags](/docs/commands#global-flags).
 
