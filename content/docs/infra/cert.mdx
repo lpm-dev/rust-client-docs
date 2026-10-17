@@ -15,14 +15,14 @@ Use this command for machine setup, certificate files for another tool, or certi
 | --- | --- |
 | `status` | Show CA trust, expiry, project certificate validity, and permission problems. |
 | `trust` | Create the root CA if necessary and install its certificate in the trust store. |
-| `generate` | Create or renew the certificate for the current project. |
+| `generate` | Create or renew the certificate for the project. |
 | `uninstall` | Remove the active root CA from the trust store. Keep its files. |
 | `rotate` | Replace the root CA and reissue known project certificates. |
 | `reconcile` | Recover interrupted rotation and remove expired grace entries or stale files. |
 
 ## Quickstart
 
-Run these commands from your project directory:
+Run these commands from your project directory or one of its subdirectories:
 
 ```bash
 lpm cert trust
@@ -30,7 +30,9 @@ lpm cert generate
 lpm cert status
 ```
 
-`generate` writes `.lpm/certs/cert.pem` and `.lpm/certs/key.pem` in the current project. Keep certificates and private keys out of version control.
+`generate` writes `.lpm/certs/cert.pem` and the private key `.lpm/certs/key.pem` in the project. The project's `.lpm/` directory keeps itself out of Git through `.lpm/.gitignore`, so neither file is committed. See [Files LPM CLI creates](/docs/project-files). Git still commits files that it already tracks, so while it tracks a file in `.lpm/certs/`, under any spelling the file system treats as the same file, in the project's repository or in a repository at `.lpm/` or `.lpm/certs/`, `generate` and `rotate` refuse to write the key and name the `git rm --cached` command that untracks it. Commit after running it. They also refuse while Git can't tell whether it tracks one there, as when Git can't be run in a project inside a repository.
+
+`generate` and `status` act on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory. They print that directory when it is not the current one. `generate` refuses a directory whose `.lpm` would be the LPM home. `trust`, `uninstall`, `rotate`, and `reconcile` act on machine-wide state.
 
 ## Examples
 
@@ -154,7 +156,7 @@ lpm cert status
 lpm cert status --json
 ```
 
-`status` inspects the current project. It does not renew certificates or recover interrupted writes.
+`status` inspects the nearest project. It does not renew certificates or recover interrupted writes.
 
 The output includes root trust, expiry, SANs, renewal status, and permission problems. It checks that the project key matches its certificate and that the certificate chains to the active root.
 

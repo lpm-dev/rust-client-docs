@@ -273,15 +273,14 @@ lpm tunnel inspect --ui
 The default inspector binds to an available loopback port. An explicit busy port stops startup.
 A default-port inspector failure does not stop the tunnel. `--no-inspect` disables the browser UI while capture continues.
 
-Historical inspection opens the current directory's database. Use `--inspect-port` with `inspect --ui` to select its port.
+Historical inspection opens the project's database. Use `--inspect-port` with `inspect --ui` to select its port.
 Press `Ctrl+C` to stop it. During a tunnel, press `o` to open its inspector.
 
 ## Capture history
 
-History lives in `.lpm/inspector.db` under the command directory.
-Run history commands from the directory that started the tunnel.
+History lives in `.lpm/inspector.db` in the project. Starting a tunnel and the history commands act on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory. LPM CLI prints that directory when it is not the current one, so you can run them from any subdirectory. Without such a directory, they use the current directory. They refuse a directory whose `.lpm` would be the LPM home. `claim`, `unclaim`, `list`, and `domains` don't use a project.
 
-Captured data can contain full bodies, cookies, authorization headers, and signature headers.
+Captured data holds raw request and response headers and bodies, including cookies, authorization headers, and signature headers. `.lpm/.gitignore` keeps the database out of Git. See [Keep captures out of git](#keep-captures-out-of-git).
 
 ```bash
 lpm tunnel inspect                       # newest 20 captures
@@ -339,7 +338,7 @@ On macOS and other systems, root stops for any project that another user owns. R
 
 ### Keep captures out of git
 
-Before LPM CLI creates the database, it adds `inspector.db*` to `.lpm/.gitignore`, unless the file already ignores the capture files. Then git ignores the database, its `-wal` and `-shm` files, and the `inspector.db-lock` file of LPM CLI, wherever the project is in a repository. A later negation that can name a capture file, for example `!*.db` or `!Inspector.db`, cancels the rule. In that case, LPM CLI adds the rule again after the negation. LPM CLI does not change `.lpm/.gitignore` in these cases:
+Every LPM CLI command that writes to `.lpm` keeps a `.lpm/.gitignore` that holds `*`, so git ignores everything in `.lpm`. Before LPM CLI opens the capture database, it makes sure of this again. Git then ignores the database, its `-wal` and `-shm` files, and the `inspector.db-lock` file of LPM CLI, wherever the project is in a repository. If a later rule cancels `*`, for example a negation such as `!*.db`, LPM CLI replaces the file with one that holds `*`. LPM CLI does not change `.lpm/.gitignore` in these cases:
 
 - Git does not read it as a file, because it is a link or not a regular file.
 - It is larger than 16 MiB.
@@ -356,10 +355,10 @@ A `.git` directory, or a link to one, belongs to a repository if two things are 
 Outside any repository, the warning says nothing about git if neither query answers. Inside a repository, a query is unanswered if it cannot run or takes more than two seconds. A query that stops at a filesystem boundary or a broken `.git` file is also unanswered. The query of the project is also unanswered if git refuses it, as git refuses a repository that another user owns. A query of git inside `.lpm` that finds no repository is unanswered too. The warning then says which repository did not answer. It asks you to make sure that git ignores the capture files and does not track them. If the other query answers, the warning also reports what it found, for example tracked files.
 
 - If git ignores the capture files and no repository tracks them, the warning says so.
-- If git does not ignore them, the warning names them. Add `inspector.db*` to `.lpm/.gitignore`. Git does not read a linked `.lpm/.gitignore`, or one that is not a file. Replace such an entry with a file that holds the rule.
-- Git refuses to work inside `.lpm` if `.lpm` looks like a bare repository, or holds a repository that another user owns. In that case, the warning reports what the repository of the project says, if the project is in one. It asks you to make sure that git ignores `inspector.db*` and does not track it.
+- If git does not ignore them, the warning names them. End `.lpm/.gitignore` with `*`, so git ignores all of `.lpm`. Git does not read a linked `.lpm/.gitignore`, or one that is not a file. Replace such an entry with a file that holds `*`.
+- Git refuses to work inside `.lpm` if `.lpm` looks like a bare repository, or holds a repository that another user owns. In that case, the warning reports what the repository of the project says, if the project is in one. It asks you to make sure that git ignores the capture files and does not track them.
 
-The warning names files whose names hold only letters, digits, `.`, `_`, `-`, and `/`. It counts the other files. If it cannot name every tracked file, its command covers all the capture files, without regard to case. The command for the repository of the project does the same if only git in `.lpm` answered, because the repository can spell `.lpm` differently: `git rm --cached -- ":(glob,icase).lpm/inspector.db*"`.
+The warning names files whose names hold only letters, digits, `.`, `_`, `-`, and `/`, and counts the others. Git can track a capture file under any spelling the file system takes for its name or for a directory above it: `inſpector.db` for `inspector.db` on APFS and NTFS, `../DIR/.lpm/inspector.db` when the repository spells the project's directory `DIR`, or an NTFS short name such as `LPM~1/inspector.db` on Windows. The warning counts those too. Its command names each tracked file when there are at most five and every shell reads each name the same way. Otherwise the command matches the capture names, and no other file, in each directory that holds them, as in `git rm --cached --ignore-unmatch -- ":(glob).lpm/[iI][nN][sS][pP][eE][cC][tT][oO][rR].[dD][bB]*" …`. If only git in `.lpm` answered, the command names the files from the top of the repository, as in `git rm --cached -- ":(top,literal)packages/app/.lpm/inspector.db"`.
 
 ### Remove committed captures
 
@@ -391,7 +390,7 @@ for suffix in "" -wal -shm -journal; do
 done
 ```
 
-If LPM CLI did not warn that other users can read the database, you can keep the files in `.lpm` instead. Give each file a name that starts with `inspector.db`, for example `inspector.db.old` and `inspector.db.old-wal`, so that `.lpm/.gitignore` still ignores it. Delete the files when you no longer need their captures.
+If LPM CLI did not warn that other users can read the database, you can keep the files in `.lpm` instead, where `.lpm/.gitignore` keeps them out of git. Rename them together and keep each suffix, for example `inspector.db.old` and `inspector.db.old-wal`. Delete the files when you no longer need their captures.
 
 The `-wal` file can hold captures that the database does not have yet. If LPM CLI finds the `-wal`, `-shm`, and `-journal` files without a database, it removes them, unless it refuses them as above.
 

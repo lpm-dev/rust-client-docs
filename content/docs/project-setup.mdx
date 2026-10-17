@@ -11,9 +11,11 @@ LPM CLI splits project configuration across three files. Each owns a different k
 | --- | --- | --- |
 | [`package.json`](#packagejson) | Standard npm fields (dependencies, scripts, engines) **plus** an `"lpm"` block for project-shared LPM CLI behavior (script policy, trust, linker, sandbox, overrides) | Yes |
 | [`lpm.json`](#lpmjson) | Dev-server, task-runner, env-file mapping, env schema, services, publish targets — runtime infrastructure that isn't publishable metadata | Yes |
-| [`lpm.toml`](#lpmtoml) | Per-project CLI defaults and reviewable local policy exceptions — tool behavior, not publishable | Team's call |
+| [`lpm.toml`](#lpmtoml) | Per-project CLI defaults and reviewable policy exceptions — tool behavior, not publishable | Yes |
 
-The split is deliberate: anything that ships to consumers of your package lives in `package.json`. Anything that's about running the project locally lives in `lpm.json`. Anything that's about which way you personally (or the team) prefer the CLI to behave lives in `lpm.toml`.
+The split is deliberate: anything that ships to consumers of your package lives in `package.json`. Anything that's about running the project locally lives in `lpm.json`. Anything that's about how the team wants the CLI to behave in this project lives in `lpm.toml`. Your personal preferences go in [`~/.lpm/config.toml`](/docs/reference/config-toml).
+
+LPM CLI also creates other files in a project, and a `.lpm/` directory that stays on your machine. See [Files LPM CLI creates](/docs/project-files) for which ones to commit.
 
 ## `package.json`
 
@@ -100,7 +102,7 @@ similar-to = "cross-env"
 reason = "Internal migration package kept for compatibility"
 ```
 
-Commit it for team-shared CLI defaults; `.gitignore` it if save policy should stay per-developer. The keys here override `~/.lpm/config.toml` (user-level) but lose to CLI flags.
+Commit it. It holds team CLI defaults and reviewable policy exceptions, such as the `policy.typosquat.allow` entries that `lpm install` writes when you allow a suspicious package name. Keep personal preferences in `~/.lpm/config.toml`. The keys here override `~/.lpm/config.toml` (user-level) but lose to CLI flags.
 
 Full field reference: [`lpm.toml`](/docs/reference/lpm-toml).
 
@@ -118,7 +120,7 @@ A missing optional file keeps its normal default or fallback behavior. A file th
 
 Malformed or semantically invalid `lpm.json` fails before any project-bound environment operation can mutate local or remote state. That includes local secret operations, named `--env` resolution, validation, aliases, inheritance, schema operations, OIDC policy environment resolution, and `lpm env push`, which needs the complete alias, inheritance, and schema metadata to preserve environment boundaries. `lpm env pull` and `lpm env rotate-key` validate before network access or local vault replacement; `lpm env share` validates before sharing-key classification or registration. Only account-level operations that do not consult project configuration, such as browser pairing and sharing-key rotation, are unaffected by an unrelated malformed file. Oversized or unreadable configuration remains a hard error whenever the command needs it.
 
-These small-file limits do not apply to `lpm.lock` / `lpm.lockb`, package tarballs and downloaded archives, package source or build outputs, patch and skill source payloads, README content, growing task/audit/webhook logs, or operating-system pseudo-files such as `/proc`. Those inputs retain their own streaming, integrity, rotation, or format-specific controls.
+These small-file limits do not apply to `lpm.lock` / `lpm.lockb`, package tarballs and downloaded archives, package source or build outputs, patch and skill source payloads, README content, growing task and audit logs, tunnel captures in `.lpm/inspector.db`, or operating-system pseudo-files such as `/proc`. Those inputs retain their own streaming, integrity, rotation, or format-specific controls.
 
 ## Safe atomic rewrites
 
@@ -148,24 +150,23 @@ Quick decision table when you're not sure where a setting belongs:
 
 ## `.gitignore` essentials
 
-[lpm init](/docs/packages/init) creates a `.gitattributes` rule for legacy binary files. Current installs use TOML only; the rule is harmless:
-
-```text title=".gitattributes"
-lpm.lockb binary
-```
-
-You probably want to ignore a few LPM CLI artifacts:
+LPM CLI needs no `.gitignore` entry of its own. Ignore what your tools and runtime produce:
 
 ```text title=".gitignore"
 node_modules/
-.lpm/                  # local install hash, security caches, skills, tunnel state
-.env*.local            # local-only env overrides
+# Local-only env overrides
+.env*.local
 ```
 
-`.lpm/` holds project-local install state (`install-hash`, captured tunnel webhooks, agent skill markdown, etc.). The global store lives in `~/.lpm/`, completely separate — nothing project-specific belongs there.
+The project's `.lpm/` directory holds machine-local state: install checkpoints, certificates, tunnel captures, env sync state, and recovery backups. It ignores itself through `.lpm/.gitignore`, so Git never sees it. Commit the `lpm.*` and `lpm-*` files at the project root.
+
+Secret files that LPM CLI writes, such as an `lpm env export` file or the `.npmrc` from `lpm setup local`, get their own ignore rule before the secret reaches disk. Your login, local env secrets, store, and caches live in the LPM home (`~/.lpm`, or `$LPM_HOME`). Some of its records are keyed by project path, such as per-project port choices, but none belong in a repository.
+
+See [Files LPM CLI creates](/docs/project-files) for the full list.
 
 ## See also
 
+- [Files LPM CLI creates](/docs/project-files) — what to commit and what stays local
 - [`package.json` "lpm" key](/docs/reference/package-json-lpm) — every field under the `"lpm"` block
 - [`lpm.json`](/docs/reference/lpm-json) — runtime / task / publish config
 - [`lpm.toml`](/docs/reference/lpm-toml) — project-level CLI defaults

@@ -33,6 +33,8 @@ lpm rebuild
 
 Explicit untrusted selections require signed authorization. `--all` and package names do not bypass that requirement.
 
+The command acts on the nearest directory with a `package.json`, as [lpm install](/docs/packages/install#project-discovery) does. From a subdirectory, it prints the directory it chose.
+
 ## Examples
 
 ```bash
@@ -229,13 +231,20 @@ Weaker modes require signed authorization. `--no-sandbox` conflicts with strict 
 
 A clean diagnostic run does not prove that a strict sandbox run will succeed.
 
+### The project's `.lpm` directory
+
+The project's `.lpm/` directory holds LPM CLI's own state, such as certificates, env sync state, tunnel captures, and recovery backups.
+Its package directories, `.lpm/wrappers/` and `.lpm/hoisted/nested/`, hold installed packages of the isolated and hoisted layouts. Sandboxed scripts can read them, and a script can write only its own package's directory there, not another package's. With the default `readProject: "narrow"`, those are also the only parts of `.lpm/` that scripts can read.
+A `package.json > lpm.scripts.sandboxWriteDirs` entry inside `.lpm` or above the project is rejected.
+Scripts can write `~/.cache`, `~/.npm`, and `~/.node-gyp`, so a project inside one of them can't run dependency scripts in the sandbox: LPM CLI refuses them until you move the project.
+
 ### Project reads and environment variables
 
 By default, `readProject: "narrow"` permits dependency directories, package manifests, lockfiles, and root `tsconfig*.json` files.
 
 Builds also retain access to their package files and permitted toolchain, cache, and writable locations. Other project source files require a read grant.
 
-Approved `readProject: "full"` permits the entire project tree, including project secrets. It does not grant access to credentials outside the project.
+Approved `readProject: "full"` permits the entire project tree, including project secrets and the project's `.lpm/` directory, which holds local certificates and tunnel captures. It does not grant access to credentials outside the project.
 
 The baseline environment contains operating-system, user, locale, terminal, path, and CI values. Other names require `passEnv` and authorization:
 

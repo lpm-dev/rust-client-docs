@@ -17,6 +17,9 @@ The examples pin LPM CLI to `0.78.0`. Update that version through your normal re
 ## Commit project configuration
 
 Commit `package.json` and `lpm.lock`. If `lpm.json` is present, commit it.
+Also commit the other LPM project files that the project uses, such as `patches/`, `lpm-sources.json`, `lpm-agent-skills.json`, and `lpm-changes/`. `.lpm/` holds local state and keeps itself out of Git. See [Files LPM CLI creates](/docs/project-files).
+
+`lpm.lock` records the overrides and patches its resolution used, so a fresh CI checkout installs from the lockfile without state from an earlier install.
 
 Use `lpm.json` for shared runtime versions, tasks, and publication targets. Registry credentials belong in the CI secret store.
 
@@ -90,7 +93,7 @@ For an npm-compatible client that needs temporary Registry credentials:
 lpm setup ci npmrc --oidc
 ```
 
-[lpm setup ci npmrc](/docs/infra/setup) writes an owner-only project `.npmrc`. The receiving client uses that file and its own supported install workflow.
+[lpm setup ci npmrc](/docs/infra/setup) writes an owner-only `.npmrc` where installs read it: the workspace root, or else the nearest directory with a `package.json`. It refuses an `.npmrc` that Git tracks and adds the file to `.git/info/exclude`, which keeps it out of commits without changing a tracked file. The receiving client uses that file and its own supported install workflow.
 
 Exclude the credential file from artifacts and caches. Writing it does not authenticate LPM CLI's direct Registry downloads.
 
@@ -103,16 +106,15 @@ A supplied assertion cannot be reused after exchange. Obtain a fresh assertion f
 ## Understand frozen and offline installation
 
 ```bash
-lpm ci --strict-integrity --no-skills --no-editor-setup --no-security-summary
+lpm ci --strict-integrity --no-skills --no-security-summary
 ```
 
 | Option | Effect |
 | --- | --- |
 | `lpm ci` | Requires a current, replayable lockfile. |
 | `--strict-integrity` | Requires inline integrity for tarball-URL dependencies instead of first-use trust. |
-| `--offline` | Uses available local package data and fails when required data is missing. |
-| `--no-skills` | Skips package skill installation. |
-| `--no-editor-setup` | Compatibility option. Package skills do not create editor integrations. |
+| `--offline` | Uses available local package data and fails when required data is missing, or when the overrides differ from the ones `lpm.lock` was resolved with. |
+| `--no-skills` | Skips package skills and the restore of recorded agent skills. Without it, unavailable skills produce warnings and never fail the install. |
 | `--no-security-summary` | Skips the post-install report. Separate audit commands still work. |
 
 For an intentionally prepared offline job:
@@ -174,7 +176,9 @@ See [Firewall for npm](/docs/guides/firewall) for scope, policy groups, and offl
 | `~/.lpm/plugins` | Managed tool binaries. Include platform and tool configuration in the cache key. |
 | `~/.lpm/cache/dlx` | Optional cache for temporary package commands. |
 
-Cache these directories separately from credentials. Do not cache the entire `~/.lpm` directory or project secret storage.
+These paths are under the LPM home. If the job sets `LPM_HOME`, cache the same subdirectories under `$LPM_HOME` instead.
+
+Cache these directories separately from credentials. Do not cache the entire LPM home, which also holds login state and local env secrets, or project secret storage.
 
 Regenerate `node_modules` from the lockfile and store. A restored store can still require downloads for another platform or missing package.
 
@@ -211,6 +215,7 @@ If a post-publish hook or availability wait fails, check the registry before ret
 | Failure | Recovery |
 | --- | --- |
 | Missing or stale lockfile | Run an online [lpm install](/docs/packages/install) locally and review the updated lockfile. |
+| Offline install reports changed overrides | Run an online `lpm install` locally, commit `lpm.lock`, then retry. |
 | Offline package missing | Populate the matching store online before the offline step. |
 | OIDC exchange rejected | Check the trigger, trust configuration, audience, and assertion reuse. |
 | Build tool missing | Declare it as a project dependency and use the intended runtime. |

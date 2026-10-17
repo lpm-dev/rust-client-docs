@@ -137,6 +137,8 @@ Use `--no-frozen-lockfile` for an intentional mutable install in CI.
 Frozen installs reject package arguments, `--force`, a missing lockfile, and changes to the locked project configuration.
 This configuration includes dependency sections, overrides, catalogs, patches, peer rules, and `autoInstallPeers`.
 
+`lpm.lock` records the overrides and patches that its resolution used. A fresh clone of a project with overrides or patches therefore installs from the committed lockfile, without local state from an earlier install.
+
 If the manifest changes, run a mutable install locally:
 
 ```bash
@@ -156,6 +158,10 @@ lpm install --offline --frozen-lockfile
 
 Offline installs require a matching lockfile and all required package data in the store.
 If data is missing, the install fails. Offline installs also skip background update requests.
+
+An offline install also fails when the overrides in `package.json` differ from the ones `lpm.lock` was resolved with.
+A lockfile from an earlier release can lack that record. If such a project has overrides, the offline install fails until one online install rewrites the lockfile.
+In either case, run `lpm install` online, commit the lockfile, then retry `--offline`.
 Lifecycle scripts and configured policy extensions can still access the network through their own processes.
 
 `--offline` does not accept package arguments. Add or change dependencies during an online install, then commit the resulting lockfile.
@@ -299,6 +305,7 @@ A successful migration also removes obsolete member lockfiles. A failure preserv
 
 An interrupted or failed install can leave provisional `node_modules` changes.
 The next install reconciles those files with the authoritative lockfile.
+It also removes rollback directories under `.lpm` that a killed workspace install left behind.
 
 ## Dependency sources
 
@@ -431,7 +438,7 @@ lpm install -g foo --replace-bin serve
 `--replace-bin` transfers the existing command name to the new package.
 
 Global installs reject workspace flags, `-D`, `--yes`, omission flags, catalog flags, frozen flags, `--offline`, `--force`, `--skills`, `--timing`, and audit-after-install flags.
-`--no-skills`, `--no-editor-setup`, and `--no-security-summary` have no effect on global installs.
+`--no-skills` and `--no-security-summary` have no effect on global installs.
 
 After [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-approvals), reinstall the affected global package to run its approved scripts.
 See [Global packages](/docs/packages/global).
@@ -765,6 +772,7 @@ An unchanged project can skip this audit. Run the separate audit command to insp
 
 Online installs can extract agent guidance from direct `@lpm.dev/*` dependencies into `.lpm/skills/<package>/`.
 This feature is enabled by default.
+Installs also restore the guidance of packages that [`lpm add`](/docs/packages/add) delivered, at the version recorded in `lpm-sources.json`.
 
 ```bash
 lpm install @lpm.dev/owner.package --no-skills
@@ -774,7 +782,10 @@ lpm install @lpm.dev/owner.package --skills
 
 The flags override user configuration for one run. Disabling automatic extraction does not remove existing skill files.
 Use [`lpm skills clean`](/docs/packages/skills) to remove them.
-Package skills do not create editor integrations. `--no-editor-setup` remains accepted but has no effect.
+
+Skills never fail an install. If a release's skills are still under review, did not pass review, cannot be fetched, or would replace locally edited files, the install warns and keeps the skills already in `.lpm/skills/`. JSON output lists the messages in `warnings`.
+
+Online installs also restore the [managed agent skills](/docs/packages/skills#storage-and-compatibility) that a committed `lpm-agent-skills.json` records, with their agent links. `--no-skills` skips this restore. A skill that cannot be restored, or an unreadable record, produces a warning.
 
 ### Free packages
 
@@ -983,8 +994,7 @@ Security exceptions remain subject to [approval requirements](#guarded-weakeners
 | Flag | Effect |
 | --- | --- |
 | `--skills` | Enable automatic LPM.dev package skills for this run |
-| `--no-skills` | Skip automatic LPM.dev package skills for this run |
-| `--no-editor-setup` | Accepted without an effect |
+| `--no-skills` | Skip automatic LPM.dev package skills and the restore of recorded agent skills for this run |
 | `--no-security-summary` | Skip the post-install source scan, Registry enrichment, and human report |
 | `--audit-after-install` | Add an informational audit summary |
 | `--no-audit-after-install` | Skip that audit, overriding environment and user configuration |

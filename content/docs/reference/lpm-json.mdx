@@ -68,10 +68,11 @@ An optional field does not necessarily accept `null`.
 | `envSchema` | Environment variable requirements. | Unset. |
 | `environments` | Named environment inheritance. | Unset. |
 | `vault` | Stable project identity for encrypted environments. | Created by [`lpm env`](/docs/dev/env). |
-| `vaultSync` | CLI-managed sync and account metadata. | Unset. |
+| `vaultSync` | Env sync state from earlier releases. LPM CLI moves it to [`.lpm/env-sync.json`](#env-sync-state). | Unset. |
 | `publish` | Registry targets and publication defaults. | LPM.dev Registry. |
 
 LPM CLI reads configuration from the relevant project directory.
+Project commands such as `lpm env`, `lpm dev`, and `lpm run` use the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory.
 Workspace inheritance differs by feature. The file is not a universal set of workspace defaults.
 
 ## `runtime`
@@ -210,15 +211,23 @@ LPM CLI rejects empty values, path separators, `..`, leading `~`, control charac
 If you remove the field, the next environment command creates a new identifier.
 The old cloud data remains under the previous identifier.
 
+[`lpm publish`](/docs/packages/publish) leaves `vault` and `vaultSync` out of the published `lpm.json`.
+
 [`LPM_VAULT_ID`](/docs/reference/env-vars#oidc-credentials) overrides this value only for `lpm env pull --oidc`.
 A blank value falls back to the local field. Other environment commands ignore the variable.
 See [Environment project identity](/docs/infra/secrets-vault#configure-a-project).
 
-## `vaultSync`
+## Env sync state
 
-```json
+Cloud operations record this checkout's sync state in `.lpm/env-sync.json`, not in `lpm.json`.
+Git never sees the file, because the project's `.lpm/` directory ignores itself. See [Files LPM CLI creates](/docs/project-files).
+If Git tracks it anyway, for example because a commit added it with `git add -f`, or a repository of `.lpm/`'s own tracks it, it came with the clone rather than from this checkout, and this checkout's state would go into the next commit. Cloud operations then stop and name the `git rm --cached` command that untracks it. When Git can't tell whether it tracks the file, they warn and use it: `.lpm/` ignores itself, so the file is rarely tracked.
+Each checkout keeps its own state. A fresh clone starts without one, and its first sync records its own account binding.
+
+```json title=".lpm/env-sync.json"
 {
-  "vaultSync": {
+  "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b",
+  "sync": {
     "personalVersion": 7,
     "personalSyncedAt": "2026-08-13T09:00:00Z",
     "orgVersions": { "acme": 12 },
@@ -247,7 +256,9 @@ See [Environment project identity](/docs/infra/secrets-vault#configure-a-project
 }
 ```
 
-| Field | Type | Notes |
+`vault` names the env ID that the state belongs to. The state applies only while [`lpm.json > vault`](#vault) names the same ID.
+
+| Field under `sync` | Type | Notes |
 | --- | --- | --- |
 | `personalVersion` | int | Non-authoritative summary of the last known personal cloud-vault version. |
 | `personalSyncedAt` | string | Non-authoritative summary of the last successful personal sync time in RFC 3339 format. |
@@ -257,18 +268,26 @@ See [Environment project identity](/docs/infra/secrets-vault#configure-a-project
 | `authorityCheckpoints.personal.<registry>.<principal>` | object | Authoritative personal-vault revision floor and optional last-sync time for one Registry and immutable user ID. |
 | `authorityCheckpoints.organizations.<slug>.<registry>.<principal>` | object | Authoritative organization-vault revision floor and optional last-sync time for one Registry, organization slug, and immutable organization ID. |
 
-LPM CLI maintains every `vaultSync` field.
+LPM CLI maintains every field and writes the file owner-only.
 `authorityCheckpoints` records account bindings and minimum accepted cloud revisions.
 `personalPlatformBindings` binds platform credentials to their original account and Registry.
 The other version and timestamp fields are non-authoritative summaries for status display.
 
-Do not edit or remove `vaultSync`. Removal resets local rollback and account-binding protection. A later operation can then establish a new principal and revision checkpoint for that checkout.
+Do not edit or remove the file. Removal resets local rollback and account-binding protection. A later operation can then establish a new principal and revision checkpoint for that checkout.
+
+### `vaultSync` from earlier releases
+
+Earlier releases kept the same object in `lpm.json > vaultSync`, where it was committed with the project.
+While Git's index doesn't hold it, LPM CLI still reads it until the next `lpm env pull` or `lpm env push` moves it to `.lpm/env-sync.json` and removes it from `lpm.json`.
+A committed `vaultSync` reached every checkout, so it is no one checkout's state: LPM CLI ignores it, the checkout syncs as a fresh one, and the next pull or push removes it from `lpm.json`.
+The check reads `lpm.json` as Git tracks it, under any spelling that the file system treats as the same file. When Git can't answer, as when it can't be run in a project inside a repository, LPM CLI ignores the field too.
+[`lpm doctor`](/docs/infra/doctor#lpmjson) warns while `lpm.json` holds `vaultSync`. Commit `lpm.json` after the move.
 
 If a version does not match, the server returns `409 VaultConflictError`. Then pull the remote values, resolve the conflict, and push again.
 
-Commands use a project-local lock when they update `lpm.json`. Each command preserves unrelated fields and atomically replaces the file.
+Commands use a project-local lock when they update `lpm.json`. Each command preserves unrelated fields and atomically replaces the file. A sync updates `lpm.json` and `.lpm/env-sync.json` together under that lock.
 
-LPM CLI rejects a symbolic-link or junction `lpm.json` during an update. This rule prevents a cloned project from redirecting the write.
+LPM CLI rejects a symbolic-link or junction `lpm.json` or `.lpm/env-sync.json` during an update. This rule prevents a cloned project from redirecting the write.
 
 ## `env`
 
@@ -811,7 +830,7 @@ Configuration files have a [16 MiB size limit](/docs/project-setup#local-configu
 Malformed JSON and invalid typed fields fail the command that reads them.
 Ordinary unknown fields are ignored for forward compatibility.
 [`lpm doctor`](/docs/infra/doctor) reports unknown nested paths, such as `proxy.httpRediect`.
-CLI-managed `vaultSync` metadata uses stricter field checks.
+CLI-managed [env sync state](#env-sync-state), including a legacy `vaultSync`, uses stricter field checks.
 
 If a command reports an invalid field, correct that field and run the command again.
 For inheritance errors, check parent names and remove cycles.

@@ -28,6 +28,8 @@ lpm publish --npm --dry-run --ignore-scripts
 lpm publish --npm --yes
 ```
 
+From a subdirectory, `lpm publish` uses the nearest directory with a `package.json`, as [`lpm install`](/docs/packages/install#project-discovery) does, and prints the directory it chose.
+
 The package needs a name and a valid semantic version. `package.json > private: true` prevents publication to every registry, including preview modes. This field differs from private distribution on LPM.dev Registry.
 
 For workspace-wide publication, use [`lpm release publish`](/docs/packages/release).
@@ -143,7 +145,7 @@ lpm publish --npm --yes
 
 The directory must remain inside the source package. Absolute paths and parent traversal are rejected.
 
-The selected directory supplies the artifact name, version, and files. Lifecycle scripts run from the source package. The source package's publish and provenance configuration remains authoritative. A private source package still blocks publication.
+The selected directory supplies the artifact name, version, and files, including the authored skills in its own `lpm-skills/`. Lifecycle scripts run from the source package. The source package's publish and provenance configuration remains authoritative. A private source package still blocks publication.
 
 ## Select targets and names
 
@@ -208,13 +210,35 @@ See [Swift package publication](/docs/packages/swift-package-registry#publish-a-
 
 ## Package contents and validation
 
-The package's `files` list controls explicit inclusion. Without it, LPM CLI excludes project-local `.lpm` state except direct authored `.lpm/skills/*.md` candidates. Installed dependency skill sets remain excluded, including with an explicit `files` list.
+The package's `files` list controls explicit inclusion. `package.json`, README and license files, and the `main`, `browser`, and `bin` entrypoints enter the archive in every case. Without `files`, each directory's `.npmignore`, or else its `.gitignore`, excludes files. Symbolic links are never packed.
 
-Authored skills receive format and security checks for every target. `--allow-secrets` does not bypass skill validation. For LPM.dev Registry, preparation can add `.lpm/skills` to an explicit `files` list. A real publish can save that change to the manifest.
+Some paths never enter the archive, even when `files` lists them:
+
+| Paths | Location |
+| --- | --- |
+| `.lpm/`, `.git/`, and `node_modules/` outside [bundled dependencies](#bundled-dependencies) | Any depth |
+| `.npmrc`, `.npmignore`, and `.gitignore` | Any depth |
+| `lpm.lock`, `lpm.lockb`, `lpm-changes/`, `lpm-sources.json`, and `lpm-agent-skills.json` | Package root. These committed files describe the project, not the package. |
+| `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, and `bun.lockb` | Package root |
+
+Credential files match by name at any depth, regardless of letter case:
+
+- `.env` and `.env.<name>` files, except templates whose name ends in `.example`, `.sample`, `.template`, `.defaults`, or `.vault`, such as `.env.production.example`
+- `.envrc`, `.netrc`, `_netrc`, `.pgpass`, `.pypirc`, and `.git-credentials`
+- SSH private keys: `id_rsa`, `id_dsa`, `id_ecdsa`, and `id_ed25519`
+- Cloud keys: `credentials.json`, `service-account.json`, and `gcloud-key.json`
+
+Without `files`, publication leaves credential files out. If `files` selects one, the secret scan stops the publish and names the file.
+
+`--check` and `--dry-run` list every archive file with its size. Their JSON output adds `tarball_files`, an array of `path` and `size` entries.
+
+Authored [package skills](/docs/packages/skills#publish-package-guidance) in `lpm-skills/` receive format and security checks for every target. Only valid skill files ship, at `lpm-skills/` in the archive, whatever `files` lists. Publication does not edit `package.json > files`. `--allow-secrets` does not bypass skill validation.
+
+A root `lpm.json` ships even when `files` omits it. The published copy leaves out `vault` and `vaultSync`, which identify the author's env and its sync state. If `envSchema` uses `extends` or overrides, the published copy holds the resolved schema. Other keys ship unchanged.
 
 LPM CLI rewrites publishable `workspace:` and `catalog:` dependencies inside the archive. It also applies target-specific package names there. These changes leave the source manifest unchanged.
 
-The final artifact for every target receives a secret scan. This includes bundled dependencies and explicitly included files that Git ignores. `--allow-secrets` skips this scan for one invocation.
+The final artifact for every target receives a secret scan. This includes bundled dependencies, explicitly included files that Git ignores, and files without an extension, such as `bin/` scripts and key files. A file without an extension whose content is binary, such as a prebuilt native executable, isn't read as text. `--allow-secrets` skips this scan for one invocation, including the credential-file check.
 
 LPM.dev Registry targets also receive a local quality score. `--min-score <N>` requires that target and accepts 0 through 100. The local score excludes checks that require server data. See [`lpm quality`](/docs/packages/quality).
 

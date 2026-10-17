@@ -45,7 +45,7 @@ lpm skills dashboard
 | `list` (`ls`) | List package, managed, and external skills. |
 | `view` | Show details for one selector. |
 | `dashboard` (`ui`) | Inspect skills and manage standalone skills in a local browser. |
-| `validate` | Check publisher-authored `.lpm/skills/*.md` files. |
+| `validate` | Check the package's authored `lpm-skills/*.md` files. |
 | `clean` | Remove intact package skill sets. |
 | `doctor` | Diagnose managed targets and broken external links. |
 | `update` | Read original sources again and refresh managed skills. |
@@ -59,8 +59,8 @@ lpm skills dashboard
 | `managed` | LPM CLI stores standalone content separately and links or copies it into selected agent directories. |
 | `external` | An agent directory contains skills that LPM CLI does not manage. |
 
-Project commands use the current directory. Run them from the intended project root.
-A command from a subdirectory uses that subdirectory for project skill storage and agent targets.
+Project commands act on the nearest directory with a `package.json`, as [lpm install](/docs/packages/install#project-discovery) does.
+From a subdirectory, the command prints the directory it chose. Without a `package.json` above it, the command uses the current directory. A local source path that you pass to `lpm skills add` is relative to the current directory.
 
 Package skills do not create agent links or change editor configuration.
 Standalone mutations do not change package skill sets or external skills.
@@ -123,8 +123,17 @@ Private guidance requires publisher access.
 Stored sessions can recover from expired credentials, including concealed access denials.
 Public reads do not require a session refresh.
 
-Pending, processing, failed, or rejected reviews stop installation and preserve the existing set.
-A partially flagged review can supply its approved subset.
+If the release's skills are not available, `lpm skills add` fails, names the review state, and keeps the installed set:
+
+| Registry review | Error says the skills |
+| --- | --- |
+| Pending or processing | are still under security review. Retry in a few minutes. |
+| Failed or unknown | could not be security reviewed. |
+| Rejected | were rejected by security review. |
+| Flagged, with no approved skill | did not pass security review. |
+| Withheld for another reason | are not available. |
+
+A flagged review with approved skills supplies its approved subset.
 A published empty set can remove an older, intact set.
 
 If a set contains edited files, untracked files, symlinks, or an invalid ownership manifest, replacement stops.
@@ -132,8 +141,13 @@ Back up and move the affected `.lpm/skills/<owner.package>/` directory, then ret
 
 ### Automatic installation and overrides
 
-[lpm install](/docs/packages/install) installs skills for direct `@lpm.dev/*` dependencies by default.
+[lpm install](/docs/packages/install) installs skills for direct `@lpm.dev/*` dependencies by default, including aliases.
 It requests the exact resolved package version. Offline installation does not fetch skills.
+It also restores the skills of packages that [lpm add](/docs/packages/add) delivered, at the version recorded in `lpm-sources.json`. A package that is also a direct dependency uses the dependency's version.
+
+Package skills never fail an installation.
+A fetch error, an unavailable review state from the table above, an unsafe skill name, or locally edited skill files produce a warning, and the skills already in `.lpm/skills/` stay.
+JSON output lists these messages in `warnings`.
 After a `--no-skills` upgrade, an enabled online installation refreshes stale guidance even if package files are current.
 If direct aliases select several versions of one package, the shared guidance directory uses the highest selected version.
 
@@ -143,13 +157,17 @@ lpm install --skills
 lpm install --no-skills
 ```
 
-The global key is `auto-install-lpm-skills` in `~/.lpm/config.toml`.
+The global key is `auto-install-lpm-skills` in `${LPM_HOME:-~/.lpm}/config.toml`.
 Its default is `true`. The legacy `noSkills` preference applies only if the current key is absent.
 
 `--skills` and `--no-skills` override the preference for one installation.
 They also apply to [lpm add](/docs/packages/add) and [lpm ci](/docs/packages/install#frozen-lockfile-and-ci).
 The preference does not remove existing files or affect explicit skill commands.
 See [lpm config](/docs/infra/config#focused-settings).
+
+An installation does not remove a package's skill directory when the package stops being a dependency.
+[lpm uninstall](/docs/packages/uninstall) removes an intact set after the last direct dependency or alias on the package goes.
+[lpm remove](/docs/packages/remove) removes the skills of a package that `lpm add` delivered, unless the package is still a dependency.
 
 ### Clean package skill sets
 
@@ -159,7 +177,7 @@ lpm skills clean --yes
 ```
 
 `clean` removes only sets whose files and digests match their ownership manifest.
-It preserves authored flat Markdown, modified or untracked content, invalid manifests, symlinks, managed standalone content, and agent targets.
+It preserves Markdown files directly under `.lpm/skills/`, modified or untracked content, invalid manifests, symlinks, managed standalone content, and agent targets.
 A dry run does not create a lock file or project directories.
 
 Interactive cleanup defaults to **No**. Unattended cleanup requires `--yes`.
@@ -195,9 +213,19 @@ lpm skills add ./team-skills \
 
 ### Storage and compatibility
 
-Project content lives under `.lpm/managed-skills/`.
-Global content lives under `${LPM_HOME:-~/.lpm}/managed-skills/`.
-Each store records ownership in `skills.lock.json`.
+| Scope | Record | Content |
+| --- | --- | --- |
+| Project | `lpm-agent-skills.json` at the project root. Commit it. | `.lpm/managed-skills/`, local to the checkout |
+| Global | `${LPM_HOME:-~/.lpm}/managed-skills/skills.lock.json` | `${LPM_HOME:-~/.lpm}/managed-skills/` |
+
+The project record lists each skill's source, revision, and agent targets with `/` paths. A local source inside the project is recorded as a `./` path.
+LPM CLI removes the record when the last project skill goes.
+A record in `.lpm/managed-skills/skills.lock.json` from an earlier release is read and replaced on the next write.
+
+An online [lpm install](/docs/packages/install) restores the project skills that this checkout lacks, with their enabled agent targets.
+A GitHub source is fetched at its recorded commit. A local source is used only while its content still has the recorded digest.
+A skill that cannot be restored produces an installation warning. If its source no longer has the recorded revision, run `lpm skills update` to take the current content.
+`--no-skills` skips this restore, as it skips package skills. An unreadable `lpm-agent-skills.json` also produces a warning rather than an installation failure. See [Files LPM CLI creates](/docs/project-files) for what to commit.
 
 | Agent | Project directory | Default global directory |
 | --- | --- | --- |
@@ -291,15 +319,15 @@ lpm skills doctor --global --json | jq -e '.healthy'
 
 ## Publish package guidance
 
-Author direct Markdown files under `.lpm/skills/`:
+Author direct Markdown files in `lpm-skills/` at the package root, next to `package.json`, and commit them:
 
 ```text
-.lpm/skills/
+lpm-skills/
 ├── usage.md
 └── migration.md
 ```
 
-```md title=".lpm/skills/usage.md"
+```md title="lpm-skills/usage.md"
 ---
 name: package-usage
 description: Use the package through its supported public API.
@@ -321,11 +349,11 @@ lpm publish
 
 | Rule | Requirement |
 | --- | --- |
-| Location | Direct `.md` files under `.lpm/skills/`. |
+| Location | Direct `.md` files in `lpm-skills/` of the directory that [`lpm publish`](/docs/packages/publish) packs: the package root, or `publishConfig.directory` when `package.json` sets it. Markdown in a subdirectory and symlinks are rejected. |
 | Count | At most 10 files. |
 | Size | At most 15 KiB per file and 100 KiB total. |
 | Frontmatter | YAML with unique keys. Required string fields: `name`, `description`. Optional: string `version`, string-array `globs`. |
-| Name | Lowercase letters, numbers, and hyphens. |
+| Name | Lowercase letters, numbers, and hyphens, starting and ending with a letter or number. Unique within the package. |
 | Description | 10–500 characters. |
 | Body | At least 100 characters. |
 | Security | No security findings, including warnings. |
@@ -333,9 +361,13 @@ lpm publish
 Quote numeric-looking names and versions to retain string values.
 Folded and literal YAML descriptions are supported.
 
-Validation ignores intact package-owned directories and rejects other nested Markdown.
-[lpm publish](/docs/packages/publish) excludes installed package sets from the archive.
-A restrictive `package.json > files` list still includes authored `.lpm/skills` content.
+LPM.dev Registry checks uploaded skills with the same validator, so a skill that passes `lpm skills validate` also passes the upload check. Registry security review happens after upload.
+Markdown files left directly in `.lpm/skills/` by earlier releases fail validation with a message to move them to `lpm-skills/`.
+Installed package sets in `.lpm/skills/<owner.package>/` are not checked.
+
+[lpm publish](/docs/packages/publish) validates the skills and ships the valid files at `lpm-skills/` in the tarball, whatever `package.json > files` lists.
+Other files in `lpm-skills/` are not published. Publishing does not edit `package.json > files`.
+When [lpm add](/docs/packages/add) copies a package without `lpm.config.json`, it leaves out `lpm-skills/`. For `@lpm.dev/*` packages, `lpm add` installs the published skills in `.lpm/skills/` instead.
 
 The optional skill `version` describes its guidance independently of the package release that carries it.
 An older value remains visible after a later package release.

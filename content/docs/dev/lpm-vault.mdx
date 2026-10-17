@@ -10,7 +10,7 @@ The application reads normal environment variables, such as `process.env.API_TOK
 
 ## Quickstart
 
-From the directory that contains `package.json`, store a value and start an existing script:
+From the project directory, or any directory below it, store a value and start an existing script:
 
 ```bash
 lpm env set API_TOKEN=example-token
@@ -18,7 +18,7 @@ lpm env list
 lpm run start
 ```
 
-The first write adds a `vault` ID to `lpm.json`. `list` masks values by default.
+The first write adds a `vault` ID to the project's `lpm.json`. `list` masks values by default.
 These commands need no desktop app, plaintext export, or cloud connection.
 
 ## Project identity and configuration
@@ -100,6 +100,7 @@ Configured paths and [environment inheritance](/docs/reference/lpm-json#environm
 Inherited process values take precedence over dotenv values. Stored secrets load after files and can override inherited process values.
 Schema defaults fill missing values. An invalid required value stops startup.
 Runtime hooks such as `NODE_OPTIONS` and `LD_PRELOAD` are excluded from project values and inherited script environments.
+Project values also cannot set `PATH`, `HOME`, or `LPM_HOME`.
 
 Inspect the resolved project values with [lpm env print](/docs/dev/env#print-the-resolved-environment):
 
@@ -121,22 +122,27 @@ lpm env import --env=staging .env.staging --overwrite
 ```
 
 Import preserves existing destination values unless you pass `--overwrite`.
-The input file remains on disk. The CLI adds its path to `.gitignore`.
+The input file remains on disk. If Git doesn't already ignore it, the CLI adds an anchored rule for its path to `.gitignore`.
+If Git already tracks the file, the CLI warns. Untrack it with the `git rm --cached` command in the warning before you commit.
 After you check the imported keys, remove secret values from the original file and restart the application.
 Keep placeholders or non-secret examples in `.env.example`.
 
 If `.env` is absent and `.env.example` exists, [lpm dev](/docs/dev/dev) copies the example to `.env`.
 This copy contains example values. It does not export local secrets.
+LPM CLI writes the copy owner-only and adds a `.gitignore` rule for it when Git doesn't already ignore it. A rule it can't add is a warning.
 
 ## Storage and recovery
 
 | Platform | Local storage |
 | --- | --- |
 | macOS | Data Protection Keychain through an official signed CLI build. |
-| Linux and Windows | Encrypted files in `~/.lpm/vaults/`. The encryption key uses native secure storage when available. |
+| Linux and Windows | Encrypted files in `vaults/` in the LPM home. The encryption key uses native secure storage when available. |
+
+The LPM home is `~/.lpm`, or the directory that [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) names.
+A home other than `~/.lpm` keeps its own OS credential store entries, so it has its own local secrets. Values stored with one home are not visible with another.
 
 On Linux, native key storage uses Secret Service. On Windows, it uses Credential Manager.
-An unavailable native backend can use an existing file key at `~/.lpm/.vault-fallback-key`.
+An unavailable native backend can use an existing file key at `.vault-fallback-key` in the LPM home.
 If native storage reports no key and cannot save a new one, initial storage can create a fallback file key.
 Existing encrypted data still requires its original key.
 
@@ -145,7 +151,7 @@ A missing or conflicting key produces an error. The CLI preserves existing data 
 
 | Problem | Recovery |
 | --- | --- |
-| Values are absent. | Check the project directory, `vault` ID, and selected environment with `lpm env list --env=<name>`. |
+| Values are absent. | Check the project directory, `vault` ID, `LPM_HOME`, and selected environment with `lpm env list --env=<name>`. |
 | macOS denies access. | Use an [official signed CLI build](/docs/installation) and unlock the Keychain in your login session. |
 | Native key storage is unavailable. | Restore access to Secret Service or Credential Manager, or restore the matching fallback key. |
 | The fallback key is lost. | Restore the matching key from a trusted backup. An encrypted local file alone is insufficient. |
@@ -172,6 +178,7 @@ Cloud sync requires an eligible LPM.dev Registry plan and authorized keys.
 Uploads preserve named empty environments, including projects with no keys.
 A pull replaces local values with the remote payload. Export local values that you need to preserve before a pull.
 Runtime startup reads local values. It does not automatically pull cloud changes.
+Each checkout keeps its sync state in `.lpm/env-sync.json`, which Git never sees.
 See [lpm env cloud sync](/docs/dev/env#cloud-sync) for personal sync, organization sharing, pairing, and CI access.
 
 ## See also

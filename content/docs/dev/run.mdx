@@ -21,6 +21,8 @@ lpm run test -- --run
 Without `lpm.json`, LPM CLI uses the scripts in `package.json`.
 It adds project and workspace executables from `node_modules/.bin` to the command's `PATH`.
 
+You can run the command from a subdirectory. An ordinary run acts on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory. LPM CLI prints that directory when it is not the current one. Scripts run in that directory, as npm runs them.
+
 | Mode | Behavior |
 | --- | --- |
 | Default | Run the requested tasks and their prerequisites in order |
@@ -123,7 +125,7 @@ lpm run test --affected --base origin/main
 lpm run build --filter-prod '...shared'
 ```
 
-Workspace modes require a workspace. The current directory identifies the project for ordinary single-package runs.
+Workspace modes require a workspace, which LPM CLI discovers from the current directory. Ordinary single-package runs use the nearest project, as described in the [quickstart](#quickstart).
 
 Repeated filters select the union of their matches. Filters and `--affected` also combine by union.
 `--all` cannot be combined with either filter flag or `--affected`.
@@ -213,7 +215,8 @@ Variables loaded from project files, local secrets, and schema defaults remain c
 Include every inherited value that can change the output.
 
 A cache hit restores outputs and replays captured logs without running the task.
-The local cache is under `~/.lpm/cache/tasks/`.
+The restore stages files inside the project's `.lpm/` directory, which Git ignores. Files in a `.lpm/` directory are never task outputs, also a workspace member's and whatever the letter case. A cached artifact that holds such files counts as a cache miss, so the task runs.
+The local cache is under `~/.lpm/cache/tasks/`, or `$LPM_HOME/cache/tasks/` when `LPM_HOME` is set.
 With `remoteCache.enabled`, LPM CLI also uses the hosted cache. Remote cache failures become cache misses.
 
 Use [lpm cache](/docs/packages/cache) to inspect or clear cached results.
@@ -275,6 +278,7 @@ An unknown top-level command can select a script or task with the same name.
 Built-in commands take precedence. For example, [lpm test](/docs/dev/test) uses runner detection, while `lpm run test` selects the task.
 
 Use `lpm run` for task-runner flags. Arguments after a shorthand name go to the task itself.
+A shorthand reads the scripts and tasks of the current directory only. From a subdirectory, use `lpm run`, which finds the nearest project.
 If no script or task matches, shorthand tries a [project-local executable](/docs/dev/exec).
 Path-like commands use the [source-file runner](/docs/dev/exec).
 
