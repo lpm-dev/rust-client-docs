@@ -21,7 +21,7 @@ From the project directory, remove a source package:
 lpm remove @lpm.dev/owner.ui-kit
 ```
 
-LPM CLI reads `.lpm/added-sources.json` and checks each tracked file before removal.
+LPM CLI reads the `lpm-sources.json` record that `lpm add` wrote and checks each tracked file before removal.
 It preserves your edits and restores originals that the add operation overwrote.
 The command works without a registry connection or confirmation prompts.
 
@@ -86,8 +86,20 @@ The last owner can then remove the managed file or restore the original.
 Only empty directories created by source delivery are eligible for cleanup.
 Preexisting directories and directories with other content remain.
 
-Keep `.lpm/added-sources.json` and `.lpm/added-source-backups/` with the project until removal is complete.
-Without a tracking record, the command cannot identify source files for removal.
+### The source record
+
+`lpm-sources.json` at the project root records what `lpm add` delivered. Commit it with the copied files, so `lpm remove` works in every checkout.
+For each source package, it records the delivered version, each created or overwritten file with a project-relative `/` path and digest, created directories, inserted dependency declarations, and installed package skills.
+For an overwritten file, it records the original's digest and Unix permissions. The original's backup copy stays in `.lpm/added-source-backups/` on the machine that ran `lpm add`.
+
+| Overwritten file, unchanged since `lpm add` | Removal |
+| --- | --- |
+| Backup copy on this machine | Restores the original. |
+| No backup copy on this machine | Keeps the file and warns. Restore the original from version control if you need it. JSON lists the path in `originalsElsewhere`. |
+
+LPM CLI deletes `lpm-sources.json` after the last tracked package is removed.
+A `.lpm/added-sources.json` record from an earlier release is still read. LPM CLI replaces it with `lpm-sources.json` the next time the record changes.
+Without a tracking record, the command cannot identify source files for removal. See [Files LPM CLI creates](/docs/project-files).
 
 ### Dependency declarations
 
@@ -104,6 +116,7 @@ See [`lpm add --no-install-deps`](/docs/packages/add#flags) to skip consumer dep
 
 Removal cleans up unchanged package skills under `.lpm/skills/`.
 It rejects modified skill files or unexpected content in the package skill directory.
+If the package is still a dependency in `package.json`, including through an `npm:` alias, removal keeps its skills, because installs maintain them. JSON reports the kept directory in `keptSkills`.
 
 For editor links from older CLI versions, cleanup removes only links to that package's materialized skill files.
 User files, directories, and links to other targets remain.
@@ -118,7 +131,7 @@ cd packages/web
 lpm remove @lpm.dev/owner.ui-kit
 ```
 
-Removal uses the current directory. It does not search parent directories or select other workspace members.
+Removal uses the nearest directory with a `package.json`, as [`lpm install`](/docs/packages/install#project-discovery) does. From a subdirectory, it prints the directory it chose. It does not select other workspace members.
 Workspace members share the root project lock, which prevents conflicting package operations.
 
 ## Recovery
@@ -153,14 +166,18 @@ lpm remove source-pkg --json
   "package": "source-pkg",
   "removed": ["src/vendor/Source.ts"],
   "preserved": ["src/vendor/Edited.ts"],
-  "dependenciesRemoved": ["source-helper"]
+  "originalsElsewhere": ["src/vendor/index.ts"],
+  "dependenciesRemoved": ["source-helper"],
+  "keptSkills": ".lpm/skills/owner.ui-kit/"
 }
 ```
 
 `removed` includes tracked files that LPM CLI deleted or restored, plus removed skill paths and editor links.
 `preserved` lists source files that remain after ownership and content checks.
+`originalsElsewhere` lists overwritten files kept because their original's backup is on another machine.
 `dependenciesRemoved` lists deleted dependency declarations.
-Empty `preserved` and `dependenciesRemoved` fields are omitted.
+`keptSkills` names the skill directory kept because the package is still a dependency.
+Empty `preserved`, `originalsElsewhere`, and `dependenciesRemoved` fields and an absent `keptSkills` are omitted.
 
 ## Flags
 

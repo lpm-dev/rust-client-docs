@@ -36,14 +36,15 @@ lpm add lodash.merge --path src/vendor/lodash-merge --yes
 ```
 
 Run the command from the project or workspace member that must receive the files.
-The current directory is the project directory. `lpm add` does not search ancestor directories for `package.json`.
+`lpm add` uses the nearest directory with a `package.json`, as [`lpm install`](/docs/packages/install#project-discovery) does. From a subdirectory, it prints the directory it chose.
+Without a `package.json` above the current directory, the current directory is the project.
 
 ### Choose a delivery mode
 
 | Package contents | Behavior |
 | --- | --- |
 | A root `lpm.config.json` | Apply file mappings, configuration values, import rewrites, and declared dependencies. |
-| No `lpm.config.json` | Copy source files and report external imports. No automatic dependency installation. |
+| No `lpm.config.json` | Copy source files and report external imports. No automatic dependency installation. The copy leaves out `package.json`, `lpm-skills/`, `.lpm`, `node_modules`, `.git`, and `test`, `tests`, and `__tests__` directories. |
 | A Swift source package | Copy Swift source and its LPM.dev Registry source dependencies. See [Swift packages](#swift-packages). |
 
 ## Configuration
@@ -63,7 +64,7 @@ lpm add @my-co/internal --path src/vendor --yes
 lpm add @my-co/internal --path "src/shared UI" --yes
 ```
 
-`--path` overrides the automatic or interactive destination.
+`--path` overrides the automatic or interactive destination. It is relative to the project directory, also when you run the command from a subdirectory.
 Paths must remain inside the project, including through symbolic links. `.lpm` is reserved for project state.
 Source packages cannot map multiple files to the same destination. A file destination cannot also serve as another file's directory.
 
@@ -137,8 +138,11 @@ Use `--force` to overwrite file conflicts:
 lpm add @lpm.dev/owner.ui-kit --path src/components --force --yes
 ```
 
-LPM CLI tracks delivered files and overwrite backups for later updates and [`lpm remove`](/docs/packages/remove).
-Keep `.lpm/added-sources.json` and `.lpm/added-source-backups/` available for these operations.
+LPM CLI tracks delivered files for later updates and [`lpm remove`](/docs/packages/remove) in `lpm-sources.json` at the project root.
+Commit it with the copied files. It records each source package's version, delivered files with their digests, created directories, inserted dependencies, and package skills.
+Copies of the files an add overwrote stay in `.lpm/added-source-backups/` on the machine that made them. On another checkout, `lpm remove` keeps such a file and asks you to restore the original from version control.
+A `.lpm/added-sources.json` record from an earlier release is still read and replaced by `lpm-sources.json` on the next add or removal.
+See [Files LPM CLI creates](/docs/project-files).
 
 ## Preview changes
 
@@ -228,6 +232,9 @@ lpm add @lpm.dev/owner.ui-kit --skills --yes
 
 `--no-skills` skips skills once. The configuration command changes the persistent default.
 `--skills` overrides that default once. These controls do not remove existing skills.
+
+`lpm-sources.json` records which package's skills an add installed. An online [`lpm install`](/docs/packages/install) in another checkout restores them at the recorded version. If the package is also a direct dependency, the install uses the dependency's version instead.
+[`lpm remove`](/docs/packages/remove) removes the skills unless the package is still a dependency.
 See [AI agent skills](/docs/reference/ai-agent-skills).
 
 ## Swift packages
@@ -315,7 +322,6 @@ The published schema supplies editor autocomplete through `$schema`.
 | `--no-install-deps` | Skip consumer dependency changes. Still copy Swift source dependencies. |
 | `--skills` | Install package-published skills for this run, overriding the persistent default. |
 | `--no-skills` | Skip automatic package skills for this run. Conflicts with `--skills`. |
-| `--no-editor-setup` | Compatibility flag. Package skills do not create editor integrations. |
 | `--pm <PM>` | Dependency manager: `lpm`, `npm`, `pnpm`, `yarn`, `bun`, or `auto`. Default: `lpm`. |
 | `--alias <ALIAS>` | Override the import alias prefix. |
 | `--target <NAME>` | Add a suffix to the automatic Swift source destination. |

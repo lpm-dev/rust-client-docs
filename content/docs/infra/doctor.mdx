@@ -14,13 +14,15 @@ lpm health [--registry <URL>] [--json]
 
 ## Quickstart
 
-Run the fast checks from the project directory:
+Run the fast checks from the project directory or any directory inside it:
 
 ```bash
 lpm doctor
 ```
 
-The command examines the current directory. It reports failures and warnings, then returns a summary.
+The command examines the nearest directory at or above the current one that has a `package.json` or an `lpm.json`. The search stops before your home directory. When that project is not the current directory, doctor prints which directory it uses. Without such a directory, doctor examines the current directory.
+
+Doctor reports failures and warnings, then returns a summary.
 
 ## Choose a command or mode
 
@@ -96,7 +98,7 @@ Use `--all` to add:
 - Global-install health
 - Sandbox and script-policy checks
 - Manifest compatibility checks
-- `.gitattributes` and store-orphan checks
+- Tracked `.lpm/` state and store-orphan checks
 
 ```bash
 lpm doctor --all
@@ -108,7 +110,7 @@ The full mode can take more time because it runs tools and sends network request
 
 ### Diagnose the current project
 
-Run doctor from the project root:
+Run doctor from the project root or one of its subdirectories:
 
 ```bash
 cd /path/to/project
@@ -156,7 +158,7 @@ CAUTION: `--all --fix` can prune the shared store, update installed plugins, and
 lpm doctor --all --fix
 ```
 
-The full fix mode can also update `.gitattributes` and project formatting.
+The full fix mode can also format the project.
 
 ### Find one check in the catalog
 
@@ -194,7 +196,6 @@ Supported fixes include:
 - Run [lpm install](/docs/packages/install) for missing or inconsistent project state
 - Run [lpm fmt](/docs/dev/fmt) for formatting failures
 - Reconcile `lpm.lockb` with `lpm.lock`
-- Add the binary lockfile rule to `.gitattributes`
 - Replace a linked project `node_modules` path with a real directory
 - Prune unreachable entries from the shared store during a full run
 - Claim an available tunnel domain during a full run
@@ -322,6 +323,8 @@ Run `lpm doctor list` for the same catalog in the terminal. Use `lpm doctor list
 
 In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for each code. A null value means that no automatic fix exists.
 
+Paths under `~/.lpm` refer to the LPM home. When `LPM_HOME` is set, they are under that directory instead.
+
 `pass` is a healthy or informational result. `warn` needs attention but keeps exit code `0`. `fail` causes exit code `1`.
 
 ### Infrastructure
@@ -344,10 +347,11 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | `auth_storage_fallback` | warn | LPM CLI stores authentication material in encrypted files instead of the OS keychain. **Fix:** Unlock or repair the keychain. Then run [lpm login](/docs/infra/login) again. |
 | `vault_storage_keychain` | pass | macOS Keychain is the selected backend for local secrets. This result does not probe Keychain access or secret decryption. |
 | `vault_storage_native` | pass | A native data key exists, or the OS secure store is the preferred backend for new local secrets. Read the detail to distinguish these states. |
-| `vault_storage_fallback` | warn | Local secrets use the fallback key at `~/.lpm/.vault-fallback-key`. Processes from the same user can read this key. **Fix:** Unlock or repair the OS secure store. |
-| `vault_storage_unavailable` | fail | Encrypted local secret files exist, but LPM CLI cannot access either local key. **Fix:** Unlock the secure store. If necessary, restore the fallback key from backup. |
+| `vault_storage_fallback` | warn | Local secrets use the fallback key `.vault-fallback-key` in the LPM home. The detail shows its full path. Processes from the same user can read this key. **Fix:** Unlock or repair the OS secure store. |
+| `vault_storage_unavailable` | fail | Encrypted local secret files exist, but LPM CLI cannot access either local key. **Fix:** Unlock the secure store. If necessary, restore the fallback key in the LPM home from backup. |
+| `lpm_home_default_state_unused` | warn | `LPM_HOME` names a directory other than `~/.lpm`, and `~/.lpm` still holds login or local env files. The selected LPM home keeps its own login and env secrets, so LPM CLI does not use the files in `~/.lpm`. The detail lists them. **Fix:** With this `LPM_HOME`, run [lpm login](/docs/infra/login) and run `lpm env pull` in each project. Alternatively, unset `LPM_HOME` to use `~/.lpm` again. |
 | `auth_unverified` | warn | The credential could not be checked because the registry request failed. |
-| `vault_storage_native_with_fallback` | warn | A native data key and a local fallback key both exist. The fallback key still permits offline decryption. |
+| `vault_storage_native_with_fallback` | warn | A native data key and a local fallback key both exist. The fallback key still permits offline decryption. **Fix:** Check the ownership and permissions of the LPM home, then run an `lpm env` command again so that LPM CLI can remove the fallback key. |
 
 ### Policy extensions
 
@@ -364,7 +368,7 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | Code | Severity | Description |
 | ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `package_json_present` | pass | A readable `package.json` exists in the project directory. |
-| `package_json_missing` | fail | No `package.json` exists in the project directory. **Fix:** Run [lpm init](/docs/packages/init), or `cd` into your project root before running doctor. |
+| `package_json_missing` | fail | No `package.json` exists in the project directory: the nearest directory with a `package.json` or `lpm.json`, else the current directory. **Fix:** Run [lpm init](/docs/packages/init) in the project root. |
 | `linker_mode_resolved` | pass | Shows the selected linker mode and its source: CLI, global configuration, environment, package, workspace, or default. |
 | `node_modules_isolated_healthy` | pass | `node_modules/` exists and is backed by an isolated `.lpm/wrappers/` store. |
 | `node_modules_hoisted_healthy` | pass | `node_modules/` exists and uses the hoisted layout. |
@@ -381,9 +385,8 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | `lockfile_binary_missing` | warn | `lpm.lockb` is missing while `lpm.lock` is present and the graph fits the binary format. **Fix:** Run `lpm doctor --fix` to regenerate, or run [lpm install](/docs/packages/install). |
 | `lockfile_binary_stale` | warn | `lpm.lockb` does not match the contents of `lpm.lock`, or stale binary bytes remain for a TOML-only graph. **Fix:** Run `lpm doctor --fix` to reconcile, or run [lpm install](/docs/packages/install). |
 | `lockfile_binary_corrupt` | warn | `lpm.lockb` does not parse as a valid binary lockfile. **Fix:** Run `lpm doctor --fix` to reconcile from `lpm.lock`. |
-| `gitattributes_lockb_marked` | pass | `.gitattributes` marks `lpm.lockb` as binary. |
-| `gitattributes_lockb_unmarked` | warn | `.gitattributes` does not mark `lpm.lockb` as binary. **Fix:** Run `lpm doctor --all --fix` or add `lpm.lockb binary`. |
-| `gitattributes_missing` | warn | No `.gitattributes` file exists, so Git can treat `lpm.lockb` as text. **Fix:** Run `lpm doctor --all --fix` or add `lpm.lockb binary`. |
+| `project_state_untracked` | pass | Git tracks nothing in the project's `.lpm` directory. |
+| `project_state_tracked` | warn | Git tracks files in `.lpm`, which holds machine-local state such as install checkpoints, trust snapshots, certificates, and tunnel captures. **Fix:** Run `git rm -r --cached .lpm` and commit. `.lpm` ignores itself, so the files stay out of later commits. |
 | `deps_sync_clean` | pass | `lpm.lock` and `package.json` agree on the declared dependency set. |
 | `deps_sync_drift` | warn | `lpm.lock` and `package.json` disagree — manifest changes have not been resolved. **Fix:** Run [lpm install](/docs/packages/install) to reconcile. |
 | `local_source_dir_ok` | pass | A `file:` / `link:` dependency points at a directory with a readable `package.json`. |
@@ -396,14 +399,13 @@ In the JSON catalog, `auto_fix` identifies the action that `--fix` supports for 
 | `linker_config_invalid` | fail | A linker configuration value is invalid. Repair the source named in the detail. |
 | `store_orphan_analysis_unavailable` | warn | Doctor could not determine which store entries are unused. |
 | `lockfile_corrupt` | fail | The lockfile cannot be read safely. Restore a valid copy or regenerate it. |
-| `gitattributes_unreadable` | warn | The attributes file cannot be read safely. Repair it and retain valid existing rules. |
 
 ### lpm.json
 
 | Code | Severity | Description |
 | -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `lpm_json_valid` | pass | Doctor accepts the `lpm.json` syntax and recognized fields. |
-| `lpm_json_schema_warnings` | warn | Doctor reports an unknown field or an incorrect value type. **Fix:** Review the detail and the [`lpm.json` reference](/docs/reference/lpm-json). |
+| `lpm_json_schema_warnings` | warn | Doctor reports an unknown field or an incorrect value type. It also reports a `vaultSync` block, which is one checkout's env sync state. **Fix:** Review the detail and the [`lpm.json` reference](/docs/reference/lpm-json). For `vaultSync`, run `lpm env pull` or `lpm env push`, which moves the state to `.lpm/env-sync.json`. Then commit `lpm.json` without it. |
 | `lpm_json_invalid_syntax` | fail | `lpm.json` is not valid JSON. **Fix:** Fix the JSON syntax error reported in `detail`. |
 | `lpm_json_not_object` | fail | `lpm.json`'s top-level value is not an object. **Fix:** Replace with a JSON object literal `{ ... }`. |
 | `lpm_json_unreadable` | fail | LPM CLI cannot read `lpm.json`. **Fix:** Correct the file permissions. Then run doctor again. |

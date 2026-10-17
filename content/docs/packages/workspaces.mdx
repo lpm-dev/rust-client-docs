@@ -285,18 +285,23 @@ Existing `file:`, `link:`, and `portal:` paths are not relocated. Compatible ord
 
 A copied peer-only source is not an automatically installed root dependency. The consuming project must supply its required peers.
 
-The file selection uses `files`, then `.npmignore`, then `.gitignore`. The deny list applies at every directory depth, including explicit `files` entries:
+Each copied source receives the files that [`lpm publish` would pack](/docs/packages/publish#package-contents-and-validation): its `files` list, otherwise each directory's `.npmignore`, otherwise its `.gitignore`, plus `package.json`, README and license files, and entrypoints. Paths that publication never packs, such as `lpm-changes/` and `lpm-sources.json`, stay out. A package's `lpm.json` is copied as publication ships it, even when `files` doesn't list it: without `vault` and `vaultSync`, and with an `envSchema` that extends other files resolved into the file.
+
+The deploy then withholds these names at every directory depth, including explicit `files` entries:
 
 - Every name that starts with `.env`, including secret directories and example files.
+- Every credential file that publication matches, such as `.npmrc`, `.netrc`, `_netrc`, SSH private keys, and `credentials.json`.
 - `node_modules`, `.lpm`, `lpm.lock`, and `lpm.lockb`.
 - `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, and `.hg`.
 - `.DS_Store` and `Thumbs.db`.
+
+Publication stops when `files` selects a credential file. A deploy has no secret scan, so it leaves the file out instead. JSON `files_skipped` counts the withheld files.
 
 The output includes its own store and lockfile. Unix installations make internal `node_modules` links relative.
 
 Source files can use hardlinks. Later writes to a shared file can also change the original workspace file. Copy the output across filesystems or into an image before editing it.
 
-On Unix, source symlinks remain symlinks, including links outside the copied package. Windows skips source symlinks and junctions. Review these paths before moving the output to another machine.
+Source symbolic links and junctions are not copied, as publication does not pack them. If the application needs a linked file, include the file itself.
 
 `--force` deletes and recreates the output directory. A dry run writes no files. JSON output contains one deployment result.
 

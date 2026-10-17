@@ -186,7 +186,7 @@ If paid overage is disabled, the tunnel stops accepting requests at the included
 
 Tunnel startup and domain actions require a saved [`lpm login`](/docs/infra/login) session. `--token`, `LPM_TOKEN`, and CI-only tokens cannot replace this session.
 
-The local `inspect`, `replay`, and `log` actions do not require a login. These actions use the capture database in the current project.
+The local `inspect`, `replay`, and `log` actions do not require a login. These actions use the capture database of the project: the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory. Tunnel startup uses the same project.
 
 ### Public access
 
@@ -238,15 +238,15 @@ The tunnel does not retain application events or guarantee exactly-once delivery
 
 ## Request capture and privacy
 
-LPM CLI records forwarded requests and local responses in the current project. Ordinary capture is best effort:
+LPM CLI records forwarded requests and local responses in the project. Ordinary capture is best effort:
 
 ```text
 <project>/.lpm/inspector.db
 ```
 
-The database can contain full headers, request bodies, response bodies, and session details. The tunnel service does not store these request bodies.
+The database holds raw request and response headers and bodies, and session details. The tunnel service does not store these request bodies.
 
-Protect the database as sensitive development data. Do not commit it to source control. LPM CLI adds `inspector.db*` to `.lpm/.gitignore` before it creates the database. It shows a warning if git tracks the capture files or does not ignore them.
+Protect the database as sensitive development data. `.lpm/.gitignore` holds `*`, so git ignores the database and everything else in `.lpm`. LPM CLI makes sure of this rule before it opens the database. It shows a warning if git tracks the capture files or does not ignore them. See [Keep captures out of git](/docs/infra/tunnel#keep-captures-out-of-git).
 
 On Unix, LPM CLI records captures only in a project whose path no other user can change, and stops otherwise. See [Keep captures private](/docs/infra/tunnel#keep-captures-private).
 
@@ -284,7 +284,7 @@ Session names group related captures:
 lpm tunnel 3000 --session stripe-test
 ```
 
-`lpm tunnel log --clear` clears current capture history and completed sessions for the project, and overwrites the cleared captures in the database. It does not remove preserved legacy capture files.
+`lpm tunnel log --clear` clears current capture history and completed sessions for the project, and overwrites the cleared captures in the database. It changes only the capture database.
 
 ### Auto-acknowledge webhooks
 
@@ -339,6 +339,8 @@ LPM CLI stores one certificate pin for each relay host:
 ~/.lpm/relay-pins/relay.lpm.fyi
 ~/.lpm/relay-pins/<other-host>
 ```
+
+With `LPM_HOME` set, the pins are in `$LPM_HOME/relay-pins/`.
 
 Normal TLS certificate and hostname checks apply before LPM CLI accepts a key.
 For `relay.lpm.fyi`, each connection attempt requires a signed list of approved public keys, even when the saved pin matches.

@@ -62,6 +62,8 @@ CMD ["node", "server.js"]
 
 The lockfile-only fetch layer can survive ordinary source changes. The source enters before installation so root lifecycle scripts and local dependencies have their files.
 
+The build starts without local install state. Projects with overrides or patches still install offline, because `lpm.lock` records them. If the overrides in `package.json` differ from the recorded ones, the offline install fails. Run `lpm install` locally and commit the lockfile.
+
 Secret mounts are optional for public dependencies. For a protected build:
 
 ```bash
@@ -136,11 +138,11 @@ The runtime image does not need LPM CLI unless application commands use it. Buil
 
 ## Control deployment contents
 
-For copied member and workspace-dependency sources, deployment selects files through `package.json > files`, otherwise `.npmignore`, otherwise `.gitignore`.
+For the member and its copied workspace dependencies, deployment copies the files that [`lpm publish`](/docs/packages/publish#package-contents-and-validation) would pack. Selection uses `package.json > files`, otherwise `.npmignore`, otherwise `.gitignore`. Each copy's `lpm.json` is the one publication ships, without `vault` and `vaultSync` and with its `envSchema` resolved, even when `files` doesn't list it.
 
-These source copies exclude package-manager state, VCS files, dotenv files, and `.npmrc`, `.netrc`, and `_netrc` credential files. Credential names match regardless of letter case.
+These source copies then exclude LPM state (`.lpm`, `lpm.lock`, `lpm.lockb`), `node_modules`, VCS files, every name that starts with `.env`, and the credential files that publication matches, such as `.npmrc`, `.netrc`, SSH private keys, and `credentials.json`. Names match regardless of letter case.
 
-A `files` allowlist does not override these exclusions. The exclusions do not filter files inside installed registry packages or other local directory dependencies.
+A `files` allowlist does not override these exclusions. Symbolic links are not copied. The exclusions do not filter files inside installed registry packages or other local directory dependencies. See [`lpm deploy`](/docs/packages/workspaces#lpm-deploy) for the complete list.
 
 Review the generated directory before publishing the image. Deployment does not identify every possible filename that can contain a secret.
 

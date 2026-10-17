@@ -1,0 +1,164 @@
+---
+title: Files LPM CLI creates
+description: "Which files LPM CLI writes in a project, which ones to commit, and which stay on your machine."
+---
+
+LPM CLI follows one naming rule in a project:
+
+- Files and directories named `lpm.*` or `lpm-*` at the project root are team files. Commit them.
+- The `.lpm/` directory holds machine-local state. It keeps itself out of Git, so it needs no `.gitignore` entry.
+
+Data that belongs to you rather than to a project, such as your login and local env secrets, lives in the [LPM home](#the-lpm-home), outside the project.
+
+```text
+my-app/
+├── package.json            commit
+├── lpm.lock                commit
+├── lpm.json                commit
+├── lpm.toml                commit
+├── lpm-skills/             commit
+├── lpm-changes/            commit
+├── lpm-sources.json        commit
+├── lpm-agent-skills.json   commit
+├── patches/                commit
+├── .env.example            commit
+└── .lpm/                   local, ignores itself
+```
+
+Each file appears only after you or a command creates it.
+
+## Files to commit
+
+| Path | Created by | Purpose |
+| --- | --- | --- |
+| `package.json` | You, [`lpm init`](/docs/packages/init), and commands that change dependencies or trust, such as `lpm install`, `lpm approve-scripts`, and `lpm patch-commit` | Dependencies, scripts, and the [`"lpm"` block](/docs/reference/package-json-lpm) of shared package policy. |
+| `lpm.lock` | `lpm install` | The resolved dependency graph. A fresh clone installs from it, including a project with overrides or patches, and offline installs can use it too. See [Lockfile](/docs/packages/lockfile). |
+| `lpm.json` | You, `lpm init --npm`, and `lpm env`, which adds the `vault` ID | Runtimes, tasks, services, env files and schema, publish targets, and the project's env ID. The ID is not a secret. See [`lpm.json`](/docs/reference/lpm-json). |
+| `lpm.toml` | You, and `lpm install` when you allow a suspicious package name at its prompt | Team CLI defaults and reviewable policy exceptions, such as `policy.typosquat.allow` entries. See [`lpm.toml`](/docs/reference/lpm-toml). |
+| `patches/` | [`lpm patch-commit`](/docs/packages/patch) | Patch files that `package.json > lpm.patchedDependencies` names. |
+| `lpm-skills/` | You | Agent skills your package publishes. [`lpm publish`](/docs/packages/publish) ships them at `lpm-skills/` in the tarball. `lpm skills validate` checks them with the rules LPM.dev Registry applies at upload. |
+| `lpm-changes/` | You | [Release](/docs/packages/release) change files at the workspace root. `lpm release apply` removes the entries it applied after it writes the new versions. |
+| `lpm-sources.json` | [`lpm add`](/docs/packages/add) | What `lpm add` delivered: each source package and version, the files it created or replaced with their digests, the directories it created, and the dependencies it added. [`lpm remove`](/docs/packages/remove) reads it on any checkout. |
+| Files that `lpm add` copied | `lpm add` | Source code delivered into your project. It is your code now. |
+| `lpm-agent-skills.json` | `lpm skills add --project` | The project's managed agent skills and the revision of each. `lpm install` restores what a checkout lacks. See [Skills](/docs/packages/skills). |
+| `.env.example` | `lpm env example` | Variable names, descriptions, and defaults from `envSchema`, without values. LPM CLI creates it with your usual file permissions. |
+| `Packages/LPMDependencies/` and the `.xcodeproj` changes | `lpm install` in an Xcode project | The wrapper package that exports your Swift dependencies and the project's link to it. Commit them with the shared `Package.resolved` files. See [Swift](/docs/guides/using-with-swift#xcode-projects-and-workspaces). |
+
+Agent folders such as `.claude/skills/<name>` link to skill content in `.lpm/managed-skills/`, or hold a copy of it. `lpm install` restores the content and agent folders that a checkout lacks. It warns about a skill that it can't restore and points to `lpm skills update`.
+
+### Records from earlier releases
+
+Earlier releases kept some of these records in `.lpm/`, where Git now never sees them:
+
+| Earlier location | Now | What LPM CLI does |
+| --- | --- | --- |
+| `.lpm/added-sources.json` | `lpm-sources.json` | Reads it, and replaces it with `lpm-sources.json` the next time it records a change. |
+| `.lpm/managed-skills/skills.lock.json` | `lpm-agent-skills.json` | Reads it, and replaces it with `lpm-agent-skills.json` the next time it records a change. |
+| `.lpm/changes/` | `lpm-changes/` | `lpm release plan` and `lpm release apply` stop until you move the files. |
+| Authored skills in `.lpm/skills/` | `lpm-skills/` | `lpm skills validate` and `lpm publish` fail until you move them. |
+
+## What stays local: `.lpm/`
+
+Every command that writes project state keeps a `.lpm/.gitignore` file that holds `*`. Git then ignores everything in `.lpm/`, wherever the project sits in a repository. LPM CLI does not edit your project's `.gitignore` for it.
+
+LPM CLI creates `.lpm/` with owner-only permissions on Unix and refuses a symbolic link in its place. If `.lpm/.gitignore` stops ignoring everything, for example because a negation follows `*`, LPM CLI replaces it. It leaves a read-only or linked file alone.
+
+| In `.lpm/` | Contents | Why it stays local |
+| --- | --- | --- |
+| `install-hash`, `build-state.json`, `trust-snapshot.json`, `overrides-state.json`, `patch-state.json` | Install checkpoints, blocked lifecycle scripts, and the trust and patch state of the last install | Installs rebuild them. A committed copy can hide the warnings that they exist to raise. |
+| `wrappers/`, `hoisted/` | Package directories that some `node_modules` layouts keep here | Installs recreate them. |
+| `skills/<owner.package>/` | Skills of installed `@lpm.dev` packages | `lpm install` restores them. |
+| `managed-skills/` | Content of the project's managed agent skills | `lpm install` restores it from `lpm-agent-skills.json`. |
+| `added-source-backups/` | Copies of the files that `lpm add` replaced | They belong to the machine that ran `lpm add`. On another checkout, `lpm remove` keeps such a file and tells you to restore the original from version control. |
+| `certs/` | The project's development certificate and its private key, `key.pem` | A private key never belongs in a repository. See [`lpm cert`](/docs/infra/cert). |
+| `inspector.db` and its `-wal`, `-shm`, and `-lock` files | [Tunnel](/docs/infra/tunnel) captures, including raw request headers and bodies | Captures can hold tokens, cookies, and personal data. |
+| `env-sync.json` | This checkout's env sync state: cloud versions, account bindings, and revision floors | Each checkout keeps its own. A committed copy would bind teammates' clones to your account. |
+| `migrate-backup/` | Originals of the files that [`lpm migrate`](/docs/packages/migrate) changed | `lpm migrate --rollback` uses them. They can include an `.npmrc` with a token. |
+| `xcode-backups/` | `project.pbxproj` as it was before the last Xcode project edit by LPM CLI | For recovery on this machine. |
+| `release-apply/`, rollback and restore staging directories | Recovery state of interrupted releases, workspace installs, and task cache restores | It only applies to this machine. |
+| `graph.html` | The view that `lpm graph --format html` writes | Regenerated on demand. |
+| Lock files | Locks that serialize installs, publishes, and `lpm.json` updates | They coordinate processes on this machine. |
+
+### If Git already tracks files in `.lpm/`
+
+Files committed before `.lpm/` ignored itself stay tracked, because ignore rules don't untrack files. [`lpm doctor --all`](/docs/infra/doctor#project-state) reports them as `project_state_tracked` and names up to three. Untrack them once and commit:
+
+```bash
+git rm -r --cached .lpm
+git commit -m "Stop tracking .lpm"
+```
+
+The files stay on disk, and `.lpm/` keeps them out of later commits.
+
+### `.gitignore` entries from earlier releases
+
+Earlier releases appended blocks such as this one to the project's `.gitignore`:
+
+```text title=".gitignore"
+# LPM wrapper tree (auto-generated)
+.lpm/wrappers/
+```
+
+`lpm install` removes the wrapper, hoisted-state, and Agent Skills blocks when they appear exactly as LPM CLI wrote them. It deletes `.gitignore` when nothing else is left in it. A `.lpm/` rule that you wrote yourself stays; it is harmless but no longer needed.
+
+### Lifecycle scripts and publishing
+
+Sandboxed dependency lifecycle scripts can write only the package directories in `.lpm/`: `wrappers/` and `hoisted/nested/`. With the default `readProject: "narrow"`, those are also the only parts of `.lpm/` that they can read. `package.json > lpm.scripts.sandboxWriteDirs` rejects entries inside `.lpm`. See [the `lpm.scripts` block](/docs/reference/package-json-lpm#the-lpmscripts-block).
+
+`lpm publish` never packs `.lpm/` at any depth, even when `files` lists it. It also leaves out the root `lpm.lock`, `lpm.lockb`, `lpm-changes/`, `lpm-sources.json`, and `lpm-agent-skills.json`. A published `lpm.json` keeps its other fields but drops `vault` and `vaultSync`. See [`lpm publish`](/docs/packages/publish).
+
+## Secret files in a project
+
+Some commands write real secrets into project files. Before a secret reaches disk, LPM CLI makes sure that Git ignores the file.
+
+| Command | File | Ignore rule goes to | When the file can't be kept out of Git |
+| --- | --- | --- | --- |
+| `lpm env export <file>` | The exported values | `.gitignore` | The command stops and writes nothing. |
+| `lpm env export --ci <file>` | The resolved CI values | `.git/info/exclude` | The command stops and writes nothing. |
+| `lpm env pull --oidc --output=<file>` | The pulled values | `.git/info/exclude` | The command stops and writes nothing. |
+| [`lpm setup local`](/docs/infra/setup#local-authentication) | `.npmrc` with a project token | `.gitignore` | The command stops before it changes the token. |
+| [`lpm setup ci npmrc`](/docs/infra/setup) | `.npmrc` with a CI token | `.git/info/exclude` | The command stops before it changes the token. |
+| [`lpm dev`](/docs/dev/dev) | `.env`, copied from `.env.example` when `.env` is missing | `.gitignore` | A warning; the copy is written. |
+| `lpm env import <file>`, `lpm env init` | The env files they read | `.gitignore` | A warning; the import is done. |
+
+For a file inside the project, LPM CLI does this:
+
+1. It refuses a destination that Git tracks and names the fix, `git rm --cached -- <file>`. `import` and `init` only read their files, so a tracked source file is a warning.
+2. If Git doesn't already ignore the file, it appends an anchored rule for that exact path, such as `/.env.production`, and checks that Git now ignores the file. Commands for CI use the repository's `.git/info/exclude`, which leaves the work tree clean.
+3. It writes the file atomically with owner-only permissions: `0600` on Unix and a protected access list on Windows. It refuses to write through a linked parent directory.
+
+Outside a Git repository, LPM CLI still adds the `.gitignore` rule, so the file stays ignored after you create a repository. A rule that it can't write there is a warning. When Git can't be run at all, LPM CLI writes the file with a warning that it couldn't confirm that Git ignores it; commands that use `.gitignore` still add the rule. A file outside the project is written owner-only without changes to any ignore file. JSON output lists warnings in `warnings`.
+
+## Which directory is the project
+
+Commands that keep project state, such as `lpm env`, `lpm dev`, `lpm tunnel`, and `lpm cert`, act on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`. The search stops before your home directory. Package commands such as `lpm add`, `lpm remove`, and `lpm publish` use the nearest `package.json`, as `lpm install` does.
+
+LPM CLI prints the directory that it chose when it isn't the current one. File paths that you type, such as `lpm env export local.env`, stay relative to the directory where you ran the command.
+
+Without a project around it, a command uses the current directory. Commands that write project state refuse a directory whose `.lpm` would be the LPM home, such as your home directory.
+
+## The LPM home
+
+Data that isn't part of any project lives in the LPM home: `~/.lpm` by default, `%USERPROFILE%\.lpm` on Windows, or the directory that [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) names. Keep it out of repositories.
+
+| In the LPM home | Contents |
+| --- | --- |
+| `config.toml` | [User defaults](/docs/reference/config-toml). |
+| `store/`, `cache/` | The [package store](/docs/packages/content-addressable-store) and [caches](/docs/packages/cache). |
+| `global/`, `bin/` | Globally installed packages and their commands. |
+| `.credentials` and its key files | Login state, when the OS credential store can't hold it. See [Authentication](/docs/infra/authentication#credential-storage). |
+| `vaults/`, `.vault-fallback-key` | Local env secrets on Linux and Windows. See [Local secrets](/docs/dev/lpm-vault#storage-and-recovery). |
+| `certs/` | The local root certificate authority, including its private key. |
+| `security/` | Security approvals. |
+| `cert-projects.json`, `known-projects.json`, `ports.toml` | Records keyed by project path: projects with development certificates, projects whose packages the store keeps, and per-project port choices. |
+
+An LPM home other than `~/.lpm` keeps its own entries in the OS credential store, so it has its own login, local env secrets, and approvals. Switching `LPM_HOME` doesn't carry them over. [`lpm doctor`](/docs/infra/doctor#auth) warns with `lpm_home_default_state_unused` when `~/.lpm` holds login or env files that the selected home doesn't use.
+
+Project env values can't set `LPM_HOME` for the scripts that LPM CLI starts: it drops the variable from `.env` files and stored env values. [`lpm self-update`](/docs/infra/self-update) keeps its state in `.lpm` in your OS account's home directory, whatever `LPM_HOME` names.
+
+## See also
+
+- [Project setup](/docs/project-setup) — what `package.json`, `lpm.json`, and `lpm.toml` own
+- [`lpm doctor`](/docs/infra/doctor) — project state and storage checks
+- [`lpm env`](/docs/dev/env) — env files, exports, and sync state
+- [Environment variables](/docs/reference/env-vars#filesystem-layout) — `LPM_HOME`

@@ -34,7 +34,7 @@ lpm release publish --all --npm --dry-run --ignore-scripts
 lpm release publish --all --npm --yes
 ```
 
-`apply` updates manifests. It does not update lockfiles, create a Git commit, create tags, or publish packages. [`lpm install`](/docs/packages/install) refreshes the installed dependencies and lockfiles.
+`apply` updates manifests and removes the [change-file](#choose-version-bumps) entries it applied. It does not update lockfiles, create a Git commit, create tags, or publish packages. [`lpm install`](/docs/packages/install) refreshes the installed dependencies and lockfiles.
 
 `publish` uses each package's current version. It does not apply a version bump.
 
@@ -132,10 +132,10 @@ lpm release apply --filter core --bump 2.0.0-rc.1
 
 Each new version must be greater than the package's current version. An exact version can fail for a selection whose members have different current versions.
 
-For separate bumps, add files under the workspace root's `.lpm/changes/` directory. Each nonempty line contains a package name and a bump:
+For separate bumps, write change files in the `lpm-changes/` directory at the workspace root and commit them with the code they describe. No command creates them. Each line contains a package name and a bump. Blank lines and lines that start with `#` are ignored:
 
-```text
-# .lpm/changes/api-update
+```text title="lpm-changes/api-update"
+# The API client changed its options
 core major
 app patch
 ```
@@ -149,9 +149,15 @@ Change-file entries override the `--bump` fallback for matching packages. A sele
 
 Identical repeated entries are accepted. Conflicting entries cause an error, including conflicts between exact versions or prerelease bumps. File order does not choose the bump.
 
-Change files do not select packages. `apply` leaves them in place. Remove completed entries before the next release to prevent another bump from the same instructions.
+Change files do not select packages. After `apply` writes the manifests, it removes the entries for the packages it released and deletes a change file with no entries left. Entries for other packages stay for a later release. If a change file changed during the release, `apply` leaves it alone and names it in the error. Remove the applied entries from it yourself.
 
-Change files must be regular files. The loader rejects symbolic links and excessive input: 10,000 files, 100,000 records, 16 MiB per file, or 64 MiB total.
+`plan` and `apply --dry-run` show which change files the release would update or remove. JSON output lists them in `change_files`, each with `path`, `applied`, and `remaining` entry counts.
+
+Change files must be regular files directly in `lpm-changes/`. Subdirectories are ignored. The loader rejects symbolic links and excessive input: 10,000 files, 100,000 records, 16 MiB per file, or 64 MiB total.
+
+Earlier releases read change files from `.lpm/changes/`, which is never committed. If that directory still holds files and `lpm-changes/` does not exist, `plan` and `apply` stop with a message to move them.
+
+Publication never packs `lpm-changes/`.
 
 ## Update dependency ranges
 
@@ -239,7 +245,7 @@ lpm release publish --filter app --npm --yes --json
 
 ## JSON output
 
-`plan --json` and `apply --json` report versions, dependency updates, and changed files:
+`plan --json` and `apply --json` report versions, dependency updates, changed manifests, and change-file updates:
 
 ```json
 {
@@ -247,7 +253,8 @@ lpm release publish --filter app --npm --yes --json
   "dry_run": true,
   "packages": [],
   "dependency_updates": [],
-  "files": []
+  "files": [],
+  "change_files": []
 }
 ```
 
