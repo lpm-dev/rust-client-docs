@@ -44,7 +44,7 @@ Each file appears only after you or a command creates it.
 | `.env.example` | `lpm env example` | Variable names, descriptions, and defaults from `envSchema`, without values. LPM CLI creates it with your usual file permissions. |
 | `Packages/LPMDependencies/` and the `.xcodeproj` changes | `lpm install` in an Xcode project | The wrapper package that exports your Swift dependencies and the project's link to it. Commit them with the shared `Package.resolved` files. See [Swift](/docs/guides/using-with-swift#xcode-projects-and-workspaces). |
 
-Agent folders such as `.claude/skills/<name>` link to skill content in `.lpm/managed-skills/`, or hold a copy of it. `lpm install` restores the content and agent folders that a checkout lacks. It warns about a skill that it can't restore and points to `lpm skills update`.
+Agent folders such as `.claude/skills/<name>` link to skill content in `.lpm/managed-skills/`, or hold a copy of it. `lpm install` restores the content and agent folders that a checkout lacks. It warns about a skill that it can't restore and points to `lpm skills update`. Where a repository commits such a link and Git checks it out as a plain file, as on Windows without link support, `lpm install` replaces that file.
 
 ### Records from earlier releases
 
@@ -52,8 +52,8 @@ Earlier releases kept some of these records in `.lpm/`, where Git now never sees
 
 | Earlier location | Now | What LPM CLI does |
 | --- | --- | --- |
-| `.lpm/added-sources.json` | `lpm-sources.json` | Reads it, and replaces it with `lpm-sources.json` the next time it records a change. |
-| `.lpm/managed-skills/skills.lock.json` | `lpm-agent-skills.json` | Reads it, and replaces it with `lpm-agent-skills.json` the next time it records a change. |
+| `.lpm/added-sources.json` | `lpm-sources.json` | Reads it, and replaces it with `lpm-sources.json` the next time it records a change. Packages that a teammate's committed `lpm-sources.json` lacks join it. |
+| `.lpm/managed-skills/skills.lock.json` | `lpm-agent-skills.json` | Reads it, and replaces it with `lpm-agent-skills.json` the next time it records a change. Skills that a teammate's committed `lpm-agent-skills.json` lacks join it. |
 | `.lpm/changes/` | `lpm-changes/` | `lpm release plan` and `lpm release apply` stop until you move the files. |
 | Authored skills in `.lpm/skills/` | `lpm-skills/` | `lpm skills validate` and `lpm publish` fail until you move them. |
 
@@ -88,7 +88,7 @@ git rm -r --cached .lpm
 git commit -m "Stop tracking .lpm"
 ```
 
-The files stay on disk, and `.lpm/` keeps them out of later commits.
+The files stay on disk, and `.lpm/` keeps them out of later commits. Until you untrack them, [`lpm cert`](/docs/infra/cert) refuses to write the project's private key into `.lpm/certs/` while Git tracks a file there.
 
 ### `.gitignore` entries from earlier releases
 
@@ -103,7 +103,7 @@ Earlier releases appended blocks such as this one to the project's `.gitignore`:
 
 ### Lifecycle scripts and publishing
 
-Sandboxed dependency lifecycle scripts can write only the package directories in `.lpm/`: `wrappers/` and `hoisted/nested/`. With the default `readProject: "narrow"`, those are also the only parts of `.lpm/` that they can read. `package.json > lpm.scripts.sandboxWriteDirs` rejects entries inside `.lpm`. See [the `lpm.scripts` block](/docs/reference/package-json-lpm#the-lpmscripts-block).
+Sandboxed dependency lifecycle scripts can read the package directories in `.lpm/`, `wrappers/` and `hoisted/nested/`, and write only their own package's directory there. With the default `readProject: "narrow"`, those are also the only parts of `.lpm/` that they can read. `package.json > lpm.scripts.sandboxWriteDirs` rejects entries inside `.lpm` or above the project, and a project inside `~/.cache`, `~/.npm`, or `~/.node-gyp`, which scripts can write, can't run dependency scripts in the sandbox. See [the `lpm.scripts` block](/docs/reference/package-json-lpm#the-lpmscripts-block).
 
 `lpm publish` never packs `.lpm/` at any depth, even when `files` lists it. It also leaves out the root `lpm.lock`, `lpm.lockb`, `lpm-changes/`, `lpm-sources.json`, and `lpm-agent-skills.json`. A published `lpm.json` keeps its other fields but drops `vault` and `vaultSync`. See [`lpm publish`](/docs/packages/publish).
 
@@ -118,24 +118,24 @@ Some commands write real secrets into project files. Before a secret reaches dis
 | `lpm env pull --oidc --output=<file>` | The pulled values | `.git/info/exclude` | The command stops and writes nothing. |
 | [`lpm setup local`](/docs/infra/setup#create-a-local-project-token) | `.npmrc` with a project token | `.gitignore` | The command stops before it changes the token. |
 | [`lpm setup ci npmrc`](/docs/infra/setup) | `.npmrc` with a CI token | `.git/info/exclude` | The command stops before it changes the token. |
-| [`lpm dev`](/docs/dev/dev) | `.env`, copied from `.env.example` when `.env` is missing | `.gitignore` | A warning; the copy is written. |
+| [`lpm dev`](/docs/dev/dev) | `.env`, copied from `.env.example` when `.env` is missing | `.gitignore` | A warning; the copy is written. When Git tracks `.env`, a warning and no copy. |
 | `lpm env import <file>`, `lpm env init` | The env files they read | `.gitignore` | A warning; the import is done. |
 
-For a file inside the project, LPM CLI does this:
+For a file inside the project, or elsewhere in a Git work tree, LPM CLI does this:
 
 1. It refuses a destination that Git tracks and names the fix, `git rm --cached -- <file>`. `import` and `init` only read their files, so a tracked source file is a warning.
-2. If Git doesn't already ignore the file, it appends an anchored rule for that exact path, such as `/.env.production`, and checks that Git now ignores the file. Commands for CI use the repository's `.git/info/exclude`, which leaves the work tree clean.
-3. It writes the file atomically with owner-only permissions: `0600` on Unix and a protected access list on Windows. It refuses to write through a linked parent directory.
+2. If Git doesn't already ignore the file, it appends an anchored rule for that exact path, such as `/.env.production`, and checks that Git now ignores the file. The rule goes to the project's `.gitignore`, or for a file outside the project, such as one at a monorepo's root, to the `.gitignore` at the root of the work tree that holds it. Commands for CI use the repository's `.git/info/exclude`, which leaves the work tree clean.
+3. It writes the file atomically with owner-only permissions: `0600` on Unix, without access list entries that the directory would pass on on macOS, and a protected access list on Windows. It refuses to write through a linked parent directory.
 
-Outside a Git repository, LPM CLI still adds the `.gitignore` rule, so the file stays ignored after you create a repository. A rule that it can't write there is a warning. When Git can't be run at all, LPM CLI writes the file with a warning that it couldn't confirm that Git ignores it; commands that use `.gitignore` still add the rule. A file outside the project is written owner-only without changes to any ignore file. JSON output lists warnings in `warnings`.
+Outside a Git repository, LPM CLI still adds the `.gitignore` rule, so the file stays ignored after you create a repository. A rule that it can't write there is a warning. When Git can't be run at all, LPM CLI writes the file with a warning that it couldn't confirm that Git ignores it; commands that use `.gitignore` still add the rule. A file in no Git work tree, outside the project, is written owner-only without changes to any ignore file. JSON output lists warnings in `warnings`.
 
 ## Which directory is the project
 
 Commands that keep project state, such as `lpm env`, `lpm dev`, `lpm tunnel`, and `lpm cert`, act on the nearest directory at or above the current one that has a `package.json` or an `lpm.json`. The search stops before your home directory. Package commands such as `lpm add`, `lpm remove`, and `lpm publish` use the nearest `package.json`, as `lpm install` does.
 
-LPM CLI prints the directory that it chose when it isn't the current one. File paths that you type, such as `lpm env export local.env`, stay relative to the directory where you ran the command.
+LPM CLI prints the directory that it chose when it isn't the current one. File paths that you type, such as `lpm env export local.env`, `lpm add <package> --path widgets`, or `lpm skills add ./team-skills`, stay relative to the directory where you ran the command.
 
-Without a project around it, a command uses the current directory. Commands that write project state refuse a directory whose `.lpm` would be the LPM home, such as your home directory.
+Without a project around it, a command uses the current directory. Commands that write project state refuse a directory whose `.lpm` would be the LPM home, such as your home directory. Account actions that use no project, such as `lpm env pair`, `unpair`, `ls-remote`, and `rotate-sharing-key`, run in any directory.
 
 ## The LPM home
 
