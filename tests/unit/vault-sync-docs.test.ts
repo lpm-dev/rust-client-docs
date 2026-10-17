@@ -3,19 +3,19 @@ import { describe, expect, it } from "vitest";
 
 const reference = readFileSync("content/docs/reference/lpm-json.mdx", "utf8");
 const vaultGuide = readFileSync("content/docs/infra/secrets-vault.mdx", "utf8");
-const vaultSyncSection = reference
-  .split("## `vaultSync`")[1]
+const envSyncSection = reference
+  .split("## Env sync state")[1]
   ?.split("\n## ")[0];
 
-describe("vaultSync documentation", () => {
+describe("env sync state documentation", () => {
   it("documents the authoritative account and revision bindings", () => {
-    expect(vaultSyncSection).toBeDefined();
-    expect(vaultSyncSection).toContain('"authorityCheckpoints"');
-    expect(vaultSyncSection).toContain('"personalPlatformBindings"');
-    expect(vaultSyncSection).toMatch(/non-authoritative summaries/i);
-    expect(vaultSyncSection).toMatch(
-      /remov\w+.*rollback.*account[- ]binding/is,
-    );
+    expect(envSyncSection).toBeDefined();
+    expect(envSyncSection).toContain(".lpm/env-sync.json");
+    expect(envSyncSection).toContain('"authorityCheckpoints"');
+    expect(envSyncSection).toContain('"personalPlatformBindings"');
+    expect(envSyncSection).toMatch(/non-authoritative summaries/i);
+    expect(envSyncSection).toMatch(/remov\w+.*rollback.*account[- ]binding/is);
+    expect(envSyncSection).toContain("### `vaultSync` from earlier releases");
     expect(vaultGuide).toMatch(/authority checkpoints/i);
     expect(vaultGuide).toMatch(/remov\w+.*rollback.*account[- ]binding/is);
   });
