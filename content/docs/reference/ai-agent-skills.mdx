@@ -11,11 +11,12 @@ LPM CLI manages package guidance and standalone skills through [lpm skills](/doc
 | | LPM.dev package skills | Standalone skills |
 | --- | --- | --- |
 | Purpose | Guidance for an `@lpm.dev/*` package release | Instructions independent of a package installation |
-| Source | Publisher-authored `.lpm/skills/*.md` files | `SKILL.md` directories from GitHub or local files |
+| Source | Publisher-authored `lpm-skills/*.md` files | `SKILL.md` directories from GitHub or local files |
 | Delivery | Reviewed by the LPM.dev Registry | Read and scanned by LPM CLI |
-| Project storage | `.lpm/skills/<owner.package>/` | `.lpm/managed-skills/` |
+| Project record | None. Installs follow `package.json` and `lpm-sources.json`. | `lpm-agent-skills.json`, committed |
+| Project storage | `.lpm/skills/<owner.package>/`, local | `.lpm/managed-skills/`, local |
 | Agent targets | No automatic links | Links by default, or copies with `--copy` |
-| Updates | Follow online dependency installation | Explicit `update` from the original source |
+| Updates | Follow online dependency installation | Explicit `update` from the original source. `lpm install` restores missing ones at the recorded revision. |
 
 Both systems can coexist. Their ownership records separate installed guidance, authored package files, and standalone content.
 Neither system has dedicated [`lpm.json`](/docs/reference/lpm-json) configuration.
@@ -38,7 +39,8 @@ lpm skills list
 lpm skills dashboard
 ```
 
-Project skill commands use the current directory. Run them from the intended project root.
+Project skill commands act on the nearest directory with a `package.json`, as [lpm install](/docs/packages/install#project-discovery) does, and print the directory they chose when it is not the current one.
+`.lpm/` holds the installed content and stays out of Git. See [Files LPM CLI creates](/docs/project-files) for what to commit.
 Package guidance stays in `.lpm/skills/<owner.package>/` without editor configuration changes.
 Tell your agent where to read it:
 
@@ -67,8 +69,14 @@ Do not edit the manifest.
 ### Automatic reconciliation
 
 Online project installations reconcile the owned directory with the selected release's approved skill set.
-An upgrade can add, replace, or remove guidance files. Removing the final direct dependency or alias removes its intact owned directory.
+An upgrade can add, replace, or remove guidance files.
+Installations keep a package's directory when the package stops being a dependency. [lpm uninstall](/docs/packages/uninstall) of the final direct dependency or alias removes its intact owned directory.
 Offline installations do not fetch skills. Global package installations disable automatic skill installation.
+
+Packages delivered by [lpm add](/docs/packages/add) are recorded in `lpm-sources.json`. An online installation restores their skills at the recorded version, unless the package is also a direct dependency.
+
+Skills never fail an installation. If a release's skills are under review, failed or rejected review, cannot be fetched, have an unsafe name, or would replace locally edited files, the installation warns and keeps the existing set.
+JSON installation output lists these messages in `warnings`.
 
 ```bash
 # Disable automatic fetching persistently
@@ -102,7 +110,7 @@ Explicit retrieval works even if automatic fetching is disabled.
 A later enabled installation restores guidance for its selected dependency version.
 
 Anonymous users can read approved guidance for Free packages. Private guidance requires publisher access.
-Pending, processing, failed, or rejected skill reviews stop retrieval and preserve the existing set.
+If the release's skills are pending or processing review, failed or rejected review, or flagged without an approved skill, retrieval fails, names that review state, and preserves the existing set.
 A partially flagged review can supply its approved subset. An approved empty set removes older, intact guidance files.
 
 ### Safe package cleanup
@@ -119,22 +127,22 @@ An enabled online installation restores removed package guidance.
 
 If local changes or an invalid manifest prevent replacement or removal, back up the affected directory.
 Move that directory out of `.lpm/skills/`, then retry the command.
-Dependency installation and removal report an error for these conflicts. Source-package addition reports a warning and preserves the directory.
+Dependency installation and source-package addition report a warning and preserve the directory.
+`lpm skills add`, `lpm uninstall`, and `lpm remove` report an error.
 
 ## Publish guidance with an LPM.dev package
 
-Place authored Markdown files directly under `.lpm/skills/`:
+Place authored Markdown files directly in `lpm-skills/` at the package root and commit them:
 
 ```text
 package-repository/
 ├── package.json
-└── .lpm/
-    └── skills/
-        ├── usage.md
-        └── migration.md
+└── lpm-skills/
+    ├── usage.md
+    └── migration.md
 ```
 
-Nested publisher paths such as `.lpm/skills/guides/usage.md` are rejected.
+Markdown in a subdirectory, such as `lpm-skills/guides/usage.md`, and symlinks are rejected.
 Each file has YAML frontmatter and a Markdown body:
 
 ```md
@@ -170,13 +178,12 @@ lpm publish --check
 lpm publish
 ```
 
-[Validation](/docs/packages/skills) checks the package-skill contract and security rules.
-LPM.dev Registry publishing also checks those files before acceptance.
+[Validation](/docs/packages/skills#publish-package-guidance) checks the package-skill contract and security rules.
+LPM.dev Registry checks uploaded skills with the same validator.
+Markdown files left directly in `.lpm/skills/` by earlier releases fail validation with a message to move them.
 
-If `package.json > files` excludes `.lpm/skills`, a real [lpm publish](/docs/packages/publish) adds the directory before packaging.
-`--check` and `--dry-run` model that change without editing the manifest.
-Without a `files` allowlist, packaging includes direct authored Markdown under `.lpm/skills/` and excludes other `.lpm` state.
-Valid ownership manifests keep installed dependency skill sets out of publisher validation and package tarballs.
+[lpm publish](/docs/packages/publish) ships the validated files at `lpm-skills/` in the tarball for every target, whatever `package.json > files` lists. It does not edit `files`.
+Other files in `lpm-skills/` are not published. Tarballs never contain `.lpm/`, so installed dependency skill sets never ship.
 The final artifact receives the same secret scan as other published content, including for other registries.
 
 ## Manage standalone skills
@@ -204,8 +211,13 @@ Global `--json` disables prompts.
 
 ### Storage and targets
 
-Project content lives under `.lpm/managed-skills/`. Global content lives under `${LPM_HOME:-~/.lpm}/managed-skills/`.
-Each store has a `skills.lock.json` ownership record.
+Project content lives under `.lpm/managed-skills/`. Its ownership record is `lpm-agent-skills.json` at the project root, which you commit.
+Global content and its `skills.lock.json` record live under `${LPM_HOME:-~/.lpm}/managed-skills/`.
+A project record that an earlier release kept in `.lpm/managed-skills/skills.lock.json` is read and replaced on the next write.
+
+On a fresh checkout, an online [lpm install](/docs/packages/install) restores the recorded project skills and their enabled agent targets.
+GitHub sources are fetched at the recorded commit. Local sources are used only while their content matches the recorded digest.
+Anything that cannot be restored becomes an installation warning. If a source no longer has the recorded revision, run `lpm skills update` to take its current content.
 
 | Agent | Project target | Default global target |
 | --- | --- | --- |
@@ -219,6 +231,7 @@ Each store has a `skills.lock.json` ownership record.
 
 Global targets honor `CODEX_HOME`, `GROK_HOME`, `XDG_CONFIG_HOME`, and `PI_CODING_AGENT_DIR` for the corresponding agents.
 Project links are relative and remain usable when the project moves.
+Where Git checks out a committed link as a plain file, as on Windows with `core.symlinks` off, `lpm skills doctor` reports the target as a link placeholder once the skill's content is in `.lpm/` (in a fresh clone, before any install, it reports that content as canonical missing), and the next online `lpm install` restores the content and replaces the placeholder with the link.
 `--copy` creates copies. Windows can fall back to copies if symlink creation is unavailable.
 Agent-specific frontmatter can restrict compatible targets.
 
@@ -235,6 +248,7 @@ All discovered skill trees receive these checks before `--skill` selection.
 
 Local sources exclude `.git` and reject symlinks, special files, or oversized regular files throughout the selected source root.
 Local limits also include 500 files, 64 MiB total content, and 12 directory levels.
+A local source can't hold what adding it writes, so the project root or a directory containing `.lpm/`, `lpm-agent-skills.json`, or a selected agent target is rejected. Keep skills in a directory of their own, such as `./skills`.
 
 LPM CLI scans skill content for prompt injection, secret access, exfiltration, downloaded shell execution, and destructive filesystem instructions.
 
@@ -275,7 +289,7 @@ External skills exist in agent directories but have no LPM CLI ownership record.
 
 | Operation | Authored package files | Installed package sets | Managed standalone skills |
 | --- | --- | --- | --- |
-| `validate` | Checks | Ignores valid owned sets | No effect |
+| `validate` | Checks `lpm-skills/` | Ignores | No effect |
 | `clean` | Preserves | Removes intact sets after confirmation | No effect |
 | `update`, `enable`, `disable`, `remove` | No effect | No effect | Changes selected skills and targets |
 | `list`, `view`, `dashboard` | Not inventory items | Inspects | Inspects |

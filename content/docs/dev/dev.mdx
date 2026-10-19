@@ -17,6 +17,8 @@ In a project with a `dev` script in `package.json`:
 lpm dev
 ```
 
+You can start it from the project root or any subdirectory. LPM CLI uses the nearest directory at or above the current one that has a `package.json` or an `lpm.json`, stopping before your home directory. It prints that directory when it is not the current one. It refuses a directory whose `.lpm` would be the LPM home.
+
 LPM CLI runs the script and opens its verified local URL. To keep the browser closed:
 
 ```bash
@@ -174,8 +176,12 @@ Later files override earlier files. Safe inherited variables take precedence ove
 Locally stored secrets from [lpm env](/docs/dev/env) override matching file values.
 Restart the session after you change a variable or secret.
 
-If `.env` does not exist, LPM CLI copies a regular `.env.example` file once.
+If `.env` does not exist, LPM CLI copies a regular `.env.example` file to `.env` once.
 The copy does not export stored secrets. An existing `.env` remains unchanged.
+Before it writes the copy, LPM CLI keeps `.env` out of Git. If Git does not already ignore it, LPM CLI adds `/.env` to the project's `.gitignore`.
+If it cannot add the rule, it warns and still creates the file. Add the rule yourself before you commit.
+If Git tracks `.env`, LPM CLI doesn't create it: it warns with the `git rm --cached` command that stops the tracking and starts the project without the copy.
+The new `.env` is readable and writable only by you.
 
 LPM CLI removes inherited credentials and runtime injection variables before it starts project commands.
 Explicit project secrets remain available. Project files and service variables cannot override protected runtime or shell variables.
@@ -248,7 +254,7 @@ A tunnel connects to the verified application endpoint.
 
 The browser inspector starts on an available local port.
 Use `--inspect-port <N>` to require a specific port, or `--no-inspect` to disable the browser server.
-Webhook capture still writes to `.lpm/inspector.db`.
+Request capture continues to `.lpm/inspector.db`, with raw request and response headers and bodies. `.lpm/.gitignore` keeps the database out of Git.
 Use [lpm tunnel inspect](/docs/infra/tunnel) to read this history.
 
 `--tunnel-auth` requires a per-session access token for the public URL.

@@ -90,14 +90,23 @@ Provenance files attach to npm-compatible targets. [`lpm publish`](/docs/package
 
 | Variable | Behavior |
 | --- | --- |
-| `LPM_HOME` | Changes the LPM CLI root from `~/.lpm`. Contains user configuration, stores, caches, global packages, and tunnel pins. |
+| `LPM_HOME` | Changes the LPM home from `~/.lpm`. It holds user configuration, login state, local env secrets, stores, caches, global packages, the local root certificate authority, security approvals, and tunnel pins. A relative path starts at the current directory. |
 
-`LPM_HOME` does not move OS-managed security policy.
+A home other than `~/.lpm` keeps its own entries in the OS credential store, so it has its own login, local env secrets, and security approvals.
+[`lpm doctor`](/docs/infra/doctor#auth) warns with `lpm_home_default_state_unused` when `~/.lpm` still holds login or env files that the selected home doesn't use.
+
+`LPM_HOME` does not move OS-managed security policy, or the state of [`lpm self-update`](/docs/infra/self-update), which stays in `.lpm` in your OS account's home directory.
+Project env values cannot set `LPM_HOME` for scripts: LPM CLI drops it from `.env` files and stored env values, as it does `HOME` and `PATH`.
+Don't point `LPM_HOME` at a project's `.lpm` directory. Commands that write project state refuse a project whose `.lpm` is the LPM home.
+
 For temporary CI isolation:
 
 ```bash
 LPM_HOME="$PWD/.lpm-ci" lpm install --frozen-lockfile
 ```
+
+A fresh home has no saved login. Supply `LPM_TOKEN` for private `@lpm.dev/*` packages. LPM CLI keeps a home inside a repository out of Git with a `.gitignore` of its own, and `lpm publish` never packs it.
+See [Files LPM CLI creates](/docs/project-files#the-lpm-home) for the layout.
 
 ## Install pipeline
 
@@ -133,7 +142,7 @@ Other features have separate CI checks. Setting `CI=false` does not universally 
 | `LPM_FORCE_TOOL_INSTALL` | Exact `1` or `true` forces managed plugin download again. |
 | `LPM_PLUGIN_QUIET` | Exact `1` or `true` hides plugin installation status. Warnings and errors remain visible. |
 | `LPM_NO_UPDATE_CHECK` | Any presence, including empty or `0`, disables the background CLI update check. |
-| `LPM_SANDBOX_HELPER` | Windows sandbox helper path. An existing override takes precedence over the helper beside the executable. |
+| `LPM_SANDBOX_HELPER` | Windows sandbox helper path, which must be absolute: LPM CLI starts the helper outside the sandbox, so it refuses a relative path, which would resolve against the directory it runs in. An existing file it names takes precedence over the helper beside the executable. Without either, LPM CLI runs lifecycle scripts only with the sandbox off: `--no-sandbox`, or `[sandbox] mode = "none"`. |
 | `LPM_MSVC_TARGET` | Windows `vcvarsall` target for native builds. Defaults to the host architecture. |
 
 See [Node version pinning](/docs/dev/node-version-pinning), [built-in tools](/docs/dev/builtin-tools), and [`lpm self-update`](/docs/infra/self-update).
@@ -193,7 +202,7 @@ Ollama model and endpoint changes request a new verdict.
 | --- | --- |
 | `LPM_TRIAGE_OLLAMA_MODEL` | Ollama model name. Default `llama3.2`. |
 | `LPM_L4_CACHE` | Enabled when absent. Case-insensitive `1`, `true`, `yes`, or `on` enables it. Every other value disables it. Whitespace is not trimmed. |
-| `LPM_L4_CACHE_PATH` | Literal cache path override. Default `$LPM_HOME/cache/l4-verdicts.json`, then `$HOME/.lpm/cache/l4-verdicts.json`. |
+| `LPM_L4_CACHE_PATH` | Literal cache path override. Default `cache/l4-verdicts.json` in the LPM home: `$LPM_HOME` when set, else `~/.lpm`. |
 | `LPM_L4_CACHE_TTL_SECS` | Unsigned integer seconds. Default 30 days. Invalid values use the default. Zero expires entries immediately. |
 
 ## Tunnel

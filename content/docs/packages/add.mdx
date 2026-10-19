@@ -36,14 +36,15 @@ lpm add lodash.merge --path src/vendor/lodash-merge --yes
 ```
 
 Run the command from the project or workspace member that must receive the files.
-The current directory is the project directory. `lpm add` does not search ancestor directories for `package.json`.
+`lpm add` uses the nearest directory with a `package.json`, as [`lpm install`](/docs/packages/install#project-discovery) does. From a subdirectory, it prints the directory it chose.
+Without a `package.json` above the current directory, the current directory is the project.
 
 ### Choose a delivery mode
 
 | Package contents | Behavior |
 | --- | --- |
 | A root `lpm.config.json` | Apply file mappings, configuration values, import rewrites, and declared dependencies. |
-| No `lpm.config.json` | Copy source files and report external imports. No automatic dependency installation. |
+| No `lpm.config.json` | Copy source files and report external imports. No automatic dependency installation. The copy leaves out `package.json` and `lpm.config.json` files, the package's `lpm-skills/` and its own `lpm.lock`, `lpm.lockb`, `lpm-sources.json`, `lpm-agent-skills.json` and `lpm-changes/`, files or directories, and `.lpm`, `node_modules` and `.git` at any depth, under any spelling a file system takes for those names or Git reads as `.git`, and `test`, `tests`, and `__tests__` directories. |
 | A Swift source package | Copy Swift source and its LPM.dev Registry source dependencies. See [Swift packages](#swift-packages). |
 
 ## Configuration
@@ -63,8 +64,8 @@ lpm add @my-co/internal --path src/vendor --yes
 lpm add @my-co/internal --path "src/shared UI" --yes
 ```
 
-`--path` overrides the automatic or interactive destination.
-Paths must remain inside the project, including through symbolic links. `.lpm` is reserved for project state.
+`--path` overrides the automatic or interactive destination. Like other paths you type, it is relative to the directory where you run the command. The interactive prompt's default and answer are relative to the project directory.
+Paths must remain inside the project, including through symbolic links. `.lpm` is reserved for project state, nothing is delivered into a `.git` directory at any depth, where a file such as a hook would run with the next Git command, and a delivery to one of the project's own LPM records at its root (`lpm.lock`, `lpm.lockb`, `lpm-sources.json`, `lpm-agent-skills.json`, `lpm-changes/`), or into a directory under one of those names, is refused, under any spelling a file system takes for the record: another letter case, `ſ` for `s`, or with a character HFS+ or a Linux casefold directory leaves out of names, such as a zero-width mark. The `.lpm` check reads names the same way, and the `.git` check also takes the spellings Git reads as `.git` on every platform: `.git.`, `.git `, `git~1`, and `.git` followed by a stream name. On a volume that makes short names (NTFS, FAT), from Windows or another system, the short name of each, such as `LPM~1.LOC` for `lpm.lock`, is refused where the name itself is. These checks go by names and links: a mount you place at a destination, such as a bind mount of another directory, receives what `lpm add` writes there, as it would from any other tool.
 Source packages cannot map multiple files to the same destination. A file destination cannot also serve as another file's directory.
 
 ### Pre-answer prompts
@@ -137,8 +138,11 @@ Use `--force` to overwrite file conflicts:
 lpm add @lpm.dev/owner.ui-kit --path src/components --force --yes
 ```
 
-LPM CLI tracks delivered files and overwrite backups for later updates and [`lpm remove`](/docs/packages/remove).
-Keep `.lpm/added-sources.json` and `.lpm/added-source-backups/` available for these operations.
+LPM CLI tracks delivered files for later updates and [`lpm remove`](/docs/packages/remove) in `lpm-sources.json` at the project root.
+Commit it with the copied files. It records each source package's version, delivered files with their digests, created directories, inserted dependencies, and package skills.
+Copies of the files an add overwrote stay in `.lpm/added-source-backups/` on the machine that made them. On another checkout, `lpm remove` keeps such a file and asks you to restore the original from version control.
+A `.lpm/added-sources.json` record from an earlier release is still read and replaced by `lpm-sources.json` on the next add or removal.
+See [Files LPM CLI creates](/docs/project-files).
 
 ## Preview changes
 
@@ -228,6 +232,9 @@ lpm add @lpm.dev/owner.ui-kit --skills --yes
 
 `--no-skills` skips skills once. The configuration command changes the persistent default.
 `--skills` overrides that default once. These controls do not remove existing skills.
+
+`lpm-sources.json` records which package's skills an add installed. An online [`lpm install`](/docs/packages/install) in another checkout restores them at the recorded version. If the package is also a direct dependency, the install uses the dependency's version instead.
+[`lpm remove`](/docs/packages/remove) removes the skills unless the package is still a dependency.
 See [AI agent skills](/docs/reference/ai-agent-skills).
 
 ## Swift packages
@@ -315,7 +322,6 @@ The published schema supplies editor autocomplete through `$schema`.
 | `--no-install-deps` | Skip consumer dependency changes. Still copy Swift source dependencies. |
 | `--skills` | Install package-published skills for this run, overriding the persistent default. |
 | `--no-skills` | Skip automatic package skills for this run. Conflicts with `--skills`. |
-| `--no-editor-setup` | Compatibility flag. Package skills do not create editor integrations. |
 | `--pm <PM>` | Dependency manager: `lpm`, `npm`, `pnpm`, `yarn`, `bun`, or `auto`. Default: `lpm`. |
 | `--alias <ALIAS>` | Override the import alias prefix. |
 | `--target <NAME>` | Add a suffix to the automatic Swift source destination. |

@@ -91,7 +91,8 @@ runner disables caching because it has nothing to record.
 
 All `inputs` and `outputs` values must be valid, project-relative globs. LPM CLI
 rejects invalid syntax, absolute paths, and parent traversal before it starts
-the task.
+the task. Files in the project's `.lpm/` directory are never collected as
+outputs, even when a pattern matches them.
 
 Omitted or empty `inputs` uses default source and configuration patterns.
 These include `src`, `lib`, `app`, `pages`, `components`, `scripts`, `bin`, and common root JavaScript and TypeScript files.
@@ -183,6 +184,8 @@ for the dependent workspace member.
 
 ### Cache layout
 
+With `LPM_HOME` set, the cache is under `$LPM_HOME/cache/tasks/`.
+
 ```text
 ~/.lpm/cache/tasks/
   {sha256-hex-key}/
@@ -195,7 +198,7 @@ for the dependent workspace member.
 On hit:
 
 1. Validate the metadata, logs, archive paths, file types, sizes, and output count.
-2. Stage all outputs without changing the project.
+2. Stage all outputs in a temporary directory inside the project's `.lpm/`, which Git ignores, without changing project outputs.
 3. Remove declared output files that are absent from the cached result.
 4. Replace project outputs in one rollback-protected transaction.
 5. Preserve each archived file's mode and modification time.
@@ -207,9 +210,10 @@ task and replaces the bad entry. Concurrent writers for one key publish one
 complete entry.
 
 LPM CLI writes a recovery journal before it replaces an output. If a process stops
-during restore, the next restore rolls back the incomplete operation first. If
-an immediate rollback fails, LPM CLI keeps the recovery files and reports their
-path.
+during restore, the next restore in the project rolls back the incomplete operation
+first. This also recovers `.lpm-cache-restore-*` directories that earlier LPM CLI
+releases staged at the project root. If an immediate rollback fails, LPM CLI keeps
+the recovery files and reports their path.
 
 The restore rejects output paths that use an existing symlink or junction.
 The cache cannot write through that link to a location outside the project.

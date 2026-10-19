@@ -169,13 +169,15 @@ Explicit tokens, environment tokens, CI tokens, and older token-only logins do n
 
 Credentials use the `lpm-cli` service and remain separate by registry.
 
-If a new credential cannot use native storage, LPM CLI can save it in the encrypted `~/.lpm/.credentials` file. [`lpm doctor`](/docs/infra/doctor) reports this fallback as degraded.
+Login state belongs to the LPM home: `~/.lpm`, or the directory that [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) names. A home other than `~/.lpm` adds a suffix derived from its location to the service names, so it keeps its own logins. After you change `LPM_HOME`, sign in again with it. [`lpm doctor`](/docs/infra/doctor#auth) warns with `lpm_home_default_state_unused` when `~/.lpm` still holds login files that the selected home doesn't use.
+
+If a new credential cannot use native storage, LPM CLI can save it in the encrypted `.credentials` file in the LPM home. [`lpm doctor`](/docs/infra/doctor) reports this fallback as degraded. The file and its key are owner-only: `0600` on Unix, without access list entries that the directory would pass on on macOS, and a protected access list on Windows. In a Git repository that the LPM home can't be kept out of, LPM CLI refuses to save them. See [the LPM home](/docs/project-files#the-lpm-home).
 
 An outage does not activate an old file credential when native storage holds the current credential. LPM CLI refuses ambiguous or stale copies.
 
-For an older encrypted-file login, retain `~/.lpm/.credentials`, `~/.lpm/.key`, and `~/.lpm/.salt`. Recovery preserves the login when its saved key can decrypt the credentials.
+For an older encrypted-file login, retain `.credentials`, `.key`, and `.salt` in the LPM home. Recovery preserves the login when its saved key can decrypt the credentials.
 
-The first recovery of an older file key needs about 1 GiB of memory. Later Unix reads can use `~/.lpm/.key-derived`, an authenticated private cache. Native keyring keys do not enter this cache.
+The first recovery of an older file key needs about 1 GiB of memory. Later Unix reads can use `.key-derived` in the LPM home, an authenticated private cache. Native keyring keys do not enter this cache.
 
 ### macOS upgrades and permission prompts
 

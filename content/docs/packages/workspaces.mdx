@@ -277,7 +277,7 @@ The default selects production and optional dependencies. `--dev` selects the me
 
 `--no-optional` omits optional dependencies, including duplicate names in regular dependencies. An optional declaration takes precedence over a regular declaration.
 
-Selected dependencies declared with `workspace:` go under `.lpm/deploy-workspace/`. Their copied manifests use relative `file:` references. This includes named root providers and peer-only local references.
+Selected dependencies declared with `workspace:` go under `.lpm/deploy-workspace/`. Their copied manifests use relative `file:` references. This includes named root providers and peer-only local references. The output's `.lpm/` also holds its package store, so its `.gitignore` lets Git commit `store/`, `deploy-workspace/`, and the `.gitignore` itself, so a clone keeps them committed, and ignores the rest, which belongs to the machine; later commands in the output, and in a clone of it, keep it that way, whatever line endings a checkout gives the file. Copy or commit `.lpm/` with the rest of the output. A `.gitignore` that came with a dependency, as an install script or a source other than a registry can leave one, still keeps Git from committing the files it names, whatever the output's `.lpm/.gitignore` says; the deploy lists each one (JSON `dependency_ignore_files`) with the `git add -f` command that commits what they hide. The output also gets a `.gitignore` of its own, which only takes files back: Git commits each top-level file and directory the deploy wrote, every directory in those directories, and all of `node_modules/`, whatever the `.gitignore` of a repository around the output or a global excludes file says, such as a monorepo's `node_modules/`, `dist/`, or `.lpm/` rule. Their rules for files, such as `*.log`, still apply inside those directories, and all of their rules apply to a file or top-level entry you add to the output later, such as an `.env` file, and to a top-level name with a line break, which no `.gitignore` line can hold. A rule that ignores the output directory itself keeps Git out of all of it. In the output's repository, [`lpm doctor --all`](/docs/infra/doctor#project-state) names what Git ignores of the dependencies (`deploy_output_dependencies_ignored`) with the command that commits it. An install in the output, such as `lpm install` there, links its dependencies from your LPM home's store by absolute path instead; deploy again rather than installing in the output.
 
 Catalog references use the root catalog declarations. The copied manifests contain the declared catalog specifications.
 
@@ -285,20 +285,29 @@ Existing `file:`, `link:`, and `portal:` paths are not relocated. Compatible ord
 
 A copied peer-only source is not an automatically installed root dependency. The consuming project must supply its required peers.
 
-The file selection uses `files`, then `.npmignore`, then `.gitignore`. The deny list applies at every directory depth, including explicit `files` entries:
+Each copied source receives the files that [`lpm publish` would pack](/docs/packages/publish#package-contents-and-validation): its `files` list, otherwise each directory's `.npmignore`, otherwise its `.gitignore`, plus `package.json`, README and license files, and entrypoints. Paths that publication never packs, such as `lpm-changes/` and `lpm-sources.json`, stay out, and so does `lpm-skills/`, whose skills a publish adds for the registry. A package's `lpm.json` is copied as publication ships it, even when `files` doesn't list it: without `vault` and `vaultSync`, and with an `envSchema` that extends other files resolved into the file.
+
+The deploy then withholds these names at every directory depth, matching them as publication does, regardless of letter case and of the characters HFS+ and Linux casefold directories leave out of names, including explicit `files` entries:
 
 - Every name that starts with `.env`, including secret directories and example files.
+- Every credential file that publication matches, such as `.npmrc`, `.netrc`, `_netrc`, SSH private keys, and `credentials.json`.
 - `node_modules`, `.lpm`, `lpm.lock`, and `lpm.lockb`.
-- `.git`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, and `.hg`.
+- `.git`, under any spelling Git reads as one, such as `.git.` or `git~1`, `.gitignore`, `.npmignore`, `.gitattributes`, `.svn`, and `.hg`. The output's top-level `.gitignore` is the deploy's own, described above.
 - `.DS_Store` and `Thumbs.db`.
+
+An entrypoint that names a file by a spelling its directory doesn't list, such as `ENV-CM~1` for `.env-cmdrc` or `INDEX.JS` for `index.js`, stops the deploy, as it stops a publish. When a copied `workspace:` source stops it, the error names that package.
+
+Publication stops when `files` selects a credential file; a deploy leaves the file out instead. JSON `files_skipped` counts the files that publication's selection includes and the deploy withholds; files publication leaves out on its own, such as `.npmrc` or an `.env` file that `files` doesn't name, aren't counted.
+
+Every other file the deploy copies, the member's and each source's, including the `lpm.json` it writes, receives [publication's secret scan](/docs/packages/publish#package-contents-and-validation). A secret it finds stops the deploy before it writes anything, and stops a dry run too. A file replaced or written after the scan read it stops the deploy as it is copied, naming the file, and the output keeps no copy of it. The report names each package and its directory, the file and line, and what was found; JSON output reports `"error": "secret_scan_failed"` with one `matches` entry for each, holding `package`, `directory`, `path`, `pattern`, `description`, `line`, and `severity`. Remove the secret, or leave its file out of the copy with `files` or `.npmignore`. `--allow-secrets` skips the scan for one invocation.
 
 The output includes its own store and lockfile. Unix installations make internal `node_modules` links relative.
 
-Source files can use hardlinks. Later writes to a shared file can also change the original workspace file. Copy the output across filesystems or into an image before editing it.
+Source files are copied, as clones where the file system makes them, so the output shares no file with the workspace: editing one never changes the other, and the output keeps the bytes the secret scan read.
 
-On Unix, source symlinks remain symlinks, including links outside the copied package. Windows skips source symlinks and junctions. Review these paths before moving the output to another machine.
+Source symbolic links and junctions are not copied, as publication does not pack them. If the application needs a linked file, include the file itself.
 
-`--force` deletes and recreates the output directory. A dry run writes no files. JSON output contains one deployment result.
+The deploy selects every file it copies, the member's and each source's, before it writes anything, so a deploy that stops there leaves the output directory as it was, even with `--force`. `--force` deletes and recreates the output directory, a `.git` directory in it included; an output path that names a file is refused, with or without it. An output that holds the LPM home, sits inside it, or holds your home directory is refused, with or without `--force`: also where an NFS mount of the same server shows them, by the server directory its source names, such as an automounted view of the export holding your home, and on Linux where a bind mount shows them under another path, as a toolbox container's `/run/host/home` does. So is an output in a git directory, whose hooks and config git runs: a `.git` under any name Git reads as one, a bare repository, or the directory a `.git` file points at. So is a mount point with `--force`, such as a disk's or a bind mount's, which it couldn't delete: empty it and deploy without `--force`, or deploy into a directory inside it. On macOS and Linux, a directory that holds a mount point is refused with `--force` too, as the deletion would stop at the mount point with part of the output deleted: it never enters another volume, so one mounted there after the check stops it there too. On a Linux kernel before 5.8, telling a mount point needs `/proc`; without it `--force` stops before deleting anything. Windows removes a folder a volume is mounted on as the link it is. On macOS and Linux, a deploy that can't read the system's list of mounts stops before writing anything. Links in the output are removed, not followed. A dry run writes no files but makes the same selections, so it stops where the deploy would. JSON output contains one deployment result.
 
 ```bash
 lpm deploy /prod/api --filter api --json

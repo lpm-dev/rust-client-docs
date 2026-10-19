@@ -13,7 +13,7 @@ lpm migrate --dry-run
 lpm migrate
 ```
 
-Run the command from the directory that contains `package.json` and the source lockfile.
+Run the command from the directory that contains `package.json` and the source lockfile. Unlike `lpm install`, migration does not search parent directories for a `package.json`.
 The default flow converts the lockfile, configures `.npmrc`, installs dependencies, and runs available `build` and `test` scripts.
 
 LPM CLI works with npm, private registries, and LPM.dev Registry. Your project does not need an LPM.dev Registry account for public npm dependencies.
@@ -90,7 +90,7 @@ Binary Bun conversion uses the Yarn text output from the Bun executable.
 
 The conversion reads a fixed snapshot of the selected file. A selected `bun.lockb` does not fall back to an older `bun.lock`.
 The command reports unsupported package entries and conversion warnings.
-Review these reports before you commit the result.
+Review these reports before you commit the result. See [Files LPM CLI creates](/docs/project-files) for the files to commit.
 
 ### Input limits
 
@@ -109,12 +109,11 @@ For `bun.lockb`, the converter has a 30-second deadline, a 64 MiB output limit, 
 ## Converted files and installation
 
 Conversion writes a version 12 staging `lpm.lock` and, when the graph permits it, a binary `lpm.lockb` companion.
-It also adds the binary lockfile rule to `.gitattributes`.
 
 The default online [lpm install](/docs/packages/install) resolves the final package instances and writes the current version 13 TOML lockfile.
 Run migration from the workspace root. A member-directory invocation fails before conversion or backups.
 
-`--rollback` still accepts an older member-local recovery inventory.
+`--rollback` from a member directory restores the workspace root's migration. If an earlier LPM CLI release left a backup in that member, rollback uses that backup instead.
 
 At a workspace root, this install includes the root and workspace members. It runs each target's install lifecycle once.
 The online install resolves manifest requirements again and can change the imported versions and `node_modules`.
@@ -192,19 +191,27 @@ GitHub Actions recognizes the generated file in `.github/workflows`. The other p
 lpm migrate --rollback
 ```
 
-Migration keeps `.backup` files and `.lpm-migrate-manifest.json` so rollback can restore original managed files and remove newly created ones.
-This includes converted lockfiles, prior workspace-member lockfiles, `.gitattributes`, translated manifests, copied patches, changed `.npmrc` files, and generated CI templates.
-Repeated migrations preserve the first snapshots until rollback or manual cleanup.
+Before migration changes a file, it keeps a copy in `.lpm/migrate-backup/`, which Git ignores.
+This covers converted lockfiles, prior workspace-member lockfiles, translated manifests, copied patches, changed `.npmrc` files, and generated CI templates.
+A repeated migration keeps each file's earliest copy. If you edit a file between migrations, the next migration keeps your edit as the file's copy instead, so rollback returns the file to your edit.
+When a repeated migration changes a file whose last writer LPM can't tell, such as one left by an interrupted migration or an earlier LPM CLI release, the backup keeps what that migration found beside the earliest copy, for every such migration.
+If a repeated migration fails while it writes files, it restores the files it changed and keeps the earlier backup.
+One migration or rollback runs in a project at a time; another one waits for it.
+
+Rollback restores those files and removes the files and directories migration created.
+It restores a file only while the file still holds what migration wrote. When a file changed after migration, migration stopped before it recorded what it wrote, or a migration replaced content LPM can't attribute and no later backup recorded the file again, rollback restores nothing and lists those files. For the last kind, it names the absolute path where the backup keeps each version that migrations found, newest first.
+Run `lpm migrate --rollback --force` to restore them anyway to the copies the backup keeps from before the migrations.
+A complete rollback removes `.lpm/migrate-backup/`.
 
 Rollback covers these managed files. It does not undo `node_modules`, store changes, or arbitrary files changed by install, build, or test scripts.
 After rollback, use your previous package manager to restore its dependency layout.
 
 Rollback checks the complete recovery record before it changes files. Unsafe paths, linked directories, malformed records, and unknown record versions cause an error.
-An untracked existing `.backup` file also blocks migration so the command cannot replace it.
+Backups from earlier LPM CLI releases, `.backup` files beside the originals with `.lpm-migrate-manifest.json`, are read too. They don't record what migration wrote, so restoring a file that differs from its original requires `--force`. Rollback restores each file with the permissions it had before migration; a file restored from such a backup gets the backup's own, which on macOS and Linux those releases kept owner-only.
 
 If an install or script fails, fix the reported error, then retry with `--force`.
 To restore the original managed files instead, use `--rollback`.
-Keep the backup files and manifest together until you accept the migration.
+Keep `.lpm/migrate-backup/` until you accept the migration.
 `--rollback` and `--dry-run` cannot be combined.
 
 ## Flags
@@ -212,7 +219,7 @@ Keep the backup files and manifest together until you accept the migration.
 | Flag | Effect |
 | --- | --- |
 | `--dry-run` | Check conversion and translations without project writes. |
-| `--force` | Replace an existing `lpm.lock`. |
+| `--force` | Replace an existing `lpm.lock`. With `--rollback`, also restore files that changed after the migration, files LPM can't tell it wrote, and files whose earlier content the backup keeps, each to the backup's copy. |
 | `--no-install` | Skip dependency installation. |
 | `--skip-verify` | Skip the `build` and `test` verification scripts. |
 | `--no-npmrc` | Skip project `.npmrc` configuration. |
