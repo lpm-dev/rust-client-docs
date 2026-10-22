@@ -171,11 +171,24 @@ Do not prefix the full command with `sudo`. LPM CLI requests elevation for the r
 
 The installation creates a user proxy and a root-owned loopback forwarder. Without explicit listener flags, public HTTPS uses `443`, including projects with a high `proxy.port`.
 
+The forwarder runs a root-owned copy of LPM CLI. The installation puts the copy in this directory:
+
+| Platform | Directory |
+| --- | --- |
+| macOS | `/Library/Application Support/LPM/Forwarder` |
+| Linux | `/opt/lpm/proxy-forwarder` |
+
+The copy is the LPM CLI that you used for the installation. On macOS, the installation makes sure that the copy has the code signature of that build. The LPM CLI app bundle must also have the Developer ID signature of LPM.
+
+If a user other than root can change a directory on the path to the copy, the installation stops. The same rule applies to the configuration file and the service file of the forwarder. Other users can get write access through directory permissions or an access control list. On a volume that ignores ownership, all users can change all files. By default, macOS mounts external drives in this mode.
+
+When you update LPM CLI, the copy does not change. After each update, run `lpm proxy install --privileged-ports` again. If the forwarder runs an older version, `lpm proxy status` shows a warning.
+
 The public HTTP redirect uses `80` unless `proxy.httpRedirect` is `false`. This opt-out also applies before a hostname is configured.
 
 Each time the user proxy starts, it uses free loopback ports for its backends. The forwarder sends connections to these ports. If another program uses a port that the proxy used before, the service continues to run. Browser URLs and redirects use the public port.
 
-An installation from an earlier release keeps its fixed backend ports. To change to free ports, run `lpm proxy install --privileged-ports` again.
+An installation from an earlier release keeps its fixed backend ports and runs your own LPM CLI as root. `lpm proxy status` shows a warning for this installation. To update it, run `lpm proxy install --privileged-ports` again.
 
 To select different public ports, provide explicit low ports:
 
