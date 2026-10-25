@@ -184,8 +184,10 @@ const config = {
  * can't, and the GitHub release lookup.
  *
  * @param {string} phase
+ * @param {{ defaultConfig: object }} context
+ * @returns {Promise<import("next").NextConfig>}
  */
-export default async function nextConfig(phase) {
+export default async function nextConfig(phase, context) {
   if (phase === PHASE_PRODUCTION_SERVER) return config;
 
   const withMDX = createMDX();
@@ -203,9 +205,11 @@ export default async function nextConfig(phase) {
     return baseConfig;
   }
   const { withPostHogConfig } = await import("@posthog/nextjs-config");
+  // withPostHogConfig returns a config function for Next to call, and this
+  // function has to give Next the config itself.
   return withPostHogConfig(baseConfig, {
     personalApiKey: process.env.POSTHOG_PERSONAL_API_KEY,
     projectId: process.env.POSTHOG_PROJECT_ID,
     host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://eu.i.posthog.com",
-  });
+  })(phase, context);
 }
