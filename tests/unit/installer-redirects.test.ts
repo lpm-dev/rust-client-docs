@@ -1,5 +1,8 @@
+import { PHASE_PRODUCTION_SERVER } from "next/constants.js";
 import { describe, expect, it } from "vitest";
-import config from "../../next.config.mjs";
+import nextConfig from "../../next.config.mjs";
+
+const config = await nextConfig(PHASE_PRODUCTION_SERVER);
 
 const INSTALLER_URL =
   "https://raw.githubusercontent.com/lpm-dev/rust-client/main/install.sh";
