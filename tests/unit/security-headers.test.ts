@@ -2,7 +2,9 @@ import { PHASE_PRODUCTION_SERVER } from "next/constants.js";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../../next.config.mjs";
 
-const config = await nextConfig(PHASE_PRODUCTION_SERVER);
+const config = await nextConfig(PHASE_PRODUCTION_SERVER, {
+  defaultConfig: {},
+});
 
 const EXPECTED_CSP = [
   "default-src 'self'",
