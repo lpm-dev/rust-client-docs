@@ -1,6 +1,5 @@
 import { createMDX } from "fumadocs-mdx/next";
-
-const withMDX = createMDX();
+import { PHASE_PRODUCTION_SERVER } from "next/constants.js";
 
 // Captured when `next build` evaluates this config. The value is then inlined
 // into `process.env.BUILD_TIME` everywhere it's read (sitemap, etc.). If
@@ -32,7 +31,6 @@ async function resolveCliVersion() {
   }
 }
 
-const RESOLVED_CLI_VERSION = await resolveCliVersion();
 const ONE_DAY_SECONDS = 60 * 60 * 24;
 const HTML_CACHE_CONTROL = `public, max-age=0, s-maxage=${ONE_DAY_SECONDS}, stale-while-revalidate=${ONE_DAY_SECONDS}`;
 const CONTENT_SECURITY_POLICY = [
@@ -99,10 +97,8 @@ const config = {
   compress: false,
   poweredByHeader: false,
   reactStrictMode: true,
-  env: {
-    BUILD_TIME: RESOLVED_BUILD_TIME,
-    LPM_CLI_VERSION: RESOLVED_CLI_VERSION,
-  },
+  // The extensions Fumadocs sets, so the server phase, which skips it, agrees.
+  pageExtensions: ["mdx", "md", "jsx", "js", "tsx", "ts"],
   async redirects() {
     return [
       ...INSTALLER_REDIRECTS,
@@ -181,16 +177,35 @@ const config = {
   },
 };
 
-const baseConfig = withMDX(config);
+/**
+ * The custom server loads this file again when it starts. Only `next build`
+ * and `next dev` compile the docs and fix values into the bundles, so the
+ * server phase skips Fumadocs, whose generator writes files the server user
+ * can't, and the GitHub release lookup.
+ *
+ * @param {string} phase
+ */
+export default async function nextConfig(phase) {
+  if (phase === PHASE_PRODUCTION_SERVER) return config;
 
-let finalConfig = baseConfig;
-if (process.env.POSTHOG_PERSONAL_API_KEY && process.env.POSTHOG_PROJECT_ID) {
+  const withMDX = createMDX();
+  const baseConfig = withMDX({
+    ...config,
+    env: {
+      BUILD_TIME: RESOLVED_BUILD_TIME,
+      LPM_CLI_VERSION: await resolveCliVersion(),
+    },
+  });
+  if (
+    !process.env.POSTHOG_PERSONAL_API_KEY ||
+    !process.env.POSTHOG_PROJECT_ID
+  ) {
+    return baseConfig;
+  }
   const { withPostHogConfig } = await import("@posthog/nextjs-config");
-  finalConfig = withPostHogConfig(baseConfig, {
+  return withPostHogConfig(baseConfig, {
     personalApiKey: process.env.POSTHOG_PERSONAL_API_KEY,
     projectId: process.env.POSTHOG_PROJECT_ID,
     host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://eu.i.posthog.com",
   });
 }
-
-export default finalConfig;
