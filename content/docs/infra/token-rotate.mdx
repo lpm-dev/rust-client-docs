@@ -45,9 +45,7 @@ A browser session keeps its refresh credential. LPM CLI preserves the precise ac
 
 ## Complete an MFA-protected rotation
 
-The registry requires MFA for some write-capable tokens.
-
-Rotation checks an authenticator code. In an organization that requires 2FA, an account whose only second factor is a passkey can't rotate its token with this command. The registry refuses with `PASSKEY_VERIFICATION_UNAVAILABLE`. Create a new token in the dashboard, then revoke the old one.
+If your account has a passkey or an authenticator app, rotating a token that can publish or write to the remote cache needs it. An organization that requires 2FA asks for it to rotate any of its tokens.
 
 For an interactive rotation, omit `--otp`:
 
@@ -55,11 +53,18 @@ For an interactive rotation, omit `--otp`:
 lpm token-rotate
 ```
 
-If the registry requires MFA, LPM CLI opens a masked prompt. Enter the six-digit authenticator code.
+How LPM CLI asks depends on what your account has:
+
+| Account | LPM CLI |
+| --- | --- |
+| A passkey, with or without an authenticator app | Prints an approval URL and opens it in your browser. Approve the rotation there with your passkey, or with your authenticator app if you have one. LPM CLI waits up to 10 minutes, then rotates the token. |
+| An authenticator app only | Opens a masked prompt for the six-digit code. |
+
+Without a terminal, LPM CLI still prints the approval URL and waits for it. An authenticator-only account passes `--otp` instead.
 
 LPM CLI retries the MFA challenge once with your code. It does not print the code in terminal or JSON output.
 
-`--json` disables the MFA prompt, even in an interactive terminal. If a prompt is unavailable, pass a fresh code with `--otp`:
+`--json` disables the MFA prompt and the browser approval, even in an interactive terminal. If a prompt is unavailable, pass a fresh code with `--otp`:
 
 ```bash
 lpm token-rotate --otp 123456 --json
@@ -69,7 +74,7 @@ LPM CLI rejects a code before the request unless the code contains exactly six A
 
 Use the masked prompt for manual rotations. A command-line code can appear in shell history or process information.
 
-If you supply `--otp`, LPM CLI uses that code on the first request. It does not open another prompt after rejection.
+If you supply `--otp`, LPM CLI uses that code on the first request. It does not open another prompt after rejection. An account whose only second factor is a passkey can't use `--otp`.
 
 If the registry rejects the code, run the command again with a fresh code.
 
@@ -234,7 +239,7 @@ If MFA is required without an interactive prompt, the command returns `otp_requi
 }
 ```
 
-An invalid or expired code returns `otp_invalid`. Neither MFA error rotates the token, but an earlier session refresh can change local credentials.
+An invalid or expired code returns `otp_invalid`. An account with a passkey gets `browser_approval_required`, because `--json` doesn't wait for an approval: run the command without `--json`. No MFA error rotates the token, but an earlier session refresh can change local credentials.
 
 ## Flags
 
