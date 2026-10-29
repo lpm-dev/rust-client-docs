@@ -270,13 +270,13 @@ Run [`lpm install`](/docs/packages/install) before publication. Missing bundles,
 
 The `package/` prefix leaves 255 components for a project-relative path. Target-specific rewrites and bundled dependencies use the same limits. Other registries can impose smaller limits.
 
-LPM.dev Registry accepts compressed tarballs up to 250 MiB, with at most 20,000 archive entries and 20,000 GNU or PAX metadata entries; the other limits in the table are the same. LPM CLI uploads the tarball first, then sends the publish request, which holds the metadata of the package and no tarball. LPM.dev Registry accepts publish requests up to 100 MiB. If a publish includes LPM.dev Registry, LPM CLI refuses a larger tarball or request, or more files, before it publishes to any target. A `--provenance` publish adds its Sigstore bundle to the request two times, about 10 KB each. As a result, LPM CLI keeps 1 MiB of the request limit free for it.
+LPM.dev Registry accepts a tarball up to 250 MiB with up to 20,000 files. Its other limits are the same as in the table. When you publish to LPM.dev Registry, LPM CLI checks these limits before it publishes to any target.
 
-The tarball upload goes to a storage URL that LPM.dev Registry gives, on a subdomain of `r2.cloudflarestorage.com`. A network that allows only `lpm.dev` must also allow `*.r2.cloudflarestorage.com`. LPM CLI uses the same proxy settings for it as for other HTTPS requests.
+LPM CLI uploads the tarball first. Then it sends a second request with the package details, which can be up to 100 MiB. A `--provenance` publish adds about 20 KB to that request, so LPM CLI keeps 1 MiB of it free.
 
-An upload stays usable for two hours. If you publish the same tarball again within an hour of its upload, for example after a wrong 2FA code, LPM CLI reuses the upload, and does not send the tarball again if LPM.dev Registry already has it. LPM.dev Registry removes an upload when its publish succeeds, or about two hours after it starts. An account, organization, or token can hold at most 20 uploads at a time; past that, LPM.dev Registry refuses a new one (`PUBLISH_UPLOADS_OPEN`) until one is removed. If the uploaded bytes do not match the integrity of the tarball, the publish fails (`PUBLISH_UPLOAD_INTEGRITY_MISMATCH`), and running it again uploads the tarball again.
+If you publish the same tarball again within an hour, for example after a wrong 2FA code, LPM CLI does not upload it again. An account, organization, or token can have up to 20 unfinished uploads. An upload finishes when its publish succeeds, or after about two hours. If you have 20, LPM.dev Registry refuses new uploads (`PUBLISH_UPLOADS_OPEN`) until one finishes.
 
-npm and older LPM CLI releases send the tarball in the publish request, in base64. A tarball sent that way can be about 75 MiB at most. LPM CLI sends the tarball that way too to an LPM registry that does not take tarball uploads, and refuses a tarball too large for it.
+npm, and LPM CLI versions before 0.82.0, send the tarball inside the publish request. This limits the tarball to about 75 MiB.
 
 ## When LPM.dev Registry refuses a publish
 
@@ -300,11 +300,11 @@ Each target also handles these answers when it publishes:
 
 After a rate limit, a timeout, or a server error, LPM CLI tries the request again first.
 
-Before any target publishes, the same publish then checks the second factor of LPM.dev Registry, unless LPM.dev Registry already has the version. With `--json` and no `--otp`, it publishes to no target. A malformed `--otp`, or a token that LPM.dev Registry refuses, also stops it at this point. If 2FA is on, the LPM.dev target asks for the code after it uploads the tarball, just before its publish request, so a slow upload does not outlast the code.
+Before any target publishes, the same publish then checks the second factor of LPM.dev Registry, unless LPM.dev Registry already has the version. With `--json` and no `--otp`, it publishes to no target. A malformed `--otp`, or a token that LPM.dev Registry refuses, also stops it at this point. If 2FA is on, LPM CLI asks for the code after it uploads the tarball, so the code does not expire during a slow upload.
 
 If LPM CLI cannot read the account, for example while LPM.dev Registry is unavailable, the other targets still publish. The LPM.dev target tries again and reports its own result.
 
-This first question counts the tarball. At the publish request, LPM.dev Registry also counts the content that it derives from the tarball: the README, skill content, and for a Swift package, its source archive, raw `Package.swift`, and manifest bundle. As a result, LPM.dev Registry can still refuse a publish at its publish request if the publish is within that much of the limit. API docs and LLM context, which it derives later, also count toward storage. `--dry-run` asks the same question and fails on any refusal.
+This first question counts the tarball. When the publish arrives, LPM.dev Registry also counts the content that it derives from the tarball: the README, skill content, and for a Swift package, its source archive, raw `Package.swift`, and manifest bundle. As a result, LPM.dev Registry can still refuse a publish that is within that much of the limit. API docs and LLM context, which it derives later, also count toward storage. `--dry-run` asks the same question and fails on any refusal.
 
 ## Credentials and OTP
 
