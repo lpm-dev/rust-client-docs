@@ -300,7 +300,7 @@ Each target also handles these answers when it publishes:
 
 After a rate limit, a timeout, or a server error, LPM CLI tries the request again first.
 
-Before any target publishes, the same publish then checks the second factor of LPM.dev Registry, unless LPM.dev Registry already has the version. With `--json` and no `--otp`, it publishes to no target. A malformed `--otp`, or a token that LPM.dev Registry refuses, also stops it at this point. If 2FA is on, LPM CLI asks for the code after it uploads the tarball, so the code does not expire during a slow upload.
+Before any target publishes, the same publish then checks the [second factor](#lpmdev-registry-second-factor) of LPM.dev Registry, unless LPM.dev Registry already has the version. If 2FA is on, `--json` without `--otp` publishes to no target. A malformed `--otp`, an `--otp` from an account whose only second factor is a passkey, or a token that LPM.dev Registry refuses, also stops it at this point. LPM CLI asks for the code, or for the browser approval, after it uploads the tarball, so neither expires during a slow upload.
 
 If LPM CLI cannot read the account, for example while LPM.dev Registry is unavailable, the other targets still publish. The LPM.dev target tries again and reports its own result.
 
@@ -329,7 +329,23 @@ lpm login --login-registry https://gitlab.example.com/api/v4/projects/12345/pack
 
 Trailing slashes do not create a separate credential scope. Different registry paths do.
 
-For LPM.dev Registry MFA, use `--otp <CODE>` with exactly six ASCII digits. This flag does not supply npm OTP.
+### LPM.dev Registry second factor
+
+An account with 2FA confirms each publish to LPM.dev Registry with a passkey or an authenticator app:
+
+- **Passkey:** LPM CLI prints an approval URL and opens it in your browser. Approve the publish there with your passkey, or with your authenticator app if you have one. LPM CLI waits up to 10 minutes, then publishes. If you deny the request or it expires, the LPM.dev target fails.
+- **Authenticator app only:** LPM CLI asks for the six-digit code in the terminal.
+- **Both:** LPM CLI uses the browser. To use a code instead, pass `--otp`.
+
+To supply a code without a prompt, pass `--otp <CODE>` with exactly six ASCII digits. This flag does not supply npm OTP. An account whose only second factor is a passkey can't use `--otp`.
+
+An approval covers one package version, and only the CLI session that asked for it can use it. Browser approval needs a session from `lpm login` and a terminal that can wait for it:
+
+- `--json` doesn't wait for an approval. An account whose only second factor is a passkey can't publish with `--json`.
+- A token from the dashboard can't ask for an approval. With such a token, an account with an authenticator app passes `--otp`; an account whose only second factor is a passkey can't publish.
+- In CI, use [trusted publishing](/docs/guides/publishing-a-package#publish-from-ci). A trusted publisher doesn't need a second factor.
+
+An organization that requires 2FA accepts either factor.
 
 npm-compatible publishing supports browser-based and interactive OTP challenges. `publish.npm.otpRequired` requests OTP before the first upload attempt. For non-interactive npm publication, use an automation token or Trusted Publishing.
 
@@ -434,7 +450,7 @@ The quality result includes `score`, `max_score`, `earned_points`, `applicable_p
 | `--ignore-scripts` | Skip package lifecycle scripts. |
 | `--wait` | Wait for LPM.dev Registry publication availability. |
 | `--wait-timeout <SECONDS>` | Wait limit, from 10 to 3600. Default: 1200. Requires `--wait`. |
-| `--otp <CODE>` | Six-digit LPM.dev Registry authenticator code. |
+| `--otp <CODE>` | Six-digit LPM.dev Registry authenticator code. Without it, an account with a passkey approves in the browser. |
 | `--min-score <N>` | Minimum local quality score, from 0 to 100. Requires an LPM.dev Registry target. |
 | `--allow-secrets` | Skip the final-artifact secret scan. |
 | `--npm` | Select npm, including its configured endpoint. |
