@@ -1,0 +1,130 @@
+---
+title: lpm deprecate / undeprecate
+description: "Deprecate an LPM.dev Registry package or one of its versions with a message, and remove the deprecation, confirmed with your second factor."
+---
+
+Use `lpm deprecate` to warn users away from a package, or from one of its versions, while it stays installable. Use `lpm undeprecate` to take the warning away.
+
+```bash
+lpm deprecate <PACKAGE[@VERSION]> <MESSAGE> [--otp <CODE>] [--json]
+lpm undeprecate <PACKAGE[@VERSION]> [--otp <CODE>] [--json]
+```
+
+A deprecated version still installs, and can still be `latest`. Installs show its message. To stop a version from installing, [unpublish it](/docs/packages/unpublish) while the registry still allows it.
+
+## Quickstart
+
+```bash
+lpm deprecate @lpm.dev/acme.kit@1.2.3 "Use 1.2.4, which fixes the crash"
+lpm undeprecate @lpm.dev/acme.kit@1.2.3
+```
+
+Each change is confirmed with your [second factor](#confirm-it-with-your-second-factor).
+
+## Examples
+
+```bash
+lpm deprecate @lpm.dev/acme.kit@1.2.3 "Use 1.2.4, which fixes the crash"   # one version
+lpm deprecate @lpm.dev/acme.kit "Moved to @lpm.dev/acme.kit2"               # every version
+lpm undeprecate @lpm.dev/acme.kit                                           # every version
+lpm deprecate acme.kit@1.2.3 "Use 1.2.4" --otp 123456 --json
+```
+
+## Name the package or a version
+
+Name the package, `@lpm.dev/owner.package` or `owner.package`, to change every version. Add one exact version, as in `@lpm.dev/acme.kit@1.2.3`, to change only that one. LPM CLI drops a leading `v`, as npm does.
+
+LPM CLI refuses a range such as `^1.2.0` and a dist-tag such as `latest` before it sends anything, with `invalid_version`. npm's `npm deprecate` takes a range; LPM.dev Registry changes one version or all of them.
+
+## The message
+
+The message can be up to 500 characters after LPM CLI trims the spaces around it. LPM.dev Registry counts characters as JavaScript does, in UTF-16 code units, so an emoji counts as two. An empty message is refused: to remove a deprecation, run `lpm undeprecate`. LPM CLI checks the message before it sends anything, and exits `2` on a message it refuses.
+
+To change a version's message, undeprecate it, then deprecate it with the new one.
+
+## What changes
+
+| Command | Changes |
+| --- | --- |
+| `lpm deprecate <package>@<version>` | That version, unless it's already deprecated, unpublished or quarantined |
+| `lpm deprecate <package>` | Every version that isn't deprecated or unpublished yet. A version already deprecated keeps its own message. |
+| `lpm undeprecate <package>@<version>` | That version, if it's deprecated |
+| `lpm undeprecate <package>` | Every deprecated version |
+
+When the change would change nothing, LPM.dev Registry refuses it before it asks for your second factor, and says why: the version doesn't exist, or it, or every version, is already as asked.
+
+You need a token that can publish the package: your `lpm login` session, or a publish token such as `LPM_TOKEN`. In an organization, owners, admins and maintainers can deprecate its packages. The package's **Danger Zone** in the dashboard makes the same changes.
+
+## Confirm it with your second factor
+
+If your account has a passkey or an authenticator app, LPM.dev Registry asks for it to deprecate or undeprecate:
+
+| Account | LPM CLI |
+| --- | --- |
+| A passkey, with or without an authenticator app | Prints an approval URL and opens it in your browser. Approve there with your passkey, or with your authenticator app if you have one. LPM CLI waits up to 10 minutes, then makes the change. |
+| An authenticator app only | Asks for the six-digit code in the terminal. |
+
+Without a terminal, LPM CLI still prints the approval URL and waits for it. An authenticator-only account passes `--otp` instead. `--json` doesn't wait for an approval.
+
+To use a code from your authenticator app without being asked, pass `--otp <CODE>` with exactly six ASCII digits. An account whose only second factor is a passkey can't use `--otp`.
+
+An approval covers this one change, and only the session or token that asked for it can use it. A [trusted publisher](/docs/guides/publishing-a-package#publish-from-ci) needs no second factor.
+
+## JSON output
+
+```bash
+lpm deprecate @lpm.dev/acme.kit@1.2.3 "Use 1.2.4" --json
+```
+
+```json
+{
+  "success": true,
+  "deprecated": true,
+  "package": "@lpm.dev/acme.kit",
+  "version": "1.2.3",
+  "changed": 1,
+  "message": "Use 1.2.4"
+}
+```
+
+`lpm undeprecate --json` prints the same fields, with `deprecated: false` and no `message`.
+
+| Field | Meaning |
+| --- | --- |
+| `success` | The command completed |
+| `deprecated` | Whether the versions are now deprecated |
+| `package` | The package's full name |
+| `version` | The version, normalized, or `all` for every version |
+| `changed` | How many versions changed |
+| `message` | The message, trimmed, as installs show it |
+
+A failure prints the [error envelope](/docs/reference/exit-codes#json-failures):
+
+| `error_code` | Cause |
+| --- | --- |
+| `invalid_version` | A range or dist-tag was named. Nothing was sent. |
+| `invalid_package_name` | The package isn't an LPM.dev Registry package. Nothing was sent. |
+| `browser_approval_required` | The account confirms in the browser, which a `--json` run doesn't wait for. Run it without `--json`, or pass `--otp`. |
+| `otp_required` | A code is needed, and no terminal can ask for it. Pass `--otp`. |
+| `otp_invalid` | The code was malformed or rejected. |
+| `registry` | LPM.dev Registry refused the change, with its reason in the message, such as a version that is already deprecated. |
+
+LPM.dev Registry can make 10 deprecation changes per minute for one token.
+
+## Flags
+
+The relevant [global flags](/docs/commands#global-flags) are also listed.
+
+| Flag | Purpose |
+| --- | --- |
+| `--otp <CODE>` | Send a six-digit authenticator code instead of approving in the browser or typing it when asked |
+| `--json` | Print the result as JSON |
+| `--registry <URL>` | Select the registry |
+| `--token <TOKEN>` | Use this token instead of the stored session |
+
+## See also
+
+- [`lpm unpublish`](/docs/packages/unpublish) — stop a version from installing
+- [`lpm publish`](/docs/packages/publish) — publish a corrected version
+- [`lpm install`](/docs/packages/install) — how installs show deprecation messages
+- [Versions and deprecation](https://lpm.dev/docs/packages/versioning#deprecate-a-version) — revocation, unpublishing and deprecation on LPM.dev Registry
