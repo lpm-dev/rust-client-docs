@@ -1,0 +1,127 @@
+---
+title: lpm unpublish
+description: "Unpublish one version of an LPM.dev Registry package, confirmed with your second factor, while the registry's rules still allow it."
+---
+
+Use `lpm unpublish` to remove one version of an LPM.dev Registry package that shouldn't be installed, such as a release with a leaked secret or a broken build.
+
+```bash
+lpm unpublish <PACKAGE@VERSION> [--otp <CODE>] [--yes] [--json]
+```
+
+An unpublished version stops installing, even from a lockfile that pins it. Its version number stays used, so it can't be published again, and it can't be undone. To warn users without removing a release, [deprecate it](/docs/packages/deprecate) instead.
+
+## Quickstart
+
+```bash
+lpm unpublish @lpm.dev/acme.kit@1.2.3
+```
+
+LPM CLI asks before it unpublishes, then confirms the change with your [second factor](#confirm-it-with-your-second-factor).
+
+## Examples
+
+```bash
+lpm unpublish @lpm.dev/acme.kit@1.2.3          # ask, then unpublish
+lpm unpublish acme.kit@1.2.3                   # the short name works too
+lpm unpublish @lpm.dev/acme.kit@1.2.3 --yes    # don't ask, as in a script
+lpm unpublish @lpm.dev/acme.kit@1.2.3 --otp 123456 --yes --json
+```
+
+## Name the version
+
+Name one exact version: `@lpm.dev/owner.package@1.2.3`, or `owner.package@1.2.3`. LPM CLI drops a leading `v`, as npm does, so `v1.2.3` is `1.2.3`.
+
+LPM CLI refuses a missing version, a range such as `^1.2.0`, and a dist-tag such as `latest` before it sends anything, with `invalid_version`. To archive or delete the whole package, use its **Danger Zone** in the dashboard.
+
+## Which versions can be unpublished
+
+LPM.dev Registry decides, by the package's distribution:
+
+| Distribution | Can be unpublished |
+| --- | --- |
+| Private | At any time |
+| Pool | For 72 hours after publication, while nobody outside the package's owner or organization has installed it |
+| Marketplace | For 72 hours after publication, while no customer has access to the package |
+| Free | Until it's public |
+
+A quarantined version, or one already unpublished, can't be unpublished. LPM.dev Registry refuses a version it won't unpublish before it asks for your second factor, and says why. When the distribution's rules keep the version, it names the [`lpm deprecate`](/docs/packages/deprecate) command to run instead.
+
+You need a token that can publish the package: your `lpm login` session, or a publish token such as `LPM_TOKEN`. In an organization, owners, admins and maintainers can unpublish its packages.
+
+## Confirm it
+
+In an interactive terminal, LPM CLI asks `Unpublish @lpm.dev/acme.kit@1.2.3? This can't be undone.` The answer defaults to no. Declining sends nothing and exits `0`.
+
+Pass `--yes` to skip the question. Without a terminal, or with `--json`, LPM CLI can't ask, so it needs `--yes`. Otherwise it sends nothing and fails with `confirmation_required`, so a script or an agent can't unpublish a version by accident.
+
+## Confirm it with your second factor
+
+If your account has a passkey or an authenticator app, LPM.dev Registry asks for it to unpublish:
+
+| Account | LPM CLI |
+| --- | --- |
+| A passkey, with or without an authenticator app | Prints an approval URL and opens it in your browser. Approve there with your passkey, or with your authenticator app if you have one. LPM CLI waits up to 10 minutes, then unpublishes. |
+| An authenticator app only | Asks for the six-digit code in the terminal. |
+
+Without a terminal, LPM CLI still prints the approval URL and waits for it. An authenticator-only account passes `--otp` instead. `--json` doesn't wait for an approval.
+
+To use a code from your authenticator app without being asked, pass `--otp <CODE>` with exactly six ASCII digits. An account whose only second factor is a passkey can't use `--otp`.
+
+An approval covers this one version, and only the session or token that asked for it can use it. A [trusted publisher](/docs/guides/publishing-a-package#publish-from-ci) needs no second factor. See [Authentication](/docs/infra/authentication) for how LPM CLI finds its credential.
+
+## JSON output
+
+```bash
+lpm unpublish @lpm.dev/acme.kit@1.2.3 --yes --json
+```
+
+```json
+{
+  "success": true,
+  "unpublished": true,
+  "package": "@lpm.dev/acme.kit",
+  "version": "1.2.3"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `success` | The command completed |
+| `unpublished` | LPM.dev Registry unpublished the version |
+| `package` | The package's full name |
+| `version` | The version, normalized |
+
+A failure prints the [error envelope](/docs/reference/exit-codes#json-failures):
+
+| `error_code` | Cause |
+| --- | --- |
+| `confirmation_required` | `--yes` is missing. Nothing was sent. |
+| `invalid_version` | No exact version was named. Nothing was sent. |
+| `invalid_package_name` | The package isn't an LPM.dev Registry package. Nothing was sent. |
+| `browser_approval_required` | The account confirms in the browser, which a `--json` run doesn't wait for. Run it without `--json`, or pass `--otp`. |
+| `otp_required` | A code is needed, and no terminal can ask for it. Pass `--otp`. |
+| `otp_invalid` | The code was malformed or rejected. |
+| `registry` | LPM.dev Registry refused the version, with its reason in the message, such as a Pool version older than 72 hours. |
+| `rate_limited` | The token made too many unpublishes in the last minute. The message says how long to wait. |
+
+LPM.dev Registry can unpublish 10 versions per minute for one token.
+
+## Flags
+
+The relevant [global flags](/docs/commands#global-flags) are also listed.
+
+| Flag | Purpose |
+| --- | --- |
+| `--otp <CODE>` | Send a six-digit authenticator code instead of approving in the browser or typing it when asked |
+| `-y`, `--yes` | Unpublish without asking. Required with `--json` or without a terminal. |
+| `--json` | Print the result as JSON |
+| `--registry <URL>` | Select the registry |
+| `--token <TOKEN>` | Use this token instead of the stored session |
+
+## See also
+
+- [`lpm deprecate`](/docs/packages/deprecate) — warn about a version without removing it
+- [`lpm publish`](/docs/packages/publish) — publish a version
+- [Authentication](/docs/infra/authentication) — credentials and login commands
+- [Versions and unpublishing](https://lpm.dev/docs/packages/versioning#unpublish-a-release) — revocation, unpublishing and deprecation on LPM.dev Registry

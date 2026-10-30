@@ -72,6 +72,38 @@ Additional fields can include `argument`, `command`, `value`, `valid_values`, `u
 lpm --json install --unknown-option > error.json
 ```
 
+### Confirmation required
+
+A command that asks before it makes a change can't ask with `--json` or without a terminal. Without `--yes`, it doesn't make that change, and fails with `confirmation_required`. `error.command` names the command, and `error.help` says what to check, or run instead, before you pass `--yes`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "confirmation_required",
+  "error": {
+    "code": "CONFIRMATION_REQUIRED",
+    "message": "`lpm ports kill` needs `--yes` to kill 2 processes listening on ports 3000-3001 without asking",
+    "command": "lpm ports kill",
+    "help": "Check them with `lpm ports list --all`, then run it again with `--yes`. It asks only in an interactive terminal, and never with `--json`."
+  }
+}
+```
+
+These commands ask first:
+
+| Command | Asks before it |
+| --- | --- |
+| [`lpm init`](/docs/packages/init) | Writes `package.json` from its questions. `--yes` takes the defaults. |
+| [`lpm unpublish`](/docs/packages/unpublish) | Unpublishes a version |
+| [`lpm trust prune`](/docs/packages/trust) | Removes stale trust entries |
+| [`lpm hosts clean`](/docs/infra/hosts) | Removes LPM-managed hosts file blocks |
+| [`lpm ports kill`](/docs/infra/ports) | Kills the processes listening in a port range |
+| [`lpm skills`](/docs/packages/skills) | Adds, cleans, updates, removes, enables, disables or prunes skills |
+| [`lpm dev`](/docs/dev/dev) | Trusts its local certificate authority, or adds hosts file entries |
+| [`lpm doctor`](/docs/infra/doctor) | Applies automatic fixes with `--fix`, or changes sandbox permissions with `sandbox-setup` |
+| [`lpm publish`](/docs/packages/publish), [`lpm stage`](/docs/packages/stage), [`lpm release`](/docs/packages/release) | Runs the package's lifecycle scripts. `--ignore-scripts` skips them instead. |
+
 ### Suggested recovery
 
 When a safe recovery command is available, the envelope includes `next_steps`:
@@ -128,6 +160,7 @@ These codes identify CLI-owned errors. Command reports can carry their own addit
 | `otp_required` | The registry requires a one-time password. |
 | `otp_invalid` | The one-time password was rejected. |
 | `browser_approval_required` | The registry needs the request approved in the browser, which a `--json` run doesn't wait for. Run the command again without `--json`. |
+| `confirmation_required` | The command asks before it makes a change, and ran with `--json` or without a terminal, and without `--yes`. It didn't make the change. See [Confirmation required](#confirmation-required). |
 | `forbidden` | The authenticated operation is not permitted. |
 | `not_found` | The requested resource does not exist. |
 | `rate_limited` | A service rate limit prevents the request. |
