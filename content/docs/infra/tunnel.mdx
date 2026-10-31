@@ -22,7 +22,7 @@ lpm login
 lpm tunnel 3000
 ```
 
-The command prints a public URL and forwards requests to `http://127.0.0.1:3000/`.
+The command prints a public URL. It forwards requests to the address on port `3000` where your service listens: `127.0.0.1` or `::1`.
 Keep the command open while you use the URL. Press `q` or `Ctrl+C` to stop it.
 Tunnels need a Pro plan or one of your organization's claimed domains. See [Plans and limits](/docs/infra/tunneling#plans-and-limits).
 
@@ -127,8 +127,12 @@ lpm tunnel log --clear
 
 ## Select the local service
 
-An explicit port targets plain HTTP at `127.0.0.1`. Valid ports range from `1` through `65535`.
+A port that you give sends plain HTTP to that port at `127.0.0.1` or `::1`. Valid ports are `1` through `65535`.
 The public URL still uses HTTPS.
+
+Some dev servers listen only on `::1`, for example Vite and Astro on macOS. When the tunnel starts, LPM CLI tries both addresses. It forwards requests to the address that accepts connections. The `local` line shows this address.
+If your service starts after the tunnel, or restarts on the other address, LPM CLI finds it at the next request.
+If nothing listens on the port when the tunnel starts, LPM CLI shows a warning. Until your service starts, requests get a `502` response.
 
 Without a port, LPM CLI selects the only active [lpm dev](/docs/dev/dev) endpoint across local sessions.
 It preserves that endpoint's address, port, and base path.
@@ -275,7 +279,10 @@ The default inspector binds to an available loopback port. An explicit busy port
 A default-port inspector failure does not stop the tunnel. `--no-inspect` disables the browser UI while capture continues.
 
 Historical inspection opens the project's database. Use `--inspect-port` with `inspect --ui` to select its port.
-Press `Ctrl+C` to stop it. During a tunnel, press `o` to open its inspector.
+Press `Ctrl+C` to stop it. During a tunnel, press `o` to open its inspector. An open inspector tab does not delay `q` or `Ctrl+C`.
+
+The inspector sidebar shows the capture sessions. To delete a stopped session and its captured requests, select `×` on the session. To delete all stopped sessions, select `clear ended`. You cannot delete a running session. As with `log --clear`, LPM CLI overwrites the deleted captures in the database.
+If a tunnel crashes, gets a kill signal, or loses its terminal, it cannot end its session. The next time that LPM CLI opens the history of the project, it ends that session. The end time is the time of the last capture in the session. If the session has no captures, the end time is its start time.
 
 ## Capture history
 
@@ -294,7 +301,7 @@ lpm tunnel log --clear
 Status filters accept `2xx`, `3xx`, `4xx`, `5xx`, `error`, `err`, or an HTTP status from `100` through `599`.
 Provider filters are case-insensitive.
 
-`log --clear` deletes captured requests and completed sessions. Active sessions remain available for new captures.
+`log --clear` deletes captured requests and completed sessions. Active sessions remain available for new captures. If a tunnel stopped and did not end its session, for example after a crash, `log --clear` counts that session as completed.
 LPM CLI overwrites the deleted captures in the database. It also empties the write-ahead log, which still holds them. If another LPM CLI run reads the database at that time, the log keeps the captures until the last run that uses the database stops. SQLite then removes the log. If root ran the tunnel in the project of another user, SQLite empties the log instead.
 It cannot combine with filters or a count limit. `inspect --ui` cannot combine with CLI capture filters or JSON output.
 
