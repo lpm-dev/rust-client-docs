@@ -140,7 +140,8 @@ For a persistent setting, use `remoteCache.readOnly: true`. `LPM_REMOTE_CACHE_RE
 
 ## Make cache hits predictable
 
-The key includes source inputs, the command, arguments, project configuration, manifests, lockfiles, runtime identities, environment values, and task dependencies.
+The key includes source inputs, the command, arguments, project configuration, manifests, lockfiles, Node and Bun versions, the platform, environment values, and task dependencies.
+The location of the checkout does not affect it. A CI runner and a developer machine can share entries when they use the same platform and runtime versions.
 
 See [Task runner — Cache key](/docs/dev/task-runner#cache-key) for the complete contract.
 
@@ -148,7 +149,9 @@ See [Task runner — Cache key](/docs/dev/task-runner#cache-key) for the complet
 
 - Set `inputs` to include every source and configuration file that affects the result.
 - Set `outputs` to include every generated file that another machine needs.
-- Pin runtime and dependency versions across producers and consumers.
+- Use the same Node and Bun versions, operating system, and CPU architecture on producers and consumers.
+- Pin dependency versions with a committed lockfile.
+- Set `cacheEnv` on each cached task. Without it, the key includes variables such as `HOME`, and LPM CLI warns that other machines can't reuse the task's entries.
 - Use the same task configuration on each machine.
 
 The complete `lpm.json` affects the key. For CI-only read-only behavior, an environment override preserves the shared configuration file.
@@ -187,6 +190,8 @@ An accepted restore removes stale files that match the same patterns but are abs
 A restore stages the cached files in a temporary directory inside the project's `.lpm/`, which Git ignores, before it moves them into place. If a restore is interrupted, the next restore in the project recovers it first. This includes `.lpm-cache-restore-*` directories that earlier LPM CLI releases staged at the project root.
 
 Declare generated files only. Do not include source files or configuration that the task must preserve.
+
+If a task's outputs contain the absolute project path, set `cachePortable` to `false` for that task. Other checkouts then build their own result instead of restoring one with the wrong path.
 
 ### Choose inherited variables with `cacheEnv`
 
@@ -444,7 +449,9 @@ Organization access continues during the billing grace period. After billing lap
 
 ### Every machine rebuilds
 
-Make sure that producers and consumers use the same namespace, inputs, runtime versions, and task configuration. Inspect `cacheEnv` for missing or machine-specific selections.
+Make sure that producers and consumers use the same namespace, inputs, and task configuration. They also need the same Node and Bun versions, operating system, and CPU architecture. A different checkout path does not prevent reuse, unless the task sets `cachePortable` to `false`.
+
+If LPM CLI warns that a task has no `cacheEnv`, add the list. Also inspect `cacheEnv` for machine-specific selections.
 
 Project-loaded environment values also affect the key. Different dotenv or local secret values can produce different keys.
 

@@ -114,7 +114,8 @@ The cache key is a SHA-256 hash of:
 - The complete `lpm.json` file, including dependency edges and output globs
 - The inherited environment after credential and runtime-hook removal, or the variables selected by `cacheEnv`
 - All environment values loaded from project files, secrets, and schema defaults
-- Managed Node and Bun versions, plus fingerprints of the selected executables
+- The Node and Bun versions that the task's `PATH` selects
+- The operating system, CPU architecture, and C library
 - The complete `package.json` contract, including scripts and resolution fields
 - Supported lockfiles in the project root
 - The workspace-root configuration and lockfiles during workspace task runs
@@ -137,15 +138,43 @@ Use `cacheEnv` to select inherited variables that affect a task:
 }
 ```
 
-Excluded inherited values, such as `CI` or `GITHUB_RUN_ID`, do not directly affect the key.
-Runtime selection and project paths still affect it.
+Excluded inherited values, such as `CI` or `GITHUB_RUN_ID`, do not affect the key.
 If your build uses `CI` to change behavior, include `CI`. Include every inherited variable that can affect the result.
 Names are exact and case-sensitive. Wildcards are not supported.
 
 Without `cacheEnv`, inherited values that survive credential and runtime-hook filtering remain cache inputs.
-An empty list excludes those inherited values. CLI-provided script context, including absolute project paths, still affects the key.
+An empty list excludes those inherited values.
 Project-loaded values always remain cache inputs. `cacheEnv` changes neither the task environment nor remote-upload secret checks.
-Executable paths and file metadata also affect runtime identity. Matching source and `cacheEnv` do not guarantee cache reuse across checkout paths or machines.
+
+### Keys across checkouts and machines
+
+The location of the project and of its runtimes does not change the key:
+
+- LPM CLI hashes `npm_package_json` and `INIT_CWD` relative to the workspace root, or to the project outside a workspace. The task still receives the absolute paths.
+- LPM CLI identifies Node and Bun by version. The same release gives the same key wherever it is installed, and also when a version manager selects it.
+
+Two machines produce the same key when they have the same inputs, configuration, lockfiles, and selected environment values. They also need the same Node and Bun versions, operating system, CPU architecture, and C library.
+
+To find the version, LPM CLI runs a version manager's shim with `--version` once per command. It remembers the version of a Node or Bun binary until that binary changes.
+
+Without `cacheEnv`, the key includes every inherited variable, such as `HOME`, so no other machine produces it. With the remote cache enabled, LPM CLI warns once per command about such a task.
+
+If a task's outputs contain the absolute project path, set `cachePortable` to `false`. The key then includes the checkout path, so only that checkout reuses the task's entries:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": [],
+      "cachePortable": false,
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+Before a restore or an upload, LPM CLI checks that the task's `PATH` still selects the same runtimes. If a runtime changes during a download, LPM CLI treats the result as a miss and runs the task. It also does not upload that run's result.
 
 An ordinary prerequisite without a usable cache identity disables caching for its dependents.
 For example, an uncached `check` prerequisite prevents a dependent `build` task from reusing a cached result.
@@ -358,7 +387,7 @@ See [local secrets](/docs/dev/lpm-vault) and [lpm env](/docs/dev/env) for select
 | A local run reports a workspace prerequisite. | Use `--filter` or `--all` from the workspace. |
 | A cache entry never appears. | Check `cache`, declared outputs, and whether prerequisites have usable cache identities. |
 | A changed file does not invalidate the cache. | Add its path to the task's input patterns. |
-| Different checkout paths miss the cache. | Account for absolute script paths and executable identity in the cache key. |
+| Another machine misses the cache. | Use the same Node and Bun versions and platform, and set `cacheEnv`. See [keys across checkouts and machines](#keys-across-checkouts-and-machines). |
 | Watch reruns after generated output changes. | Declare the generated paths in `outputs`. |
 
 For long-running development servers, readiness checks, and restarts, use [lpm dev](/docs/dev/dev).
