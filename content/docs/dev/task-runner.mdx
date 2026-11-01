@@ -114,7 +114,8 @@ The cache key is a SHA-256 hash of:
 - The complete `lpm.json` file, including dependency edges and output globs
 - The inherited environment after credential and runtime-hook removal, or the variables selected by `cacheEnv`
 - All environment values loaded from project files, secrets, and schema defaults
-- Managed Node and Bun versions, plus fingerprints of the selected executables
+- The Node and Bun versions that the task's `PATH` selects
+- The operating system, CPU architecture, and C library
 - The complete `package.json` contract, including scripts and resolution fields
 - Supported lockfiles in the project root
 - The workspace-root configuration and lockfiles during workspace task runs
@@ -137,15 +138,51 @@ Use `cacheEnv` to select inherited variables that affect a task:
 }
 ```
 
-Excluded inherited values, such as `CI` or `GITHUB_RUN_ID`, do not directly affect the key.
-Runtime selection and project paths still affect it.
+Excluded inherited values, such as `CI` or `GITHUB_RUN_ID`, do not affect the key.
 If your build uses `CI` to change behavior, include `CI`. Include every inherited variable that can affect the result.
 Names are exact and case-sensitive. Wildcards are not supported.
 
 Without `cacheEnv`, inherited values that survive credential and runtime-hook filtering remain cache inputs.
-An empty list excludes those inherited values. CLI-provided script context, including absolute project paths, still affects the key.
+An empty list excludes those inherited values.
 Project-loaded values always remain cache inputs. `cacheEnv` changes neither the task environment nor remote-upload secret checks.
-Executable paths and file metadata also affect runtime identity. Matching source and `cacheEnv` do not guarantee cache reuse across checkout paths or machines.
+
+### Keys across checkouts and machines
+
+Where the project is checked out, and where its runtimes are installed, does not change the key:
+
+- LPM CLI hashes `npm_package_json` relative to the workspace root, or to the project outside a workspace. The task still receives the absolute path.
+- The directory you run the command from is not part of the key. A run from a member's directory and a `--filter` run from the workspace root share entries. Both include the workspace root's configuration and lockfiles. If LPM CLI can't read them, it runs the tasks without the cache.
+- LPM CLI identifies the Node or Bun binary by its version, and by the CPU architecture and C library it was built for.
+- LPM CLI identifies a version manager's shim (Volta, asdf, mise, nodenv, or proto) by the version it selects. The version files inside the workspace, such as `.nvmrc` or `mise.toml`, are also part of the key, because mise and proto apply environment settings from them.
+
+Two machines produce the same key when they have the same inputs, configuration, lockfiles, and selected environment values. They also need the same Node and Bun versions and the same operating system, CPU architecture, and C library. A machine without Bun does not share entries with a machine that has Bun. On an Apple silicon Mac, an Intel build of LPM CLI runs under Rosetta and shares entries with neither an Intel Mac nor a native run.
+
+To find a shim's version, LPM CLI runs it with `--version` once per command for each set of version files. It records the version of a Node or Bun binary, and reuses the record until that binary changes.
+
+Some setups keep the key on one machine. Another launcher, such as a wrapper script in `node_modules/.bin`, can change the environment before it runs Node. Its key therefore includes its location. Debian's packaged Node, a Nix store that hard-links files, and Scoop shims also count as launchers.
+
+Settings outside the workspace are not part of the key, for example a global mise `[env]` table. The same applies to tools that a task finds outside the project, such as a global CLI or a system compiler. Install those tools as project dependencies, or list a variable that names their version in `cacheEnv`. Otherwise a machine with another version can reuse the result.
+
+Without `cacheEnv`, the key includes every inherited variable, such as `HOME`, so no other machine produces it. With the remote cache enabled, LPM CLI warns once per command about such a task.
+
+The variables that name the directory you ran the command from, `INIT_CWD`, `PWD`, and `OLDPWD`, are not part of the key. If a task's output depends on one of them, list it in `cacheEnv`.
+
+If a task's outputs contain the absolute project path, set `cachePortable` to `false`. The key then includes the checkout path and the directory that the command runs from, so only that checkout reuses the task's entries:
+
+```json title="lpm.json"
+{
+  "tasks": {
+    "build": {
+      "cache": true,
+      "cacheEnv": [],
+      "cachePortable": false,
+      "outputs": ["dist/**"]
+    }
+  }
+}
+```
+
+Before a restore or an upload, LPM CLI checks that the task's `PATH` still selects the same runtimes. If a runtime changes during a download, LPM CLI treats the result as a miss and runs the task. It also does not upload that run's result.
 
 An ordinary prerequisite without a usable cache identity disables caching for its dependents.
 For example, an uncached `check` prerequisite prevents a dependent `build` task from reusing a cached result.
@@ -358,7 +395,7 @@ See [local secrets](/docs/dev/lpm-vault) and [lpm env](/docs/dev/env) for select
 | A local run reports a workspace prerequisite. | Use `--filter` or `--all` from the workspace. |
 | A cache entry never appears. | Check `cache`, declared outputs, and whether prerequisites have usable cache identities. |
 | A changed file does not invalidate the cache. | Add its path to the task's input patterns. |
-| Different checkout paths miss the cache. | Account for absolute script paths and executable identity in the cache key. |
+| Another machine misses the cache. | Use the same Node and Bun versions and platform, and set `cacheEnv`. See [keys across checkouts and machines](#keys-across-checkouts-and-machines). |
 | Watch reruns after generated output changes. | Declare the generated paths in `outputs`. |
 
 For long-running development servers, readiness checks, and restarts, use [lpm dev](/docs/dev/dev).
