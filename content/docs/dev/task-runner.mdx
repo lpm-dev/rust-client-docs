@@ -148,18 +148,24 @@ Project-loaded values always remain cache inputs. `cacheEnv` changes neither the
 
 ### Keys across checkouts and machines
 
-The location of the project and of its runtimes does not change the key:
+Where the project is checked out, and where its runtimes are installed, does not change the key:
 
-- LPM CLI hashes `npm_package_json` and `INIT_CWD` relative to the workspace root, or to the project outside a workspace. The task still receives the absolute paths.
-- LPM CLI identifies Node and Bun by version. The same release gives the same key wherever it is installed, and also when a version manager selects it.
+- LPM CLI hashes `npm_package_json` relative to the workspace root, or to the project outside a workspace. The task still receives the absolute path.
+- The directory you run the command from is not part of the key. A run from a member's directory and a `--filter` run from the workspace root share entries. Both include the workspace root's configuration and lockfiles.
+- LPM CLI identifies the Node or Bun binary by its version, and by the CPU architecture and C library it was built for.
+- LPM CLI identifies a version manager's shim (Volta, asdf, mise, nodenv, or proto) by the version it selects. The version files inside the workspace, such as `.nvmrc` or `mise.toml`, are also part of the key, because mise and proto apply environment settings from them.
 
-Two machines produce the same key when they have the same inputs, configuration, lockfiles, and selected environment values. They also need the same Node and Bun versions, operating system, CPU architecture, and C library.
+Two machines produce the same key when they have the same inputs, configuration, lockfiles, and selected environment values. They also need the same Node and Bun versions and the same operating system, CPU architecture, and C library. A machine without Bun does not share entries with a machine that has Bun.
 
-To find the version, LPM CLI runs a version manager's shim with `--version` once per command. It remembers the version of a Node or Bun binary until that binary changes.
+To find a shim's version, LPM CLI runs it with `--version` once per command for each set of version files. It records the version of a Node or Bun binary, and reuses the record until that binary changes.
 
-Without `cacheEnv`, the key includes every inherited variable, such as `HOME`, so no other machine produces it. With the remote cache enabled, LPM CLI warns once per command about such a task.
+Some setups keep the key on one machine. Another launcher, such as a wrapper script in `node_modules/.bin`, can change the environment before it runs Node. Its key therefore includes its location. Debian's packaged Node, a Nix store that hard-links files, and Scoop shims also count as launchers.
 
-If a task's outputs contain the absolute project path, set `cachePortable` to `false`. The key then includes the checkout path, so only that checkout reuses the task's entries:
+Settings outside the workspace are not part of the key, for example a global mise `[env]` table. The same applies to tools that a task finds outside the project, such as a global CLI or a system compiler. Install those tools as project dependencies, or list a variable that names their version in `cacheEnv`. Otherwise a machine with another version can reuse the result.
+
+Without `cacheEnv`, the key includes every inherited variable, such as `HOME`, so no other machine produces it. With the remote cache enabled, LPM CLI warns once per command about such a task, unless the task sets `cachePortable` to `false`.
+
+If a task's outputs contain the absolute project path, or the task reads `INIT_CWD`, set `cachePortable` to `false`. The key then includes the checkout path and the directory that the command runs from, so only that checkout reuses the task's entries:
 
 ```json title="lpm.json"
 {
