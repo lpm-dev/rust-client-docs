@@ -25,11 +25,8 @@ A lockfile pins the graph. The [content-addressable store](/docs/packages/conten
 | File | Purpose | Commit it? |
 | --- | --- | --- |
 | `lpm.lock` | Authoritative dependency graph and manifest snapshot | Yes. In a workspace, commit the root lockfile. |
-| `lpm.lockb` | Binary lockfile that earlier LPM CLI versions wrote. LPM CLI no longer reads or writes it. | No. Commit its removal. |
 
-Current installs write lockfile version **13**, and LPM CLI writes only `lpm.lock`. When it finds an `lpm.lockb` left by an earlier version, an install removes it, even when the dependencies are already up to date. Any other command that writes the lockfile removes it too.
-
-Install and inspection commands read only `lpm.lock`. A leftover `lpm.lockb` has no effect on what they install.
+Current installs write lockfile version **13**. Install and inspection commands read `lpm.lock`.
 
 For the other files that LPM CLI creates and whether to commit them, see [Files LPM CLI creates](/docs/project-files).
 
@@ -69,7 +66,7 @@ Frozen installs preserve the selected graph. Offline installs use local package 
 
 With an existing lockfile, plain [`lpm install`](/docs/packages/install) automatically uses frozen mode when LPM CLI detects CI. Without a lockfile, plain install can create one. Use [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) when CI must reject a missing lockfile.
 
-Frozen mode rejects manifest drift, incompatible lockfile schemas, package-add requests, and `--force`. LPM CLI leaves `lpm.lock` and any `lpm.lockb` unchanged in frozen mode. Frozen mode does not disable downloads or lifecycle scripts.
+Frozen mode rejects manifest drift, incompatible lockfile schemas, package-add requests, and `--force`. LPM CLI leaves `lpm.lock` unchanged in frozen mode. Frozen mode does not disable downloads or lifecycle scripts.
 
 To prepare the store for offline CI:
 
@@ -106,7 +103,7 @@ git diff -- lpm.lock
 git add lpm.lock
 ```
 
-After a successful migration, LPM CLI removes obsolete member `lpm.lock` and `lpm.lockb` files. Cleanup failures produce warnings. Commit successful removals with the root lockfile.
+After a successful migration, LPM CLI removes obsolete member `lpm.lock` files. Cleanup failures produce warnings. Commit successful removals with the root lockfile.
 
 Member commands use the nearest ancestor lockfile that records that member. A legacy local lockfile does not override its owning workspace lockfile.
 
@@ -183,13 +180,11 @@ For `"local": "npm:canonical@1.0.0"`, the key is `local`. For an unavailable tra
 
 Authentication, rate limits, transport errors, and registry server errors remain separate failures.
 
-### Invalid files or failed cleanup
+### Invalid files
 
 If an owning lockfile is malformed, restore a valid committed copy before you retry inspection or a frozen install.
 
-Lockfile writes remove a leftover `lpm.lockb`. If permissions or a directory at `lpm.lockb` prevent that, LPM CLI reports an error. Inspect the reported path and preserve unrelated contents before you correct it.
-
-Each lockfile replacement is atomic, but the lockfile write and the `lpm.lockb` removal are separate operations. A cleanup error can occur after the new TOML file exists. This is not a multi-file transaction or a guarantee against power loss.
+Each lockfile replacement is atomic. This is not a guarantee against power loss.
 
 ## See also
 
@@ -197,7 +192,6 @@ Each lockfile replacement is atomic, but the lockfile write and the `lpm.lockb` 
 - [`lpm ci`](/docs/packages/install#frozen-lockfile-and-ci) — frozen installs in CI
 - [`lpm fetch`](/docs/packages/fetch) — prepare package artifacts from a lockfile
 - [`lpm.lock` format](/docs/reference/lockfile-format) — TOML fields and validation
-- [Legacy binary files](/docs/reference/lockfile-format#legacy-binary-files) — migration and repair compatibility
 - [Resolver](/docs/packages/resolver) — package selection
 - [Dependency graph](/docs/packages/dependency-graph) — inspect locked dependencies
 - [Content-addressable store](/docs/packages/content-addressable-store) — package storage and reuse
