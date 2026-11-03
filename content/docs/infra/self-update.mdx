@@ -206,12 +206,26 @@ LPM_NO_UPDATE_CHECK=1 lpm install
 For a standalone installation, LPM CLI downloads the release files and completes these steps before it replaces the binary:
 
 1. It verifies that the signed manifest comes from the expected LPM CLI release workflow.
-2. It verifies that the signed Git reference and source commit match the requested version.
-3. It verifies that the signature time matches the GitHub release time.
-4. It verifies the checksum of the manifest.
-5. It verifies the downloaded release asset against the manifest.
+2. It verifies that the release workflow ran from an accepted Git reference.
+3. It verifies that the signed source commit matches the requested version.
+4. It verifies that the signature time matches the GitHub release time.
+5. It verifies the checksum of the manifest.
+6. It verifies the downloaded release asset against the manifest.
+7. It runs the new binary and checks that it reports the requested version.
 
 If any verification step fails, LPM CLI refuses the update and retains the current binary.
+
+### Release signing identity
+
+The release workflow runs only from the `main` branch, so stable and nightly releases are signed from `refs/heads/main`. Stable releases 0.75.0 through 0.76.x were signed from their version tag, such as `refs/tags/v0.76.5`. LPM CLI accepts that tag for that version only. It refuses a signature from any other branch or tag.
+
+A `main` signature does not name a version, so LPM CLI binds the signed source commit to the requested version:
+
+| Release | Binding |
+| --- | --- |
+| Nightly | The version ends with the first seven characters of the signed commit. |
+| Stable, signed from `main` | The GitHub release points at the signed commit, and a manual release run produced the signature. |
+| Stable, signed from its tag | The signed tag names the version. |
 
 On Linux and Windows, the updater attempts to copy the current binary to `<binary>.previous`. This backup is best-effort and can be absent.
 
@@ -253,6 +267,30 @@ curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=nightly sh
 ```
 
 The installer preserves saved credentials and configuration. It retains the [installer verification checks](/docs/installation#standalone-installer-macos-linux). Do not disable verification or delete your credentials. For npm and Homebrew installations, use the package manager.
+
+### Upgrade from 0.75.0 to 0.84.0
+
+`lpm self-update` in 0.75.0 to 0.84.0 accepts a stable release only when it is signed from its version tag. Newer stable releases are signed from `main`, so standalone and Cargo installations of these versions refuse them:
+
+```text
+✗ Self-update refused
+  reason release v0.84.0 has invalid signed provenance: certificate identity must be
+  `github:lpm-dev/rust-client` workflow `.github/workflows/release.yml` at `refs/tags/v0.84.0`
+```
+
+The release is not tampered. For a standalone installation, rerun the installer once:
+
+```bash
+curl -fsSL https://cli.lpm.dev/install | sh
+```
+
+The installer preserves saved credentials and configuration. For a Cargo installation, install the new release once from its tag:
+
+```bash
+cargo install --git https://github.com/lpm-dev/rust-client --tag v<version> lpm-cli --force --locked
+```
+
+After this one reinstall, `lpm self-update` works again. npm, Homebrew, and nightly installations are not affected.
 
 ### Recover from a standalone update error
 
