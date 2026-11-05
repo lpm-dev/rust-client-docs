@@ -167,6 +167,35 @@ Source evidence includes a package-relative path, a reason, and a file context.
 Precise matches also include a line, a byte column, and a short excerpt.
 Evidence contains a bounded set of examples. It does not list every call or prove that an API executes.
 
+Native bindings come from the files a package ships: a compiled `.node` addon, or a `binding.gyp` that node-gyp builds an addon from on install. A `process.dlopen` call also counts.
+A module name in code, such as `node-gyp-build` or `napi`, does not establish native bindings.
+
+A high-entropy string is a string literal that looks random: at least 32 base64, base64url, or hex characters, with a repeated character, close to the most entropy its length allows, and switching between lower case, upper case, and digits as random text does.
+A PEM private key always counts. Identifiers, hashes, UUIDs, alphabets, and prose don't.
+
+### Bundled dependencies
+
+The source scan reads the dependencies a package bundles in its own `node_modules/` as the package's code.
+A package that the package manager installed inside another package's `node_modules/` is scanned as its own package, not as part of the other.
+The `node_modules/` directories of a local `file:` or `link:` dependency hold that directory's own installs, so the scan skips them.
+
+### Hidden files
+
+The source scan reads every hidden file a package ships, such as `.config/setup.js` or a `.git` directory, as npm unpacks them and LPM.dev Registry reads them.
+The hidden files and `.git` of a local `file:` or `link:` dependency hold its tooling and caches, such as `.next`, so the scan reads only the hidden files that its install scripts or entry points name.
+
+### Test files
+
+The source scan reads test files too. A file counts as a test when a directory above it is named `test`, `tests`, `__tests__`, `__test__`, `spec`, `specs`, `__mocks__`, or `__fixtures__`, or when its name matches `*.test.*`, `*.spec.*`, `test_*.py`, or `*_test.py`.
+
+A capability or finding that only test files show is reported as tests only, with `info` severity.
+A test file that the package's install or uninstall scripts, or its `main`, `module`, `browser`, `bin`, or `exports` fields, name counts as package code.
+A field that names a directory names its `index` file, as Node resolves it.
+LPM.dev Registry marks its tags the same way.
+
+With `--json`, a tests-only capability or issue has `tests_only: true`.
+Local evidence from package code replaces a Registry tests-only mark. Local evidence from tests does not replace Registry evidence from package code.
+
 With `--json`, each package stores capabilities in `capabilities`, and `total_capabilities` counts them.
 Each capability includes `rule_id`, `name`, `policy_severity`, `source`, and `evidence`.
 Capabilities do not contribute to `issues`, `total_issues`, `packages_with_issues`, or security severity counts.
@@ -180,8 +209,11 @@ An incomplete source audit prints `Audit incomplete` and exits with code `1`, re
 The source scan covers JavaScript and TypeScript files. It keeps these resource limits:
 
 - Full analysis stops at 4 MiB for one file. Larger files receive a sample from each end.
-- One package has a 50 MiB scan budget and a 5,000-file limit.
-- A sampled file does not count as a fully scanned file.
+- The files a package runs have a 50 MiB scan budget and a 5,000-file limit.
+- Its test files have a separate 12.5 MiB budget and a 1,250-file limit, so tests can't use up the budget for the package's code.
+- The scan reads a package's own files first, then the dependencies it bundles, then its tests.
+- A sampled file counts toward the file limit. It does not count as a fully scanned file.
+- A file nested too deeply to parse within 64 MiB of stack, or to analyze within 256 MiB, is read with pattern checks only, and counts as unsupported syntax.
 
 If sources are missing, install the dependencies with the project's package manager, then rerun `lpm audit`.
 For Yarn PnP, provide a `node_modules` installation to enable local source analysis.
