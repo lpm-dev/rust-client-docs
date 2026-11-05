@@ -1,0 +1,98 @@
+---
+title: lpm env repair
+description: Find damage in the newer data that LPM keeps next to a project's env values, and repair it.
+---
+
+`lpm env repair` finds damage in the newer data of an env project and repairs it. The values of the project do not change.
+
+```bash
+lpm env repair [--yes] [--json]
+
+# Show the damage, then confirm the repair
+lpm env repair
+
+# Repair without a confirmation, for example in a script
+lpm env repair --yes
+```
+
+LPM keeps newer data next to the values of a project, for example the personal overrides that LPM Vault keeps for this computer.
+If this data is damaged, a command that needs it stops with a message like this:
+
+```text
+This env project's newer data is damaged (missing record "overrides"). Repair it: lpm env repair
+```
+
+On macOS, the message also says that you can repair the project in LPM Vault.
+Run `lpm env repair` from the project directory, or from any directory below it.
+
+## Review and confirm
+
+The command shows each problem first, with the repair for it:
+
+```text
+! this env project's newer data is damaged:
+    missing record "overrides"
+      repair: remove personal overrides and the records only it uses
+```
+
+In an interactive terminal, the command then asks you to confirm. Without a terminal, it repairs nothing unless you add `--yes`.
+If nothing is damaged, the command says so and changes nothing.
+
+## Repairs
+
+| Repair | Effect |
+| --- | --- |
+| Remove a feature | Deletes one damaged feature, such as personal overrides, and the records that only this feature uses. The other newer data stays. |
+| Delete unlisted records | Deletes the records that no feature of the project uses. |
+| Discard the newer data | Deletes all newer data of the project. LPM uses this repair when it cannot read which features the project has, or when an interrupted change cannot be finished. It is then the only repair. |
+
+Each repair deletes the damaged data, and it cannot restore that data. The values of the project stay as they are.
+
+## CLI approval on macOS
+
+Damage to the [CLI approval](/docs/dev/lpm-vault#cli-approval-on-macos) of a project is different. `lpm env repair` shows the problem, but only LPM Vault can set CLI approval again.
+To correct it, switch the CLI approval of the project in LPM Vault. The command fails until you do.
+
+## JSON output
+
+```bash
+lpm env repair --json
+lpm env repair --json --yes
+```
+
+Without `--yes`, `--json` reports the problems, repairs nothing, and exits with status `1`:
+
+```json
+{
+  "success": false,
+  "problems": [
+    {
+      "damage": "missing record \"overrides\"",
+      "repair": { "action": "removeFeature", "feature": "overrides" }
+    }
+  ],
+  "repaired": []
+}
+```
+
+With `--yes`, the command runs the repairs and lists them in `repaired`.
+
+| Field | Meaning |
+| --- | --- |
+| `success` | `true` when nothing is damaged, or when the repairs ran. |
+| `problems[].damage` | A description of the damage. |
+| `problems[].repair.action` | `removeFeature` with a `feature`, `removeUnlisted`, or `discardProject`. It is `null` when only LPM Vault can repair the problem. |
+| `repaired` | The repairs that ran, in the same form as `repair`. |
+
+## Flags
+
+| Flag | Effect |
+| --- | --- |
+| `--yes` | Repair without a confirmation. Without a terminal, the command needs it. |
+| `--json` | Print the result as JSON. |
+
+## See also
+
+- [lpm env](/docs/dev/env)
+- [Local secrets](/docs/dev/lpm-vault)
+- [Exit codes and JSON failures](/docs/reference/exit-codes)
