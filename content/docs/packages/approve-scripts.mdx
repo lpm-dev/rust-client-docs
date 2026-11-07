@@ -110,18 +110,24 @@ Interactive cards show package identity, lifecycle phases, static classification
 
 ### What a package reaches
 
-Approval is per package, so the card shows when a package's install code or manifest reaches beyond the package itself. LPM CLI reads the files the lifecycle commands run (a `node` or `bun` file argument, the package's own binaries, and the package's own scripts called through `npm run` and similar), the local files they import, and `package.json`.
+Approval is per package, so the card shows when a package's install code or manifest reaches beyond the package itself. LPM CLI reads the files the lifecycle commands run and the local files they import, plus `package.json`. That includes:
+
+- a `node` or `bun` file argument and the package's own binaries
+- shell scripts (`.sh`, `.bash`, `.zsh`, `.ps1`, `.cmd`, `.bat`), line by line
+- the package's own scripts called through `npm run` and similar
+- command expansions in `binding.gyp` when a script runs `node-gyp`
 
 | Card line | Meaning | Needs individual review |
 | --- | --- | --- |
-| `starts npm (install.js)` | The code can start another package manager. Its nested installs run with dependency scripts off; see [npm compatibility](/docs/packages/npm-compatibility#script-execution). | No |
-| `installs packages with bun (...)` | The code runs `bun install`, `bun add`, or `bun pm`. Bun has no setting that turns dependency scripts off. | Yes |
+| `starts npm (install.js)` | The code can start npm, pnpm, or another package manager whose nested installs run with dependency scripts off; see [npm compatibility](/docs/packages/npm-compatibility#script-execution). | No |
+| `starts bun (install.js), which can run dependency scripts LPM cannot switch off` | The code can start Yarn, Bun, or Corepack. Yarn still builds packages a project marks in `dependenciesMeta`, and Bun has no setting that turns dependency scripts off. | Yes |
+| `runs a command the static gate marks Red (...)` | A command the lifecycle reaches outside its own phases, such as a package script run through `npm run`, a shell-script line, or a `binding.gyp` expansion, is [Red](/docs/packages/security-audit#understand-triage-labels). | Yes |
 | `changes whether nested installs run scripts: ...` | The code mentions `ignore-scripts`, `enable-scripts`, `--allow-scripts`, `--allow-build`, or `dangerously-allow-all-*`. | Yes |
-| `edits script approvals: ...` | The code mentions an approval list such as `allowBuilds`, `onlyBuiltDependencies`, `trustedDependencies`, `allowScripts`, `approve-builds`, or `pm trust`. | Yes |
-| `approves scripts for other packages in ...` | The manifest approves scripts for packages that are not among its own dependencies. LPM CLI never honors approvals from a dependency's manifest. | Yes |
-| `not fully scanned (...)` | A file, size, or package-boundary limit left code unread. | Yes |
+| `edits script approvals: ...` | The code mentions an approval list such as `allowBuilds`, `onlyBuiltDependencies`, `trustedDependencies`, `allowScripts`, `dependenciesMeta`, `approve-builds`, or `pm trust`. | Yes |
+| `approves scripts for other packages in ...` | The manifest approves scripts for packages that are not among its own dependencies, including `dependenciesMeta.<name>.built`. LPM CLI never honors approvals from a dependency's manifest. | Yes |
+| `not fully scanned (...)` | A limit left code unread: more than 128 files, a file over 4 MiB, 16 MiB per package, an import outside the package, or a chain of more than four `npm run` calls. | Yes |
 
-A package that needs individual review must be approved on its own. `--yes` refuses it, and the triage advisor never reviews it. The scan is textual, so it cannot see code assembled at runtime. No findings is not proof of safe behavior.
+A package that needs individual review must be approved on its own. `--yes` refuses it, the triage advisor never reviews it, and the `triage` script policy does not run it automatically even when its label is green. The scan is textual, so it cannot see code assembled at runtime. It does not read the package's dependencies or files the package imports through its own name, such as `require('<package>/lib/x')`. No findings is not proof of safe behavior.
 
 When an earlier approval exists, project review can show changed script lines and behavioral tags. Script bodies appear only when they match the recorded binding.
 
@@ -207,9 +213,9 @@ lpm approve-scripts esbuild --dry-run --json
 
 Pair `--json` with `--list`, `--yes`, or a package selector. A nonempty interactive queue cannot use JSON mode.
 
-Project and global reports use `schema_version: 4` and include counts, `dry_run`, and `blocked` entries. Entries include identity, script hash, phases, `static_tier`, `reach`, and drift data.
+Project and global reports use `schema_version: 4` and include counts, `dry_run`, and `blocked` entries. Entries include identity, script hash, phases, `static_tier`, `reach`, and drift data. Global entries include `static_tier` and `reach` too.
 
-`reach` is `null` for entries captured before the scan. Otherwise it holds `findings`, `incomplete`, and `requires_individual_review`. Each finding has a `kind` (`starts-package-manager`, `installs-with-bun`, `changes-script-policy`, `edits-script-approvals`, or `approves-other-packages`) and the file, manager, marker, key, or packages it is about:
+`reach` is `null` for entries captured before the scan. Otherwise it holds `findings`, `incomplete`, and `requires_individual_review`. Each finding has a `kind` (`starts-package-manager`, `runs-red-command`, `changes-script-policy`, `edits-script-approvals`, or `approves-other-packages`) and the file, manager, source, command, marker, key, field, or packages it is about:
 
 ```json
 {
