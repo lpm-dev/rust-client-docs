@@ -132,6 +132,31 @@ The executable is not isolated from the current project's files.
 LPM CLI removes inherited credential variables and protected runtime hooks before it starts an ordinary package tool.
 This environment filtering does not prevent the tool from reading accessible files or making network requests.
 
+## Package managers the tool starts
+
+Scaffolders such as `create-next-app` install the project they generate with whichever package manager they detect, and some approve dependency builds for it first. Those installs would run dependency lifecycle scripts under that package manager's rules instead of LPM's.
+
+`lpm dlx` and [lpm exec](/docs/dev/exec) put shims for the package managers installed on your machine (`npm`, `npx`, `pnpm`, `pnpx`, `yarn`, `yarnpkg`, `bun`, `bunx`) first on the tool's `PATH`. A package manager that is not installed gets no shim, so the tool detects the same package managers it would without LPM CLI.
+
+| The tool runs | LPM CLI runs |
+| --- | --- |
+| `npm install`, `pnpm install`, `yarn`, `bun install`, and their aliases | `lpm install` in that directory, carrying over `--frozen-lockfile`, `--prod`, `--offline`, and `--ignore-scripts` |
+| `npm install <pkg>`, `pnpm add <pkg>`, `yarn add <pkg>`, `bun add <pkg>` | `lpm install <pkg>`, with `-D` for dev dependencies |
+| `npm ci` | `lpm ci` |
+| `npx <bin>`, `bunx <bin>`, `npm exec <bin>`, `bun x <bin>` | [lpm exec](/docs/dev/exec) when the binary is installed in the project, otherwise `lpm dlx` |
+| `pnpm dlx`, `yarn dlx`, `pnpx` | `lpm dlx` |
+| Anything else, or a flag LPM CLI cannot carry over (for example `-g`, `--registry`, `--filter`) | The real package manager, unchanged |
+
+An install into a project that another package manager owns runs that package manager unchanged. A project is owned by the nearest lockfile at or above the install directory: `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, or `bun.lockb` without an `lpm.lock` beside it. A project with `lpm.lock`, or with no lockfile yet, such as one a scaffolder just generated, installs with LPM CLI.
+
+Dependency scripts in those installs follow LPM CLI's approvals: they stay blocked until you approve them with [lpm approve-scripts](/docs/packages/approve-scripts). Native builds of approved packages run as in any `lpm install`.
+
+The tool also sees `npm_config_user_agent=lpm/<version> npm/? node/? <platform> <arch>`. Tools that pick a package manager from the user agent, such as `create-vite`, then call `lpm` directly.
+
+When the tool exits, LPM CLI lists the package-manager commands it ran and how each was handled. It also lists script approvals left in the directories they ran in: `allowScripts`, `trustedDependencies`, and `pnpm` / `lpm` approval lists in `package.json`, `allowBuilds`, `onlyBuiltDependencies`, and `dangerouslyAllowAllBuilds` in `pnpm-workspace.yaml`, script settings in `.npmrc`, and `enableScripts` in `.yarnrc.yml`. LPM CLI ignores the npm, pnpm, Yarn, and bun lists. `lpm.trustedDependencies` applies only after you approve it on this machine.
+
+The shims keep LPM CLI's script approvals for the packages the tool installs. They do not limit the tool itself, which runs with your permissions and can start any program by path.
+
 ### Release-age overrides
 
 ```bash
