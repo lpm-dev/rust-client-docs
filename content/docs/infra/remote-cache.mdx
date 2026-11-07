@@ -356,7 +356,7 @@ Turborepo receives a per-minute limit as HTTP 429, and a daily limit as HTTP 403
 
 LPM CLI and Turborepo download a cache hit from the download host of the cache, `cache-dl.lpm.dev`. They use a link that the Registry gives in its answer. The link works for one minute.
 
-> **CAUTION:** Allow `cache-dl.lpm.dev` and `lpm.dev` in your CI firewall. If you do not, every cache hit fails to download, and the task runs again.
+> **CAUTION:** Allow `cache-dl.lpm.dev` and `lpm.dev` in your CI firewall. If you do not, the first cache hit fails to download, the task runs again, and LPM CLI skips remote lookups for the rest of the run.
 
 - The host refuses a request with HTTP 403 if the request has an `Origin`, `Forwarded`, `X-Forwarded-Host`, or similar header. If a TLS-inspecting proxy adds such a header, every cache hit becomes a miss.
 - LPM CLI reports a failed download without its link, because the link works as a credential for that minute.
@@ -502,6 +502,15 @@ LPM CLI rejects the archive before it replaces or removes project outputs. The t
 ### The cache service is unavailable
 
 Remote timeouts, missing artifacts, and rejected downloads do not stop local task execution. Upload failures do not turn a successful task into a failure.
+
+LPM CLI waits up to 10 seconds to connect to the cache. A request that cannot connect or times out stops that kind of remote request for the rest of the run, so an unreachable cache costs one timeout, not one per task:
+
+- A lookup that cannot reach the cache turns off the remote cache for the run.
+- A download from the download host that cannot connect or times out turns off remote lookups for the run. Uploads continue.
+- An upload that cannot reach the cache turns off uploads for the run.
+- A token that the cache still rejects with HTTP 401 after a refresh turns off the remote cache for the run.
+
+LPM CLI shows each distinct remote cache warning once a run.
 
 The JSON output from [`lpm cache status`](/docs/packages/cache#status) includes `remote.error`. Even when the command exits successfully, inspect this field.
 
