@@ -102,8 +102,11 @@ lpm run lint test build --parallel
 lpm run lint test build --parallel --no-bail --stream
 ```
 
+With `--parallel`, independent tasks run in batches of up to one task per available processor. Each batch starts when the previous one finishes. Long-running watchers past the first batch therefore never start; run them as [`lpm dev`](/docs/dev/dev) services instead.
 By default, a failure prevents the next batch from starting. Already running tasks finish.
 With `--no-bail`, independent tasks continue. Tasks whose prerequisites failed remain skipped.
+
+On Unix, Ctrl+C or SIGTERM stops the running scripts. LPM CLI forwards SIGTERM, which reaches only LPM CLI when it runs as a container's main process or under an IDE's stop button, to each script and its descendants. A terminal Ctrl+C already reaches the scripts, so LPM CLI doesn't send it again. Each script has 5 seconds to finish its cleanup before LPM CLI stops what remains. An interrupted run exits with `130` for SIGINT or `143` for SIGTERM.
 
 `--stream` shows live output with task prefixes, including sequential runs and levels with one task.
 Cached logs use the same prefixes. The global color setting also applies to streamed output.
@@ -156,7 +159,7 @@ A local run without workspace selection rejects reachable `^task` dependencies. 
 
 ### Concurrency and changed files
 
-`--workspace-concurrency <N>` limits concurrent members within each dependency level.
+`--workspace-concurrency <N>` limits concurrent members within each dependency level. A member starts as soon as another finishes, and after a failure, members that haven't started are skipped unless you pass `--no-bail`.
 The default comes from `lpm.toml` under `[workspace].concurrency`, then `~/.lpm/config.toml` under `workspace-concurrency`, then available processors.
 `--parallel` separately controls independent tasks inside each member.
 
