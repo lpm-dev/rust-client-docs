@@ -407,6 +407,10 @@ All target uploads finish before the wait starts. Timeout, polling failure, manu
 
 A version that passed its review can still be held, for example during its release cooldown or while the package is archived. Without `--json`, LPM CLI prints why while it waits. A timeout says why the version is held, if it still is. If only a new version gets past the hold, the wait stops at once. When the wait ends on a hold, or times out or fails while the version is held, JSON output gives that hold in `publication_wait.hold`, with `reason`, `message`, and `final`, which is `true` when only a new version gets past it. Otherwise `publication_wait.hold` is `null`.
 
+A Swift release isn't available until LPM.dev Registry checks its manifests with Swift and signs its source archive, usually within a minute. While that runs, the wait prints that the release is being prepared. If that preparation fails, the Registry rejects the release, and the wait stops and prints the reason, which can be Swift compiler output, and what to fix. A release rejected while it was being prepared was never served, so publishing the same version again replaces it. A Swift release that publication review rejects keeps its version, like any other. If the wait times out or a poll fails while the release is still being prepared, it says so: only a rejection would let the version be published again. Without `--wait`, the package page shows the result, and LPM.dev Registry emails a rejection unless the account's **Package updates** emails are off.
+
+When the last poll saw the release being prepared or rejected, JSON output gives that state in `publication_wait.swift`, with `status` (`pending` or `rejected`), `code`, `message`, and `remedy`. While the release is pending, `code` and `remedy` are `null`. On a rejection, `code` names why preparation failed: `unsupported_tools_version`, `invalid_manifest`, `invalid_package`, `distribution_restricted`, `timed_out`, or `unavailable`, and it can be `null`. Otherwise `publication_wait.swift` is `null`.
+
 Choosing a public mode, which is permanent, reviews the latest eligible version. The package stays private until a release is approved. Earlier private history stays publisher-only. Future versions require review individually. See [LPM.dev package distribution](/docs/packages/package-distribution) for coverage and dependency requirements.
 
 ## Recover from failures
@@ -419,6 +423,8 @@ lpm publish --github --yes --json
 ```
 
 A post-upload lifecycle failure or publication-wait failure can occur after successful upload. Check the registry before retrying. To publish different contents, choose a new version with [`lpm version`](/docs/packages/version).
+
+A Swift release that LPM.dev Registry rejected while preparing it is the exception: fix what the rejection names, then publish the same version again to replace it. After a publish to several targets, publish it again to LPM.dev Registry alone with `lpm publish --lpm --wait`. A Swift release that publication review rejected needs a new version.
 
 When other changes to the package keep an LPM.dev Registry upload from finishing, the registry answers `PUBLISH_CONTENTION` and LPM CLI retries the upload. If the registry also can't undo the unfinished upload, it answers `PUBLISH_INCOMPLETE`: the version stays reserved for about two hours, so publish a new version, or that one after the reservation ends. Until then, a publish of that version is answered `PUBLISH_INCOMPLETE` too, after any refusal of the account; in a publish to several targets, the other targets still publish.
 
