@@ -29,7 +29,7 @@ Approval saves trust. It does not execute scripts. Use [lpm rebuild](/docs/packa
 | No package or mode flag | Review the blocked set interactively |
 | `[PACKAGE]` | Select one package, version, or artifact |
 | `--list` | Show the blocked set without changes |
-| `--yes` | Approve every blocked entry only if all entries have a green classification |
+| `--yes` | Approve every blocked entry only if all entries are green and none reach beyond their own package |
 | `--dry-run` | Preview the selected review flow without writes |
 | `--global` | Review dependencies of globally installed packages |
 
@@ -106,7 +106,28 @@ A named package outside the blocked set fails. A package whose current binding a
 
 ## Review and authorization
 
-Interactive cards show package identity, lifecycle phases, static classification, and drift information. You can approve, skip, or inspect a package.
+Interactive cards show package identity, lifecycle phases, static classification, what the package reaches, and drift information. You can approve, skip, or inspect a package.
+
+### What a package reaches
+
+Approval is per package, so the card shows when a package's install code or manifest reaches beyond the package itself. LPM CLI reads the files the lifecycle commands run and the local files they import, plus `package.json`. That includes:
+
+- a `node` or `bun` file argument and the package's own binaries
+- shell scripts (`.sh`, `.bash`, `.zsh`, `.ps1`, `.cmd`, `.bat`), line by line
+- the package's own scripts called through `npm run` and similar
+- command expansions in `binding.gyp` when a script runs `node-gyp`
+
+| Card line | Meaning | Needs individual review |
+| --- | --- | --- |
+| `starts npm (install.js)` | The code can start npm, pnpm, or another package manager whose nested installs run with dependency scripts off; see [npm compatibility](/docs/packages/npm-compatibility#script-execution). | No |
+| `starts bun (install.js), which can run dependency scripts LPM cannot switch off` | The code can start Yarn, Bun, or Corepack. Yarn still builds packages a project marks in `dependenciesMeta`, and Bun has no setting that turns dependency scripts off. | Yes |
+| `runs a command the static gate marks Red (...)` | A command the lifecycle reaches outside its own phases, such as a package script run through `npm run`, a shell-script line, or a `binding.gyp` expansion, is [Red](/docs/packages/security-audit#understand-triage-labels). | Yes |
+| `changes whether nested installs run scripts: ...` | The code mentions `ignore-scripts`, `enable-scripts`, `--allow-scripts`, `--allow-build`, or `dangerously-allow-all-*`. | Yes |
+| `edits script approvals: ...` | The code mentions an approval list such as `allowBuilds`, `onlyBuiltDependencies`, `trustedDependencies`, `allowScripts`, `dependenciesMeta`, `approve-builds`, or `pm trust`. | Yes |
+| `approves scripts for other packages in ...` | The manifest approves scripts for packages that are not among its own dependencies, including `dependenciesMeta.<name>.built`. LPM CLI never honors approvals from a dependency's manifest. | Yes |
+| `not fully scanned (...)` | A limit left code unread: more than 128 files, a file over 4 MiB, 16 MiB per package, an import outside the package, or a chain of more than four `npm run` calls. | Yes |
+
+A package that needs individual review must be approved on its own. `--yes` refuses it, the triage advisor never reviews it, and the `triage` script policy does not run it automatically even when its label is green. The scan is textual, so it cannot see code assembled at runtime. It does not read the package's dependencies or files the package imports through its own name, such as `require('<package>/lib/x')`. No findings is not proof of safe behavior.
 
 When an earlier approval exists, project review can show changed script lines and behavioral tags. Script bodies appear only when they match the recorded binding.
 
@@ -122,7 +143,7 @@ On project review, quitting discards the pending selections. On global review, q
 lpm approve-scripts --yes --dry-run
 ```
 
-`--yes` refuses amber, amber-llm, red, and unclassified entries before it writes approvals. Review those packages individually.
+`--yes` refuses amber, amber-llm, red, and unclassified entries before it writes approvals. It also refuses green entries that [reach beyond their own package](#what-a-package-reaches), and green entries captured before LPM CLI scanned reach. Run [lpm install](/docs/packages/install) to scan those. Review refused packages individually.
 
 If every entry is green, live bulk approval still requires authorization and emits a warning. `--yes` does not bypass security authorization.
 
@@ -192,7 +213,19 @@ lpm approve-scripts esbuild --dry-run --json
 
 Pair `--json` with `--list`, `--yes`, or a package selector. A nonempty interactive queue cannot use JSON mode.
 
-Project reports use `schema_version: 3` and include counts, `dry_run`, and `blocked` entries. Entries include identity, script hash, phases, classification, and drift data.
+Project and global reports use `schema_version: 4` and include counts, `dry_run`, and `blocked` entries. Entries include identity, script hash, phases, `static_tier`, `reach`, and drift data. Global entries include `static_tier` and `reach` too.
+
+`reach` is `null` for entries captured before the scan. Otherwise it holds `findings`, `incomplete`, and `requires_individual_review`. Each finding has a `kind` (`starts-package-manager`, `runs-red-command`, `changes-script-policy`, `edits-script-approvals`, or `approves-other-packages`) and the file, manager, source, command, marker, key, field, or packages it is about:
+
+```json
+{
+  "findings": [
+    { "kind": "edits-script-approvals", "key": "allowBuilds", "file": "bin/onboard.mjs" }
+  ],
+  "incomplete": false,
+  "requires_individual_review": true
+}
+```
 
 `version_diff` describes changes relative to a previous approval, or is `null` for a first review. Global entries also include installation origins.
 
@@ -217,7 +250,7 @@ If script execution later fails on Windows, check [sandbox permissions](/docs/in
 | Flag or argument | Effect |
 | --- | --- |
 | `[PACKAGE]` | Select `name`, `name@version`, or `name@version#artifact-id`. |
-| `--yes` | Approve a fully green blocked set with authorization. |
+| `--yes` | Approve a fully green blocked set whose entries do not reach beyond their own package, with authorization. |
 | `--list` | List without prompts or trust changes. Conflicts with `--yes` and a package selector. |
 | `--dry-run` | Preview without writes or provenance fetches. Works with named, bulk, interactive, and global review. |
 | `--global` | Read global install queues and write global trust. |

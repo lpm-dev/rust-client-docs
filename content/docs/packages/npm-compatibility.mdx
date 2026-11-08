@@ -103,6 +103,20 @@ Each script phase receives its own npm context:
 
 These values replace inherited values for the same variables. Dependency scripts use the installed dependency's identity and manifest.
 
+Dependency lifecycle scripts also receive these settings in every sandbox mode, including `none`:
+
+| Variable | Value |
+| --- | --- |
+| `npm_config_ignore_scripts` | `true` |
+| `pnpm_config_ignore_scripts` | `true` |
+| `YARN_ENABLE_SCRIPTS` | `false` |
+
+If a dependency's script starts npm, pnpm, or Yarn to install something, that install does not run the installed packages' lifecycle scripts. These settings outrank those package managers' own approval lists, such as `allowScripts` and `allowBuilds`. Approving one package's script never approves the scripts of packages it installs.
+
+These variables replace inherited values and are not available through `passEnv`. An `npm run` command inside a dependency script still runs the named script, but npm skips its `pre` and `post` hooks.
+
+Two package managers are not covered by these settings. Yarn 2 and later still builds a package that the project it installs marks with `dependenciesMeta.<name>.built: true`, and Bun has no equivalent setting. The static gate classifies Yarn and Bun installs in a script as Red, and code that starts Yarn, Bun, or Corepack needs [individual review](/docs/packages/approve-scripts#what-a-package-reaches). A script that removes these settings, for example with `unset`, `env -u`, or `env -i`, is also Red.
+
 Explicit `lpm.json` task commands use the task name for `npm_lifecycle_event`. They run directly, without npm pre/post hook lookup.
 
 With `--json`, script output goes to stderr. Stdout contains one result. Cached output follows the same rule.
