@@ -1,10 +1,11 @@
 ---
 title: MCP servers
-description: "Connect AI editors to LPM.dev Registry tools through a managed MCP server."
+description: "Give AI editors LPM.dev Registry tools, and tools that install, add, and audit packages in your projects."
 ---
 
-The LPM.dev Registry MCP server gives an AI editor tools to search packages, read package guidance, install dependencies, and audit projects.
-Use `lpm mcp` to configure the editor and manage the server launcher.
+`lpm mcp serve` is an MCP server for AI editors.
+It gives an editor's agent the LPM.dev Registry tools for finding and evaluating packages, and tools that install, add, and audit packages in projects on your machine.
+Use `lpm mcp` to configure editors and run the server.
 
 ```bash
 lpm mcp setup [name]
@@ -22,16 +23,17 @@ lpm mcp setup
 lpm mcp status
 ```
 
-Restart the editor. Ask its agent to find a package on the LPM.dev Registry or read a package's API documentation.
+Restart the editor. Ask its agent to find a package on the LPM.dev Registry, or to install one in your project.
+To let it read private packages and your account, sign in with [lpm login](/docs/infra/login).
 
 | Mode | Purpose |
 | --- | --- |
-| `setup [name]` | Write the Registry server entry into every supported, existing editor configuration. The default name is `lpm-registry`. |
-| `serve` | Run the managed server over stdio. An MCP client starts this mode automatically. |
+| `setup [name]` | Write the server entry into every supported, existing editor configuration. The default name is `lpm-registry`. |
+| `serve` | Run the server over stdio. An MCP client starts this mode. |
 | `remove <name>` | Remove the named entry from every supported, existing editor configuration. |
 | `status` | List configured server names for each supported editor, including servers from other providers. |
 
-The optional name identifies a server entry. It does not select an editor or a different server package.
+The optional name identifies a server entry. It does not select an editor or a different server.
 There is no `lpm.json` configuration for this workflow.
 
 ## Examples
@@ -63,7 +65,7 @@ Repeated `setup` replaces the named entry. It preserves unrelated servers and ot
 | Claude Desktop | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` |
 
 `setup` skips missing files. It does not create editor configuration files or discover other editor locations.
-For another MCP client, configure the launcher manually through that client's configuration interface.
+For another MCP client, add the entry from the next section through that client's configuration interface.
 
 Existing files must contain valid JSON and fit within the [16 MiB configuration limit](/docs/project-setup#local-configuration-size-limits).
 Setup and removal reject configuration files that are symlinks or directory junctions.
@@ -71,19 +73,14 @@ Each file update is atomic and preserves existing Unix permission bits. An error
 
 ## What gets written
 
-Setup records the absolute path of the current LPM CLI executable.
-The same path selects the CLI for tools that run package commands.
-For example:
+Setup records the absolute path of the current LPM CLI executable:
 
 ```json
 {
   "mcpServers": {
     "lpm-registry": {
       "command": "/absolute/path/to/lpm",
-      "args": ["mcp", "serve"],
-      "env": {
-        "LPM_CLI_PATH": "/absolute/path/to/lpm"
-      }
+      "args": ["mcp", "serve"]
     }
   }
 }
@@ -91,74 +88,82 @@ For example:
 
 VS Code uses `servers` instead of `mcpServers`.
 When you configure another client, use the path from `lpm mcp setup --json`.
-After an installation moves or an upgrade removes that executable path, run `setup` again.
 
-The saved path prevents a project executable named `lpm` from replacing the launcher through `PATH`.
-For a manually configured server, `LPM_CLI_PATH` must contain an absolute executable path for CLI tools.
-Without that override, the server searches absolute `PATH` locations outside its working directory, including native Windows and global npm installations.
+The absolute path keeps a project executable named `lpm` from replacing the server through `PATH`.
+The server runs the same executable for the tools that change a project.
+After an installation moves or an upgrade removes that path, run `setup` again.
 
 ## Available tools
 
-The server connects to LPM.dev Registry APIs. The [LPM CLI itself supports other package registries](/docs/registries).
+### Registry tools
+
+These tools come from the LPM.dev Registry's hosted MCP server, at `https://lpm.dev/mcp` by default.
+The registry defines them, so this list follows the registry.
 
 | Task | MCP tools |
 | --- | --- |
-| Discover packages | `lpm_search`, `lpm_search_owners`, `lpm_packages_by_owner` |
-| Read package information | `lpm_package_info`, `lpm_quality_report`, `lpm_marketplace_info`, `lpm_pool_stats` |
-| Read guidance and source | `lpm_api_docs`, `lpm_llm_context`, `lpm_package_context`, `lpm_package_skills`, `lpm_browse_source` |
-| Read account or CLI information | `lpm_user_info`, `lpm_docs` |
-| Change or inspect a project | `lpm_add`, `lpm_install`, `lpm_audit` |
+| Find packages | `lpm_search` |
+| Find publishers and their packages | `lpm_owner` |
+| Evaluate a package: overview, API, usage guide, quality report, and Marketplace terms | `lpm_package` |
+| Read guidance and source | `lpm_package_skills`, `lpm_browse_source` |
+| Read the LPM.dev Registry documentation | `lpm_docs` |
+| Read your account and Pool earnings | `lpm_account` |
 
-Search accepts natural-language queries or structured filters, including `free`, `private`, `pool`, and `marketplace` distribution modes.
-Results still follow the account's package access.
+The server asks the registry for its tools when the editor lists them, and reuses the list for as long as the registry allows.
+If the registry doesn't answer within 5 seconds, the server lists the local tools at once.
+It keeps asking the registry, and tells the editor when the registry tools are available, so they appear without a restart in editors that support tool list changes.
 
-`lpm_add` and `lpm_install` run the corresponding CLI commands and can change project files.
-`lpm_audit` audits the requested project path, or the server's working directory if no path is supplied.
-These tools return the full CLI report. A failed command marks the MCP response as an error and retains available findings.
+### Local tools
 
-Authentication and security policy for these three tools follow the CLI command.
-A local audit or an anonymous Free package operation does not require a token solely because it comes through MCP.
+These tools run an LPM CLI command in a project on your machine.
 
-## Managed runtime
+| Tool | Command | Purpose |
+| --- | --- | --- |
+| `lpm_install` | [`lpm install`](/docs/packages/install) | Install an LPM.dev package as a dependency. |
+| `lpm_add` | [`lpm add`](/docs/packages/add) | Copy an LPM.dev package's source into the project to customize it. |
+| `lpm_audit` | [`lpm audit`](/docs/packages/audit) | Check the project's installed dependencies. |
 
-The launcher downloads `@lpm-registry/mcp-server@latest` and selects the newest release allowed by its security policy.
-It resolves the runtime independently of the editor project's lockfile and install overrides.
+Each tool takes `projectPath`, the absolute path of the project's directory.
+An agent's working directory isn't always your project, so the tools don't assume one.
 
-The default runtime location is `~/.lpm/cache/mcp/runtime`, under `LPM_HOME` when configured.
-After 24 hours, a subsequent launch refreshes it. An active server can defer that refresh.
-A refresh installs into a restricted staging directory and checks the executable before replacing the active runtime.
-A failed refresh preserves the previous installation.
+`lpm_install` and `lpm_add` take LPM.dev packages only, named `owner.package-name` or `@lpm.dev/owner.package-name`.
+They also take a version or range. `lpm_add` takes the options of `lpm add`: a target directory inside the project, an import alias, a Swift target, overwriting existing files, skipping dependencies, and the package's configuration choices.
 
-A registry transport outage, retryable HTTP failure, or rate limit can fall back to the last verified runtime.
-Integrity, policy, firewall, provenance, authentication, and approval failures stop startup instead.
+Each tool returns the command's JSON result. A command that fails marks the result as an error.
+`lpm audit` findings are its report, so they don't mark the result as an error.
 
-The server uses Node.js from outside the caller's working directory, detected project roots, and `node_modules` directories.
-Interpreter lookup excludes relative paths and project-controlled symlinks.
-The server retains the caller's working directory for project tools.
+`lpm install` and `lpm add` stop after 5 minutes, and `lpm audit` after 2 minutes.
+When the editor cancels a tool call or disconnects, the server stops the command. The command gets 5 seconds to stop the lifecycle scripts it started, and then the server stops what remains. A call cancelled before its command starts never starts it.
+The server runs at most four commands at once.
 
-```bash
-lpm cache path mcp
-lpm cache clean mcp
-```
+## Authentication
 
-[Cache cleanup](/docs/packages/cache) refuses while an MCP process uses the runtime.
-`lpm cache prune --apply` waits for the server to stop and retains the registered runtime.
+Registry tools use your login from [lpm login](/docs/infra/login) for the effective Registry URL, or `LPM_TOKEN`.
+Listing the tools never uses it.
 
-## Authentication and custom registries
+Without a login, the registry tools read public packages and the documentation.
+When a tool needs an account, its result says so. Run `lpm login` in a terminal, then ask the agent to call the tool again.
+The server finds a login made after it started, and a `lpm logout`, so you don't need to restart the editor.
+It refreshes an expired session automatically.
 
-The launcher downloads the public server package anonymously.
-The server uses `LPM_TOKEN`, or an OS keychain credential from [lpm login](/docs/infra/login) for the effective Registry URL.
-Keychain credentials are scoped to that URL.
+Local tools run CLI commands, which use the same login and policies as in a terminal.
+A `--token` in the server entry's `args` applies to both the registry tools and the commands the local tools run.
+A local audit or an anonymous Free package install does not require a login solely because it comes through MCP.
 
-`lpm_docs` always reads the LPM.dev Registry documentation at `https://lpm.dev/api/docs`. It does not use this CLI documentation site or a custom Registry URL.
+## Custom registries
 
 The default Registry URL is `https://lpm.dev`.
-For another trusted Registry instance, set `LPM_REGISTRY_URL` in the editor environment or its MCP server entry.
+For another LPM.dev Registry instance, set `LPM_REGISTRY_URL` in the editor environment or the server entry's `env`, or add `--registry <URL>` to its `args`.
+Registry tools then come from that registry's `/mcp`, and the local tools' commands use the same registry.
+The server follows the CLI's [Registry transport checks](/docs/infra/authentication), including `--insecure` for a remote HTTP registry.
+
 Setup does not copy your shell's token or Registry override into editor configuration.
 
-The server accepts HTTPS URLs and HTTP loopback URLs. It has no remote HTTP exception equivalent to the CLI's `--insecure` flag.
-An invalid or unsupported server URL falls back to the default Registry URL.
-The CLI launcher also applies its own [Registry transport checks](/docs/infra/authentication).
+## Connect without the LPM CLI
+
+An MCP client that connects to remote servers by URL can use the hosted server at `https://lpm.dev/mcp` directly.
+It has the registry tools, but not the local tools. It signs you in through LPM.dev in your browser.
+See [the LPM.dev MCP server documentation](https://lpm.dev/docs/ai/mcp).
 
 ## Troubleshooting
 
@@ -167,11 +172,29 @@ The CLI launcher also applies its own [Registry transport checks](/docs/infra/au
 | Setup reports a skipped editor | Enable MCP in that editor, then check the configuration path in the table. Run setup again. |
 | Setup rejects a configuration file | Correct invalid JSON or excessive size. For a linked file, manage its server entry through the editor or its configuration owner. |
 | The editor cannot start the executable | Run setup with the current LPM CLI installation, then restart the editor. |
-| No suitable Node.js executable | Install Node.js outside the project and expose it to the editor environment. |
-| A protected Registry tool needs authentication | Use `lpm login` for the effective Registry URL, or supply `LPM_TOKEN` through the editor environment. |
-| Runtime refresh fails | Resolve the reported network, integrity, or policy error. Stop the server before removing its MCP cache. |
+| Only `lpm_install`, `lpm_add`, and `lpm_audit` are listed | The registry didn't answer when the editor listed tools. Check the network and the Registry URL. The registry tools appear when the registry answers; if your editor doesn't pick them up, restart the server from the editor. |
+| A registry tool asks you to sign in | Run `lpm login` for the effective Registry URL, then ask the agent to call the tool again. |
+| A registry tool says the `--token` was rejected | Replace the token in the server entry's `args`, or remove `--token` to use the login from `lpm login`. |
+| A local tool rejects `projectPath` | Give the agent the absolute path of the project's directory. |
 
 `serve` requires an MCP client over stdio. Direct interactive terminal use and `--json` are rejected because stdout carries MCP JSON-RPC.
+The server writes warnings to stderr, which most editors keep in their MCP logs.
+
+## Upgrading from the npm server
+
+Earlier versions of the LPM CLI ran the npm package `@lpm-registry/mcp-server` from a cache at `~/.lpm/cache/mcp`.
+The LPM CLI now serves MCP itself. `lpm mcp setup` and `lpm mcp serve` remove that cache, unless an older LPM CLI still runs it.
+A full [lpm cache clean](/docs/packages/cache) removes it too.
+
+Server entries from those versions also set `LPM_CLI_PATH`. Run `lpm mcp setup` to replace them.
+
+Some tools have new names:
+
+| Earlier tools | Now |
+| --- | --- |
+| `lpm_package_info`, `lpm_quality_report`, `lpm_marketplace_info`, `lpm_api_docs`, `lpm_llm_context`, `lpm_package_context` | `lpm_package` |
+| `lpm_search_owners`, `lpm_packages_by_owner` | `lpm_owner` |
+| `lpm_user_info`, `lpm_pool_stats` | `lpm_account` |
 
 ## Flags and structured output
 
@@ -179,13 +202,14 @@ There are no MCP-specific flags. [Global flags](/docs/reference/terminal-output)
 Invalid subcommands, missing required names, and extra positional arguments return usage exit code `2`.
 
 `--json` emits one document for `setup`, `remove`, and `status`.
-Setup includes `server`, `configured`, `package`, `package_spec`, `version_policy`, `command`, `args`, and `env`.
+Setup includes `server`, `configured`, `command`, `args`, and `registry_server`, the hosted server the registry tools come from.
 Removal reports `removed_from`. Status reports an `editors` list.
 
 ## See also
 
+- [lpm login](/docs/infra/login) — sign in for private packages and your account
 - [AI agent skills](/docs/reference/ai-agent-skills) — package guidance and standalone skills
 - [lpm skills](/docs/packages/skills) — manage agent instructions
 - [lpm audit](/docs/packages/audit) — project security reports
-- [lpm cache](/docs/packages/cache) — inspect or remove the managed runtime
+- [LPM.dev MCP server](https://lpm.dev/docs/ai/mcp) — the hosted server and its limits
 - [Model Context Protocol](https://modelcontextprotocol.io) — protocol documentation
