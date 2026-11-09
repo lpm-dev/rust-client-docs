@@ -39,8 +39,8 @@ lpm cache prune --apply
 | `prune` | Preview unused package data and pending global-install cleanup. |
 | `prune --apply` | Remove the eligible data without a confirmation prompt. |
 
-`clean` and `path` accept `metadata`, `tasks`, `dlx`, or `mcp`.
-Without a category, they select all four caches or the cache root.
+`clean` and `path` accept `metadata`, `tasks`, or `dlx`.
+Without a category, they select all three caches or the cache root.
 
 The default cache root is `~/.lpm/cache/`. The package store is separate at `~/.lpm/store/`.
 `LPM_HOME` changes both locations, with the rest of the LPM home. See [Environment variables](/docs/reference/env-vars#filesystem-layout).
@@ -93,7 +93,6 @@ lpm cache path metadata
 lpm cache clean metadata
 lpm cache clean tasks
 lpm cache clean dlx
-lpm cache clean mcp
 ```
 
 | Category | Deleted data | Next use |
@@ -101,7 +100,6 @@ lpm cache clean mcp
 | `metadata` | Cached registry responses, and the version recorded for each Node executable. | Fetch package metadata again, and ask Node for its version again. |
 | `tasks` | Local task results across projects. | Run the task again, or restore a remote result. |
 | `dlx` | Cached packages for temporary commands. | Install the command again. |
-| `mcp` | The verified MCP runtime. | Prepare the runtime again. |
 
 To clear all categories, run:
 
@@ -112,8 +110,11 @@ lpm cache clean
 `clean` leaves the package store and remote task artifacts intact.
 It has no preview mode.
 
-If a command uses the `dlx` or `mcp` cache, an all-category cleanup skips that category and reports it as in use.
-A targeted `clean dlx` or `clean mcp` fails. Stop the active command or editor connection, then retry.
+A full cleanup also removes `mcp`, the npm MCP server that earlier versions of [lpm mcp serve](/docs/reference/mcp-servers) kept in the cache.
+
+If a command uses the `dlx` cache, an all-category cleanup skips it and reports it as in use.
+A targeted `clean dlx` fails. Stop the active command, then retry.
+An all-category cleanup also skips `mcp` while an older LPM CLI still runs that server.
 
 ## Status
 
@@ -147,8 +148,8 @@ An incomplete cleanup returns a nonzero exit code.
 
 LPM CLI records installed projects in `~/.lpm/known-projects.json`.
 Prune follows their `node_modules` links and keeps each reachable package, its dependencies, and its source data.
-These records include cached `dlx` tools and the managed MCP runtime.
-The `prune --apply` command waits until active tools and servers release the store.
+These records include cached `dlx` tools.
+The `prune --apply` command waits until active tools release the store.
 It does not use lockfiles as the root set.
 
 A project with no `node_modules` does not retain packages through its lockfile alone.
@@ -229,7 +230,7 @@ See [Global flags](/docs/commands#global-flags) for shared options.
 ## JSON output
 
 `clean` reports `success`, `cleaned[]`, `skipped[]`, `total_bytes_freed`, and `total_freed`.
-A busy `dlx` or MCP cache appears in `skipped` with `reason: "in use"`.
+A busy `dlx` cache, or an `mcp` server an older LPM CLI still runs, appears in `skipped` with `reason: "in use"`.
 
 `status` reports `local.path`, `local.bytes`, and `local.size`.
 Its `remote` object includes availability, usage, quota, and an `error` when a lookup fails.
