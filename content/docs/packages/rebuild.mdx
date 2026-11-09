@@ -238,6 +238,18 @@ Its package directories, `.lpm/wrappers/` and `.lpm/hoisted/nested/`, hold insta
 A `package.json > lpm.scripts.sandboxWriteDirs` entry inside `.lpm` or above the project is rejected. On Linux, scripts don't run when a directory they can write, or a mount below one, shows `.lpm`, the LPM home or the repository's git directory (a worktree's common one included) under another path, as a bind mount can, or when the mount table can't be read to check that. An NFS mount counts by the server directory its source names, so a bind of a directory in that state, or a mount of the same server with other options, is refused too.
 Scripts can write `~/.cache`, `~/.npm`, and `~/.node-gyp`, so a project inside one of them can't run dependency scripts in the sandbox: LPM CLI refuses them until you move the project.
 
+### The project's `node_modules`
+
+Scripts can't write the project's `node_modules`. LPM CLI runs the commands in `node_modules/.bin` and follows the package links there outside the sandbox, so a script that could change them could run code outside the sandbox. A package installed directly in `node_modules`, as with the hoisted linker and `LPM_STORE_VERSION=v1`, can write only its own directory there, not `.bin` or another package. The one exception is `@prisma/client` installed that way: its install script can write `node_modules/.prisma`, where `prisma generate` puts the client.
+
+### Git hooks
+
+Dependency scripts can't write the project's `.husky` directory, because git runs the hooks there outside the sandbox on your next commit. No dependency needs to: husky 5 and later set hooks up from the project's own `prepare` script, which LPM CLI runs without the sandbox.
+
+### The clipboard
+
+On macOS, scripts can't read or change the clipboard. It may hold a password you just copied, or the command you're about to paste into a shell.
+
 ### Project reads and environment variables
 
 By default, `readProject: "narrow"` permits dependency directories, package manifests, lockfiles, and root `tsconfig*.json` files.
@@ -283,11 +295,13 @@ Linux and Windows inspect existing secret files before execution. This protectio
 
 Ctrl+C and SIGTERM cancel active scripts. Interrupted builds do not receive successful build markers.
 
-Linux prevents sandboxed scripts from creating separate process groups. Windows uses a Job Object to contain descendants.
+When a script exits, times out, or is cancelled, LPM CLI ends every process it started:
 
-On macOS, detached or reparented native child processes can survive completion or cancellation. Their filesystem and network restrictions remain active.
+- Linux keeps them in the script's process group.
+- macOS finds each one by the sandbox it inherited, including a process that left its session and was adopted by `launchd`. It stops them all before ending any, so a script that keeps starting processes can't outpace it. If some still can't be ended, the script fails. A script can signal only its own processes.
+- Windows contains them in a Job Object.
 
-For complete process-lifetime isolation, use a disposable virtual machine or container.
+On Linux, scripts can connect to Unix sockets, which install tools use to talk to each other. That includes local services that start programs on request, such as the systemd user manager or a Docker daemon you can use, and a program one of them starts runs outside the sandbox, with network access even in strict mode. For complete process-lifetime isolation, use a disposable virtual machine or container.
 
 ## `--deny-all`
 
