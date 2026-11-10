@@ -33,7 +33,7 @@ This command uses the LPM.dev Registry quality API. See [Registries](/docs/regis
 ```bash
 lpm quality owner.widget
 lpm quality owner.widget --json
-lpm quality owner.widget --json | jq '.checks[] | select(.passed == false)'
+lpm quality owner.widget --json | jq '.checks[] | select(.status != "passed")'
 ```
 
 For a private package, sign in as an authorized publisher:
@@ -88,13 +88,25 @@ A stored browser session can refresh after rejected access.
 Tokens supplied through `--token` or `LPM_TOKEN` do not refresh automatically.
 See [Authentication](/docs/infra/authentication).
 
-The report can change without a new publication.
-The Registry removes maintenance points after the selected release exceeds 90 whole days in age.
+A report changes only when the evidence about that release changes: a Registry check finishes, an Agent Skills security scan approves or flags skills, provenance is verified again, the package owner's verified domain appears or goes away, or LPM.dev Registry scores its releases under new rules.
+The age of a release never changes its score.
 
 ## Read the score and checks
 
-The human report shows a score, tier, ecosystem, and a flat list of checks.
-Failed checks include their available points and any improvement detail.
+The human report shows the score, tier, status, rules version, and ecosystem, then the checks under four categories: Docs, API, Provenance, and Health.
+A complete report shows each category's points.
+A check that earned part of its points shows as partial. A check that lost points shows its detail.
+
+While a Registry check of a new release is still running, the report status is `pending`.
+The human report then shows `Scoring…` in place of the score, no category points, and `…` for the waiting checks.
+LPM.dev Registry never stores a partial score or partial category totals.
+
+When the Registry can't run a release's archive checks, the report status is `unavailable`.
+The human report shows `Score unavailable` and the reason, and the archive checks show `not checked`.
+
+A release that LPM.dev Registry scored before the four categories keeps that report until the Registry scores it again.
+Its report is `complete` with a `null` rules version, and the human report shows `earlier rules`.
+Its checks appear under the earlier categories, such as Code and Testing.
 
 | Tier | Score |
 | --- | --- |
@@ -106,15 +118,14 @@ Failed checks include their available points and any improvement detail.
 A score of zero is a valid report.
 A low score or failed check does not cause a nonzero exit status.
 
-The LPM.dev Registry owns the check definitions and point limits.
-Client-supplied scores, weights, and duplicate checks cannot add points. Checks without server evidence earn zero points.
+LPM.dev Registry runs every check itself. A quality report in the publish request earns nothing.
+The checks that read the package archive run in LPM CLI code, the same code that [lpm publish](/docs/packages/publish) runs before an upload.
+A local check and the Registry agree when your LPM CLI is the version the Registry runs.
+The Registry adds the checks that need its own data: Agent Skills, trusted publishing, signed provenance, a repository that matches provenance, and a verified domain of the package owner.
 
-Approved skills add seven points. Three or more approved skills add another three points.
+At least one approved Agent Skill earns five points, even when the scan flagged others.
 Skills awaiting public security review do not earn these points, including during review retries.
 Private packages use static skill validation until public distribution activates.
-
-[lpm publish](/docs/packages/publish) runs the locally available checks before an upload to LPM.dev Registry.
-Checks that require Registry analysis remain pending until processing completes. The final score can differ from local preflight.
 
 ## JSON output
 
@@ -128,13 +139,18 @@ lpm quality owner.widget --json
 | `name` | Package name returned by the Registry. |
 | `available` | Whether quality data exists for the selected release. |
 | `message` | Explanation when the Registry returns one, otherwise `null`. |
-| `score` / `maxScore` | Current points and maximum points, or `null` when absent. |
-| `tier` / `ecosystem` | Registry labels, or `null`. |
-| `categories` | Category totals such as `documentation`, `code`, `testing`, and `health`, or `null`. |
+| `status` | `complete`; `pending` while a Registry check runs; or `unavailable` when the Registry couldn't run the archive checks. `null` from a Registry that predates it. |
+| `unavailableReason` | Why the archive checks couldn't run, for an `unavailable` report. Otherwise `null`. |
+| `rulesVersion` | Version of the Registry's scoring rules. `null` for a report scored under earlier rules, and when the release has no report. |
+| `score` / `tier` | The points and tier of a complete report. `null` otherwise. |
+| `maxScore` | The most points a report can earn, 100. `null` when the release has no report. |
+| `ecosystem` | Registry ecosystem label, or `null`. |
+| `categories` | Totals for `documentation`, `api`, `provenance`, and `health` in a complete report. `null` otherwise. |
 | `published_at` | Publication timestamp for the selected release, or `null`. |
 | `checks` / `count` | Check array and its length. |
 
-Each check includes `id`, `category`, `label`, `passed`, `points`, `maxPoints`, and `detail`.
+Each check includes `id`, `category`, `label`, `status`, `passed`, `points`, `maxPoints`, and `detail`.
+`status` is `passed`, `partial`, `failed`, `pending`, or `unavailable` for an archive check of an `unavailable` report. `passed` is `true` only for `passed`.
 Missing optional check fields appear as `null`.
 The CLI retains the existing `maxScore` and `maxPoints` spellings for compatibility.
 
@@ -145,10 +161,10 @@ A failed request returns `success: false` with `error` and `error_code`.
 
 ```bash
 set -o pipefail
-lpm quality owner.widget --json | jq -e '.success and .available and (.score >= 70)'
+lpm quality owner.widget --json | jq -e '.success and .available and .status == "complete" and (.score >= 70)'
 ```
 
-This example fails when the lookup fails, the report is unavailable, or the score is less than 70.
+This example fails when the lookup fails, the report is missing, pending, or unavailable, or the score is less than 70.
 The command itself has no minimum-score flag.
 For a local publication gate, see the `--min-score` option in [lpm publish](/docs/packages/publish).
 
@@ -159,7 +175,8 @@ For a local publication gate, see the `--min-score` option in [lpm publish](/doc
 | No quality data | Publish with a current LPM CLI version, or wait for Registry processing. Then request the report again. |
 | `not_found` for a private package | Verify the name and publisher access. Refresh an expired environment token or sign in again. |
 | npm package name rejected | Use [lpm info](/docs/packages/info) for metadata or [lpm audit](/docs/packages/audit) for installed-package security checks. |
-| Score decreased without a new release | Inspect maintenance checks and the publication date. |
+| `Scoring…` | A Registry check of the release is still running. Request the report again in a few minutes. |
+| `Score unavailable` | The Registry couldn't run the release's archive checks, for the reason the report gives. Publish a new version, or ask LPM.dev support to check the release again. |
 | Rate limit or temporary Registry error | Retry after the reported delay. |
 
 ## Quality warnings during installation

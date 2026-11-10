@@ -241,7 +241,9 @@ LPM CLI rewrites publishable `workspace:` and `catalog:` dependencies inside the
 
 The final artifact for every target receives a secret scan, which finds API keys, tokens, and private keys in PEM, OpenSSH, SSH2, PuTTY, and PGP form. This includes bundled dependencies and explicitly included files that Git ignores. The scan reads the whole of JavaScript and TypeScript files; `.json`, `.yml`, `.yaml`, `.toml`, `.cfg`, `.conf`, `.ini`, and `.env` files; shell scripts; Python, Ruby, Rust, Go, Java, Kotlin, and Swift sources; `.md`, `.txt`, and `.xml` files; private-key files (`.pem`, `.key`, `.p8`, `.pk8`, `.ppk`); files whose names start with `.env` or end in `rc`; files under a `private`, `secrets`, `.secrets`, `credentials`, or `.credentials` directory; and files without an extension, such as `bin/` scripts. It checks the first 64 KiB of every other file for a private key, so a key file stops the publish whatever its name. A file without an extension whose content is binary, such as a prebuilt native executable, is checked that way instead of being read as text. `--allow-secrets` skips this scan for one invocation, including the credential-file check.
 
-LPM.dev Registry targets also receive a local quality score. `--min-score <N>` requires that target and accepts 0 through 100. The local score excludes checks that require server data. See [`lpm quality`](/docs/packages/quality).
+LPM.dev Registry targets also run the quality checks that read the archive, on the exact tarball LPM.dev Registry receives. LPM.dev Registry runs the same checks after the upload. The results agree when your LPM CLI is the version LPM.dev Registry runs. A publish shows the archive points and warns for each check that lost points. `--check` lists every check with how to earn its points; checks that need Registry data show as checked by LPM.dev Registry after publish.
+
+`--min-score <N>` requires an LPM.dev Registry target and accepts 0 through 100. It compares N with the archive points as a share of the points the archive checks are worth, rounded down, so 79.5% fails `--min-score 80`. See [`lpm quality`](/docs/packages/quality).
 
 For LPM.dev Registry, `lpm.config.json > type` accepts `package` or `source`. If omitted, the registry infers the classification. Any valid `lpm.config.json` still activates the configured [`lpm add`](/docs/packages/add) workflow.
 
@@ -443,7 +445,7 @@ lpm publish --npm --yes --json
 
 Check output includes `success`, `check`, `targets`, and `quality`. Real publication reports per-target upload results. `publication_wait` records the wait result separately from upload success. Earlier preparation failures use the standard [JSON error format](/docs/reference/exit-codes).
 
-The quality result includes `score`, `max_score`, `earned_points`, `applicable_points`, and `checks`. Each check reports `passed`, `failed`, or `not_evaluated` in its `evaluation` field.
+`quality` is `null` without an LPM.dev Registry target. Otherwise it includes `schemaVersion` (the format of this object, now 1), `ecosystem`, `rulesVersion`, `preflightScore` (the share `--min-score` compares, rounded down), `archivePoints`, `archiveMaxPoints`, `registryMaxPoints`, and `checks`, every check in report order. Each check has `id`, `category`, `label`, `points`, `maxPoints`, and `status`: `passed`, `partial`, `failed`, `pending` for an archive check that lacks its evidence, or `after_publish` for a check LPM.dev Registry runs after the upload. Archive checks add `detail`, and a check that lost points adds `tip`.
 
 ## Flags
 
@@ -456,7 +458,7 @@ The quality result includes `score`, `max_score`, `earned_points`, `applicable_p
 | `--wait` | Wait for LPM.dev Registry publication availability. |
 | `--wait-timeout <SECONDS>` | Wait limit, from 10 to 3600. Default: 1200. Requires `--wait`. |
 | `--otp <CODE>` | Six-digit LPM.dev Registry authenticator code. Without it, an account with a passkey approves in the browser. |
-| `--min-score <N>` | Minimum local quality score, from 0 to 100. Requires an LPM.dev Registry target. |
+| `--min-score <N>` | Minimum share of the archive quality points, from 0 to 100. Requires an LPM.dev Registry target. |
 | `--allow-secrets` | Skip the final-artifact secret scan. |
 | `--npm` | Select npm, including its configured endpoint. |
 | `--lpm` | Select LPM.dev Registry. |
