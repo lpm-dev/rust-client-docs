@@ -51,7 +51,9 @@ OG images once the new build serves.
 
 The client loads PostHog's slim build, without session recording, exception capture, web vitals
 or surveys. The search dialog loads when someone reaches for search, not on every page
-(`components/search-preload.tsx`).
+(`components/search-preload.tsx`). On a phone, the sidebar's links prefetch once its drawer
+opens: a closed drawer is still laid out, and Next would prefetch its links
+(`components/docs-sidebar.tsx`).
 
 The custom server loads `next.config.mjs` again when it starts. In that phase the config skips
 Fumadocs and the GitHub release lookup, since only `next build` and `next dev` need them.
