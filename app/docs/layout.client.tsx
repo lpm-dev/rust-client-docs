@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo } from "react";
+import { docsSidebarSlot } from "@/components/docs-sidebar";
 import { baseOptions } from "@/lib/layout.shared";
 
 const docsContainerStyle: CSSProperties = {
@@ -89,6 +90,7 @@ export function DocsLayoutClient({
         ),
       }}
       containerProps={{ style: docsContainerStyle }}
+      slots={{ sidebar: docsSidebarSlot }}
     >
       {children}
     </DocsLayout>
