@@ -37,6 +37,22 @@ the Coolify application. The image keeps none of them. Without git history in th
 the content dates come from the committed `lib/generated/content-dates.json`, which
 `npm run check:content-dates` keeps current.
 
+Cloudflare compresses responses; the origin doesn't. After `npm run build`, the build writes a
+maximum-quality brotli copy of each script, stylesheet and SVG in `.next/static`
+(`scripts/compress-static-assets.mjs`), and `server.mjs` sends it to a client that accepts brotli
+(`lib/precompressed-assets.mjs`). The copies are about 16% smaller than Cloudflare's own brotli.
+Cloudflare caches them and converts them for a visitor without brotli.
+
+Cloudflare caches the HTML of `/` and the `/docs` pages for browsers only. Its rule requires
+`text/html,application/xhtml+xml` in Accept, and skips requests whose Accept names markdown or
+`text/plain`, which get markdown, and Next's `rsc` requests. Cloudflare ignores `Vary`. Pages
+send `s-maxage=86400`, and `npm run deploy:docs` purges them, the markdown, the sitemap and the
+OG images once the new build serves.
+
+The client loads PostHog's slim build, without session recording, exception capture, web vitals
+or surveys. The search dialog loads when someone reaches for search, not on every page
+(`components/search-preload.tsx`).
+
 The custom server loads `next.config.mjs` again when it starts. In that phase the config skips
 Fumadocs and the GitHub release lookup, since only `next build` and `next dev` need them.
 

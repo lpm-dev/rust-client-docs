@@ -1,8 +1,13 @@
-import type { PostHog } from "posthog-js";
+import type { PostHog } from "posthog-js/dist/module.slim";
 import {
   getLandingAttribution,
   normalizeAnalyticsProperties,
 } from "@/lib/posthog/attribution";
+
+// The slim build is the client without its extensions (session recording,
+// exception and dead-click capture, web vitals, surveys and the rest), at
+// about half the size. The site only captures events, which the client does
+// itself, so an extension enabled in PostHog's project settings won't load.
 
 let posthogPromise: Promise<PostHog | null> | null = null;
 
@@ -12,7 +17,7 @@ export function getPostHogClient(): Promise<PostHog | null> {
   if (!key) return Promise.resolve(null);
 
   if (!posthogPromise) {
-    posthogPromise = import("posthog-js")
+    posthogPromise = import("posthog-js/dist/module.slim")
       .then(({ default: posthog }) => {
         let hasFullConsent = false;
         try {
@@ -29,7 +34,6 @@ export function getPostHogClient(): Promise<PostHog | null> {
           capture_pageleave: true,
           autocapture: false,
           person_profiles: "identified_only",
-          capture_exceptions: true,
           persistence: hasFullConsent ? "localStorage+cookie" : "memory",
           cookieless_mode: hasFullConsent ? undefined : "always",
           before_send: (event) =>
@@ -50,11 +54,6 @@ export function getPostHogClient(): Promise<PostHog | null> {
                     : {}),
                 }
               : null,
-          disable_session_recording: !hasFullConsent,
-          session_recording: {
-            maskAllInputs: true,
-          },
-          disable_surveys: true,
         });
 
         posthog.register({
