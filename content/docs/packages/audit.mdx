@@ -114,9 +114,13 @@ LPM CLI sends names and versions outside `@lpm.dev/*` to [OSV.dev](https://osv.d
 
 For `@lpm.dev/*`, it requests exact version metadata from LPM.dev Registry. Local source analysis does not upload source code.
 
+OSV doesn't list `@lpm.dev/*` packages. An advisory on an npm package that one of them depends on is reported once, under that npm package.
+
+To plan a fix for an `@lpm.dev/*` dependency, `lpm audit fix` also requests its versions from LPM.dev Registry, and the versions of its flagged npm dependencies from the registry their `lpm.lock` entries name: public npm or LPM.dev Registry. It skips a dependency installed from any other registry, so the name isn't sent elsewhere.
+
 OSV requests run on each invocation. Local source analysis can use cached results. The automatic audit uses the same network scope.
 
-An unavailable service, incomplete response, inconsistent version identity, or unsupported advisory severity prevents a clean audit. Reconnect or correct the metadata, then rerun the command.
+An unavailable service, incomplete response, inconsistent version identity, or unsupported severity prevents a clean audit. Reconnect or correct the metadata, then rerun the command.
 
 ## Severity and CI policies
 
@@ -347,9 +351,15 @@ If a legacy lockfile leaves the source ambiguous, the fixer skips that dependenc
 
 The fixer chooses the lowest newer stable version that the available advisory data identifies as unaffected. The target can cross a major version boundary.
 
+An `@lpm.dev/*` dependency needs a fix when OSV flags an npm package it depends on directly or takes as a peer. The fixer then chooses its lowest newer stable version that no longer installs an affected version. It reads each range as the install that applies the fix does:
+
+- In a workspace, which keeps `lpm.lock`, a locked version the range allows comes first.
+- Otherwise the `latest` tag when it fits the range, then the newest matching version.
+- A peer range takes a version the tree already holds when it allows one, so a release that moves the package to a peer still counts as affected while another package keeps that version.
+
 An applied fix pins the manifest to the exact planned version. An npm alias retains its `npm:` identity. Review the preview and run your project tests afterward.
 
-Transitive-only findings remain unchanged. Non-registry protocols, such as `workspace:`, `catalog:`, `file:`, git, and JSR, cannot be rewritten automatically.
+Other transitive-only findings remain unchanged. Non-registry protocols, such as `workspace:`, `catalog:`, `file:`, git, and JSR, cannot be rewritten automatically.
 
 The report lists skipped dependencies and their reasons. Any skipped dependency makes the command exit nonzero, even when other fixes succeed.
 
