@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   register: vi.fn(),
 }));
 
-vi.mock("posthog-js", () => ({
+vi.mock("posthog-js/dist/module.slim", () => ({
   default: { init: mocks.init, register: mocks.register },
 }));
 
@@ -72,9 +72,25 @@ describe("getPostHogClient", () => {
       expect.objectContaining({
         cookieless_mode: "always",
         persistence: "memory",
-        disable_session_recording: true,
       }),
     );
+  });
+  it("configures none of the extensions the slim build leaves out", async () => {
+    window.localStorage.setItem("cookie_consent", "granted");
+    const { getPostHogClient } = await import("../../lib/posthog/client");
+    await getPostHogClient();
+
+    const options = mocks.init.mock.calls[0]?.[1];
+    for (const extension of [
+      "capture_exceptions",
+      "session_recording",
+      "disable_session_recording",
+      "capture_performance",
+      "capture_dead_clicks",
+      "disable_surveys",
+    ]) {
+      expect(options).not.toHaveProperty(extension);
+    }
   });
   it("initializes when storage is blocked", async () => {
     vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {

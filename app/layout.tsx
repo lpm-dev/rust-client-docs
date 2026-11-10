@@ -2,6 +2,7 @@ import { RootProvider } from "fumadocs-ui/provider/next";
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import PostHogProvider from "@/components/posthog-provider";
+import { SearchPreload } from "@/components/search-preload";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import {
@@ -61,7 +62,8 @@ export default function Layout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={inter.className} suppressHydrationWarning>
       <body className="flex flex-col min-h-screen">
-        <RootProvider>
+        <RootProvider search={{ preload: false }}>
+          <SearchPreload />
           <PostHogProvider>
             <SiteHeader />
             <div className="flex-1 flex flex-col">{children}</div>

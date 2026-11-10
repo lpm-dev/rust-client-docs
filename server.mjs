@@ -1,7 +1,12 @@
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import next from "next";
 import { negotiatesOnAccept } from "./lib/content-negotiation.mjs";
+import {
+  createPrecompressedAssetHandler,
+  loadPrecompressedAssets,
+} from "./lib/precompressed-assets.mjs";
 import { normalizeOriginVary } from "./lib/vary.mjs";
 import { DRAIN_SIGNAL, isDraining, startDraining } from "./server-drain.mjs";
 
@@ -199,6 +204,33 @@ export function installGracefulShutdown({
   };
 }
 
+/**
+ * The server's request handler. Every response names the image's commit,
+ * which deploys wait for, and Vary is normalized. `serveAsset` answers first
+ * when it can (see createPrecompressedAssetHandler).
+ *
+ * @param {{
+ *   handle: (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => unknown,
+ *   isClosing: () => boolean,
+ *   version?: string,
+ *   serveAsset?: (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => boolean,
+ * }} options
+ */
+export function createRequestHandler({
+  handle,
+  isClosing,
+  version,
+  serveAsset,
+}) {
+  return function handleRequest(request, response) {
+    if (isClosing()) response.shouldKeepAlive = false;
+    if (version) response.setHeader("X-App-Version", version);
+    installFinalVariance(request, response);
+    if (serveAsset?.(request, response)) return;
+    handle(request, response);
+  };
+}
+
 async function start() {
   const port = portFrom(process.argv.slice(2));
   const hostname = process.env.LPM_DOCS_HOST || "0.0.0.0";
@@ -206,15 +238,19 @@ async function start() {
   // The commit the image was built from; deploys wait until it's served.
   const version = process.env.APP_VERSION;
   const app = next({ dev: false, hostname, port });
-  const handle = app.getRequestHandler();
 
-  await app.prepare();
-  const server = createServer((request, response) => {
-    if (shutdown.isClosing()) response.shouldKeepAlive = false;
-    if (version) response.setHeader("X-App-Version", version);
-    installFinalVariance(request, response);
-    handle(request, response);
-  });
+  const [assets] = await Promise.all([
+    loadPrecompressedAssets(join(process.cwd(), ".next", "static")),
+    app.prepare(),
+  ]);
+  const server = createServer(
+    createRequestHandler({
+      handle: app.getRequestHandler(),
+      isClosing: () => shutdown.isClosing(),
+      version,
+      serveAsset: createPrecompressedAssetHandler(assets),
+    }),
+  );
   const shutdown = installGracefulShutdown({
     server,
     closeApp: () => app.close(),

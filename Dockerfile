@@ -55,7 +55,7 @@ ENV NODE_ENV=production \
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/public ./public
 COPY --from=build /app/skills ./skills
-COPY --from=build /app/lib/content-negotiation.mjs /app/lib/vary.mjs ./lib/
+COPY --from=build /app/lib/content-negotiation.mjs /app/lib/precompressed-assets.mjs /app/lib/vary.mjs ./lib/
 COPY --from=build /app/package.json /app/next.config.mjs /app/source.config.ts /app/server.mjs /app/server-drain.mjs ./
 # Only .next is writable: the server keeps its caches and regenerated pages there.
 COPY --from=build --chown=docs:docs /app/.next ./.next
