@@ -1,0 +1,66 @@
+---
+title: lpm verify-npm
+description: "Prove that you own your npm account, to use your npm username on LPM.dev and show it on your profile."
+---
+
+Use `lpm verify-npm` to prove to LPM.dev Registry that you own an npm account. `lpm verify` without the suffix still runs your project's own `verify` script or task.
+
+```bash
+lpm verify-npm [--json]
+```
+
+LPM.dev holds the usernames of npm users who maintain a package with at least 10,000 weekly downloads. Only the owner of the npm account can take a held username. The proof also links the npm account to your LPM.dev profile.
+
+## Quickstart
+
+```bash
+lpm login
+lpm login --npm
+lpm verify-npm
+```
+
+The command uses two sign-ins: your LPM.dev session from [`lpm login`](/docs/infra/login), and your npm login. A project or CI token cannot prove an npm account.
+
+## What it does
+
+1. Asks npm which account your npm token belongs to.
+2. Gets a token from LPM.dev, valid for 24 hours and for one proof.
+3. Publishes `@<npm username>/lpm-verify` to npm with the token in its `package.json`. Only your npm account can publish to your own scope.
+4. Waits for LPM.dev to find the package on npm, up to 90 seconds.
+5. Unpublishes the version it published.
+
+The proof version is `1.0.<seconds>`, the second at which LPM.dev issued the token. The manual steps in your LPM.dev settings use the same version.
+
+If you already have a package named `@<npm username>/lpm-verify` with versions of your own, the command keeps them and its `latest` tag. It publishes the proof under the `lpm-verify` tag and removes only that version. A package that holds only earlier proofs is removed whole.
+
+If LPM.dev cannot confirm the proof, the version stays on npm, because npm refuses to publish an unpublished package again for 24 hours. This happens when npm is slow, when the connection fails, or when the npm account is linked to another LPM.dev account. Fix the cause, and then select "Check npm" under "npm account" in your LPM.dev settings within 24 hours. Then run the `npm unpublish @<npm username>/lpm-verify@<version> --force` command that the command printed. It removes only the proof version. After a refusal that trying again cannot change, such as a package another npm account published, the command removes the version.
+
+Your npm token stays on your computer. LPM CLI finds it in `NPM_TOKEN`, in the credential that `lpm login --npm` saved, or in `.npmrc`.
+
+If your npm account uses two-factor authentication, npm asks for it to publish and again to unpublish. The command opens the browser or prompts for a one-time password. With `--json`, or without a terminal, it cannot answer npm's prompt.
+
+## Usernames held for npm users
+
+If you chose a held username at sign-up or in your LPM.dev settings, your account waits for it. When the proof shows that you own one of the npm accounts the name is held for, your account gets the username.
+
+If you are signed in to npm with a different account, the command says so before it publishes. The proof links that npm account, and your account keeps waiting for the name.
+
+## Examples
+
+```bash
+lpm verify-npm           # prove the npm account your npm token belongs to
+lpm verify-npm --json    # print the result as JSON
+```
+
+The JSON result has `npmUsername`, `username`, `package`, and `version`. When your account waited for a name, it also has one of `claimed`, `taken`, `unclaimable`, or `locked`. `locked` means that you published under your current username, so it cannot change. `unpublished` is `false` when the command could not remove the version from npm. In that case, run `npm unpublish @<npm username>/lpm-verify@<version> --force` within 72 hours. When the proof fails with `--json`, the command writes what happened to the version to stderr.
+
+## Limits
+
+- npm never accepts the same version twice, so each run publishes a new version.
+- After a whole package is unpublished, npm refuses to publish it again for 24 hours. A second proof within a day of the first fails with npm's error.
+- LPM.dev allows 10 tokens an hour per account.
+
+## See also
+
+- [lpm login, logout, and whoami](/docs/infra/login)
+- [npm usernames on LPM.dev](https://lpm.dev/docs/getting-started/npm-usernames)
