@@ -6,7 +6,7 @@ description: "Create, inspect, and rotate certificates for trusted local HTTPS."
 `lpm cert` manages the local certificate authority (CA) and project certificates for local HTTPS.
 
 ```bash
-lpm cert <ACTION> [--host <HOST>] [--project <PROJECT>] [--keep-old-trusted <DAYS>] [--fail-on-missing] [--dry-run] [--json]
+lpm cert <ACTION> [--host <HOST>] [--project <PROJECT>] [--keep-old-trusted <DAYS>] [--fail-on-missing] [--name-constraints | --no-name-constraints] [--dry-run] [--json]
 ```
 
 Use this command for machine setup, certificate files for another tool, or certificate recovery. For daily development, use [`lpm dev`](/docs/dev/dev).
@@ -41,6 +41,7 @@ lpm cert generate --host app.localhost --host api.app.localhost
 lpm cert status --json
 lpm cert rotate --project ../web --project ../api --fail-on-missing
 lpm cert rotate --keep-old-trusted 14
+lpm cert rotate --no-name-constraints
 lpm cert reconcile --dry-run --json
 lpm cert reconcile
 lpm cert uninstall
@@ -160,6 +161,8 @@ lpm cert status --json
 
 The output includes root trust, expiry, SANs, renewal status, and permission problems. It checks that the project key matches its certificate and that the certificate chains to the active root.
 
+The output also says whether the root signs local names only or any name. JSON lists the root's permitted names in `ca.name_constraints`, and gives `null` for a root that may sign any name or when no root exists.
+
 JSON includes `project.valid` and `project.error`. An absent project certificate has `valid: false` and `error: null`. An unusable certificate has a reason in `error`.
 
 `success: true` means the inspection completed. It does not mean HTTPS is ready.
@@ -213,11 +216,21 @@ lpm cert trust
 
 ### Root name restrictions
 
-A root created with `LPM_CERT_NAME_CONSTRAINTS=1` limits the names that project certificates can use. Project `cert` configuration cannot expand that root policy.
+A root CA that LPM CLI creates permits only local names, so a stolen root key can sign certificates only for those. Project `cert` configuration cannot expand that root policy. See [local HTTPS root restrictions](/docs/infra/local-https#root-restrictions) for the names it permits.
 
-LPM CLI rejects names outside the root restrictions before issuance or TLS publication. Use a permitted local hostname or explicitly rotate the root with the intended policy.
+LPM CLI refuses a project that asks for a name outside the root restrictions before it issues or installs anything, and names the names. To serve a public hostname, replace the root with one that may sign any name:
 
-See [local HTTPS root restrictions](/docs/infra/local-https#existing-root-restrictions) for the supported name ranges.
+```bash
+lpm cert rotate --no-name-constraints
+```
+
+> CAUTION: The key of an unrestricted root could sign a trusted certificate for any site. Use it only for a project that serves a public hostname you control.
+
+Later rotations keep an unrestricted root unrestricted. `lpm cert rotate --name-constraints` restricts it again. `LPM_CERT_NAME_CONSTRAINTS=0` also creates unrestricted roots, and decides over a root's recorded choice when you rotate without either flag.
+
+Before a rotation writes or trusts anything, it checks every recorded project's certificate names against the new root. It names the first project it couldn't reissue, so you can rotate with `--no-name-constraints` or remove that project's `.lpm/certs` for `lpm dev` to issue it again.
+
+A root that an earlier release created without restrictions keeps working. LPM CLI warns about it during HTTPS setup; `lpm cert rotate` replaces it with a restricted root.
 
 ## Rotate the root CA
 
@@ -277,6 +290,8 @@ Repeat the preview after recovery to inspect the remaining work. Reconciliation 
 | `--project <PROJECT>` | `rotate` | Include another project directory. Repeat for more projects. |
 | `--keep-old-trusted <DAYS>` | `rotate` | Defer old-root removal for 0–90 days. |
 | `--fail-on-missing` | `rotate` | Fail if a recorded or explicit project directory is missing. |
+| `--no-name-constraints` | `rotate` | Create a root that may sign any name. Later rotations keep it unrestricted. |
+| `--name-constraints` | `rotate` | Restrict the new root to local names again. |
 | `--dry-run` | `reconcile` | Preview without certificate or trust mutations. |
 | `--json` | All actions | Print machine-readable output. |
 
