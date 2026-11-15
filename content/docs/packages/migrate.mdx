@@ -79,6 +79,7 @@ The command selects the most recently modified supported lockfile in the current
 For equal timestamps, the priority is `bun.lockb`, `bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, then `package-lock.json`.
 Other detected lockfiles stay in place.
 Binary Bun conversion uses the Yarn text output from the Bun executable.
+LPM CLI gives Bun a copy of the lockfile in a private directory, runs Bun there, and does not pass Bun its credentials.
 
 | Input | Supported format |
 | --- | --- |
@@ -144,6 +145,26 @@ Original patch files remain in place.
 
 The `pnpm` fields remain available. For copied patches, migration updates their pnpm paths to the new patch copies.
 See [Migrating from pnpm](/docs/guides/migrating-from-pnpm) for supported translations and conflicts.
+
+### Registries the lockfile names
+
+A package from npm's registry or from LPM.dev Registry can come from any registry that your `.npmrc` routes it to.
+A package from another registry must come from that registry again. Otherwise a package with the same name on another registry could take its place.
+If LPM CLI would fetch such a package from another registry, migration stops before it writes any file. The message names each package and its registry.
+Route the registry in `.npmrc`, then run the migration again:
+
+```ini title=".npmrc"
+@corp:registry=https://npm.corp.example/
+```
+
+Yarn Berry lockfiles record no registry, and Bun lockfiles record none for packages from the default registry.
+For those packages, migration reads the registries in `.yarnrc.yml` (`npmRegistryServer`, `npmScopes`) or `bunfig.toml` (`install.registry`, `install.scopes`).
+A registry that these files give as an environment variable stops the migration in the same way.
+
+`--allow-registry-change` fetches these packages from the registry that LPM CLI uses instead.
+In JSON output, `registry_changes` lists each of them with the URL the lockfile recorded.
+
+If the install resolves a package at the version that the source lockfile locked, the package must have the integrity that the lockfile recorded. Otherwise the install fails before LPM CLI links any package.
 
 ### Registry configuration
 
@@ -219,6 +240,7 @@ Keep `.lpm/migrate-backup/` until you accept the migration.
 | Flag | Effect |
 | --- | --- |
 | `--dry-run` | Check conversion and translations without project writes. |
+| `--allow-registry-change` | Fetch packages that came from a registry LPM CLI doesn't route from the registry it uses instead. A package at its locked version must still match the recorded integrity. |
 | `--force` | Replace an existing `lpm.lock`. With `--rollback`, also restore files that changed after the migration, files LPM can't tell it wrote, and files whose earlier content the backup keeps, each to the backup's copy. |
 | `--no-install` | Skip dependency installation. |
 | `--skip-verify` | Skip the `build` and `test` verification scripts. |
