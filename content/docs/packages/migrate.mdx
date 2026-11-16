@@ -159,7 +159,7 @@ Route the registry in `.npmrc`, then run the migration again:
 
 A package installed under an npm alias, such as `"utils": "npm:@corp/utils@^1"`, counts by the package that the alias installs.
 A dependency that a tarball URL or a Git specifier names needs no route, because LPM CLI fetches it from that URL or repository.
-A tarball that the lockfile recorded over `http` counts as coming from the same registry over `https`. A GitLab project's tarball counts as coming from a route to that GitLab's instance or group endpoint.
+A tarball that the lockfile recorded over `http` counts as coming from the same registry over `https`. A GitLab project's tarball counts as coming from a route to that GitLab's instance or group endpoint, and a GitHub Packages tarball as coming from a route to `npm.pkg.github.com`.
 
 Yarn Berry lockfiles record no registry, and Bun lockfiles record none for packages from the default registry.
 For those packages, migration reads the registries the way each tool does:
@@ -167,7 +167,7 @@ For those packages, migration reads the registries the way each tool does:
 | Source | Registry settings |
 | --- | --- |
 | Yarn Berry | `npmRegistryServer` and `npmScopes` in each `.yarnrc.yml` from the project directory up to the root, then in `~/.yarnrc.yml`; the nearest file wins. `YARN_NPM_REGISTRY_SERVER` overrides them. `YARN_RC_FILENAME` changes the file name. |
-| Bun | `install.registry` and `install.scopes` in the project's `bunfig.toml`, over the global `.bunfig.toml` in `$XDG_CONFIG_HOME` or your home directory. `BUN_CONFIG_REGISTRY`, then `NPM_CONFIG_REGISTRY`, override the default registry. |
+| Bun | `install.registry` and `install.scopes` in the project's `bunfig.toml`, over the global `.bunfig.toml` in `$XDG_CONFIG_HOME` when that's set, otherwise in your home directory. `BUN_CONFIG_REGISTRY`, then `NPM_CONFIG_REGISTRY`, override the default registry. |
 
 Environment variables in these settings expand as each tool expands them, such as `${CORP_REGISTRY:-https://npm.corp.example}` for Yarn or `$CORP_REGISTRY` for Bun.
 Migration compares the expanded registry, but names it by its setting and file, and records only its origin in `lpm.lock`, because a value from the environment can hold a token.
@@ -179,7 +179,7 @@ In JSON output, `registry_changes` lists each of them: `from` is the URL the loc
 If an install resolves a package at the version that the source lockfile locked, the package must have the integrity that the lockfile recorded. Otherwise the install fails before LPM CLI downloads or links any package.
 When the registry gives no integrity, or only a weaker hash, LPM CLI verifies the download against the recorded integrity instead.
 A dependency fetched from a tarball URL must match the integrity recorded for that URL before LPM CLI extracts it.
-This holds for every install until one writes a new `lpm.lock`: the install that `lpm migrate` runs, `lpm install` after `lpm migrate --no-install` or after a failed install, and each workspace member.
+This holds for every install until one writes a new `lpm.lock`: the install that `lpm migrate` runs, `lpm install` after `lpm migrate --no-install` or after a failed install, and each workspace member. In a workspace, an install that doesn't cover every member doesn't replace the migrated lockfile; run `lpm install --recursive` from the workspace root.
 A version fetched from a tarball URL and the same version from a registry stay two packages. A source lockfile that records two different integrities for one package version from the same source stops the migration.
 
 ### Registry configuration
