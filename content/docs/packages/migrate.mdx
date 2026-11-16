@@ -157,14 +157,28 @@ Route the registry in `.npmrc`, then run the migration again:
 @corp:registry=https://npm.corp.example/
 ```
 
+A package installed under an npm alias, such as `"utils": "npm:@corp/utils@^1"`, counts by the package that the alias installs.
+A dependency that a tarball URL or a Git specifier names needs no route, because LPM CLI fetches it from that URL or repository.
+A tarball that the lockfile recorded over `http` counts as coming from the same registry over `https`. A GitLab project's tarball counts as coming from a route to that GitLab's instance or group endpoint.
+
 Yarn Berry lockfiles record no registry, and Bun lockfiles record none for packages from the default registry.
-For those packages, migration reads the registries in `.yarnrc.yml` (`npmRegistryServer`, `npmScopes`) or `bunfig.toml` (`install.registry`, `install.scopes`).
-A registry that these files give as an environment variable stops the migration in the same way.
+For those packages, migration reads the registries the way each tool does:
 
-`--allow-registry-change` fetches these packages from the registry that LPM CLI uses instead.
-In JSON output, `registry_changes` lists each of them with the URL the lockfile recorded.
+| Source | Registry settings |
+| --- | --- |
+| Yarn Berry | `npmRegistryServer` and `npmScopes` in each `.yarnrc.yml` from the project directory up to the root, then in `~/.yarnrc.yml`; the nearest file wins. `YARN_NPM_REGISTRY_SERVER` overrides them. `YARN_RC_FILENAME` changes the file name. |
+| Bun | `install.registry` and `install.scopes` in the project's `bunfig.toml`, over the global `.bunfig.toml` in `$XDG_CONFIG_HOME` or your home directory. `BUN_CONFIG_REGISTRY`, then `NPM_CONFIG_REGISTRY`, override the default registry. |
 
-If the install resolves a package at the version that the source lockfile locked, the package must have the integrity that the lockfile recorded. Otherwise the install fails before LPM CLI links any package.
+Environment variables in these settings expand as each tool expands them, such as `${CORP_REGISTRY:-https://npm.corp.example}` for Yarn or `$CORP_REGISTRY` for Bun.
+A registry that names a variable that isn't set, or a value that isn't a URL, stops the migration in the same way. The message names the setting and its file, not the value.
+
+`--allow-registry-change` fetches these packages from the registries that LPM CLI routes them to instead.
+In JSON output, `registry_changes` lists each of them: `from` is the URL the lockfile recorded, and `to` is the registry LPM CLI fetches the package from.
+
+If an install resolves a package at the version that the source lockfile locked, the package must have the integrity that the lockfile recorded. Otherwise the install fails before LPM CLI downloads or links any package.
+When the registry gives no integrity, or only a weaker hash, LPM CLI verifies the download against the recorded integrity instead.
+This holds for every install until one writes a new `lpm.lock`: the install that `lpm migrate` runs, `lpm install` after `lpm migrate --no-install` or after a failed install, and each workspace member.
+A source lockfile that records two different integrities for one package version stops the migration.
 
 ### Registry configuration
 
@@ -240,7 +254,7 @@ Keep `.lpm/migrate-backup/` until you accept the migration.
 | Flag | Effect |
 | --- | --- |
 | `--dry-run` | Check conversion and translations without project writes. |
-| `--allow-registry-change` | Fetch packages that came from a registry LPM CLI doesn't route from the registry it uses instead. A package at its locked version must still match the recorded integrity. |
+| `--allow-registry-change` | Fetch packages that came from a registry LPM CLI doesn't route from the registries it routes them to instead. A package at its locked version must still match the recorded integrity. |
 | `--force` | Replace an existing `lpm.lock`. With `--rollback`, also restore files that changed after the migration, files LPM can't tell it wrote, and files whose earlier content the backup keeps, each to the backup's copy. |
 | `--no-install` | Skip dependency installation. |
 | `--skip-verify` | Skip the `build` and `test` verification scripts. |
