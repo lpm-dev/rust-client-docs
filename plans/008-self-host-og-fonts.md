@@ -29,10 +29,10 @@ The code does not check response status, and a rejected asset promise is retaine
 
 Commit the exact TTF payloads currently used by the route:
 
-| File | Source | Bytes | SHA-256 |
-| --- | --- | ---: | --- |
+| File                                | Source                                                                                                  |  Bytes | SHA-256                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- | -----: | ------------------------------------------------------------------ |
 | `public/fonts/inter-og-regular.ttf` | `https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfMZhrib2Au-0.ttf` | 337936 | `aff10562c603409a49b7ef6591467cb02fc5f6f412ecde10a3f3dcd8f0d6fa52` |
-| `public/fonts/inter-og-bold.ttf` | `https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZhrib2Au-0.ttf` | 339200 | `95125c934078475c386060a78206961655e9b20a5b79557b97b7c4b728eb9207` |
+| `public/fonts/inter-og-bold.ttf`    | `https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuFuYMZhrib2Au-0.ttf` | 339200 | `95125c934078475c386060a78206961655e9b20a5b79557b97b7c4b728eb9207` |
 
 Replace the URL constants and network fetches with local reads:
 
