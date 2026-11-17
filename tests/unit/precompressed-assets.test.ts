@@ -235,11 +235,14 @@ describe("the server with precompressed assets", () => {
   it.each([
     "/_next/static/chunks/app.js?dpl=abc",
     "/_next/static/chunks/app/%28home%29/page.js",
-  ])("ignores the query string and matches a percent-encoded path: %s", async (path) => {
-    const response = await get(port, path, { "Accept-Encoding": "br" });
+  ])(
+    "ignores the query string and matches a percent-encoded path: %s",
+    async (path) => {
+      const response = await get(port, path, { "Accept-Encoding": "br" });
 
-    expect(response.headers["content-encoding"]).toBe("br");
-  });
+      expect(response.headers["content-encoding"]).toBe("br");
+    },
+  );
 
   it("answers HEAD with the copy's headers and no body", async () => {
     const response = await get(

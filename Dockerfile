@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22.23.4-bookworm-slim AS base
+FROM node:24.22.3-bookworm-slim AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 
 FROM base AS production-dependencies
 COPY package.json package-lock.json ./
-# npm 10 installs the native packages built for musl and WebAssembly too, which
+# npm installs the native packages built for musl and WebAssembly too, which
 # this glibc image never loads.
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 	npm ci --omit=dev --ignore-scripts --no-audit --no-fund \

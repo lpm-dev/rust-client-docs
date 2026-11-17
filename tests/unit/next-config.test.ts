@@ -26,11 +26,13 @@ describe("next config", () => {
   it("gives Next an object when the build uploads source maps to PostHog", async () => {
     vi.stubEnv("POSTHOG_PERSONAL_API_KEY", "phx_test");
     vi.stubEnv("POSTHOG_PROJECT_ID", "1");
+    vi.stubEnv("POSTHOG_RELEASE_ID", "docs-test-release");
 
     const config = await nextConfig(PHASE_PRODUCTION_BUILD, context);
 
     expect(typeof config).toBe("object");
     expect(typeof config.redirects).toBe("function");
+    expect(config.env?.POSTHOG_RELEASE_ID).toBe("docs-test-release");
     // The webpack build uploads through PostHog's webpack hook.
     expect(typeof config.webpack).toBe("function");
   });
