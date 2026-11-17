@@ -1,40 +1,190 @@
 ---
-title: Local secrets
-description: Store project secrets outside your repository and load them into applications with LPM CLI.
+title: LPM Vault
+description: Manage project secrets, schemas, local history, cloud sync, and platform publishing in the macOS app.
 ---
 
-Local secrets keep project values in protected storage outside your repository. [lpm env](/docs/dev/env) manages them without an account or application SDK.
+LPM Vault is a free macOS app for project environment variables. Download it from [vault.lpm.dev](https://vault.lpm.dev).
 
-[lpm dev](/docs/dev/dev) and [lpm run](/docs/dev/run) load the values before they start your application.
-The application reads normal environment variables, such as `process.env.API_TOKEN` in Node.js.
+The app and [LPM CLI](/docs/installation) share local secrets in your Mac's Keychain.
+Use either one to change values, then start your application with [lpm dev](/docs/dev/dev) or [lpm run](/docs/dev/run).
+Your application reads normal environment variables. It needs no SDK.
 
-## Quickstart
+Local use needs no account. An LPM.dev Registry account adds optional cloud sync and platform connections.
+For terminal workflows and storage on other operating systems, see [Local secrets](/docs/dev/local-secrets).
 
-From the project directory, or any directory below it, store a value and start an existing script:
+Screenshots on this page use a dummy project and example values.
+
+## Install the macOS app
+
+LPM Vault requires macOS 14 or later. The download supports Apple silicon and Intel Macs.
+
+1. Download the [LPM Vault DMG](https://vault.lpm.dev/download).
+2. Open `LPM-Vault.dmg`.
+3. Drag LPM Vault into Applications.
+4. Open LPM Vault from Applications.
+5. Unlock it with Touch ID or your Mac login password.
+
+Install [LPM CLI](/docs/installation) separately to load these values into your local application.
+In **Settings → CLI**, use **Check Again** to find the installed command and its version.
+
+## Create a project
+
+A project holds separate sets of values for environments such as `development` and `production`.
+Its `vault` ID connects those values to a project folder through `lpm.json`.
+The ID contains no secrets and is safe to commit.
+
+### From LPM Vault
+
+1. Select **New Project** above the project list.
+2. Enter a name, such as `Harbor API`.
+3. Select **Choose Folder…** and choose your application folder.
+4. Review **CLI approval** and **Local history**.
+5. Select **Create Project**.
+
+The app adds the project's `vault` ID to `lpm.json` and keeps the file's other configuration.
+The folder is optional. To link it later, use [Connect CLI](#connect-a-project-to-the-cli).
+
+If the folder already links another local project, open that project instead.
+Creating another project does not recover values for an existing ID.
+
+### From LPM CLI
+
+In your application folder, store the first values with [lpm env set](/docs/dev/env#local-file-management):
 
 ```bash
-lpm env set API_TOKEN=example-token
-lpm env list
-lpm run start
+lpm env set [--env <ENV>] <KEY=VALUE>...
+
+# Create the local project and its development values.
+lpm env set --env=development API_URL=https://dev.example.com API_TOKEN=demo-token
+lpm env list --env=development
 ```
 
-The first write adds a `vault` ID to the project's `lpm.json`. `list` masks values by default.
-These commands need no desktop app, plaintext export, or cloud connection.
+The first write creates a `vault` ID in `lpm.json`. It does not require the app or a login.
+Open LPM Vault, then use **Refresh** in the title bar to load the project.
 
-## Project identity and configuration
+To import an existing dotenv file, use [lpm env import](/docs/dev/env#import-export-and-copy):
 
-The generated `vault` field associates the project with its local secrets:
+```bash
+lpm env import --env=development .env.development
+```
+
+The app and CLI must use the same [LPM home](/docs/project-files#the-lpm-home).
+The default is `~/.lpm`. A CLI command with another `LPM_HOME` uses separate local secrets.
+
+## Connect a project to the CLI
+
+Select a project, then select **Connect CLI** in the title bar.
+Choose the folder that holds its `package.json`.
+
+**Write File** adds the `vault` field to `lpm.json` and preserves existing configuration.
+**Manual Setup** lets you copy the field into the file yourself:
 
 ```json title="lpm.json"
 {
-  "$schema": "https://cli.lpm.dev/schemas/lpm.json",
+  "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b"
+}
+```
+
+Copy your project's ID from the app. Do not use this example ID or replace an existing file with this snippet.
+If the folder links another project, review the warning before you replace the link.
+Changing the ID selects different secrets. It does not move them.
+
+![Connect CLI shows the project's vault ID, file setup choices, and commands to run.](/images/lpm-vault/connect-cli.png)
+
+### Select values for each script
+
+Keep the generated `vault` field when you add task configuration:
+
+```json title="lpm.json"
+{
   "vault": "7f3a1e2c-5b9d-4a8f-b6c1-9b1d2e3f4a5b",
   "tasks": {
     "dev": { "env": "development" },
-    "start": { "env": "staging" }
-  },
+    "start": { "env": "production" }
+  }
+}
+```
+
+Start an existing script through [lpm dev](/docs/dev/dev) or [lpm run](/docs/dev/run):
+
+```bash
+lpm dev
+lpm run start
+
+# Override the script's environment for this run.
+lpm run start --env=development
+```
+
+`--env` overrides the script's configuration for one run. `--env=default` selects the default stored environment.
+After you change a value in either tool, restart the application. A running process keeps its original values.
+
+## Add values and environments
+
+Select **New Key** to add a name and value to the selected environment.
+Use the plus beside the project's environments to add `development`, `staging`, or `production`.
+The app displays the default environment as `.env` and named environments as `.env.<name>`.
+These labels do not create plaintext files.
+
+Select the project to compare environments in **All Keys**.
+Select an environment to work with its values. **Drift** shows keys with different values across environments.
+**Missing** shows keys absent from an environment.
+Use **Import…** to review a dotenv file before you save its values.
+
+![A dummy Harbor API project compares masked values across three environments.](/images/lpm-vault/workspace.png)
+
+Values stay masked until you reveal them. Copy and export actions release plaintext values.
+Keep secret values out of screenshots and committed dotenv files.
+For file precedence and environment fallback, see [Local secrets](/docs/dev/local-secrets#files-stored-values-and-validation).
+
+## CLI approval on macOS
+
+Open **Project Settings → CLI approval** for the selected project.
+This controls whether LPM CLI must ask before it reads that project's values.
+
+| CLI approval | Behavior |
+| --- | --- |
+| On | Requires Touch ID or your Mac login password before LPM CLI reads the values. A lock appears beside the project in the sidebar. |
+| Off | LPM CLI can read the values automatically. |
+
+Changing the setting requires authentication. The setting covers every environment in that project on this Mac.
+It still applies when the app is locked or closed.
+Locking the app does not turn CLI approval on for other projects.
+
+New and imported app projects start with CLI approval on, unless you change the default in **Settings → CLI**.
+The setting is **Ask before the CLI reads a new project**.
+The creation sheet also lets you choose it for one new project.
+A project created by [lpm env set](/docs/dev/env#local-file-management) starts with CLI approval off.
+
+If you cancel an approval prompt, the CLI stops before it starts lifecycle hooks or your script.
+`--no-env-check` skips schema value checks and defaults for one run. It does not bypass approval.
+For unattended local runs, use a project with CLI approval off.
+This permits reads without an approval prompt.
+
+## Use a schema
+
+A schema declares the rules for environment variables. LPM Vault reads and edits these rules in `lpm.json > envSchema`.
+Link the project folder through **Connect CLI** before you edit the schema.
+Commit rules with your project, but keep secret values out of the file.
+
+1. Select **Schema** below the project in the sidebar.
+2. Select a declared key, or select **Declare Key** to add one.
+3. Set its rules, such as required, secret, format, or default.
+4. Review the pending changes and their effect on stored values.
+5. Save the reviewed changes to `lpm.json`.
+
+![The Schema page shows declarations from lpm.json and the rule editor for a selected key.](/images/lpm-vault/schema.png)
+
+For example, require an API URL and token, and provide a non-secret port default:
+
+```json title="lpm.json"
+{
   "envSchema": {
     "vars": {
+      "API_URL": {
+        "description": "Base URL for the Harbor API.",
+        "required": true,
+        "format": "url"
+      },
       "API_TOKEN": { "required": true, "secret": true },
       "PORT": { "default": "3000", "format": "port" }
     }
@@ -42,159 +192,173 @@ The generated `vault` field associates the project with its local secrets:
 }
 ```
 
-Keep the generated ID when you add configuration. Do not replace it with this example ID.
-Commit `lpm.json` with the project. The ID contains no secrets and grants no access by itself.
-A directory rename or move keeps the same association.
+Merge this section into the existing file and keep its `vault` ID.
+Defaults belong in the schema only when they are safe to share.
+`secret: true` masks diagnostics. It does not make a literal default secret.
 
-A clone on another machine has the same ID but needs its own local values or an authorized cloud pull.
-Deleting the field creates a new association on the next write. It does not delete or recover the old secrets.
+Rules also support types, allowed values, conditions, groups, and rules for specific environments, stages, or services.
+**Client Prefixes** identifies additional prefixes for browser-visible keys.
+A public variable can reach browser code. Keep credentials out of public variables.
+See the [envSchema reference](/docs/reference/lpm-json#envschema) for the complete fields and supported formats.
 
-## CLI approval on macOS
-
-In LPM Vault, select a project and use **CLI approval** beside **All variables**.
-The sidebar icon shows each project's setting without selecting it.
-
-| CLI approval | Sidebar icon | CLI behavior |
-| --- | --- | --- |
-| Off | Folder | Injects local env values automatically. |
-| On | Lock | Requires Touch ID or your Mac login password before releasing env values. |
-
-Locking the app preserves each project's setting.
-
-Projects that you create or import in LPM Vault start with CLI approval on. To change this default, use **Ask before the CLI reads a new project** in **Settings → CLI**.
-A project that the CLI creates, as `lpm env set` does, starts with CLI approval off.
-
-Approval applies to every environment in the project on this Mac. Other projects keep their own settings.
-The CLI still requires approval when the app is closed or locked.
-If you cancel authentication or it fails, the command stops before running lifecycle hooks or the main script.
-`lpm env check` reads every environment's values in one read of the vault.
-`lpm run` reads each environment's values once and shares them across the run's tasks. A task that saves its result to the [task cache](/docs/dev/task-runner) reads them again first, so the saved result matches the current values.
-`--no-env-check` skips value checks and defaults. Invalid declarations and access approval still stop the command.
-
-## Select an environment
+Use [lpm env schema](/docs/dev/env#validate-and-generate-examples) to inspect declarations without reading stored values.
+Use [lpm env check](/docs/dev/env#validate-and-generate-examples) to validate values:
 
 ```bash
-lpm env set --env=development API_TOKEN=development-token
-lpm env set --env=staging API_TOKEN=staging-token
-lpm env list --env=staging
-lpm dev
-lpm run start
-lpm run start --env=development
+lpm env schema --json
+lpm env check --env=development --json
 ```
 
-For each script, selection uses this order:
+[lpm dev](/docs/dev/dev) and [lpm run](/docs/dev/run) apply schema defaults and stop on invalid required values before startup.
+For one run, `--no-env-check` skips value checks and defaults. Invalid declarations still stop the command.
 
-1. The command's `--env` value.
-2. `tasks.<name>.env` in `lpm.json`.
-3. The matching `env.<name>` mapping in `lpm.json`.
-4. The default environment.
+## Project settings
 
-The example configuration selects `development` for `dev` and `staging` for `start`.
-Explicit `--env=development` overrides that selection for one run. `--env=default` selects the default stored values.
-Named values do not require matching dotenv files.
+Select **Project Settings** in the project toolbar. You can also press `⌘I` or use the project's context menu.
+Change the display name and icon, then select **Save**. **Revert** discards those unsaved edits.
 
-Each stored environment is independent. If a selected environment is missing or empty, runtime loading falls back to the default stored environment.
-A nonempty named environment does not inherit missing keys from the default environment.
-Explicit [lpm env get and list](/docs/dev/env#local-file-management) inspect the selected environment without this fallback.
+The page also shows the linked folder, **CLI approval**, and **Local history**.
+Approval and history changes apply separately from the name and icon.
+Use **Connect CLI** to link a different folder.
 
-## Files, stored values, and validation
+![Project Settings shows the dummy project's folder, CLI approval, and local history.](/images/lpm-vault/project-settings.png)
 
-The standard dotenv order is `.env`, `.env.local`, `.env.<name>`, then `.env.<name>.local`. Later files override earlier files.
-Configured paths and [environment inheritance](/docs/reference/lpm-json#environments) can change that file selection.
+**Delete Locally…** removes the project, its Keychain values, and local history from this Mac.
+It keeps the application folder, `lpm.json`, and any synced cloud copy.
+Deleting the project locally does not revoke or remove a cloud copy.
 
-Inherited process values take precedence over dotenv values. Stored secrets load after files and can override inherited process values.
-Schema defaults fill missing values. An invalid required value stops startup.
-Runtime hooks such as `NODE_OPTIONS` and `LD_PRELOAD` are excluded from project values and inherited script environments.
-Project values also cannot set `PATH`, `HOME`, or `LPM_HOME`.
+## Local history
 
-Inspect the resolved project values with [lpm env print](/docs/dev/env#print-the-resolved-environment):
+Local history keeps an encrypted record of value changes on this Mac.
+It includes changes from LPM Vault and LPM CLI. It does not sync to lpm.dev.
+Set **Local history** in **Project Settings**.
+The default for new app projects is in **Settings → General → Keep local history for new projects**.
+
+Select **History** below the project in the sidebar to browse changes.
+Select an entry to inspect its affected environments and keys.
+Values stay masked until you reveal them.
+
+**Undo This Change…** reverses the selected change.
+**Roll Back to This Point…** restores values to their state just after that entry and reverses later changes.
+Review the affected keys and environments before you apply either action.
+Rollback creates another history entry.
+
+Turning history off deletes the project's history on this Mac and stops recording changes. Current values stay.
+Turning it on again starts an empty history. Copies in system backups can remain.
+For terminal commands and recovery details, see [local history with lpm env](/docs/dev/env#local-history).
+
+## Sign in to lpm.dev
+
+Local editing works without a login. To use cloud sync, open **Settings → Account & Sync** and select **Sign In with Browser**.
+Complete the LPM.dev Registry login in your browser, then return to LPM Vault.
+The account menu at the bottom of the sidebar also offers **Sign In…**.
+
+The app and CLI share the login for the same registry and LPM home.
+You can also sign in through [lpm login](/docs/infra/login):
 
 ```bash
-lpm env print --env=staging --format=json
-lpm env check --json
+lpm login
 ```
 
-`print` includes plaintext secrets. `secret: true` masks diagnostics, not this explicit export.
-For one run, `--no-env-check` skips value checks and defaults. It still loads local secrets and rejects invalid declarations.
+After a terminal login, reopen the app or return to it so it can refresh the account.
+**Settings → Account & Sync → Sign Out…** ends the shared login. Local Keychain values stay on your Mac.
 
-## Import existing dotenv files
+## Sync with lpm.dev
 
-```bash
-lpm env import .env
-lpm env import --env=staging .env.staging
-lpm env list --env=staging
-lpm env import --env=staging .env.staging --overwrite
-```
+Personal cloud sync requires Pro. Organization sharing requires an active Organization or Enterprise plan.
+Values are encrypted on your Mac before upload. An account login alone does not recover another device's encryption keys.
+See [device keys and access](/docs/dev/env#cloud-sync) before you set up another Mac.
 
-Import preserves existing destination values unless you pass `--overwrite`.
-It stores each value as given. If a value holds [hidden characters](/docs/dev/env#hidden-characters-in-values), such as a no-break space at the end, the import warns.
-The input file remains on disk. If Git doesn't already ignore it, the CLI adds an anchored rule for its path to `.gitignore`.
-If Git already tracks the file, the CLI warns. Untrack it with the `git rm --cached` command in the warning before you commit.
-After you check the imported keys, remove secret values from the original file and restart the application.
-Keep placeholders or non-secret examples in `.env.example`.
+To upload a local project, select the sync status in the title bar, then **Push to lpm.dev…**.
+Review the project and confirm the push.
+To fetch its cloud values, choose **Pull from lpm.dev…**.
+In the app, a pull merges cloud values into local environments. Cloud values replace matching local keys, while local-only keys stay.
 
-If `.env` is absent and `.env.example` exists, [lpm dev](/docs/dev/dev) copies the example to `.env`.
-This copy contains example values. It does not export local secrets.
-LPM CLI writes the copy owner-only and adds a `.gitignore` rule for it when Git doesn't already ignore it. A rule it can't add is a warning.
+To open a cloud project that is not on this Mac, choose **Import from lpm.dev…** in the account menu.
+Select the project to import. For organization projects, select the organization account first.
+**Share with Organization…** uploads an organization project for approved members.
 
-## Storage and recovery
+Sync is explicit. Local application startup does not pull changes from the cloud.
+After a pull, restart the application through [lpm dev](/docs/dev/dev) or [lpm run](/docs/dev/run).
+For CLI sync, account keys, and conflict recovery, see [lpm env cloud sync](/docs/dev/env#cloud-sync).
 
-| Platform | Local storage |
+## Connect platforms
+
+Open **Platforms** from the bottom of the sidebar. Connect the account that holds your deployment target.
+Vercel, Netlify, GitHub, and Cloudflare connect through your browser.
+Sign in to your LPM.dev Registry account before you connect these providers.
+Coolify uses your instance URL and an API token that you create in Coolify.
+Platform tokens stay in this Mac's Keychain.
+
+| Platform | Publish destination |
 | --- | --- |
-| macOS | Data Protection Keychain through an official signed CLI build. |
-| Linux and Windows | Encrypted files in `vaults/` in the LPM home. The encryption key uses native secure storage when available. |
+| Vercel | A project and its development, preview, production, or custom environment. |
+| Netlify | A site and its deployment context or branch. |
+| GitHub | Repository or environment secrets and variables for GitHub Actions. |
+| Cloudflare | A Worker's secrets. |
+| Coolify | An application or service, with its production or preview configuration. |
 
-The LPM home is `~/.lpm`, or the directory that [`LPM_HOME`](/docs/reference/env-vars#filesystem-layout) names. In a Git repository that the LPM home can't be kept out of, LPM CLI refuses to write local secrets there; see [the LPM home](/docs/project-files#the-lpm-home).
-A home other than `~/.lpm` keeps its own OS credential store entries, so it has its own local secrets. Values stored with one home are not visible with another.
+![Platforms offers browser connections and a Coolify connection for the dummy workspace.](/images/lpm-vault/platforms.png)
 
-On Linux, native key storage uses Secret Service. On Windows, it uses Credential Manager.
-An unavailable native backend can use an existing file key at `.vault-fallback-key` in the LPM home.
-If native storage reports no key and cannot save a new one, initial storage can create a fallback file key.
-Existing encrypted data still requires its original key.
+The connection determines which projects, sites, repositories, or Workers you can select.
+If a GitHub repository is absent, grant the GitHub App access to it, then reload the choices.
+The Platforms page also explains how to disconnect and revoke each provider's access.
 
-Encrypted files need their matching encryption key. Copying encrypted files alone does not recover the values on another machine.
-A missing or conflicting key produces an error. The CLI preserves existing data instead of silently replacing the key.
+### Publish an environment
 
-| Problem | Recovery |
+1. Select the local project, then select **Publish…** in the title bar.
+2. Choose **Source environment** and **Platform connection**.
+3. Choose the target project, site, repository, Worker, or Coolify resource.
+4. Select the destination environment or context where the platform supports one.
+5. Open **Review** and inspect the planned actions for each key.
+6. Select the keys to send, then publish and approve with Touch ID or your Mac password.
+
+The review flags invalid values, public variables, and platform conflicts before you send anything.
+A platform receives the values you publish. It must be able to use them for builds or application startup.
+Every publish requires fresh authentication, even when the app is unlocked.
+
+A successful first publish saves the destination. Select it from **Publish…** to review the next update.
+Read the result for each key and retry failed keys after you fix the reported problem.
+New values apply to new deployments. Redeploy through your platform when needed.
+Publishing values does not deploy application code.
+
+## App settings
+
+Open **Settings** with the gear at the bottom of the sidebar or `⌘,`.
+Search for a setting by name if you do not know its page.
+
+| Page | Configuration |
 | --- | --- |
-| Values are absent. | Check the project directory, `vault` ID, `LPM_HOME`, and selected environment with `lpm env list --env=<name>`. |
-| macOS denies access. | Use an [official signed CLI build](/docs/installation) and unlock the Keychain in your login session. |
-| Native key storage is unavailable. | Restore access to Secret Service or Credential Manager, or restore the matching fallback key. |
-| The fallback key is lost. | Restore the matching key from a trusted backup. An encrypted local file alone is insufficient. |
-| A clone has no local values. | Import values or pull an authorized cloud copy before startup. |
-| A command says that the newer data of the project is damaged. | Run [`lpm env repair`](/docs/dev/env-repair). The values stay. |
+| General | Quit shortcut and the local history default for new app projects. |
+| Security | Idle lock, value approval, automatic masking, clipboard clearing, and screenshot protection. |
+| Appearance | System, light, or dark theme. |
+| Account & Sync | Browser login, account details, and sign-out. |
+| CLI | Installed command and version, the approval default, and the LPM home. |
+| Platforms | Connected provider accounts and access revocation guidance. |
+| Backup & Restore | Encrypted backup export, restore, and monthly reminders. |
+| Updates | Manual update checks, automatic checks, background installation, and release channel. |
+| About | Version, release notes, documentation, and feedback. |
 
-Do not delete storage files or change the project ID to repair a missing encryption key.
+The app locks when your Mac sleeps, the screen locks, or you close its window.
+It hides values while another app is in front.
+**Security → Hide from screenshots and screen sharing** makes app windows blank in captures.
+To capture dummy data, turn that setting off temporarily, then restore it.
 
-Local history is kept in the same storage, encrypted with its own key. It records each change to the values on this computer, so you can [see and roll back changes](/docs/dev/env#local-history). Turning it off deletes it.
-For encrypted backup and access details, see [environment encryption and access](/docs/infra/secrets-vault).
+![The CLI settings page shows command detection, the approval default, and the LPM home.](/images/lpm-vault/cli-settings.png)
 
-## Changes take effect at startup
+Under **CLI**, keep the app's LPM home aligned with the terminal's `LPM_HOME`.
+Changing the home can move the shared login and environment data, then relaunch the app.
+Review the move choices before you continue.
 
-After you change a secret, restart the application through [lpm dev](/docs/dev/dev) or [lpm run](/docs/dev/run).
-An existing process retains the values that it received at startup.
-The application and its child processes can read those variables.
-
-## Optional cloud sync
-
-```bash
-lpm env push --yes
-lpm env pull --yes
-lpm env pull --org=acme
-```
-
-Cloud sync requires an eligible LPM.dev Registry plan and authorized keys.
-Uploads preserve named empty environments, including projects with no keys.
-A personal pull replaces local values with the remote payload. An organization pull merges it: a key in the cloud copy replaces its local value, and local keys that aren't in the cloud copy stay. Local history records the pull, so `lpm env rollback --undo <entry>` can put the earlier values back.
-Runtime startup reads local values. It does not automatically pull cloud changes.
-Each checkout keeps its sync state in `.lpm/env-sync.json`, which Git never sees.
-See [lpm env cloud sync](/docs/dev/env#cloud-sync) for personal sync, organization sharing, pairing, and CI access.
+Under **Backup & Restore**, export an encrypted backup before you replace or erase a Mac.
+Keep its passphrase separately. Local history is not a substitute for a backup.
 
 ## See also
 
+- [Local secrets](/docs/dev/local-secrets)
 - [lpm env](/docs/dev/env)
+- [Manage project secrets](/docs/guides/managing-secrets)
+- [envSchema reference](/docs/reference/lpm-json#envschema)
+- [Environment encryption and access](/docs/infra/secrets-vault)
 - [lpm dev](/docs/dev/dev)
 - [lpm run](/docs/dev/run)
-- [Manage project secrets](/docs/guides/managing-secrets)
-- [Environment encryption and access](/docs/infra/secrets-vault)
-- [Project identity in lpm.json](/docs/reference/lpm-json#vault)

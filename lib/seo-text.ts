@@ -39,6 +39,7 @@ export function resolvedDocsTitle(title: string, slugs: string[]): string {
     "project-setup": `Project setup with package.json and lpm.json${SEO_TITLE_SUFFIX}`,
     registries: `Registry routing with npm and lpm.dev${SEO_TITLE_SUFFIX}`,
     dev: `Developer workflow docs${SEO_TITLE_SUFFIX}`,
+    "dev/lpm-vault": `LPM Vault for macOS | secrets, schemas, and sync`,
     guides: `LPM workflow guides${SEO_TITLE_SUFFIX}`,
     infra: `Infrastructure command docs${SEO_TITLE_SUFFIX}`,
     packages: `Package management docs${SEO_TITLE_SUFFIX}`,
