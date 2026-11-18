@@ -130,7 +130,7 @@ For protected access, run [lpm login](/docs/infra/login), then rerun setup or [l
 ### Signing roots
 
 LPM CLI includes the roots LPM.dev signs its Swift releases under, so setup downloads no certificate.
-SwiftPM accepts a release from LPM.dev only when a certificate one of those roots issued signed it.
+SwiftPM accepts a source archive from LPM.dev only when a certificate one of those roots issued signed it. The roots don't cover manifests; see the [trust model](/docs/packages/swift-package-registry#trust-model).
 
 The roots are in `security/lpm-trusted-roots/lpm.dev` under the [SwiftPM user directory](#swiftpm-user-directory).
 SwiftPM reads every file in that directory as a trusted root, so setup leaves only LPM.dev's roots there and removes other files.
@@ -149,7 +149,7 @@ LPM CLI sets strict default signing actions to `error`.
 For LPM.dev, it sets `onUnsigned` and `onUntrustedCertificate` to `error`, sets `trustedRootCertificatesPath` to the roots directory, and sets `includeDefaultTrustedRootCertificates` to `false`.
 It also removes `lpmdev` scope and package settings that would replace those roots.
 
-For another Registry hostname, it sets `onUntrustedCertificate` to `silentAllow` and warns that SwiftPM accepts that Registry's releases from any signer.
+For another Registry hostname, it sets `onUntrustedCertificate` to `silentAllow` and warns that SwiftPM accepts that Registry's releases from any signer. If you pinned that hostname to roots of your own, with `onUntrustedCertificate` set to `error` and a `trustedRootCertificatesPath`, LPM CLI keeps your settings.
 HTTPS to that Registry is then the only anchor, and loopback HTTP has none. See [Swift signing trust](/docs/packages/swift-package-registry#trust-model).
 
 LPM CLI removes the obsolete `lpmdev` scope signing override and preserves unrelated valid mappings and authentication configuration.
@@ -157,7 +157,7 @@ LPM CLI removes the obsolete `lpmdev` scope signing override and preserves unrel
 SwiftPM uses a project's own `security` settings in `.swiftpm/configuration/registries.json` in place of your user-wide ones, so LPM.dev's roots wouldn't apply in that project.
 Setup and [lpm install](/docs/packages/install) refuse such a project before they change anything. For an Xcode project, this includes the shared settings in `xcshareddata/swiftpm/configuration/registries.json` of the project or a workspace that contains it.
 
-An earlier LPM CLI release run on the same machine sets LPM.dev back to accepting any signer. The next setup or installation with this release restores the roots.
+An earlier LPM CLI release run on the same machine sets LPM.dev back to accepting any signer. The next setup or installation with this release restores the roots and warns that an earlier release had changed them.
 
 The configuration file has a 16 MiB limit before parsing.
 An oversized file stops setup without replacement. Matching valid trust configuration avoids a rewrite.
@@ -189,11 +189,11 @@ lpm swift-registry --json
 | `https` | Whether the endpoint uses HTTPS. |
 | `authentication_outcome` | `configured`, `skipped_no_credential`, or `skipped_http`. |
 | `signing_certificate_installed` | Whether the Registry's signing roots are installed. `false` for a Registry without them. |
-| `signing_certificate_outcome` | `installed` when setup changed the roots, `already_installed` for matching roots, or `not_pinned` for a Registry without them. |
+| `signing_certificate_outcome` | `installed` when setup wrote a root, `repaired` when it only removed files that aren't roots, `already_installed` for matching roots, or `not_pinned` for a Registry without them. |
 | `signing_trust_configured` | Boolean that reports the required trust configuration is present. |
 | `signing_trust_outcome` | `configured` for a change or `already_configured` for matching configuration. |
-| `trust_anchor` | `pinned_root` for a Registry with signing roots, otherwise `https` or `insecure_http`. |
-| `signer_trust_policy` | `error` for a Registry with signing roots, otherwise `silentAllow`. |
+| `trust_anchor` | `pinned_root` when SwiftPM accepts only signers under pinned roots, LPM CLI's or your own. Otherwise `https` or `insecure_http`. |
+| `signer_trust_policy` | `error` when SwiftPM accepts only signers under pinned roots, otherwise `silentAllow`. |
 
 Failed setup returns `success: false` with `error` and `error_code`.
 JSON mode suppresses SwiftPM terminal output.
@@ -205,9 +205,9 @@ JSON mode suppresses SwiftPM terminal output.
 | Swift is unavailable | Install a compatible Swift toolchain and make `swift` available on `PATH`. |
 | `skipped_no_credential` or protected requests return `401` | Sign in, then rerun setup to update SwiftPM authentication. |
 | SwiftPM login fails | Replace an expired explicit token, or renew the stored session. Then rerun setup. |
-| SwiftPM reports that an LPM.dev release's signer is not trusted | Update LPM CLI. A release signed under a newer root needs an LPM CLI release that includes it. |
+| SwiftPM reports that an LPM.dev release's signer is not trusted | Update LPM CLI. A release signed under a newer root needs an LPM CLI release that includes it. If you already run the latest release, report the package and version to LPM.dev. |
 | Setup or installation refuses a project that has its own signing settings | Remove the `security` section from the file the error names, moving any settings you need to your user-wide configuration. |
-| SwiftPM or Xcode can't load its trusted roots | Run `lpm swift-registry`. It leaves only LPM.dev's roots in the roots directory. |
+| SwiftPM or Xcode can't load its trusted roots, or says the roots path isn't a directory | Run `lpm swift-registry`. It leaves only LPM.dev's roots in the roots directory, at the path this machine's configuration names. A configuration copied from another machine names that machine's path. |
 | Setup reports a directory or link in the roots directory | Remove it, then rerun setup. |
 | Existing configuration is malformed, unsupported, or linked | Correct the reported file or field. For a linked configuration, use a regular file at the reported path. Then rerun setup. |
 | Trust configuration exceeds 16 MiB | Inspect the reported file before reducing or replacing it. |
