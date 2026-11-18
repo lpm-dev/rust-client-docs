@@ -12,7 +12,7 @@ lpm install @lpm.dev/owner.swift-kit
 # Select the first eligible target without a prompt
 lpm install @lpm.dev/owner.swift-kit --yes
 
-# Repair registry configuration and retrieve the current certificate
+# Repair registry configuration and signing roots
 lpm swift-registry
 ```
 
@@ -55,11 +55,11 @@ If a requirement uses an unsupported expression, the CLI stops without changing 
 
 After resolution, the CLI checks required products and access to each resolved LPM.dev Registry dependency. A failure restores the previous project declarations and lockfiles.
 
-That rollback does not restore global SwiftPM configuration, certificates, or caches.
+That rollback does not restore global SwiftPM configuration, signing roots, or caches.
 
 ## Automatic registry configuration
 
-Each native install checks the project's registry scope, downloads the current certificate, and checks the signing policy.
+Each native install checks the project's registry scope, the signing roots, and the signing policy. It downloads no certificate.
 
 The project scope points `lpmdev` to:
 
@@ -67,7 +67,7 @@ The project scope points `lpmdev` to:
 https://lpm.dev/api/swift-registry
 ```
 
-The certificate is `security/trusted-root-certs/lpm.der` inside the [SwiftPM user directory](/docs/packages/swift-registry#swiftpm-user-directory). Signing policy uses `configuration/registries.json` in that directory.
+The signing roots are in `security/lpm-trusted-roots/lpm.dev` inside the [SwiftPM user directory](/docs/packages/swift-registry#swiftpm-user-directory). Signing policy uses `configuration/registries.json` in that directory.
 
 Free-package installation starts anonymously. If native resolution needs protected dependencies, the CLI can retry with available credentials.
 
@@ -85,9 +85,12 @@ SwiftPM checks the archive checksum and its detached CMS signature. Each served 
 
 The Registry signs these artifacts. The signatures do not establish the package author's identity.
 
-The current trust policy combines cryptographic integrity checks with HTTPS origin authentication. The certificate and package bytes come from the configured Registry origin.
+LPM.dev signs releases with a certificate issued by an offline root. LPM CLI includes that root and configures SwiftPM to accept a source archive from LPM.dev only when its signature chains to it.
+Someone who controls the Registry's database, storage, or CDN, but not its signing key, can't serve a source archive that SwiftPM accepts.
 
-For that hostname, `onUntrustedCertificate` is `silentAllow`. This accepts a valid signature without a certificate chain to a trusted root. It does not pin a signer.
+SwiftPM still accepts a manifest whose signature doesn't chain to a trusted root. The roots protect source archives, not the dependency graph SwiftPM reads from manifests.
+
+For another Registry hostname, `onUntrustedCertificate` is `silentAllow`. This accepts a valid signature without a certificate chain to a trusted root, so HTTPS to that Registry is the only anchor.
 
 Unsigned packages remain errors. Setup also enforces strict default signing actions, while preserving unrelated configuration and other registry overrides.
 
@@ -160,13 +163,13 @@ Repeated downloads do not create duplicate monthly credit. Publisher and organiz
 
 ## Recover from an install failure
 
-If scope, certificate, or signing-policy configuration needs repair, run:
+If scope, signing-root, or signing-policy configuration needs repair, run:
 
 ```bash
 lpm swift-registry
 ```
 
-Each setup downloads the current certificate and replaces changed bytes. `--force` also replaces a matching certificate. A failed download preserves the previous certificate.
+Each setup restores the signing roots LPM CLI includes and replaces changed bytes. `--force` also rewrites matching roots.
 
 If protected packages require authentication, sign in and repeat installation:
 
@@ -197,7 +200,7 @@ The hosted API serves the `lpmdev` scope:
 | `GET /{scope}/{name}/{version}/Package.swift` | Signed root manifest and links to available alternatives. |
 | `GET /{scope}/{name}/{version}/Package.swift?swift-version=6.0` | Signed manifest for the requested tools version. |
 | `PUT /` or `POST /` | Authentication at the registry root. |
-| `GET /certificate` | Public signing certificate in DER format. |
+| `GET /certificate` | Public signing root in DER format. |
 
 A valid unavailable tools version redirects to the root manifest. Invalid or repeated `swift-version` values return HTTP 400.
 

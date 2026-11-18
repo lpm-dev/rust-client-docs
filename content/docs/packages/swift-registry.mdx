@@ -15,10 +15,10 @@ Use this command to prepare or repair Swift registry access.
 | Mode | Command |
 | --- | --- |
 | Configure access and repair stale configuration | `lpm swift-registry` |
-| Also replace a matching local signing certificate | `lpm swift-registry --force` |
+| Also rewrite matching signing roots | `lpm swift-registry --force` |
 
 The registry scope applies to the current Swift project. For an Xcode project, setup also configures the user-wide `lpmdev` scope.
-The certificate and signing-trust configuration apply to your user account and can affect other Swift projects.
+The signing roots and signing-trust configuration apply to your user account and can affect other Swift projects.
 
 ## Quickstart
 
@@ -45,7 +45,7 @@ Protected releases use the current Registry credential, including when the proje
 
 ```bash
 lpm swift-registry                         # configure or repair access
-lpm swift-registry --force                 # replace the local certificate
+lpm swift-registry --force                 # rewrite matching signing roots
 lpm swift-registry --json                  # report each setup outcome
 lpm swift-registry --registry https://registry.example.com
 ```
@@ -92,7 +92,7 @@ After that check, setup performs these operations in order:
 
 1. Set the project registry scope and, for an Xcode project, the user-wide `lpmdev` scope.
 2. If HTTPS and a Registry credential are available, log in through SwiftPM.
-3. Download and install the current package signing certificate.
+3. Install the Registry's signing roots. LPM.dev has them; another Registry has none.
 4. Configure the user-wide signing-trust policy.
 
 A failed operation stops the command. Earlier successful operations remain in place.
@@ -127,30 +127,35 @@ If no credential exists, setup skips login and can still succeed.
 This does not clear credentials that SwiftPM already stores.
 For protected access, run [lpm login](/docs/infra/login), then rerun setup or [lpm install](/docs/packages/install).
 
-### Signing certificate
+### Signing roots
 
-Every setup run downloads the current certificate, including a run without `--force`.
-The certificate request has a 10-second connection limit and a 30-second overall limit, including the response body.
+LPM CLI includes the roots LPM.dev signs its Swift releases under, so setup downloads no certificate.
+SwiftPM accepts a release from LPM.dev only when a certificate one of those roots issued signed it.
 
-LPM CLI accepts one complete DER X.509 certificate between 100 bytes and 64 KiB.
-Malformed, oversized, and trailing-data responses stop setup. This check validates certificate structure, not its expiry or certificate chain.
+The roots are in `security/lpm-trusted-roots/lpm.dev` under the [SwiftPM user directory](#swiftpm-user-directory).
+SwiftPM reads every file in that directory as a trusted root, so setup leaves only LPM.dev's roots there and removes other files.
+A directory inside it, or a link in its place, stops setup.
 
-The certificate is `security/trusted-root-certs/lpm.der` under the [SwiftPM user directory](#swiftpm-user-directory).
+Matching roots avoid a rewrite. `--force` rewrites them.
+Setup also removes `security/trusted-root-certs/lpm.der`, which earlier LPM CLI releases wrote. SwiftPM never read that file.
 
-Matching valid bytes avoid a file replacement. Missing, malformed, or different bytes cause an atomic replacement.
-`--force` also replaces a matching certificate.
-A download or validation failure preserves the previous certificate and returns an error, with or without `--force`.
+Another Registry has no signing roots in LPM CLI, so setup installs none for it.
 
 ### Signing trust
 
 User-wide trust configuration is `configuration/registries.json` under the [SwiftPM user directory](#swiftpm-user-directory).
 
 LPM CLI sets strict default signing actions to `error`.
-It sets `onUntrustedCertificate` to `silentAllow` for the selected Registry hostname.
-It also removes the obsolete `lpmdev` scope signing override and preserves unrelated valid mappings and authentication configuration.
+For LPM.dev, it sets `onUnsigned` and `onUntrustedCertificate` to `error`, sets `trustedRootCertificatesPath` to the roots directory, and sets `includeDefaultTrustedRootCertificates` to `false`.
+It also removes `lpmdev` scope and package settings that would replace those roots.
 
-For HTTPS, trust starts with the authenticated connection that supplies the signing certificate.
-Loopback HTTP has no authenticated transport. See [Swift signing trust](/docs/packages/swift-package-registry#trust-model).
+For another Registry hostname, it sets `onUntrustedCertificate` to `silentAllow` and warns that SwiftPM accepts that Registry's releases from any signer.
+HTTPS to that Registry is then the only anchor, and loopback HTTP has none. See [Swift signing trust](/docs/packages/swift-package-registry#trust-model).
+
+LPM CLI removes the obsolete `lpmdev` scope signing override and preserves unrelated valid mappings and authentication configuration.
+
+SwiftPM uses a project's own `security` settings in `.swiftpm/configuration/registries.json` in place of your user-wide ones.
+When a project has such settings and they don't keep LPM.dev's roots, setup and [lpm install](/docs/packages/install) warn that the roots don't apply in that project.
 
 The configuration file has a 16 MiB limit before parsing.
 An oversized file stops setup without replacement. Matching valid trust configuration avoids a rewrite.
@@ -181,12 +186,13 @@ lpm swift-registry --json
 | `scope` | `lpmdev`. |
 | `https` | Whether the endpoint uses HTTPS. |
 | `authentication_outcome` | `configured`, `skipped_no_credential`, or `skipped_http`. |
-| `signing_certificate_installed` | Boolean that reports a valid certificate is present. |
-| `signing_certificate_outcome` | `installed` for replacement or `already_installed` for matching bytes. |
+| `signing_certificate_installed` | Whether the Registry's signing roots are installed. `false` for a Registry without them. |
+| `signing_certificate_outcome` | `installed` when setup changed the roots, `already_installed` for matching roots, or `not_pinned` for a Registry without them. |
 | `signing_trust_configured` | Boolean that reports the required trust configuration is present. |
 | `signing_trust_outcome` | `configured` for a change or `already_configured` for matching configuration. |
-| `trust_anchor` | `https` or `insecure_http`. |
-| `signer_trust_policy` | `silentAllow` for the selected Registry hostname. |
+| `trust_anchor` | `pinned_root` for a Registry with signing roots, otherwise `https` or `insecure_http`. |
+| `signer_trust_policy` | `error` for a Registry with signing roots, otherwise `silentAllow`. |
+| `project_signing_overrides_pin` | Whether the project's own signing settings keep the Registry's signing roots from applying to it. |
 
 Failed setup returns `success: false` with `error` and `error_code`.
 JSON mode suppresses SwiftPM terminal output.
@@ -198,8 +204,9 @@ JSON mode suppresses SwiftPM terminal output.
 | Swift is unavailable | Install a compatible Swift toolchain and make `swift` available on `PATH`. |
 | `skipped_no_credential` or protected requests return `401` | Sign in, then rerun setup to update SwiftPM authentication. |
 | SwiftPM login fails | Replace an expired explicit token, or renew the stored session. Then rerun setup. |
-| Certificate request times out or returns invalid data | Check the Registry endpoint and connection. Rerun setup after recovery. |
-| Registry certificate rotates | Rerun ordinary setup. It detects changed certificate bytes. |
+| SwiftPM reports that an LPM.dev release's signer is not trusted | Update LPM CLI. A release signed under a newer root needs an LPM CLI release that includes it. |
+| Setup warns that the project's signing settings keep the roots from applying | Remove the `security` section from the project's `.swiftpm/configuration/registries.json`, or restate the LPM.dev settings there. |
+| Setup reports a directory or link in the roots directory | Remove it, then rerun setup. |
 | Existing configuration is malformed, unsupported, or linked | Correct the reported file or field. For a linked configuration, use a regular file at the reported path. Then rerun setup. |
 | Trust configuration exceeds 16 MiB | Inspect the reported file before reducing or replacing it. |
 
@@ -207,7 +214,7 @@ JSON mode suppresses SwiftPM terminal output.
 
 | Flag | Effect |
 | --- | --- |
-| `--force` | Replace the local signing certificate even when it matches the Registry certificate. |
+| `--force` | Rewrite the Registry's signing roots even when they match. |
 | `--json` | Print setup outcomes or a structured error. |
 | `--token <TOKEN>` | Override the Registry credential for this run. |
 | `--registry <URL>` | Override the Registry base URL. |
