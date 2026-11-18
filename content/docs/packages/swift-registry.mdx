@@ -154,8 +154,10 @@ HTTPS to that Registry is then the only anchor, and loopback HTTP has none. See 
 
 LPM CLI removes the obsolete `lpmdev` scope signing override and preserves unrelated valid mappings and authentication configuration.
 
-SwiftPM uses a project's own `security` settings in `.swiftpm/configuration/registries.json` in place of your user-wide ones.
-When a project has such settings and they don't keep LPM.dev's roots, setup and [lpm install](/docs/packages/install) warn that the roots don't apply in that project.
+SwiftPM uses a project's own `security` settings in `.swiftpm/configuration/registries.json` in place of your user-wide ones, so LPM.dev's roots wouldn't apply in that project.
+Setup and [lpm install](/docs/packages/install) refuse such a project before they change anything. For an Xcode project, this includes the shared settings in `xcshareddata/swiftpm/configuration/registries.json` of the project or a workspace that contains it.
+
+An earlier LPM CLI release run on the same machine sets LPM.dev back to accepting any signer. The next setup or installation with this release restores the roots.
 
 The configuration file has a 16 MiB limit before parsing.
 An oversized file stops setup without replacement. Matching valid trust configuration avoids a rewrite.
@@ -192,7 +194,6 @@ lpm swift-registry --json
 | `signing_trust_outcome` | `configured` for a change or `already_configured` for matching configuration. |
 | `trust_anchor` | `pinned_root` for a Registry with signing roots, otherwise `https` or `insecure_http`. |
 | `signer_trust_policy` | `error` for a Registry with signing roots, otherwise `silentAllow`. |
-| `project_signing_overrides_pin` | Whether the project's own signing settings keep the Registry's signing roots from applying to it. |
 
 Failed setup returns `success: false` with `error` and `error_code`.
 JSON mode suppresses SwiftPM terminal output.
@@ -205,7 +206,8 @@ JSON mode suppresses SwiftPM terminal output.
 | `skipped_no_credential` or protected requests return `401` | Sign in, then rerun setup to update SwiftPM authentication. |
 | SwiftPM login fails | Replace an expired explicit token, or renew the stored session. Then rerun setup. |
 | SwiftPM reports that an LPM.dev release's signer is not trusted | Update LPM CLI. A release signed under a newer root needs an LPM CLI release that includes it. |
-| Setup warns that the project's signing settings keep the roots from applying | Remove the `security` section from the project's `.swiftpm/configuration/registries.json`, or restate the LPM.dev settings there. |
+| Setup or installation refuses a project that has its own signing settings | Remove the `security` section from the file the error names, moving any settings you need to your user-wide configuration. |
+| SwiftPM or Xcode can't load its trusted roots | Run `lpm swift-registry`. It leaves only LPM.dev's roots in the roots directory. |
 | Setup reports a directory or link in the roots directory | Remove it, then rerun setup. |
 | Existing configuration is malformed, unsupported, or linked | Correct the reported file or field. For a linked configuration, use a regular file at the reported path. Then rerun setup. |
 | Trust configuration exceeds 16 MiB | Inspect the reported file before reducing or replacing it. |
