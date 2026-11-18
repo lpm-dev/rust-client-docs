@@ -210,7 +210,7 @@ LPM.dev does not limit how often you revoke tokens in [Registry token settings](
 
 The command writes the `.npmrc` that installs read: at the workspace root, or else in the nearest directory with a `package.json`. Without a `package.json` around it, the command uses the current directory. LPM CLI prints the directory when it isn't the current one.
 
-JSON output reports the paths, where the token went (`npmrc_location`, `project` or `user`), scope, expiry, whether `.gitignore` changed (`gitignore_updated`), and `warnings`. It does not include the token.
+JSON output reports the paths, where the token went (`npmrc_location`, `project` or `user`), scope, expiry, whether `.gitignore` changed (`gitignore_updated`), and `warnings`. `gitignore_path` is `null` when the token went to npm's user configuration. The output does not include the token.
 
 ```bash
 lpm setup local --json
@@ -224,20 +224,24 @@ A project can commit an `.npmrc` that routes `@lpm.dev` and holds no token:
 @lpm.dev:registry=https://lpm.dev/api/registry/
 ```
 
-`lpm setup local` and `lpm setup ci npmrc` leave a tracked `.npmrc` as it is. They write their generated block, with the token, to npm's user configuration: the file that `NPM_CONFIG_USERCONFIG` names, or else `~/.npmrc`. npm, pnpm, and Yarn 1 read that file, and the project `.npmrc` still routes the scope. Bun reads `~/.npmrc` and ignores `NPM_CONFIG_USERCONFIG`.
+`lpm setup local` and `lpm setup ci npmrc` leave a tracked `.npmrc` as it is. They write their generated block, with the token, to npm's user configuration: the file that `NPM_CONFIG_USERCONFIG` names, or else `~/.npmrc`. The other lines of that file stay. npm, pnpm, and Yarn 1 read the file, and the project `.npmrc` still routes the scope. Bun reads only `~/.npmrc`, so when `NPM_CONFIG_USERCONFIG` names another file, Bun doesn't get the token, and the command says so.
 
-The user configuration holds one generated block. A run in another project replaces it and retires the token it held.
+The token in npm's user configuration serves every project on the machine. The file holds one generated block. A later `lpm setup local` run, from any project, replaces the block and retires the setup token it held. `lpm setup ci npmrc` also retires an `lpm setup local` token it finds there. The command names a token it creates there `npmrc-user-config-<day>`.
 
-If the tracked `.npmrc` doesn't route `@lpm.dev`, the command still works on this machine, because the generated block routes the scope too. It prints the line to add to the tracked file, so other machines route `@lpm.dev` packages as well.
+The command prints a line to add to the tracked `.npmrc` when that file doesn't route `@lpm.dev`, so that other machines route the scope too. It asks for the trailing slash when the tracked URL lacks one, because the project line takes precedence and Bun needs the slash.
+
+In CI, the token stays in npm's user configuration after the job. On a runner that other jobs share, remove the generated block when the job ends, or point `NPM_CONFIG_USERCONFIG` at a file in the job's temporary directory.
 
 Setup stops before token changes when:
 
-- The tracked `.npmrc` sets a credential for the registry, such as `//lpm.dev/api/registry/:_authToken=${LPM_TOKEN}`. npm, Yarn 1, and Bun use a project setting before a user setting, so they would never send the new token. Remove the line, and revoke its token if it held one.
+- The tracked `.npmrc` sets `_authToken`, `_auth`, `_password`, `username`, or `tokenHelper` for the registry, such as `//lpm.dev/api/registry/:_authToken=${LPM_TOKEN}`. npm, Yarn 1, and Bun use a project setting before a user setting, so they would never send the new token. Remove the setting, and revoke its secret if it held one. Other settings for the registry, such as `always-auth`, don't stop setup.
 - The tracked `.npmrc` routes `@lpm.dev` to another registry. Run the command with that registry's `--registry`, or change the line.
-- npm's user configuration is the tracked `.npmrc` itself.
-- A Git repository tracks npm's user configuration, as a dotfiles repository can. LPM CLI does not write a token into a tracked file.
+- npm's user configuration already sets one of those credentials for the registry, or routes `@lpm.dev` elsewhere, outside the generated block. The block would override that setting in every project. Remove the setting first.
+- npm's user configuration holds a generated block for another registry. Run the command with that registry's `--registry`, or remove the block.
+- npm's user configuration is the tracked `.npmrc` itself, a symbolic link, or a file in a directory that doesn't exist, or no home directory can be found.
+- A Git repository that LPM CLI can find tracks npm's user configuration. A bare dotfiles repository, such as one used through `git --git-dir=~/.dotfiles`, is invisible to LPM CLI. Keep `.npmrc` out of such a repository yourself.
 
-JSON output reports where the token went: `npmrc_location` for `lpm setup local` and `location` for `lpm setup ci npmrc`, each `project` or `user`.
+JSON output reports where the token went: `npmrc_location` for `lpm setup local` and `location` for `lpm setup ci npmrc`, each `project` or `user`. When the token went to npm's user configuration, `gitignore_path` is `null`.
 
 ## Print a GitHub Actions workflow
 
