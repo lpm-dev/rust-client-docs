@@ -222,6 +222,14 @@ The source scan covers JavaScript and TypeScript files. It keeps these resource 
 - So is a file whose names would take more than 16 scope lookups per byte to bind and resolve, with at least 1,048,576 allowed per file, such as one that nests its references, `var` declarations or labelled jumps thousands of scopes or labels deep. Real code takes fewer than 2 per byte.
 - The data-flow checks behind findings such as credential exfiltration get one step per byte of a file, and at least 65,536. A file that needs more keeps the findings already made and counts as unsupported syntax. Real code needs fewer than 100.
 
+A package that the install left out has no source to scan, and it doesn't make the audit incomplete:
+
+- In an LPM CLI project, that is a package `lpm install` skips on this platform: an optional package whose `os`, `cpu`, or `libc` excludes it, or one reachable only through such a package. A package left out by `--omit` or by an `engines` mismatch still counts as missing.
+- With `package-lock.json`, it is an optional or dev package missing from the path the lockfile records for it, when `node_modules/.package-lock.json`, npm's record of what it installed (npm 7 or later), leaves it out.
+- pnpm, Yarn, and Bun lockfiles don't record where each package is installed, so a missing package there is still a coverage gap.
+
+The audit still checks these packages against OSV, and the summary line counts them as `not installed`. A file where the package's directory should be is still a coverage gap.
+
 If sources are missing, install the dependencies with the project's package manager, then rerun `lpm audit`.
 For Yarn PnP, provide a `node_modules` installation to enable local source analysis.
 If a file exceeds a limit or uses unsupported syntax, review that file separately. Increasing `--level` does not complete the scan.
@@ -234,6 +242,7 @@ With `--json`, incomplete source coverage sets `success: false`. The `behavioral
 | `scanned_packages` | Packages with a local analysis, including partial analyses. |
 | `partial_packages` | Packages with analysis limits, input failures, or unsupported source syntax. |
 | `unavailable_packages` | Packages without accessible source files. |
+| `not_installed_packages` | Packages the install left out, which have no source to scan. |
 | `packages` | Coverage gaps with package identity, path, reason, file count, and byte count. |
 
 Gap reasons are `source_unavailable`, `source_missing_or_unreadable`, `scan_limit_reached`, `source_read_failed`, or `unsupported_source_syntax`.
