@@ -13,11 +13,11 @@ Analytics URLs exclude credentials, fragments, and query parameters other than a
 
 ## Events
 
-| Event | Meaning |
-| --- | --- |
-| `cli_install_command_copied` | The clipboard accepts the homepage install command. |
-| `cli_install_guide_clicked` | A visitor opens the installation guide through a link. |
-| `cli_registry_clicked` | A visitor opens LPM.dev Registry through a link. |
+| Event                        | Meaning                                                |
+| ---------------------------- | ------------------------------------------------------ |
+| `cli_install_command_copied` | The clipboard accepts the homepage install command.    |
+| `cli_install_guide_clicked`  | A visitor opens the installation guide through a link. |
+| `cli_registry_clicked`       | A visitor opens LPM.dev Registry through a link.       |
 
 These events measure intent. They do not prove that the CLI installed or that a visitor activated it.
 The registry separately records authenticated package downloads and publications.

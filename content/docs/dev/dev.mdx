@@ -214,8 +214,8 @@ On first use, LPM CLI asks before it installs the local CA into the system trust
 Use `--yes` to approve this step without a prompt.
 `--allow-ca-bootstrap` serves the root certificate over plain HTTP on an assigned LAN port for mobile trust setup.
 
-`--network` shows LAN URLs and a QR code. The application must accept connections through the relevant network interface.
-`--host` sets the HTTPS hostname. It does not create public DNS records.
+`--network` shows LAN URLs and a QR code. The application must accept connections through the relevant network interface. With HTTPS, the certificate names your private and VPN addresses; an address the local CA can't sign, such as a public one, is left out with a warning.
+`--host` sets the HTTPS hostname. It does not create public DNS records. The local CA signs only [local names](/docs/infra/local-https#root-restrictions) unless it was made unrestricted.
 See [local HTTPS](/docs/infra/local-https) for certificate and mobile setup.
 
 Without HTTPS, `--port` selects the application port.
@@ -276,7 +276,11 @@ The flag does not sign in to LPM.dev Registry or select a tunnel plan.
 When `CI`, `CONTINUOUS_INTEGRATION`, or `GITHUB_ACTIONS` is present, the browser also stays closed.
 If the `BROWSER` environment variable is set, LPM CLI opens the URL with the command that it names. For example, `BROWSER=false` keeps the browser closed. [Login](/docs/infra/login) gives the full `BROWSER` format.
 
-Stop the session with Ctrl+C. LPM CLI stops the tracked child processes and removes session routes and hosts-file entries.
+Stop the session with Ctrl+C. LPM CLI gives the services up to two seconds in all to stop themselves, ends what still runs, dependents first, and removes session routes and hosts-file entries. A second Ctrl+C stops the services at once. Closing the terminal window stops the session too. On Windows, LPM CLI then ends the services without waiting, since Windows allows it only a few seconds.
+
+A service can handle the stop itself. On macOS and Linux, LPM CLI sends each service SIGTERM, dependents first. On Windows, services share the console, so the Ctrl+C itself reaches every service at the same time, which Node.js reports as SIGINT.
+
+Stopping a service also ends the processes it started, such as a daemon or a browser window it opened. On macOS and Linux, a process that starts a session of its own escapes this. On Windows, each service runs in a job object that none of its processes can leave.
 
 ## Troubleshooting
 

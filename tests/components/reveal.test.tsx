@@ -59,7 +59,7 @@ describe("Reveal", () => {
     const observe = vi.fn();
     Object.defineProperty(globalThis, "IntersectionObserver", {
       configurable: true,
-      value: vi.fn(function MockObserver() {
+      value: vi.fn(function mockObserver() {
         return { observe, disconnect: vi.fn() };
       }),
     });
@@ -77,7 +77,7 @@ describe("Reveal", () => {
     const disconnect = vi.fn();
     Object.defineProperty(globalThis, "IntersectionObserver", {
       configurable: true,
-      value: vi.fn(function MockObserver(
+      value: vi.fn(function mockObserver(
         observerCallback: IntersectionObserverCallback,
       ) {
         callback = observerCallback;

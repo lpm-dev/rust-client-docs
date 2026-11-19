@@ -6,7 +6,7 @@ description: "Create, inspect, and rotate certificates for trusted local HTTPS."
 `lpm cert` manages the local certificate authority (CA) and project certificates for local HTTPS.
 
 ```bash
-lpm cert <ACTION> [--host <HOST>] [--project <PROJECT>] [--keep-old-trusted <DAYS>] [--fail-on-missing] [--dry-run] [--json]
+lpm cert <ACTION> [--host <HOST>] [--project <PROJECT>] [--keep-old-trusted <DAYS>] [--fail-on-missing] [--name-constraints | --no-name-constraints] [--dry-run] [--json]
 ```
 
 Use this command for machine setup, certificate files for another tool, or certificate recovery. For daily development, use [`lpm dev`](/docs/dev/dev).
@@ -41,6 +41,7 @@ lpm cert generate --host app.localhost --host api.app.localhost
 lpm cert status --json
 lpm cert rotate --project ../web --project ../api --fail-on-missing
 lpm cert rotate --keep-old-trusted 14
+lpm cert rotate --no-name-constraints
 lpm cert reconcile --dry-run --json
 lpm cert reconcile
 lpm cert uninstall
@@ -160,7 +161,9 @@ lpm cert status --json
 
 The output includes root trust, expiry, SANs, renewal status, and permission problems. It checks that the project key matches its certificate and that the certificate chains to the active root.
 
-JSON includes `project.valid` and `project.error`. An absent project certificate has `valid: false` and `error: null`. An unusable certificate has a reason in `error`.
+The output also says whether the root signs local names only or any name. JSON lists the root's permitted names in `ca.name_constraints`, and gives `null` for a root that may sign any name or when no root exists.
+
+JSON lists the names the project certificate covers in `project.hostnames`, each a DNS name or an IP address, such as `localhost`, `127.0.0.1` and `::1`. It also includes `project.valid` and `project.error`. An absent project certificate has `valid: false` and `error: null`. An unusable certificate has a reason in `error`.
 
 `success: true` means the inspection completed. It does not mean HTTPS is ready.
 
@@ -188,6 +191,10 @@ Run the printed command, then retry the failed operation.
 
 The root CA files default to `~/.lpm/certs/`. `LPM_HOME` changes the LPM CLI state directory. Project certificates remain under `<project>/.lpm/certs/`.
 
+On Windows, some drives keep no file permissions: exFAT and FAT drives, and some network folders, such as Parallels shared folders. Anyone using the computer can read every file there.
+- If `LPM_HOME` is on such a drive, LPM CLI refuses to create or use the root CA's private key there. Point `LPM_HOME` at a folder on an NTFS drive. If a root CA is already there, its key may have been read: run `lpm cert uninstall` first, which still works there, to remove its trust.
+- If a project is on such a drive, LPM CLI writes the project's key with a warning, since that key only serves the project's local names.
+
 | Platform | Trust behavior |
 | --- | --- |
 | macOS | Uses the user login Keychain without `sudo`. The root counts as trusted only when macOS trusts it, not when it is merely in the Keychain, as after a cancelled authorization prompt or a "Never Trust" setting. |
@@ -203,7 +210,7 @@ Trust checks and removal identify the certificate by fingerprint, not only its n
 lpm cert uninstall
 ```
 
-The command keeps the root CA files. LPM CLI identifies the trust entry to remove from the on-disk certificate, so it must exist, unless a pending write described next holds the authority. Where Git could commit the [LPM home](/docs/project-files#the-lpm-home), a certificate write that stopped part way isn't completed, as completing it would write the CA's private key into a file Git could commit; `lpm cert uninstall` then also removes the pending CA's trust entry and deletes the pending write, which holds that CA's private key. If the write had already put its certificate in place, that `rootCA.pem` is left without its own key, which went with the pending write: delete `rootCA.pem` and `rootCA-key.pem` from the LPM home's `certs/`, and `lpm cert trust` creates and trusts a new CA.
+The command keeps the root CA files, and says when the trust store held nothing of the CA to remove. LPM CLI identifies the trust entry to remove from the on-disk certificate, so it must exist, unless a pending write described next holds the authority. Where Git could commit the [LPM home](/docs/project-files#the-lpm-home), a certificate write that stopped part way isn't completed, as completing it would write the CA's private key into a file Git could commit; `lpm cert uninstall` then also removes the pending CA's trust entry and deletes the pending write, which holds that CA's private key. If the write had already put its certificate in place, that `rootCA.pem` is left without its own key, which went with the pending write: delete `rootCA.pem` and `rootCA-key.pem` from the LPM home's `certs/`, and `lpm cert trust` creates and trusts a new CA.
 
 To trust the same CA again:
 
@@ -213,11 +220,21 @@ lpm cert trust
 
 ### Root name restrictions
 
-A root created with `LPM_CERT_NAME_CONSTRAINTS=1` limits the names that project certificates can use. Project `cert` configuration cannot expand that root policy.
+A root CA that LPM CLI creates permits only local names, so a stolen root key can sign certificates only for those. Project `cert` configuration cannot expand that root policy. See [local HTTPS root restrictions](/docs/infra/local-https#root-restrictions) for the names it permits.
 
-LPM CLI rejects names outside the root restrictions before issuance or TLS publication. Use a permitted local hostname or explicitly rotate the root with the intended policy.
+LPM CLI refuses a project that asks for a name outside the root restrictions before it issues or installs anything, and names the names. To serve a public hostname, replace the root with one that may sign any name:
 
-See [local HTTPS root restrictions](/docs/infra/local-https#existing-root-restrictions) for the supported name ranges.
+```bash
+lpm cert rotate --no-name-constraints
+```
+
+> CAUTION: The key of an unrestricted root could sign a trusted certificate for any site. Use it only for a project that serves a public hostname you control.
+
+Later rotations keep an unrestricted root unrestricted. `lpm cert rotate --name-constraints` restricts it again. `LPM_CERT_NAME_CONSTRAINTS=0` also creates unrestricted roots, and decides over a root's recorded choice when you rotate without either flag.
+
+Before a rotation writes or trusts anything, it checks every recorded project's certificate names against the new root. It names the first project it couldn't reissue, so you can rotate with `--no-name-constraints` or remove that project's `.lpm/certs` for `lpm dev` to issue it again.
+
+A root that an earlier release created without restrictions keeps working. LPM CLI warns about it during HTTPS setup; `lpm cert rotate` replaces it with a restricted root.
 
 ## Rotate the root CA
 
@@ -235,6 +252,8 @@ lpm cert rotate --project ../web --project ../api --fail-on-missing
 
 By default, rotation skips directories that no longer exist. `--fail-on-missing` makes a missing directory an error.
 
+Rotation keeps the trust the old root had. A trusted root's replacement goes into the system trust store in its place. A root that was never trusted, such as one `lpm cert generate` created with trust declined, gets a replacement that stays out of the trust store; run `lpm cert trust` to trust it. The output and the JSON field `new_ca_trusted` say which happened.
+
 Hard rotation refuses to proceed while known local TLS consumers remain active. Stop those development or proxy sessions before rotation.
 
 ### Keep old trust during a transition
@@ -243,7 +262,7 @@ Hard rotation refuses to proceed while known local TLS consumers remain active. 
 lpm cert rotate --keep-old-trusted 14
 ```
 
-The accepted range is 0–90 days. A positive grace period keeps the old root trusted and permits active TLS consumers during rotation.
+The accepted range is 0–90 days. A positive grace period keeps the old root trusted and permits active TLS consumers during rotation. Rotation refuses `--keep-old-trusted` for a root the trust store doesn't hold.
 
 Restart those consumers so they load the new certificate chain. After the grace period expires, run `lpm cert reconcile` to remove old trust.
 
@@ -277,6 +296,8 @@ Repeat the preview after recovery to inspect the remaining work. Reconciliation 
 | `--project <PROJECT>` | `rotate` | Include another project directory. Repeat for more projects. |
 | `--keep-old-trusted <DAYS>` | `rotate` | Defer old-root removal for 0–90 days. |
 | `--fail-on-missing` | `rotate` | Fail if a recorded or explicit project directory is missing. |
+| `--no-name-constraints` | `rotate` | Create a root that may sign any name. Later rotations keep it unrestricted. |
+| `--name-constraints` | `rotate` | Restrict the new root to local names again. |
 | `--dry-run` | `reconcile` | Preview without certificate or trust mutations. |
 | `--json` | All actions | Print machine-readable output. |
 

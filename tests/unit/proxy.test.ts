@@ -10,26 +10,26 @@ function varyTokens(response: Response): string[] {
 }
 
 describe("content negotiation proxy", () => {
-  it.each([
-    "POST",
-    "OPTIONS",
-  ])("returns a controlled 405 for schema %s requests", async (method) => {
-    const response = proxy(
-      new NextRequest("https://cli.lpm.dev/schemas/lpm.json", { method }),
-    );
+  it.each(["POST", "OPTIONS"])(
+    "returns a controlled 405 for schema %s requests",
+    async (method) => {
+      const response = proxy(
+        new NextRequest("https://cli.lpm.dev/schemas/lpm.json", { method }),
+      );
 
-    expect(response.status).toBe(405);
-    expect(response.headers.get("Allow")).toBe("GET, HEAD");
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(response.headers.get("Content-Type")).toContain(
-      "application/problem+json",
-    );
-    expect(response.headers.get("X-Robots-Tag")).toBe("noindex");
-    await expect(response.json()).resolves.toMatchObject({
-      code: "METHOD_NOT_ALLOWED",
-      status: 405,
-    });
-  });
+      expect(response.status).toBe(405);
+      expect(response.headers.get("Allow")).toBe("GET, HEAD");
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Content-Type")).toContain(
+        "application/problem+json",
+      );
+      expect(response.headers.get("X-Robots-Tag")).toBe("noindex");
+      await expect(response.json()).resolves.toMatchObject({
+        code: "METHOD_NOT_ALLOWED",
+        status: 405,
+      });
+    },
+  );
 
   it("varies extensionless HTML docs on Accept", () => {
     const response = proxy(

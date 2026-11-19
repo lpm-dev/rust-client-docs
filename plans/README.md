@@ -2,19 +2,19 @@
 
 All plans were written against commit `bfed31a`. Execute them in numeric order unless a plan says otherwise. The first plan establishes the browser-like test harness used by the interaction fixes that follow.
 
-| Plan | Status | Severity | Work | Depends on |
-| --- | --- | --- | --- | --- |
-| [001](001-add-client-interaction-tests.md) | DONE | MEDIUM | Add client-component interaction test coverage | — |
-| [002](002-report-clipboard-results-honestly.md) | DONE | MEDIUM | Report clipboard success and failure honestly | 001 |
-| [003](003-announce-copy-status.md) | DONE | MEDIUM | Give the copy control a stable name and live status | 001, 002 |
-| [004](004-fix-mobile-menu-focus.md) | DONE | MEDIUM | Fix mobile navigation disclosure semantics and Escape focus | 001 |
-| [005](005-harden-posthog-pageviews.md) | DONE | MEDIUM | Cancel stale pageviews and recover from PostHog load failures | 001 |
-| [006](006-make-reveals-progressive.md) | DONE | LOW | Keep reveal content visible without working client JavaScript | 001 |
-| [007](007-add-browser-security-headers.md) | DONE | MEDIUM | Add report-only CSP and baseline browser hardening headers | — |
-| [008](008-self-host-og-fonts.md) | DONE | MEDIUM | Remove runtime Google Fonts fetches from OG generation | — |
-| [009](009-remove-unused-mdx-export.md) | DONE | LOW | Remove the unused MDX alias export | — |
-| [010](010-remove-dead-server-posthog.md) | DONE | LOW | Remove unreachable server PostHog code and dependency | — |
-| [011](011-reduce-logo-svg-precision.md) | DONE | LOW | Round duplicated logo SVG path precision | — |
+| Plan                                            | Status | Severity | Work                                                          | Depends on |
+| ----------------------------------------------- | ------ | -------- | ------------------------------------------------------------- | ---------- |
+| [001](001-add-client-interaction-tests.md)      | DONE   | MEDIUM   | Add client-component interaction test coverage                | —          |
+| [002](002-report-clipboard-results-honestly.md) | DONE   | MEDIUM   | Report clipboard success and failure honestly                 | 001        |
+| [003](003-announce-copy-status.md)              | DONE   | MEDIUM   | Give the copy control a stable name and live status           | 001, 002   |
+| [004](004-fix-mobile-menu-focus.md)             | DONE   | MEDIUM   | Fix mobile navigation disclosure semantics and Escape focus   | 001        |
+| [005](005-harden-posthog-pageviews.md)          | DONE   | MEDIUM   | Cancel stale pageviews and recover from PostHog load failures | 001        |
+| [006](006-make-reveals-progressive.md)          | DONE   | LOW      | Keep reveal content visible without working client JavaScript | 001        |
+| [007](007-add-browser-security-headers.md)      | DONE   | MEDIUM   | Add report-only CSP and baseline browser hardening headers    | —          |
+| [008](008-self-host-og-fonts.md)                | DONE   | MEDIUM   | Remove runtime Google Fonts fetches from OG generation        | —          |
+| [009](009-remove-unused-mdx-export.md)          | DONE   | LOW      | Remove the unused MDX alias export                            | —          |
+| [010](010-remove-dead-server-posthog.md)        | DONE   | LOW      | Remove unreachable server PostHog code and dependency         | —          |
+| [011](011-reduce-logo-svg-precision.md)         | DONE   | LOW      | Round duplicated logo SVG path precision                      | —          |
 
 ## Coverage map
 
