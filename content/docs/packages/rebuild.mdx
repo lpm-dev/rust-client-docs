@@ -155,6 +155,8 @@ Project capability changes require their own authorization. A script-policy gran
 
 Dry runs retain policy and authorization checks. They skip execution, engine enforcement, and sandbox or native-cache preparation.
 
+A dry run does not ask for the approval that `--no-sandbox` or a weaker sandbox mode needs, because it starts no script. It names that approval and the command that grants it, so the run itself does not stop at a prompt you did not expect.
+
 ## Dependency tools and script context
 
 With the default store, each dependency script first finds executables from its own dependencies and peers. Project executables and the inherited `PATH` follow.
@@ -176,6 +178,8 @@ A package that runs on its green label alone, without an approval, gets a narrow
 LPM CLI takes the package from the script package's own dependencies, or else from the project's. A package installed from a tarball URL, a git repository, or a directory doesn't count, whatever its name. A tool's name comes only from its own package. That package's other executables are there too, such as `node-gyp-build-test`.
 
 No other package's executable is on that `PATH`, and neither is the project's `node_modules/.bin`. From the inherited `PATH`, LPM CLI keeps the absolute directories that are not under a `node_modules` directory or the project's `.lpm/` directory. The project's own directories stay, such as a Python environment kept in the project. On Windows, the script's shell does not look for a command in the package's own directory. If a script fails there because it needs another dependency's tool, approve the package with [lpm approve-scripts](/docs/packages/approve-scripts). An approved package runs with the full `PATH` described above.
+
+If no package supplies `node-gyp` and npm is installed beside `node`, an approved script finds npm's `node-gyp` after every package's executables and before the inherited `PATH`. The script also gets `npm_config_node_gyp`, which build tools such as node-pre-gyp read. A script that runs on its green label gets both only when its command leads to `node-gyp`. A `node` inside a package does not count: LPM CLI looks beside the first `node` on the inherited `PATH` entries that are outside every `node_modules` directory.
 
 The sandbox permits reads from those installed dependencies. These read grants do not permit writes to dependency tools or their helper packages.
 
@@ -285,7 +289,7 @@ Builds also retain access to their package files and permitted toolchain, cache,
 
 On Windows, scripts can read the directories on `PATH`, each with everything below it. An entry that isn't an absolute path, that holds the project, your home directory, or the LPM home, or that is in the project's `.lpm/` directory, gets no access, so keep tools that scripts run in a directory of their own.
 
-On Windows, a package's scripts run in one AppContainer per project. Each run grants it the access the run needs and takes back what an earlier run had and this one doesn't, so its access doesn't build up. When a package leaves the project, `lpm uninstall` takes its access back and removes its AppContainer; `lpm cache clean` does the same for projects that no longer exist. Earlier versions created an AppContainer for every run and left its access entries behind; the first run in this version removes those from the directories it grants, once.
+On Windows, a package's scripts run in one AppContainer per project. Each run grants it the access the run needs and takes back what an earlier run had and this one doesn't, so its access doesn't build up. When a package leaves the project, `lpm uninstall` takes its access back and removes its AppContainer; `lpm cache clean` does the same for projects that no longer exist, and for a package whose access `lpm uninstall` couldn't remove. Earlier versions created an AppContainer for every run and left its access entries behind; the first run in this version removes those from the directories it grants, once.
 
 Approved `readProject: "full"` permits the entire project tree, including project secrets and the project's `.lpm/` directory, which holds local certificates and tunnel captures. It does not grant access to credentials outside the project.
 
@@ -349,11 +353,25 @@ lpm rebuild --dry-run --json
 lpm rebuild --json > rebuild.json
 ```
 
-Dry-run reports contain `success`, `dry_run`, `count`, and `packages`. Each package includes its name, version, scripts, and trust status.
+Dry-run reports contain `success`, `dry_run`, `count`, `packages`, and `approvals_required`. Each package includes its name, version, scripts, and trust status. `approvals_required` lists each approval the run itself needs and the dry run did not ask for, with `message`, `requested_scopes`, `project_root`, and `suggested_command`. It is empty when the run needs none.
 
-Live reports contain `success`, `built`, `failed`, and `build_cache` metrics. Security posture fields appear when a security floor or suppression needs reporting.
+Live reports contain `success`, `built`, `failed`, `failures`, and `build_cache` metrics. Security posture fields appear when a security floor or suppression needs reporting.
 
 `built` counts packages whose scripts completed successfully in this invocation. Cache reuse has separate metrics.
+
+`failures` has one entry for each package that failed:
+
+```json
+{
+  "name": "bufferutil",
+  "version": "4.0.9",
+  "script": "install",
+  "reason": "exit code 1",
+  "hints": []
+}
+```
+
+`script` is the lifecycle script that failed. It is `null` when the build stopped outside its scripts, for example when the package directory is missing. `hints` holds the notes that the terminal output prints under a failed package. LPM CLI also writes one line for each failure to stderr.
 
 Script output goes to stderr. Stdout contains one JSON report, including when a script fails. Failed builds report `success: false` and exit `1`.
 
