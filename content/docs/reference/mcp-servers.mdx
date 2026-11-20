@@ -16,7 +16,14 @@ lpm mcp status
 
 ## Quickstart
 
-Enable MCP in your editor so its configuration file exists. Then run:
+Use the [hosted server](#connect-without-the-lpm-cli) for read-only access to the LPM.dev Registry.
+When a tool needs your account, authorize the app in your browser.
+Use the local server for the registry tools and to install, copy, or audit packages in a project.
+The local server uses your [LPM CLI login](#authentication) for account access.
+
+For Codex, follow the [local setup in Codex](#local-setup-in-codex).
+For automatic setup, enable MCP in a [supported editor](#supported-editors) so its configuration file exists.
+Then run these commands.
 
 ```bash
 lpm mcp setup
@@ -65,6 +72,7 @@ Repeated `setup` replaces the named entry. It preserves unrelated servers and ot
 | Claude Desktop | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers` |
 
 `setup` skips missing files. It does not create editor configuration files or discover other editor locations.
+For example, `setup` configures Claude Code when `~/.claude.json` exists.
 For another MCP client, add the entry from the next section through that client's configuration interface.
 
 Existing files must contain valid JSON and fit within the [16 MiB configuration limit](/docs/project-setup#local-configuration-size-limits).
@@ -92,6 +100,18 @@ When you configure another client, use the path from `lpm mcp setup --json`.
 The absolute path keeps a project executable named `lpm` from replacing the server through `PATH`.
 The server runs the same executable for the tools that change a project.
 After an installation moves or an upgrade removes that path, run `setup` again.
+
+### Local setup in Codex
+
+Add the local server with the Codex CLI.
+Replace `/absolute/path/to/lpm` with the `command` path from `lpm mcp setup --json`.
+
+```bash
+codex mcp add lpm-local -- /absolute/path/to/lpm mcp serve
+```
+
+Restart Codex to load the new server.
+Use [lpm login](/docs/infra/login) when a registry tool needs your account.
 
 ## Available tools
 
@@ -138,7 +158,7 @@ The server runs at most four commands at once.
 
 ## Authentication
 
-Registry tools use your login from [lpm login](/docs/infra/login) for the effective Registry URL, or `LPM_TOKEN`.
+When you run the local server, registry tools use your [lpm login](/docs/infra/login) for the Registry URL, or `LPM_TOKEN`.
 Listing the tools never uses it.
 
 Without a login, the registry tools read public packages and the documentation.
@@ -161,9 +181,43 @@ Setup does not copy your shell's token or Registry override into editor configur
 
 ## Connect without the LPM CLI
 
-An MCP client that connects to remote servers by URL can use the hosted server at `https://lpm.dev/mcp` directly.
-It has the registry tools, but not the local tools. It signs you in through LPM.dev in your browser.
-See [the LPM.dev MCP server documentation](https://lpm.dev/docs/ai/mcp).
+Connect to `https://lpm.dev/mcp` for read-only access to the LPM.dev Registry.
+You can look up public packages and documentation without signing in.
+When you authorize an app in your browser, the app can read your account details and the packages you can access.
+
+### Claude Code
+
+From your project directory, add the server.
+
+```bash
+claude mcp add --transport http lpm-hosted https://lpm.dev/mcp
+```
+
+If a tool asks for account access, run `/mcp` in Claude Code.
+Select `lpm-hosted` to sign in.
+Approve the connection on LPM.dev in your browser.
+
+### Codex
+
+Add the server and start browser sign-in with the Codex CLI.
+
+```bash
+codex mcp add lpm-hosted --url https://lpm.dev/mcp --oauth-client-registration cimd
+```
+
+Approve the connection on LPM.dev in your browser.
+Restart Codex to load the new server.
+
+### Test the connection
+
+Ask the agent this question.
+
+> Use `lpm-hosted` to explain the difference between `lpm install` and `lpm add`. Link to the documentation.
+
+Open the tool call in the reply and make sure that it used `lpm_docs` from `lpm-hosted`.
+After browser sign-in, look for the app under **Connected apps** in [Dashboard Settings > Security](https://lpm.dev/dashboard/settings/security#connected-apps).
+CLI logins appear under **Active sessions** on the same page.
+See [the LPM.dev MCP server documentation](https://lpm.dev/docs/ai/mcp) for hosted tools and access limits.
 
 ## Troubleshooting
 
@@ -173,7 +227,8 @@ See [the LPM.dev MCP server documentation](https://lpm.dev/docs/ai/mcp).
 | Setup rejects a configuration file | Correct invalid JSON or excessive size. For a linked file, manage its server entry through the editor or its configuration owner. |
 | The editor cannot start the executable | Run setup with the current LPM CLI installation, then restart the editor. |
 | Only `lpm_install`, `lpm_add`, and `lpm_audit` are listed | The registry didn't answer when the editor listed tools. Check the network and the Registry URL. The registry tools appear when the registry answers; if your editor doesn't pick them up, restart the server from the editor. |
-| A registry tool asks you to sign in | Run `lpm login` for the effective Registry URL, then ask the agent to call the tool again. |
+| A registry tool asks you to sign in through the local server | Run `lpm login` for the Registry URL. Then ask the agent to call the tool again. |
+| The hosted server asks you to sign in | Follow the [browser sign-in steps](#connect-without-the-lpm-cli) for your client. If Codex needs to sign in again, run `codex mcp login lpm-hosted --oauth-client-registration cimd`. |
 | A registry tool says the `--token` was rejected | Replace the token in the server entry's `args`, or remove `--token` to use the login from `lpm login`. |
 | A local tool rejects `projectPath` | Give the agent the absolute path of the project's directory. |
 
