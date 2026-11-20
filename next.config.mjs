@@ -70,6 +70,15 @@ const NON_INDEXABLE_API_PATHS = [
   "/api/search",
   "/openapi.json",
 ];
+// Next's own trailing-slash redirect, minus the PostHog proxy at /a. PostHog
+// sends events and flag requests to slash-terminated paths such as
+// /a/i/v0/e/, and a redirect there doubles each request and leaves the
+// event to depend on the browser resending its body.
+const TRAILING_SLASH_REDIRECT = {
+  source: "/:path((?!a(?:/|$)).+)/",
+  destination: "/:path",
+  permanent: true,
+};
 const INSTALLER_URL =
   "https://raw.githubusercontent.com/lpm-dev/rust-client/main/install.sh";
 const INSTALLER_REDIRECTS = ["/install", "/install.sh"].map((source) => ({
@@ -97,10 +106,12 @@ const config = {
   compress: false,
   poweredByHeader: false,
   reactStrictMode: true,
+  skipTrailingSlashRedirect: true,
   // The extensions Fumadocs sets, so the server phase, which skips it, agrees.
   pageExtensions: ["mdx", "md", "jsx", "js", "tsx", "ts"],
   async redirects() {
     return [
+      TRAILING_SLASH_REDIRECT,
       ...INSTALLER_REDIRECTS,
       ...LEGACY_DOCS_REDIRECTS.flatMap(([source, destination]) => [
         { source, destination, permanent: true },
