@@ -105,7 +105,7 @@ The machine's authorized security policy can reject weaker requests.
 | `triage` | Trusted packages plus green scripts eligible for automatic execution |
 | `allow` | All packages with executable install scripts |
 
-Local JavaScript delegates still require approval, even when their static classification is green. So do green packages whose install code [reaches beyond the package](/docs/packages/approve-scripts#what-a-package-reaches), such as a `node-gyp rebuild` whose `binding.gyp` runs `bun install`.
+Local JavaScript delegates still require approval, even when their static classification is green. So do green packages whose install code [reaches beyond the package](/docs/packages/approve-scripts#what-a-package-reaches), such as a `node-gyp rebuild` whose `binding.gyp` runs `bun install`, or a `tsc` that a dependency other than `typescript` would supply.
 
 Manage individual approvals with [lpm approve-scripts](/docs/packages/approve-scripts). Manage scopes with [lpm trust lifecycle-scope](/docs/packages/trust#lpm-trust-lifecycle-scope).
 
@@ -160,6 +160,22 @@ Dry runs retain policy and authorization checks. They skip execution, engine enf
 With the default store, each dependency script first finds executables from its own dependencies and peers. Project executables and the inherited `PATH` follow.
 
 If a project tool has the same executable name, this selection preserves the dependency's tool version.
+
+A package that runs on its green label alone, without an approval, gets a narrower `PATH`. The label says what the command's text is, not which package answers to its name. The script finds only the executables of the registry packages that publish these tools, and then the inherited `PATH`:
+
+| Command | Package |
+| --- | --- |
+| `node-gyp` | `node-gyp` |
+| `node-gyp-build` | `node-gyp-build` |
+| `node-gyp-build-optional-packages` | `node-gyp-build-optional-packages` |
+| `electron-rebuild` | `@electron/rebuild` or `electron-rebuild` |
+| `tsc` | `typescript` |
+| `prisma` | `prisma` |
+| `husky` | `husky` |
+
+LPM CLI takes the package from the script package's own dependencies, or else from the project's. A package installed from a tarball URL, a git repository, or a directory doesn't count, whatever its name. A tool's name comes only from its own package. That package's other executables are there too, such as `node-gyp-build-test`.
+
+No other package's executable is on that `PATH`, and neither is the project's `node_modules/.bin`. From the inherited `PATH`, LPM CLI keeps the absolute directories that are not under a `node_modules` directory or the project's `.lpm/` directory. The project's own directories stay, such as a Python environment kept in the project. On Windows, the script's shell does not look for a command in the package's own directory. If a script fails there because it needs another dependency's tool, approve the package with [lpm approve-scripts](/docs/packages/approve-scripts). An approved package runs with the full `PATH` described above.
 
 The sandbox permits reads from those installed dependencies. These read grants do not permit writes to dependency tools or their helper packages.
 
