@@ -207,7 +207,7 @@ LPM_NO_UPDATE_CHECK=1 lpm install
 For a standalone installation, LPM CLI downloads the release files and completes these steps before it replaces the binary:
 
 1. It verifies that the signed manifest comes from the expected LPM CLI release workflow.
-2. It verifies that the release workflow ran from an accepted Git reference.
+2. It verifies that the release workflow ran from an accepted Git reference, and that the signing certificate was issued to that run.
 3. It verifies that the signed source commit matches the requested version.
 4. It verifies that the signature time matches the GitHub release time.
 5. It verifies the checksum of the manifest.
@@ -218,15 +218,17 @@ If any verification step fails, LPM CLI refuses the update and retains the curre
 
 ### Release signing identity
 
-The release workflow runs only from the `main` branch, so stable and nightly releases are signed from `refs/heads/main`. Stable releases 0.75.0 through 0.76.x were signed from their version tag, such as `refs/tags/v0.76.5`. LPM CLI accepts that tag for that version only. It refuses a signature from any other branch or tag.
+The release workflow runs only from the `main` branch, so stable and nightly releases are signed from `refs/heads/main`. Stable releases 0.75.0 through 0.76.5 were signed from their version tag, such as `refs/tags/v0.76.5`. LPM CLI accepts a tag signature for that version only, and only up to 0.76.5. It refuses a signature from any other branch or tag.
+
+Sigstore issues the signing certificate for one GitHub Actions run, and records that run's repository, Git reference, commit, and starting event in it. LPM CLI requires a GitHub-hosted run of `lpm-dev/rust-client`, at the signed reference and the signed source commit.
 
 A `main` signature does not name a version, so LPM CLI binds the signed source commit to the requested version:
 
 | Release | Binding |
 | --- | --- |
-| Nightly | The version ends with the first seven characters of the signed commit. |
-| Stable, signed from `main` | The GitHub release points at the signed commit, and a manual release run produced the signature. |
-| Stable, signed from its tag | The signed tag names the version. |
+| Nightly | The version ends with the first seven characters of the signed commit. The run was scheduled or started by hand. |
+| Stable, signed from `main` | The GitHub release points at the signed commit, and the run was started by hand. |
+| Stable, signed from its tag | The signed tag names the version, and a push of that tag started the run. |
 
 On Linux and Windows, the updater attempts to copy the current binary to `<binary>.previous`. This backup is best-effort and can be absent.
 On Windows, a running binary can't be deleted, so the updater moves it aside as `<binary>.old.<pid>`. The next update removes those copies once nothing runs them.

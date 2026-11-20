@@ -58,7 +58,13 @@ Downloads the latest binary into `~/.lpm/bin` and adds it to your `PATH` (`.zshr
 
 The installer creates a missing Fish configuration directory and quotes the installation path. Repeated runs do not append duplicate PATH entries. Open a new terminal to use the command.
 
-The installer always verifies the downloaded binary's SHA-256 digest against the release manifest. When `cosign` is available, it also authenticates that manifest against the release workflow's Sigstore identity; without `cosign`, the check proves consistency with the downloaded manifest but does not authenticate who produced it. The installer also refuses releases below its minimum security floor. Two recovery overrides exist for release incidents and broken bootstrap environments: `LPM_INSTALL_INSECURE=1` skips all integrity checks, while `LPM_INSTALL_MIN_VERSION_OVERRIDE=1` permits an older release but keeps the normal verification behavior.
+The installer always verifies the downloaded binary's SHA-256 digest against the release manifest. Before the new binary replaces an installed one, the installer runs it and checks that it reports the release's version.
+
+When `cosign` is available, the installer also verifies who signed the manifest, and refuses a release without a Sigstore bundle. A stable release must come from `release.yml` in `lpm-dev/rust-client`, run by hand on `main`. When the installer looks up the latest release itself, the signature must also be for that release's commit. A nightly must come from the same workflow on `main`, scheduled or started by hand. Most stable releases up to 0.76.5 were signed from their own tag instead.
+
+Without `cosign`, the check proves that the binary matches the downloaded manifest, but not who published it. On Linux, the installer says so. Set `LPM_INSTALL_REQUIRE_SIGSTORE=1` to refuse to install without that check. On macOS, the code signature and notarization checks below verify the publisher.
+
+The installer refuses releases older than its security floor, the latest release with security fixes. A nightly of the floor version was built before that release, so it is below the floor too. Two recovery overrides exist for release incidents and broken bootstrap environments: `LPM_INSTALL_INSECURE=1` skips all integrity checks, while `LPM_INSTALL_MIN_VERSION_OVERRIDE=1` permits an older release but keeps the normal verification behavior.
 
 On macOS, the installer also checks the app bundle's code signature, signing identity, and stapled notarization ticket, and asks Gatekeeper to assess the bundle. Checking the ticket contacts Apple's notarization service once per install. If the service does not answer, the installer tries again for about two minutes, then stops without installing anything. `lpm self-update` checks a macOS update the same way.
 
@@ -73,7 +79,7 @@ curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=nightly sh
 Pin an exact stable or nightly GitHub release tag with `LPM_INSTALL_VERSION`:
 
 ```bash
-curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_VERSION=v0.71.0-nightly.20260728.42.d82ceea sh
+curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_VERSION=v0.88.0 sh
 ```
 
 ## From source (Cargo)
