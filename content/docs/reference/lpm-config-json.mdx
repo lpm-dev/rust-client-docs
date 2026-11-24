@@ -107,13 +107,19 @@ See [`lpm add`](/docs/packages/add) for Swift target selection.
 ```
 
 This string identifies the author import prefix.
-The prefix must end with `/` and stand for the root of the package.
-The rest of each import is then the path of a file in the package: with `"@/"`, `@/components/button` refers to `components/button.tsx`.
-If the prefix does not end with `/`, such as `"@/components"`, LPM CLI cannot find the files.
-It then writes broken imports, such as `@/ui//button`.
+LPM CLI removes the prefix from each import and looks up the rest as a path from the tarball root.
+Extensions and `index` files are optional, so `@/components/button` can refer to `components/button.tsx` or `components/button/index.ts`.
+End the prefix with `/`, and map it to the tarball root in your `tsconfig.json`, such as `"@/*": ["./*"]`.
+An import of `src/button.tsx` is then `@/src/button`.
 
-LPM CLI rewrites matching internal imports to the consumer alias or relative destination path.
-The consumer can supply `--alias` or use detected TypeScript path configuration.
+With `"@/components"`, the rest of `@/components/button` is `/button`, which matches no file.
+LPM CLI then leaves the import unchanged.
+If the consumer has a different alias, such as `@/ui/`, LPM CLI writes the broken import `@/ui//button`.
+
+LPM CLI rewrites matching internal imports to the consumer alias.
+The consumer alias comes from `--alias`, the `paths` in `tsconfig.json` or `jsconfig.json`, or the interactive prompt.
+If the consumer has no alias, LPM CLI writes relative imports.
+LPM CLI does not rewrite imports in Swift sources.
 
 Relative internal imports do not require this field.
 They follow the source-to-destination map when files move.
