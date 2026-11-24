@@ -107,19 +107,23 @@ See [`lpm add`](/docs/packages/add) for Swift target selection.
 ```
 
 This string identifies the author import prefix.
-LPM CLI removes the prefix from each import and looks up the rest as a path from the tarball root.
+LPM CLI adds a trailing `/` if the prefix has none, so `"@"` and `"@/"` are the same prefix.
+An empty string means no prefix.
+LPM CLI removes the prefix from each import and looks up the rest among the delivered files, as a path from the tarball root.
 Extensions and `index` files are optional, so `@/components/button` can refer to `components/button.tsx` or `components/button/index.ts`.
-End the prefix with `/`, and map it to the tarball root in your `tsconfig.json`, such as `"@/*": ["./*"]`.
+
+Map the prefix to the tarball root in your `tsconfig.json`, such as `"@/*": ["./*"]`.
 An import of `src/button.tsx` is then `@/src/button`.
+With `"@/components"`, LPM CLI looks for `button` at the tarball root, not for `components/button`.
 
-With `"@/components"`, the rest of `@/components/button` is `/button`, which matches no file.
-LPM CLI then leaves the import unchanged.
-If the consumer has a different alias, such as `@/ui/`, LPM CLI writes the broken import `@/ui//button`.
-
-LPM CLI rewrites matching internal imports to the consumer alias.
+If LPM CLI finds the file, it points the import at the delivered file.
+It uses the consumer alias, or a relative path if the consumer has no alias.
+If LPM CLI does not find the file, it replaces the prefix with the consumer alias.
+If the consumer has no alias, that import stays unchanged.
 The consumer alias comes from `--alias`, the `paths` in `tsconfig.json` or `jsconfig.json`, or the interactive prompt.
-If the consumer has no alias, LPM CLI writes relative imports.
-LPM CLI does not rewrite imports in Swift sources.
+
+LPM CLI rewrites imports only in JavaScript and TypeScript files.
+It does not change declaration files such as `.d.ts`, Swift sources, or other files such as `.vue`, `.svelte`, and `.css`.
 
 Relative internal imports do not require this field.
 They follow the source-to-destination map when files move.
