@@ -107,14 +107,17 @@ See [`lpm add`](/docs/packages/add) for Swift target selection.
 ```
 
 This string identifies the author import prefix.
-LPM CLI adds a trailing `/` if the prefix has none, so `"@"` and `"@/"` are the same prefix.
+LPM CLI treats every import that starts with the prefix as a path into the package.
+If the prefix ends in a letter, a digit, or another character that a package name can contain, LPM CLI adds a `/`.
+So `"@"` claims `@/lib/cn` but not the npm package `@radix-ui/react-slot`.
+Other prefixes, such as `"#"`, `"~"`, or `"/"`, stay as written, and LPM CLI removes one `/` after them.
 An empty string means no prefix.
-LPM CLI removes the prefix from each import and looks up the rest among the delivered files, as a path from the tarball root.
-Extensions and `index` files are optional, so `@/components/button` can refer to `components/button.tsx` or `components/button/index.ts`.
 
+LPM CLI looks up the rest of the import among the delivered source files, as a path from the tarball root.
+Extensions and `index` files are optional, so `@/components/button` can refer to `components/button.tsx` or `components/button/index.ts`.
 Map the prefix to the tarball root in your `tsconfig.json`, such as `"@/*": ["./*"]`.
 An import of `src/button.tsx` is then `@/src/button`.
-With `"@/components"`, LPM CLI looks for `button` at the tarball root, not for `components/button`.
+With `"@/components"`, LPM CLI looks up the import `@/components/button` as `button` at the tarball root.
 
 If LPM CLI finds the file, it points the import at the delivered file.
 It uses the consumer alias, or a relative path if the consumer has no alias.
@@ -127,7 +130,7 @@ It does not change declaration files such as `.d.ts`, Swift sources, or other fi
 
 Relative internal imports do not require this field.
 They follow the source-to-destination map when files move.
-Bare package imports remain unchanged.
+Bare package imports remain unchanged unless they start with the prefix.
 Mapped `.js`, `.mjs`, `.cjs`, and `.json` imports keep runtime extensions, including explicit `index` paths.
 TypeScript imports retain extension-free behavior.
 
