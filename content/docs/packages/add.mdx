@@ -49,9 +49,12 @@ Without a `package.json` above the current directory, the current directory is t
 
 After a plain copy, LPM CLI lists the packages that the copied imports need.
 The terminal notice and the `external_imports` field of `--json` show this list.
-A second list, `unresolved_imports`, shows imports that name no package, such as `#internal`, `@/lib/utils`, or `/abs/file.js`.
+A second notice and the `unresolved_imports` field list imports that name no package, such as `#internal`, `@/lib/utils`, or `/abs/file.js`.
 Make sure that these imports resolve in your project.
-Neither list includes Node built-ins or URLs, and a `--dry-run` preview shows neither list.
+
+Neither list includes Node built-ins, URLs, or other `scheme:` imports such as `bun:test`.
+The lists leave out files that LPM CLI does not write because of a conflict.
+A `--dry-run` preview shows neither list.
 
 ## Configuration
 
@@ -105,18 +108,25 @@ lpm add @lpm.dev/owner.ui-kit --path src/components --alias '@/components' --yes
 ```
 
 `--alias` overrides alias detection for this run.
-An empty value, `--alias ''`, writes relative imports.
+An empty value, `--alias ''`, writes relative imports for the files that LPM CLI finds.
+Imports of files that it does not find stay unchanged.
 LPM CLI adds a `/` to an alias that ends in an ASCII letter or digit, `@`, `.`, `_`, or `-`.
 So `@/components` and `@/components/` are the same alias.
-Extra trailing slashes count as one, and an alias such as `#` stays as written.
+Extra trailing slashes count as one.
+
+An alias such as `#` stays as written.
 For example, `--alias '#'` writes imports such as `#button`.
 
 Without `--alias`, LPM CLI reads the `paths` in `tsconfig.json` or `jsconfig.json`.
-It uses the first target of each key, and it writes the key as it is.
-For example, with `"#*": ["./src/*"]`, LPM CLI writes `#components/button` for a file in `src/components`.
-It skips a catch-all `"*"` key.
-It also skips a key if a more specific key sends some of its imports to another folder.
-If you accept the detected alias at the prompt, LPM CLI uses it unchanged.
+It uses only the first target of each key.
+It writes the key as it is, so `"#*": ["./src/*"]` gives `#components/button` for a file in `src/components`.
+If the target does not end in `/`, LPM CLI adds a `/` after the key: `"@ui*": ["./src/ui*"]` gives `@ui/buttons/`.
+
+LPM CLI skips a catch-all `"*"` key.
+It also skips an alias if a more specific key, an exact key, or a pattern with text after `*` claims some of its imports.
+In these cases, LPM CLI writes relative imports.
+At the prompt, Enter keeps the detected alias and `-` selects relative imports.
+A typed alias follows the `--alias` rules.
 
 Mapped JavaScript imports retain runtime extensions such as `.js` and `.mjs`.
 Source delivery also preserves executable permissions on Unix systems. Directories it creates are made as `mkdir` makes them: with the mode your umask gives, and the access list entries the directory above passes on.
