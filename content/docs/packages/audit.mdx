@@ -219,7 +219,9 @@ The source scan covers JavaScript and TypeScript files. It keeps these resource 
 - The scan reads a package's own files first, then the dependencies it bundles, then its tests.
 - A sampled file counts toward the file limit. It does not count as a fully scanned file.
 - A file nested too deeply to parse within 64 MiB of stack, or to analyze within 256 MiB, is read with pattern checks only, and counts as unsupported syntax.
+- So is a file the parser would read again more than twice over, with at least 64 KiB allowed, because it tries one reading of ambiguous syntax and falls back to another, such as TypeScript generic arrow functions nested in each other's default values. Real code is read again less than once.
 - So is a file whose names would take more than 16 scope lookups per byte to bind and resolve, with at least 1,048,576 allowed per file, such as one that nests its references, `var` declarations or labelled jumps thousands of scopes or labels deep. Real code takes fewer than 2 per byte.
+- A file in which an expression sits directly inside more than 32 parentheses, sequences, or TypeScript `as`, `satisfies`, `!` or `<T>` wrappers also counts as unsupported syntax. Its pattern checks still skip comments and strings, but the checks that follow values through the code don't run on it. Real code wraps at most 5 deep.
 - The data-flow checks behind findings such as credential exfiltration get one step per byte of a file, and at least 65,536. A file that needs more keeps the findings already made and counts as unsupported syntax. Real code needs fewer than 100.
 
 A package that the install left out has no source to scan, and it doesn't make the audit incomplete:
