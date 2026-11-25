@@ -237,6 +237,14 @@ On macOS, the updater replaces the app bundle and its command links. It keeps te
 
 If macOS replacement or final verification fails, the updater attempts to restore those copies. It does not retain a permanent `.previous` binary.
 
+### Sigstore trust root
+
+Sigstore rotates the certificate authorities and log keys it signs with. LPM CLI holds the Sigstore trust root that was current when it was built. Before it verifies a release, it fetches Sigstore's current trust root from Sigstore's signed update repository at `tuf-repo-cdn.sigstore.dev`. It accepts that trust root only when its signatures trace back to the Sigstore root keys built into LPM CLI. A key Sigstore added after the build then verifies, and a key Sigstore retired is refused.
+
+If the fetch fails, LPM CLI verifies with the newest trust root it already holds: the one built in, or one fetched on an earlier run. The check never falls below what LPM CLI shipped with. If the release needs a key that trust root lacks, the refusal says that the fetch failed.
+
+LPM CLI caches the fetched trust root in `~/.lpm/cache/metadata/sigstore-trust.json`. It checks the cache against the built-in Sigstore root keys each time it reads it, so a changed cache is ignored. `lpm cache clean metadata` removes it. [`LPM_SIGSTORE_TUF_URL_OVERRIDE`](/docs/reference/env-vars#security-and-recovery-overrides) points LPM CLI at a mirror of the repository, or turns fetching off.
+
 ### Supported standalone targets
 
 | Operating system | Architecture |
