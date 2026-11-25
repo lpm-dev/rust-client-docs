@@ -103,18 +103,42 @@ See [`lpm add`](/docs/packages/add) for Swift target selection.
 ## `importAlias`
 
 ```json
-{ "importAlias": "@/components" }
+{ "importAlias": "@/" }
 ```
 
 This string identifies the author import prefix.
-LPM CLI rewrites matching internal imports to the consumer alias or relative destination path.
-The consumer can supply `--alias` or use detected TypeScript path configuration.
+LPM CLI treats every import that starts with the prefix as a path into the package.
+Relative imports and protocol-relative URLs, such as `//cdn.example.com/lib.js`, are the exceptions.
+An empty string means no prefix.
+
+Extra trailing slashes in the value count as one.
+If the prefix ends in an ASCII letter or digit, `@`, `.`, `_`, or `-`, LPM CLI adds a `/`.
+So `"@"` claims `@/lib/cn` but not the npm package `@radix-ui/react-slot`.
+Other prefixes, such as `"#"`, `"~"`, or `"/"`, stay as written.
+LPM CLI removes one `/` after the prefix, so with `"#"`, `#util` and `#/util` both work.
+
+LPM CLI looks up the rest of the import among the delivered source files, as a path from the tarball root.
+Extensions and `index` files are optional, so `@/components/button` can refer to `components/button.tsx` or `components/button/index.ts`.
+Map the prefix to the tarball root in your `tsconfig.json`, such as `"@/*": ["./*"]`.
+An import of `src/button.tsx` is then `@/src/button`.
+With `"@/components"`, LPM CLI looks up the import `@/components/button` as `button` at the tarball root.
+
+If LPM CLI finds the file, it points the import at the delivered file.
+It uses the consumer alias, or a relative path if the consumer has no alias.
+If LPM CLI does not find the file, it replaces the prefix with the consumer alias.
+If the consumer has no alias, that import stays unchanged.
+The consumer alias comes from `--alias`, the `paths` in `tsconfig.json` or `jsconfig.json`, or the interactive prompt.
+
+LPM CLI rewrites imports only in JavaScript and TypeScript files.
+It does not change declaration files such as `.d.ts`, Swift sources, or other files such as `.vue`, `.svelte`, and `.css`.
 
 Relative internal imports do not require this field.
 They follow the source-to-destination map when files move.
-Bare package imports remain unchanged.
-Mapped `.js`, `.mjs`, `.cjs`, and `.json` imports keep runtime extensions, including explicit `index` paths.
-TypeScript imports retain extension-free behavior.
+Bare package imports remain unchanged unless they start with the prefix.
+A rewritten import keeps the extension that its author wrote, including TypeScript's `./util.js` form for `util.ts`.
+Through a consumer alias, it drops a `.ts` or `.tsx` extension if no other file has the same name.
+An import without an extension gets the shortest path that still reaches the same file.
+An import that still reaches its file after the copy stays as written.
 
 ## `configSchema`
 
