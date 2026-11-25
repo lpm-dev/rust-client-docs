@@ -72,7 +72,7 @@ A name or range rule therefore never admits a future version that LPM Firewall f
 
 An exact rule added without `--allow-malware` keeps lifting nothing but policy and unscanned blocks. If the same version is later classified as malware, the install is blocked again.
 
-The `allow` line appears only when running its command lets the install finish: a rule can lift every block, the firewall named every blocked version and checked every version, and your rules can be read and added to. Otherwise a `note` line says why, for example when a managed policy owns the firewall.
+The `allow` line appears only when running its command lets the install finish: a rule can lift every block, the firewall named every blocked version and checked every version, your rules can be read and added to, and a shell reads every spec unchanged. When your rules or the machine's policy are the reason it's missing, a `note` line says so, for example when a managed policy owns the firewall. A malware block or a hold for LPM review gets its own line instead.
 
 A malware block doesn't suggest a command. The error links the report instead:
 
@@ -98,7 +98,7 @@ One prompt names up to five specs, and few enough that each shows in full. `add`
 
 Adding a rule that is already saved asks for nothing. Adding it again with a later `--ttl`, or without one, extends it and asks again. A sooner `--ttl` or a new `--reason` updates it without asking, because neither lets anything more through. No other approval stands in for the prompt, including a `floor-edit` unlock from [lpm security unlock](/docs/infra/security).
 
-In `--json` mode, in CI, and without an interactive terminal, `add` never prompts. It fails with `security_approval_required`, and `next_steps` holds the command for a person to run:
+In `--json` mode, in CI, and without an interactive terminal, `add` never prompts. Rules that are already saved, or that only expire sooner or change their note, are saved anyway. Anything else fails with `security_approval_required`, and `next_steps` holds the command for a person to run when a shell can read it unchanged:
 
 ```json
 {
@@ -129,7 +129,7 @@ A rule applies in every project by default. `--project` limits it to one project
 
 [Global installs and updates](/docs/packages/global), [`lpm dlx`](/docs/dev/dlx), and [`lpm create`](/docs/dev/dlx#run-a-project-initializer) apply only the rules for every project. [`lpm deploy`](/docs/packages/workspaces) applies the rules of the workspace it runs in.
 
-Rules don't expire unless you pass `--ttl`, such as `--ttl 30d`. An expired rule stops applying at once. `list` shows each rule's scope, expiry, and note, and marks an expired rule as expired until the next `add`, `remove`, or `clear` deletes it.
+Rules don't expire unless you pass `--ttl`, such as `--ttl 30d`. An expired rule stops applying at once. `list` shows each rule's scope, expiry, and note, and marks an expired rule as expired until a later `add`, `remove`, or `clear` that changes the rules deletes it.
 
 ## Where rules apply
 
@@ -258,6 +258,8 @@ An install blocked by LPM Firewall fails with `npm_firewall_blocked`. Each entry
   ]
 }
 ```
+
+`lpm global update --json` gives each update a block stopped the same `error_code` and `error` object, and adds one `next_steps` command for every blocked version a rule can lift.
 
 A successful install lists lifted versions under `security.firewall.bypassed`, each with its `rule` (`spec`, `id`, `scope`, `project_root`, and `source`, which is `local` or `managed`), and counts them in `security.firewall.bypassed_count`.
 
