@@ -237,6 +237,14 @@ On macOS, the updater replaces the app bundle and its command links. It keeps te
 
 If macOS replacement or final verification fails, the updater attempts to restore those copies. It does not retain a permanent `.previous` binary.
 
+### Sigstore trust root
+
+Sigstore rotates the certificate authorities and log keys it signs with. LPM CLI holds the Sigstore trust root that was current when it was built. Before it verifies a release, it fetches Sigstore's current trust root from Sigstore's signed update repository at `tuf-repo-cdn.sigstore.dev`. It accepts that trust root only when its signatures trace back to the Sigstore root keys built into LPM CLI. A key Sigstore added after the build then verifies, and a key Sigstore retired is refused.
+
+If the fetch fails, LPM CLI verifies with the newest trust root it already holds: the one built in, or one fetched on an earlier run. The check never falls below what LPM CLI shipped with. If the release needs a key that trust root lacks, the refusal says that the fetch failed.
+
+LPM CLI caches the fetched trust root in `~/.lpm/cache/metadata/sigstore-trust.json`. It checks the cache against the built-in Sigstore root keys each time it reads it, so a changed cache is ignored. `lpm cache clean metadata` removes it. [`LPM_SIGSTORE_TUF_URL_OVERRIDE`](/docs/reference/env-vars#security-and-recovery-overrides) points LPM CLI at a mirror of the repository, or turns fetching off.
+
 ### Supported standalone targets
 
 | Operating system | Architecture |
@@ -256,7 +264,7 @@ Extraction and each system verification command have a 60-second deadline. Each 
 
 The updater accepts signed app bundles with and without the optional application icon. It still checks required files, code signatures, notarization, and the signing identity. Removing a resource covered by the app signature causes verification to fail.
 
-The notarization check contacts Apple's notarization service once per update. If the service does not answer, the updater tries again for about two minutes, then stops and keeps the installed version.
+The updater uses only tools that ship with macOS, so it needs neither Xcode nor the Command Line Tools. It needs no connection to Apple either: `codesign` confirms the notarization from the ticket stapled to the app.
 
 The standalone updater shipped in 0.76.5 cannot read newer app bundles. If it reports an unexpected `Contents/Resources/` entry, rerun the installer once:
 
@@ -271,6 +279,29 @@ curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=nightly sh
 ```
 
 The installer preserves saved credentials and configuration. It retains the [installer verification checks](/docs/installation#standalone-installer-macos-linux). Do not disable verification or delete your credentials. For npm and Homebrew installations, use the package manager.
+
+### Upgrade on a Mac without Xcode from 0.76.0 to 0.88.0
+
+`lpm self-update` in 0.76.0 to 0.88.0 checks the notarization ticket with `stapler`, which macOS runs only when Xcode is installed. On a Mac without Xcode, including one with only the Command Line Tools, standalone installations of these versions refuse every update:
+
+```text
+✗ Self-update refused
+  reason macOS notarization-ticket validation failed with status exit status: 1: xcode-select: error: tool 'stapler' requires Xcode, but active developer directory '/Library/Developer/CommandLineTools' is a command line tools instance
+```
+
+Without any developer tools, the reason names `xcrun` or `xcode-select` instead. The release is not tampered. Rerun the installer once:
+
+```bash
+curl -fsSL https://cli.lpm.dev/install | sh
+```
+
+On the nightly channel, rerun it with `LPM_INSTALL_CHANNEL=nightly`:
+
+```bash
+curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=nightly sh
+```
+
+The installer preserves saved credentials and configuration, and installs a release whose updater needs no developer tools. After this one reinstall, `lpm self-update` works again. npm and Homebrew installations are not affected.
 
 ### Upgrade from 0.75.0 to 0.84.0
 
@@ -303,6 +334,19 @@ If verification fails, do not replace the current binary manually with the rejec
 On Linux or Windows, if the new binary cannot start, look for `<binary>.previous` beside it. Restore that backup or reinstall an exact release.
 
 On macOS, if recovery fails, reinstall a trusted release with the installer.
+
+On macOS and Linux, when the installer can take over, a refused standalone update names the installer command for the channel you update on. That covers a release this version of LPM CLI doesn't accept, and on macOS an installation outside the installer's app layout. The installer verifies the release itself, installs it in `~/.lpm`, and preserves saved credentials and configuration:
+
+```text
+✗ Self-update refused
+  reason <why the update was refused>
+  hint Reinstall LPM CLI with the official installer, which verifies the release itself and keeps your settings:
+    curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=stable sh
+```
+
+A refusal of the installation directory itself, such as one that other accounts can write to, names no installer, because reinstalling doesn't fix it. Make the directory writable only by your account, then retry.
+
+On Linux, when the release itself fails verification, the command also sets `LPM_INSTALL_REQUIRE_SIGSTORE=1`. Without [cosign](https://docs.sigstore.dev/cosign/system_config/installation/), the installer can't tell who published a release's checksums, so install cosign first; the installer then checks the release's signature itself. On macOS, the installer checks the app's Developer ID signature, so it needs no cosign.
 
 The standalone updater does not provide an automatic rollback command. See [Installation](/docs/installation) for exact-version and source installations.
 
@@ -408,6 +452,27 @@ For a standalone installation, JSON output applies the update and includes its v
   }
 }
 ```
+
+### Refused standalone update
+
+On macOS and Linux, when the installer can take over, the error output of a refused standalone update gives the installer command in `next_steps`:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error": "self-update refused: <why the update was refused>",
+  "error_code": "self_update",
+  "next_steps": [
+    {
+      "description": "Reinstall LPM CLI with the official installer, which verifies the release itself and keeps your settings",
+      "command": "curl -fsSL https://cli.lpm.dev/install | LPM_INSTALL_CHANNEL=stable sh"
+    }
+  ]
+}
+```
+
+The command names the channel you update on, as in `LPM_INSTALL_CHANNEL=nightly`. On Linux, a release that fails verification gets a command that also sets `LPM_INSTALL_REQUIRE_SIGSTORE=1`, with a description that asks you to install cosign first.
 
 ### Common fields
 
