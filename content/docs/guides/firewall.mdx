@@ -78,6 +78,10 @@ An approved machine posture can require a stronger mode. A weaker environment or
 
 Policy groups accept `allow`, `warn`, or `block`. The interactive editor normally offers `warn` or `allow` for suspicious signals.
 
+The approved profile is part of the signed machine posture, like the firewall mode. `lpm config firewall` asks for Touch ID, Windows Hello, or your password before it saves a profile that stops or reports less than the approved one. An edit to `~/.lpm/config.toml` that does the same fails with `security_approval_required` until you approve it with `lpm config firewall`. Stricter actions need no approval. Where the approved firewall mode is `off`, as on a fresh CI runner, any profile is stricter, so none of this applies.
+
+A [managed security policy](/docs/infra/security#managed-machine-policy) can set `[firewall.npm.policies]` itself. A managed firewall mode also keeps the approved profile from being loosened.
+
 Telemetry warnings used to be part of `lpm_ai_suspicious`. If `lpm_ai_telemetry` is not set, it uses the `lpm_ai_suspicious` action. `lpm config list` shows that source as `inherited from lpm_ai_suspicious`. To block telemetry without blocking other suspicious signals, set `lpm_ai_telemetry = "block"`.
 
 Telemetry that sends credentials, file contents, prompts, code, or other environment variable values without consent is not a telemetry warning. Neither is telemetry sent to an unrelated collector. LPM Firewall reports both as malware under `lpm_ai_confirmed_malware`.
@@ -107,6 +111,19 @@ The verdict check does not route npm downloads through a hosted tarball proxy. I
 ```
 
 A decision includes the package, version, action, and reason. Available reports link to the evidence for that version.
+
+A block stops the command and lists every blocked version:
+
+```text
+! LPM Firewall blocked 1 package:
+  › foldrun@32.8.2 - block: `foldrun talk` can send an Anthropic credential to a Foldrun gateway.
+    report: https://firewall.lpm.dev/npm/foldrun/v/32.8.2
+✗ Blocked by LPM Firewall
+  reason 1 package blocked by LPM Firewall
+  allow lpm firewall bypass add "foldrun@32.8.2"
+```
+
+The `allow` line appears when a bypass rule can lift every listed block. See [Allow a blocked version](#allow-a-blocked-version). With `--json`, the error code is `npm_firewall_blocked` and `error.packages` lists each blocked version.
 
 For a monitor-mode block decision, the output says that the package would be blocked and the command continues.
 
@@ -140,11 +157,22 @@ A later offline installation does not receive fresh verdicts. Disabling enforcem
 
 `--offline` limits package-network work. It is not a network sandbox for root lifecycle scripts.
 
+## Allow a blocked version
+
+To install a version that enforcement blocks without turning the firewall off, add a bypass rule:
+
+```bash
+lpm firewall bypass add "foldrun@32.8.2"
+lpm install
+```
+
+`add` asks for Touch ID, Windows Hello, or your password. A rule can name one version, a range, or every version, for every project or one. Name and range rules never lift malware blocks. See [lpm firewall bypass](/docs/infra/firewall-bypass).
+
 ## Recover from a blocked command
 
 | Cause | Action |
 | --- | --- |
-| Effective block decision | Read the report and select a reviewed version or dependency replacement. |
+| Effective block decision | Read the report and select a reviewed version or dependency replacement, or allow the version with [lpm firewall bypass](/docs/infra/firewall-bypass). |
 | Missing credentials | Use [lpm login](/docs/infra/login) or correct the CI identity configuration. |
 | Missing entitlement | Check the account or organization coverage. |
 | Service or network failure in enforce mode | Restore connectivity and repeat the command. |
@@ -158,4 +186,5 @@ Changing a group to `allow` changes enforcement. It does not remove the underlyi
 - [CI/CD setup](/docs/guides/ci-cd-setup) — authentication and reproducible installation
 - [Security audit](/docs/packages/security-audit) — package evidence and auditing
 - [Security policy](/docs/infra/policy) — managed requirements and approvals
+- [lpm firewall bypass](/docs/infra/firewall-bypass) — exceptions for specific versions
 - [Public Firewall policy](https://firewall.lpm.dev/policy)

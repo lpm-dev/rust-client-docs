@@ -312,11 +312,12 @@ lpm security status [--project <PATH> | --global]
 Terminal output shows:
 
 - The selected project or global target
-- The script, release-age, sandbox, Sigstore, typosquat, LPM Firewall, and install-time source analysis floors
+- The script, release-age, sandbox, Sigstore, typosquat, LPM Firewall mode and policy, and install-time source analysis floors
 - The source of each displayed floor value. A value that comes from a built-in default is dimmed.
 - The approved-posture path and active managed policy
 - Active runtime overrides
 - Active unlocks, package filters, and expiry times
+- [LPM Firewall bypass rules](/docs/infra/firewall-bypass), including the managed policy's
 
 Use JSON to get the same status in a structured object:
 
@@ -341,13 +342,26 @@ The command returns a stable top-level envelope:
       "sigstore_verify": "deny",
       "typosquat_guard": "default",
       "firewall_mode": "off",
+      "firewall_policies": {
+        "critical_vulnerability": "warn",
+        "lpm_ai_agent_control_surface": "warn",
+        "lpm_ai_confirmed_malware": "block",
+        "lpm_ai_dependency_script_policy": "block",
+        "lpm_ai_suspicious": "warn",
+        "lpm_ai_telemetry": "warn",
+        "trusted_public_malicious_advisories": "block"
+      },
       "install_time_source_analysis": false
+    },
+    "firewall_bypass": {
+      "local_rules_apply": true,
+      "rules": []
     }
   }
 }
 ```
 
-The full response also includes `floor_sources`, `approved_posture_path`, `approved_posture_source`, and an optional `managed_policy` object. Empty `active_runtime_overrides` and `active_unlocks` arrays are omitted.
+The full response also includes `floor_sources`, `approved_posture_path`, `approved_posture_source`, and an optional `managed_policy` object. Empty `active_runtime_overrides` and `active_unlocks` arrays are omitted. `firewall_bypass` lists active bypass rules; it adds `managed_rules`, an `inactive_reason` when a managed policy turns local rules off, and an `error` when the rule file fails verification.
 
 ## Managed machine policy
 
@@ -386,7 +400,14 @@ verify = "deny"
 
 [firewall]
 mode = "enforce"
+bypass = ["foldrun@32.8.2"]
+bypass-malware = ["internal-fork@1.0.0"]
+
+[firewall.npm.policies]
+lpm_ai_agent_control_surface = "block"
 ```
+
+`[firewall.npm.policies]` fixes the LPM Firewall policy profile. A managed `[firewall].mode` also keeps the approved profile from being loosened. When the policy sets either, rules added with [lpm firewall bypass](/docs/infra/firewall-bypass) don't apply, and `bypass` and `bypass-malware` list the versions it lets past blocks.
 
 The policy path and its parent directories must be controlled by the operating-system administrator. LPM CLI rejects a policy that other users can replace, edit, or delete.
 
@@ -400,7 +421,7 @@ If a signed security file has an invalid signature, run `repair`. Also run it if
 lpm security repair
 ```
 
-The command verifies the approved posture, approval state, unlocks, and audit history. It renames unverifiable files with an `.unverified-...` suffix.
+The command verifies the approved posture, approval state, unlocks, LPM Firewall bypass rules, and audit history. It renames unverifiable files with an `.unverified-...` suffix.
 
 If the audit log differs from its signed record, repair quarantines both existing files. New audited actions then start a fresh history.
 
@@ -477,6 +498,7 @@ See the other [global flags](/docs/commands#global-flags).
 
 - [`lpm install`](/docs/packages/install#guarded-weakeners-and-approvals) - run installs with guarded security options
 - [`lpm config`](/docs/infra/config#security-sensitive-changes) - manage persistent user security settings
+- [`lpm firewall bypass`](/docs/infra/firewall-bypass) - let specific versions past LPM Firewall blocks
 - [`~/.lpm/config.toml`](/docs/reference/config-toml#security-sensitive-keys-are-proposals) - review user configuration and precedence
 - [`lpm.toml`](/docs/reference/lpm-toml#sandbox) - configure project sandbox behavior
 - [Exit codes](/docs/reference/exit-codes) - handle approval and security-floor failures
