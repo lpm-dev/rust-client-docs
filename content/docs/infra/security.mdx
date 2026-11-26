@@ -243,7 +243,7 @@ Use the concrete scope from the approval error. The available scopes are:
 | `sandbox-allow-degraded` | Run strict-mode scripts without outbound network denial on Linux kernels before 6.7 |
 | `capability-widen` | Widen script access through `passEnv`, `readProject`, or `sandboxLimits` |
 | `typosquat-disable` | Disable suspicious package-name checks |
-| `firewall-disable` | Use a weaker LPM Firewall mode |
+| `firewall-disable` | Use a weaker LPM Firewall mode or policy profile |
 | `source-analysis-disable` | Disable package source analysis during install |
 | `floor-edit` | Change the approved machine security floor with a global grant |
 
@@ -312,11 +312,12 @@ lpm security status [--project <PATH> | --global]
 Terminal output shows:
 
 - The selected project or global target
-- The script, release-age, sandbox, Sigstore, typosquat, LPM Firewall, and install-time source analysis floors
+- The script, release-age, sandbox, Sigstore, typosquat, LPM Firewall mode and policy, and install-time source analysis floors
 - The source of each displayed floor value. A value that comes from a built-in default is dimmed.
 - The approved-posture path and active managed policy
 - Active runtime overrides
 - Active unlocks, package filters, and expiry times
+- [LPM Firewall bypass rules](/docs/infra/firewall-bypass), including the managed policy's
 
 Use JSON to get the same status in a structured object:
 
@@ -341,13 +342,26 @@ The command returns a stable top-level envelope:
       "sigstore_verify": "deny",
       "typosquat_guard": "default",
       "firewall_mode": "off",
+      "firewall_policies": {
+        "critical_vulnerability": "warn",
+        "lpm_ai_agent_control_surface": "warn",
+        "lpm_ai_confirmed_malware": "block",
+        "lpm_ai_dependency_script_policy": "block",
+        "lpm_ai_suspicious": "warn",
+        "lpm_ai_telemetry": "warn",
+        "trusted_public_malicious_advisories": "block"
+      },
       "install_time_source_analysis": false
+    },
+    "firewall_bypass": {
+      "local_rules_apply": true,
+      "rules": []
     }
   }
 }
 ```
 
-The full response also includes `floor_sources`, `approved_posture_path`, `approved_posture_source`, and an optional `managed_policy` object. Empty `active_runtime_overrides` and `active_unlocks` arrays are omitted.
+The full response also includes `floor_sources`, `approved_posture_path`, `approved_posture_source`, and an optional `managed_policy` object. Empty `active_runtime_overrides` and `active_unlocks` arrays are omitted. `firewall_bypass` lists the active bypass rules that apply to the target, in the shape `lpm firewall bypass list --json` uses: the rules for every project, plus the project's own unless the target is `--global`. It adds `managed_rules`, an `inactive_reason` when a managed policy turns local rules off, and an `error` when the rule file fails verification.
 
 ## Managed machine policy
 
@@ -360,7 +374,7 @@ Windows:    C:\ProgramData\lpm\security-policy.toml
 
 `protect enable` uses `enforce` by default. It also accepts `--firewall monitor`. It does not accept `off`.
 
-`protect disable` removes only the managed firewall entry. It preserves other controls, including `install-time-source-analysis`, in the same file.
+`protect disable` removes only the managed firewall entry. It preserves other controls, including `install-time-source-analysis` and the `[firewall].bypass` lists, in the same file. While the policy sets `[firewall.npm.policies]`, which needs the managed mode, `protect disable` refuses until an administrator removes that table. Without a managed mode, the `bypass` lists keep lifting blocks alongside rules added with `lpm firewall bypass`.
 
 `protect status` reports active protection for `monitor` and `enforce`. An administrator-written `off` value reports inactive protection.
 
@@ -386,11 +400,30 @@ verify = "deny"
 
 [firewall]
 mode = "enforce"
+bypass = ["foldrun@32.8.2"]
+bypass-malware = ["internal-fork@1.0.0"]
+
+[firewall.npm.policies]
+lpm_ai_agent_control_surface = "block"
 ```
+
+`[firewall.npm.policies]` sets the approved LPM Firewall policy profile and needs `[firewall].mode` in the same policy, so the firewall it governs can't be turned off locally. `~/.lpm/config.toml` can make a group stricter but no approval makes it looser. A managed `[firewall].mode` of `monitor` or `enforce` also keeps the approved profile from being loosened at that mode; a managed mode of `off` holds nothing, though a profile the policy sets still binds whenever the firewall runs. When the policy sets `[firewall].mode`, rules added with [lpm firewall bypass](/docs/infra/firewall-bypass) don't apply, and `bypass` and `bypass-malware` list the versions it lets past blocks.
 
 The policy path and its parent directories must be controlled by the operating-system administrator. LPM CLI rejects a policy that other users can replace, edit, or delete.
 
 Use TOML tables for `[sandbox]`, `[sigstore]`, and `[firewall]`. A scalar or array in place of these sections is a configuration error.
+
+## What signing protects
+
+LPM CLI signs the approved posture, approval state, unlocks, LPM Firewall bypass rules, and audit history with a secret it keeps in your operating system's credential store. A file edited without that secret fails verification, and `lpm security repair` sets it aside (see [Recovery](#recovery)).
+
+Signing doesn't protect against a program already running as you:
+
+- Where the credential store lets any program running as you read its secrets, as Windows Credential Manager and an unlocked Linux keyring do, that program can read the signing secret and sign files of its own.
+- A program can put back an older signed copy of a file, such as bypass rules you have since removed, and it still verifies. Editing or truncating the audit history is detected while the signed record of its last entry is in place, because the history is checked against it; deleting that record, or putting back older copies of both, is not.
+- Deleting the approved posture returns your locally approved values to those of a fresh computer, where the approved firewall mode is `off`. The firewall still runs where `~/.lpm/config.toml` or a managed security policy turns it on.
+
+A program running as you could also edit `~/.lpm/config.toml` or run commands directly, so these are limits of local approval as a whole. To hold settings that no program running as you can change, use a [managed machine policy](#managed-machine-policy).
 
 ## Recovery
 
@@ -400,7 +433,7 @@ If a signed security file has an invalid signature, run `repair`. Also run it if
 lpm security repair
 ```
 
-The command verifies the approved posture, approval state, unlocks, and audit history. It renames unverifiable files with an `.unverified-...` suffix.
+The command verifies the approved posture, approval state, unlocks, LPM Firewall bypass rules, and audit history. It renames unverifiable files with an `.unverified-...` suffix.
 
 If the audit log differs from its signed record, repair quarantines both existing files. New audited actions then start a fresh history.
 
@@ -477,6 +510,7 @@ See the other [global flags](/docs/commands#global-flags).
 
 - [`lpm install`](/docs/packages/install#guarded-weakeners-and-approvals) - run installs with guarded security options
 - [`lpm config`](/docs/infra/config#security-sensitive-changes) - manage persistent user security settings
+- [`lpm firewall bypass`](/docs/infra/firewall-bypass) - let specific versions past LPM Firewall blocks
 - [`~/.lpm/config.toml`](/docs/reference/config-toml#security-sensitive-keys-are-proposals) - review user configuration and precedence
 - [`lpm.toml`](/docs/reference/lpm-toml#sandbox) - configure project sandbox behavior
 - [Exit codes](/docs/reference/exit-codes) - handle approval and security-floor failures

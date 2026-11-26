@@ -1,0 +1,298 @@
+---
+title: lpm firewall bypass
+description: "Let specific package versions past LPM Firewall blocks, with your approval, without turning the firewall off."
+---
+
+`lpm firewall bypass` keeps exceptions to [LPM Firewall](/docs/guides/firewall) enforcement. A rule lets the versions it names install while the firewall keeps checking everything else.
+
+```bash
+lpm firewall bypass add <SPEC>... [--project [PATH]] [--ttl <DURATION>] [--reason <TEXT>] [--allow-malware]
+lpm firewall bypass list [--project [PATH] | --global]
+lpm firewall bypass remove <SPEC|ID>... [--project [PATH]]
+lpm firewall bypass clear [--project [PATH] | --global]
+```
+
+`list` has the alias `ls`, and `remove` has the alias `rm`.
+
+## Quickstart
+
+When enforcement blocks a version that a rule can lift, the error names the command:
+
+```text
+! LPM Firewall blocked 1 package:
+  › foldrun@32.8.2 - block: `foldrun talk` can send an Anthropic credential to a Foldrun gateway.
+    report: https://firewall.lpm.dev/npm/foldrun/v/32.8.2
+✗ Blocked by LPM Firewall
+  reason 1 package blocked by LPM Firewall
+  allow lpm firewall bypass add "foldrun@32.8.2"
+```
+
+Read the report. To install the version anyway, add the rule and run the install again:
+
+```bash
+lpm firewall bypass add "foldrun@32.8.2"
+lpm install
+```
+
+`add` shows the version's current verdict and asks for Touch ID, Windows Hello, or your password. The install then reports the version it let through and the rule that allowed it:
+
+```text
+! LPM Firewall allowed 1 blocked package because of your bypass rules:
+  › foldrun@32.8.2 - block: `foldrun talk` can send an Anthropic credential to a Foldrun gateway.
+    report: https://firewall.lpm.dev/npm/foldrun/v/32.8.2
+    rule: foldrun@32.8.2 (every project)
+```
+
+## Specs
+
+| Spec | Allows |
+| --- | --- |
+| `foldrun` | Every version |
+| `foldrun@32.8.2` | That version |
+| `foldrun@^32.8.0` | The versions an npm range matches. Prereleases follow npm's range rules. |
+
+Quote specs that contain `^`, `<`, `>`, or spaces, and scoped names, so every shell reads them unchanged: `lpm firewall bypass add "@scope/pkg@^1.2.0"`.
+
+`add` rejects dist-tags such as `latest`, `npm:`, git, file, and URL specs, scope wildcards such as `@scope/*`, `@lpm.dev/*` packages, versions or ranges with build metadata, ranges longer than 80 characters, and versions longer than the 256 characters npm allows. Write exact versions plainly: `foldrun@1.2.3`, not `foldrun@=1.2.3` or `foldrun@v1.2.3`. Names keep their case, so `JSONStream` and `jsonstream` are different packages.
+
+## What a rule can lift
+
+Each block has a class that decides which rules can lift it:
+
+| Block | Name or range rule | Exact-version rule | Exact-version rule with `--allow-malware` |
+| --- | --- | --- | --- |
+| A policy category: agent control surface, telemetry, suspicious code, dependency scripts, critical vulnerability | Yes | Yes | Yes |
+| An unscanned version, such as one blocked as too new | No | Yes | Yes |
+| Malware, a public malicious advisory, a malicious verdict, or a category this LPM CLI doesn't know | No | No | Yes |
+| A hold placed for LPM review | No | No | No |
+
+A name or range rule therefore never admits a future version that LPM Firewall flags as malware.
+
+`--allow-malware` applies to exact versions only. `add` accepts it only while LPM Firewall blocks that version as malware, so the approval covers a verdict you have seen. When the verdict can't be checked, `add --allow-malware` fails.
+
+An exact rule added without `--allow-malware` keeps lifting nothing but policy and unscanned blocks. If the same version is later classified as malware, the install is blocked again.
+
+The `allow` line appears only when running its command lets the install finish: a rule can lift every block, the firewall named every blocked version and checked every version, your rules can be read and added to, and a shell reads every spec unchanged. When your rules or the machine's policy are the reason it's missing, a `note` line says so: the rules can't be read, a managed policy owns the firewall, or `force-security-floor` refuses new rules. A malware block, a hold for LPM review, an unnamed block, and an unchecked version each get their own line instead.
+
+A malware block doesn't suggest a command. The error links the report instead:
+
+```text
+✗ Blocked by LPM Firewall
+  reason 1 package blocked by LPM Firewall
+  malware hijacked@1.0.0 is flagged as malware; read its report first (`lpm firewall bypass add --help` explains `--allow-malware`)
+```
+
+## Approval
+
+`add` asks for fresh approval every time it adds a rule or extends one:
+
+| Platform | Prompt |
+| --- | --- |
+| macOS | Touch ID or the account password |
+| Windows | Windows Hello or the PIN |
+| Linux | Type `allow` in the terminal, then the polkit password prompt |
+
+The prompt names each spec, the scope, and the duration, for example "Allow foldrun@32.8.2 past LPM Firewall in every project". The polkit dialog on Linux can't show that text, so the terminal prints it first and asks you to type `allow`.
+
+One prompt names up to five specs and stays short enough to name each in full. `add` with more asks once for each group; a spec or project path too long to share a prompt gets one of its own. Declining any prompt saves nothing, including the groups you approved before it; when a shell can read it unchanged, the error's command repeats the whole request.
+
+`--ttl` counts from when you run `add`, so adding a saved rule again compares the new expiry with the saved one. A later expiry extends the rule and asks again, even with the same `--ttl`: `--ttl 30m` run ten minutes after the first ends ten minutes later. Leaving out `--ttl` asks for no expiry, which extends a rule that has one. An earlier expiry, or a new `--reason` with the same expiry, updates the rule without asking, because neither lets anything more through. Adding a rule exactly as it is saved asks for nothing, such as a rule with no expiry added again without `--ttl` or a different `--reason`. No other approval stands in for the prompt, including a `floor-edit` unlock from [lpm security unlock](/docs/infra/security).
+
+In `--json` mode, in CI, and without an interactive terminal, `add` never prompts. A request whose rules are already saved, or only expire sooner or change their note, is saved anyway. A request with any rule that needs approval saves nothing, not even its narrowings; it fails with `security_approval_required`, and `next_steps` holds the command for a person to run when a shell can read it unchanged. The command repeats the whole request, with the same `--project`, `--ttl`, and `--allow-malware`, and keeps `--reason` unless a shell would read the note differently:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "security_approval_required",
+  "error": {
+    "code": "SECURITY_APPROVAL_REQUIRED",
+    "message": "Allowing packages past LPM Firewall needs your approval at an interactive terminal.",
+    "requested_scopes": ["firewall-bypass"],
+    "project_root": null,
+    "suggested_command": "lpm firewall bypass add \"foldrun@32.8.2\""
+  },
+  "next_steps": [
+    {
+      "description": "Approve the requested security change",
+      "command": "lpm firewall bypass add \"foldrun@32.8.2\""
+    }
+  ]
+}
+```
+
+`remove` and `clear` need no approval, because they only narrow what LPM Firewall lets through. The security audit log records every change.
+
+## Scope and expiry
+
+A rule applies in every project by default. `--project` limits it to one project, the current one when no path follows. A workspace member's rules key on the workspace root.
+
+[Global installs and updates](/docs/packages/global), [`lpm dlx`](/docs/dev/dlx), and [`lpm create`](/docs/dev/dlx#run-a-project-initializer) apply only the rules for every project. [`lpm deploy`](/docs/packages/workspaces) applies the rules of the workspace it runs in.
+
+Rules don't expire unless you pass `--ttl`, such as `--ttl 30d`. The duration counts from when you run `add`; if it runs out before you approve, `add` saves nothing. An expired rule stops applying at once. `list` shows each rule's scope, expiry, and note, and marks an expired rule as expired until a later `add`, `remove`, or `clear` that changes the rules deletes it.
+
+## Where rules apply
+
+Rules apply wherever LPM Firewall checks versions: [lpm install](/docs/packages/install), `lpm ci`, `lpm upgrade`, [global installs and updates](/docs/packages/global), [`lpm dlx`](/docs/dev/dlx), [`lpm create`](/docs/dev/dlx#run-a-project-initializer), [`lpm deploy`](/docs/packages/workspaces), [lpm fetch](/docs/packages/fetch), [lpm download](/docs/packages/download), and the source download in [lpm add](/docs/packages/add).
+
+- In `enforce` mode, a lifted block lets the package install, and the output names it with its rule.
+- In `monitor` mode, nothing is blocked. The report says which would-block versions your rules would allow.
+- With the firewall off, nothing is checked.
+
+A blocked install that also had lifted versions lists them on `allowed` lines under the error.
+
+Removing a rule doesn't uninstall anything. The next install that checks the version blocks it again; an install with nothing to change checks nothing.
+
+An enforced check still needs the network. `--offline` with enforcement fails before any rule is consulted.
+
+## Storage
+
+Rules live in a signed file, `~/.lpm/security/firewall-bypass.json`, next to the other approval state for your [LPM home](/docs/reference/env-vars#filesystem-layout). An install reads the file, and checks its signature, only when a block needs it. `list`, [`lpm security status`](/docs/infra/security), and `lpm dlx` read it on every run.
+
+The signature shows that LPM CLI on this machine wrote the file, not that it is the newest copy. As with the other signed files in `~/.lpm/security`, putting back an older copy brings back the rules it held.
+
+When the file fails verification, no rule from it applies; the managed policy's `bypass` lists still do. The block says why:
+
+```text
+  note your bypass rules couldn't be read: ...
+```
+
+Run [`lpm security repair`](/docs/infra/security#recovery) to quarantine the file, then add the rules again.
+
+## Managed machines
+
+When the [managed security policy](/docs/infra/security#managed-machine-policy) sets `[firewall].mode`, rules added with `lpm firewall bypass` don't apply and `add` refuses. A policy that sets `[firewall.npm.policies]` must set `[firewall].mode` too. The policy lists its own exceptions:
+
+```toml title="/etc/lpm/security-policy.toml"
+[firewall]
+mode = "enforce"
+bypass = ["foldrun@32.8.2", "react@^18.19.0"]
+bypass-malware = ["internal-fork@1.0.0"]
+```
+
+`bypass` entries use the same specs and lifting rules as local rules. `bypass-malware` entries must name exact versions, and they also lift malware blocks.
+
+With `force-security-floor = true` in `~/.lpm/config.toml` and the firewall in `enforce` mode, `add` refuses. Rules saved before still apply.
+
+## JSON output
+
+`list --json` reports saved and managed rules:
+
+```json
+{
+  "schema_version": 1,
+  "success": true,
+  "firewall_mode": "enforce",
+  "local_rules_apply": true,
+  "inactive_reason": null,
+  "rules": [
+    {
+      "id": "fwb_8c1d2e3f4a5b",
+      "spec": "foldrun@32.8.2",
+      "name": "foldrun",
+      "versions": "32.8.2",
+      "kind": "exact",
+      "scope": "global",
+      "project_root": null,
+      "covers_malware": false,
+      "source": "local",
+      "added_at": "2026-11-25T10:00:00+00:00",
+      "expires_at": null,
+      "expired": false,
+      "reason": "reviewed the report",
+      "added_verdict": {
+        "verdict": "suspicious",
+        "block_class": "policy",
+        "policy_group": "lpm_ai_agent_control_surface",
+        "report_url": "https://firewall.lpm.dev/npm/foldrun/v/32.8.2"
+      }
+    }
+  ],
+  "managed_rules": [],
+  "count": 1
+}
+```
+
+`add --json` returns `added`, `extended`, `narrowed`, `unchanged`, `count`, and `rules_total`. `remove --json` and `clear --json` return `removed`, `not_found`, `count`, and `rules_total`. `remove` takes a rule's `fwb_` id, which matches in any scope, or a spec, which matches the rule for every project or, with `--project`, that project's rule.
+
+An install blocked by LPM Firewall fails with `npm_firewall_blocked`. Each entry in `error.packages` has `block_class` and `bypassable`. `error.unattributed_count` counts blocks the firewall reported without naming a version the install asked about, including a second block for a version it asked about once, and `error.unchecked_reason` is set when some versions couldn't be checked. `error.bypassed` lists the versions your rules lifted in the check that found the block. A block the registry returns while resolving or downloading has `error.source` set to `registry` and an empty `bypassed`; what an earlier check let through is under `security.firewall`, as in any failed command. When the `allow` line would appear, `error.bypass_command` and `next_steps` hold its command. `error.bypass_unavailable_reason` holds the `note` when there is one, and is `null` otherwise:
+
+```json
+{
+  "schema_version": 1,
+  "success": false,
+  "error_code": "npm_firewall_blocked",
+  "error": {
+    "code": "NPM_FIREWALL_BLOCKED",
+    "message": "1 package blocked by LPM Firewall",
+    "source": "preflight",
+    "blocked_count": 1,
+    "unattributed_count": 0,
+    "unchecked_reason": null,
+    "packages": [
+      {
+        "name": "foldrun",
+        "version": "32.8.2",
+        "verdict": "suspicious",
+        "reason": "client policy maps lpm_ai_agent_control_surface to block",
+        "decision_id": "0f6c2d9e-4b1a-4c7e-9d3f-5a8b2e1c7d40:1",
+        "match_source": "package",
+        "block_class": "policy",
+        "bypassable": true,
+        "policy": { "group": "lpm_ai_agent_control_surface" },
+        "display": {
+          "summary": "`foldrun talk` can send an Anthropic credential to a Foldrun gateway.",
+          "report_url": "https://firewall.lpm.dev/npm/foldrun/v/32.8.2"
+        }
+      }
+    ],
+    "bypassed": [],
+    "bypass_command": "lpm firewall bypass add \"foldrun@32.8.2\"",
+    "bypass_unavailable_reason": null
+  },
+  "next_steps": [
+    {
+      "description": "Review each report, then allow the blocked versions past LPM Firewall; a person approves it with Touch ID, Windows Hello or a password",
+      "command": "lpm firewall bypass add \"foldrun@32.8.2\""
+    }
+  ]
+}
+```
+
+`lpm global update --json` gives each update a block stopped the same `error_code` and `error` object, and adds one `next_steps` command that covers each update whose blocks a rule can lift.
+
+A successful install lists lifted versions under `security.firewall.bypassed`, each with its `rule` (`spec`, `id`, `scope`, `project_root`, and `source`, which is `local` or `managed`), and counts them in `security.firewall.bypassed_count`.
+
+Commands that run an install for you report the same list, so a quiet install never hides a lifted version:
+
+- `lpm install -g --json`, `lpm upgrade --json`, `lpm add --json`, `lpm deploy --json`, `lpm migrate --json`, `lpm tidy --fix --json`, `lpm audit fix --json`, and `lpm doctor --fix --json` add `security.firewall` with the firewall `mode` and the `bypassed` entries when a rule let a version through. `lpm global update --json` adds it to each update's entry.
+- For `lpm add --json`, the list covers the added package and the dependencies it installs. The top-level `firewall` object keeps describing the added package's own check, as it does for `lpm fetch --json` and `lpm download --json`. A `--dry-run` preview reports the added package's `firewall` check, and under `security.firewall` what rules let through for every source package it checked.
+- A command that fails after LPM Firewall let a version through a rule, as when `lpm migrate` verification fails or a download then fails its integrity check, adds `security.firewall` to its JSON error.
+- In `enforce` mode, an install that resolves its dependencies can download a lifted version as soon as its verdict arrives. When it ends before every verdict is in, for example because another verdict request, resolution, or the `@lpm.dev` access check fails, or you press Ctrl-C, it reports the versions it already handed to the download, and a terminal prints them before the error. A version whose download it held back isn't listed. An install that waits for every verdict before downloading, such as one from the lockfile, downloads nothing before such a failure and reports none. A block from LPM Firewall's check (`source: "preflight"`) is the exception: `error.bypassed` lists every version the check lifted, downloaded or not.
+- In a terminal, `lpm audit fix`, `lpm doctor --fix`, and the install `lpm dev` runs first print the allowed versions after their quiet install, and in `enforce` mode even when the install then fails. When LPM Firewall blocks that install, they list the blocked versions the firewall named, and the command that allows them when a rule can lift every block. When `lpm global update` has more than one tool to install, it installs them quietly and prints the allowed versions under each tool, whether its update finished or failed; with one, that install prints them as `lpm install` does.
+- `lpm dlx --json` and `lpm create --json` leave stdout to the tool they run, so they print the allowed versions on stderr.
+- In `monitor` mode the entries are what the rules would have let through.
+
+## Flags
+
+| Command | Argument or flag | Purpose |
+| --- | --- | --- |
+| `add` | `<SPEC>...` | `name`, `name@version`, or `name@<range>` |
+| `add` | `--project [PATH]` | Apply only in this project. The default is every project |
+| `add` | `--ttl <DURATION>` | Stop applying the rule after this long, such as `30m`, `12h`, or `30d` |
+| `add` | `--reason <TEXT>` | Keep a note that `list` shows |
+| `add` | `--allow-malware` | Also lift a malware block on an exact version |
+| `list` | `--project [PATH]` | Show only this project's rules |
+| `list` | `--global` | Show only rules for every project |
+| `remove` | `<SPEC\|ID>...` | Remove rules by spec or by `fwb_` id |
+| `remove` | `--project [PATH]` | Remove this project's rule for a spec instead of the one for every project |
+| `clear` | `--project [PATH]` | Remove only this project's rules |
+| `clear` | `--global` | Remove only rules for every project |
+| All | `--json` | Print structured JSON. `add --json` never prompts |
+
+## See also
+
+- [Firewall for npm](/docs/guides/firewall) - modes, policy groups, and verdicts
+- [`lpm security`](/docs/infra/security) - approvals, status, and repair
+- [`lpm config`](/docs/infra/config) - firewall mode and policy settings
+- [Exit codes](/docs/reference/exit-codes) - `npm_firewall_blocked` and `security_approval_required`
