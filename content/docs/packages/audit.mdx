@@ -174,8 +174,10 @@ Evidence contains a bounded set of examples. It does not list every call or prov
 Native bindings come from the files a package ships: a compiled `.node` addon, or a `binding.gyp` that node-gyp builds an addon from on install. A `process.dlopen` call also counts.
 A module name in code, such as `node-gyp-build` or `napi`, does not establish native bindings.
 
-A high-entropy string is a string literal that looks random: at least 32 base64, base64url, or hex characters, with a repeated character, close to the most entropy its length allows, and switching between lower case, upper case, and digits as random text does.
-A PEM private key always counts. Identifiers, hashes, UUIDs, alphabets, and prose don't.
+A high-entropy string is a string literal with a run of at least 32 base64 or base64url characters that looks random: a repeated character, close to the most entropy its length allows, and switching between lower case, upper case, and digits as random text does.
+Each run counts on its own, so a prefix such as `v1:` or `Bearer `, or line breaks, don't hide one. In a URL, and in a module or file path made of words such as `./2024/IsArrayBufferViewOutOfBounds`, each path segment counts on its own.
+A PEM private key always counts. Identifiers, URL paths, module paths, hex hashes, UUIDs, alphabets, and prose don't.
+Public data passes over when its content starts as its label says: images, fonts, audio, video, and JSON such as source maps in `data:` URLs, and complete PEM certificates and public keys. A `data:` URL of script still counts.
 
 ### Bundled dependencies
 
@@ -193,10 +195,23 @@ The hidden files and `.git` of a local `file:` or `link:` dependency hold its to
 The source scan reads test files too. A file counts as a test when a directory above it is named `test`, `tests`, `__tests__`, `__test__`, `spec`, `specs`, `__mocks__`, or `__fixtures__`, or when its name matches `*.test.*`, `*.spec.*`, `test_*.py`, or `*_test.py`.
 
 A capability or finding that only test files show is reported as tests only, with `info` severity.
-A test file that the package's install or uninstall scripts, or its `main`, `module`, `browser`, `bin`, or `exports` fields, name counts as package code.
-A field that names a directory names its `index` file, as Node resolves it.
+A test file counts as package code when the package runs it:
+
+- The package's install or uninstall scripts, or its `main`, `module`, `browser`, `bin`, `exports`, or `imports` fields, name it. A field that names a directory names its `index` file, as Node resolves it, and a pattern such as `./tests/*.js` names the files it matches.
+- Code the package runs names it as a path, as a `require`, an `import`, a forked script, or a command does, directly or through other test files it reaches. Paths resolve from the file that names them and from the package root, in any letter case, and a path to a test directory names every test file in it. A path that leaves the package and comes back under the package's own name counts, and so does a module the package bundles in a `node_modules` directory, such as `require("test")` with `node_modules/test`.
+- A working directory counts too: a `cd` in a command or install script, a `cwd` option, or `process.chdir`. So do the scripts an install script runs by name, such as `npm run setup` or `npm test`, with their `pre` and `post` scripts.
+- A `package.json` in one of the package's directories, in any letter case, names files the same way, through its `main`, `module`, `browser`, `exports`, and `imports` fields and their subpath patterns, as Node reads it when code loads that directory, such as `require("./lib")`, or loads it by its `name`. One in a test directory, such as a fixture's, counts once a path reaches it.
+
+LPM CLI counts every test file as package code when it can't tell which ones the package runs:
+
+- Code the package runs loads a module from a name it computes, hands `require` on as a value, or starts a forked script or a `worker_threads` worker from a path or working directory it computes. A worker that runs code (`eval`) counts too, and so does a fork or worker whose `execArgv`, or a fork whose `NODE_OPTIONS`, isn't spelled out, since `--require` and `--import` load what they name. A path built from fixed strings, `__dirname`, or `import.meta.url` isn't computed.
+- A file of code the package runs wasn't read whole.
+- An install script, or a script it runs by name, hands a script to a shell or to another language's interpreter, such as `bash ./setup.sh` or `python setup.py`, gives `node` code to run with `-e` or on its input, builds its words with backticks or `$(…)`, or runs `make` or a package file without an extension.
+- A path the package runs leads to a test file a scan limit left unread.
+- The manifest's scripts and fields match the package's test file paths too many times to check, or its test file paths are too long to check together.
+- The package has more than 1,024 `package.json` files below its root, one in a code directory can't be read, or together they name too many files to check.
+
 LPM.dev Registry marks its tags the same way.
-LPM CLI counts every test file as package code when those scripts and fields match the package's test file paths too many times to check, or its test file paths are too long to check together.
 
 With `--json`, a tests-only capability or issue has `tests_only: true`.
 Local evidence from package code replaces a Registry tests-only mark. Local evidence from tests does not replace Registry evidence from package code.
@@ -211,13 +226,16 @@ An audit can find no threats and still have incomplete coverage. Missing package
 
 An incomplete source audit prints `Audit incomplete` and exits with code `1`, regardless of `--fail-on` or `--level`.
 
-The source scan covers JavaScript and TypeScript files. It keeps these resource limits:
+The source scan covers JavaScript and TypeScript files.
+A script whose extension doesn't say what it is, such as `bin/cli` or `bin/cli.sh`, counts too when its first line is a `#!` line that runs Node.js, Bun, Deno, tsx, or ts-node. Files whose extension marks them as data, documents, media, native code, or another language's source are never read this way.
+It keeps these resource limits:
 
 - Full analysis stops at 4 MiB for one file. Larger files receive a sample from each end.
 - The files a package runs have a 50 MiB scan budget and a 5,000-file limit.
 - Its test files have a separate 12.5 MiB budget and a 1,250-file limit, so tests can't use up the budget for the package's code.
 - The scan reads a package's own files first, then the dependencies it bundles, then its tests.
 - A sampled file counts toward the file limit. It does not count as a fully scanned file.
+- A JavaScript file that doesn't parse and contains a JSX closing tag, such as `</a>` or `<a />`, is parsed again as JSX, which React and React Native packages ship in `.js` files.
 - A file nested too deeply to parse within 64 MiB of stack, or to analyze within 256 MiB, is read with pattern checks only, and counts as unsupported syntax.
 - So is a file whose names would take more than 16 scope lookups per byte to bind and resolve, with at least 1,048,576 allowed per file, such as one that nests its references, `var` declarations or labelled jumps thousands of scopes or labels deep. Real code takes fewer than 2 per byte.
 - The data-flow checks behind findings such as credential exfiltration get one step per byte of a file, and at least 65,536. A file that needs more keeps the findings already made and counts as unsupported syntax. Real code needs fewer than 100.
