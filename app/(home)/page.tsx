@@ -11,6 +11,7 @@ import {
 import { homeJsonLd, safeJsonLd } from "@/lib/seo";
 import {
   appName,
+  homeOgImage,
   homeSeoDescription,
   homeSeoTitle,
   siteUrl,
@@ -35,20 +36,13 @@ export const metadata: Metadata = {
     title: homeSeoTitle,
     description: homeSeoDescription,
     url: siteUrl,
-    images: [
-      {
-        url: "/og/home",
-        width: 1200,
-        height: 630,
-        alt: homeSeoTitle,
-      },
-    ],
+    images: [homeOgImage],
   },
   twitter: {
     card: "summary_large_image",
     title: homeSeoTitle,
     description: homeSeoDescription,
-    images: ["/og/home"],
+    images: [homeOgImage],
   },
 };
 

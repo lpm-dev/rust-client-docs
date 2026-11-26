@@ -4,10 +4,7 @@ import { join } from "node:path";
 const WIDTH = 1200;
 const HEIGHT = 630;
 
-const STRIP_COLORS = {
-  docs: "#227CE6",
-  home: "#227CE6",
-} as const;
+const STRIP_COLOR = "#227CE6";
 
 const FONT_REGULAR_PATH = join(
   process.cwd(),
@@ -50,19 +47,13 @@ function truncate(text: string, maxLength = 180): string {
 export type OgTemplateInput = {
   title: string;
   description?: string;
-  type?: keyof typeof STRIP_COLORS;
-  typeLabel?: string;
 };
 
 export async function renderOgTemplate({
   title,
   description,
-  type = "docs",
-  typeLabel,
 }: OgTemplateInput) {
   const { fontRegular, fontBold, logoDataUri } = await loadAssets();
-  const stripColor = STRIP_COLORS[type];
-  const label = typeLabel ?? (type === "home" ? "lpm CLI" : "Documentation");
 
   const element = (
     <div
@@ -80,7 +71,7 @@ export async function renderOgTemplate({
         style={{
           width: "100%",
           height: 16,
-          backgroundColor: stripColor,
+          backgroundColor: STRIP_COLOR,
           flexShrink: 0,
         }}
       />
@@ -96,13 +87,13 @@ export async function renderOgTemplate({
           style={{
             fontSize: 18,
             fontWeight: 600,
-            color: stripColor,
+            color: STRIP_COLOR,
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             marginBottom: 20,
           }}
         >
-          {label}
+          Documentation
         </div>
         <div
           style={{

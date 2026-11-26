@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { homeOgImage } from "../../lib/shared";
 import { negotiatesOnAccept } from "../../server.mjs";
 
 describe("final response variance", () => {
@@ -20,7 +21,8 @@ describe("final response variance", () => {
     "/openapi.json",
     "/schemas/lpm.json",
     "/api/v1/search",
-    "/og/home",
+    homeOgImage.url,
+    "/og/docs/packages/install/image.png",
     "/.well-known/api-catalog",
     "/install",
   ])("does not mark the fixed representation %s", (url) => {
