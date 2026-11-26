@@ -44,7 +44,9 @@ Each file appears only after you or a command creates it.
 | `.env.example` | `lpm env example` | Variable names, descriptions, and defaults from `envSchema`, without values. LPM CLI creates it with your usual file permissions. |
 | `Packages/LPMDependencies/` and the `.xcodeproj` changes | `lpm install` in an Xcode project | The wrapper package that exports your Swift dependencies and the project's link to it. Commit them with the shared `Package.resolved` files. See [Swift](/docs/guides/using-with-swift#xcode-projects-and-workspaces). |
 
-Agent folders such as `.claude/skills/<name>` link to skill content in `.lpm/managed-skills/`, or hold a copy of it. `lpm install` restores the content and agent folders that a checkout lacks. It warns about a skill that it can't restore and points to `lpm skills update`. Where a repository commits such a link and Git checks it out as a plain file, as on Windows without link support, `lpm install` replaces that file.
+Agent folders such as `.claude/skills/<name>` link to skill content in `.lpm/managed-skills/`, or hold a copy of it. `lpm install` restores the content and agent folders that a checkout lacks.
+
+Agent folders also hold links to [dependency skills](/docs/packages/dependency-skills) in `.lpm/linked-skills/`. Do not commit them. The policy in `package.json > lpm > skills` decides them, and every install recreates them. LPM CLI lists them in the repository's local exclude file, `.git/info/exclude`, so Git ignores them without a `.gitignore` entry. It warns about a skill that it can't restore and points to `lpm skills update`. Where a repository commits such a link and Git checks it out as a plain file, as on Windows without link support, `lpm install` replaces that file.
 
 ### Records from earlier releases
 
@@ -69,6 +71,7 @@ LPM CLI keeps `.lpm/` owner-only on Unix and refuses a symbolic link in its plac
 | `wrappers/`, `hoisted/` | Package directories that some `node_modules` layouts keep here | Installs recreate them. |
 | `skills/<owner.package>/` | Skills of installed `@lpm.dev` packages | `lpm install` restores them. |
 | `managed-skills/` | Content of the project's managed agent skills | `lpm install` restores it from `lpm-agent-skills.json`. |
+| `linked-skills/` | Checked copies of the [dependency skills](/docs/packages/dependency-skills) that agent folders link to, and `state.json`, the record of what LPM CLI linked | `lpm install` recreates them from the `package.json > lpm > skills` policy. |
 | `added-source-backups/` | Copies of the files that `lpm add` replaced | They belong to the machine that ran `lpm add`. On another checkout, `lpm remove` keeps such a file and tells you to restore the original from version control. |
 | `certs/` | The project's development certificate and its private key, `key.pem` | A private key never belongs in a repository. See [`lpm cert`](/docs/infra/cert). |
 | `inspector.db` and its `-wal`, `-shm`, and `-lock` files | [Tunnel](/docs/infra/tunnel) captures, including raw request headers and bodies | Captures can hold tokens, cookies, and personal data. |
@@ -146,8 +149,8 @@ Every command gives the LPM home a `.gitignore` that ignores everything in it. W
 | In the LPM home | Contents |
 | --- | --- |
 | `config.toml` | [User defaults](/docs/reference/config-toml). |
-| `store/`, `cache/` | The [package store](/docs/packages/content-addressable-store) and [caches](/docs/packages/cache). |
-| `global/`, `bin/` | Globally installed packages and their commands. |
+| `store/`, `cache/` | The [package store](/docs/packages/content-addressable-store) and [caches](/docs/packages/cache). `cache/skill-reviews/` and `cache/skill-checks/` hold LPM.dev skill review records and optional Socket verdicts for [dependency skills](/docs/packages/dependency-skills). |
+| `global/`, `bin/` | Globally installed packages and their commands. `global/skills.json` is the dependency skills policy of global packages, and `global/linked-skills/` holds the checked copies that `~/.agents/skills` links to. |
 | `.credentials` and its key files | Login state, when the OS credential store can't hold it. See [Authentication](/docs/infra/authentication#credential-storage). |
 | `vaults/`, `.vault-fallback-key` | Local env secrets on Linux and Windows. See [Local secrets](/docs/dev/local-secrets#storage-and-recovery). |
 | `certs/` | The local root certificate authority, including its private key. |
