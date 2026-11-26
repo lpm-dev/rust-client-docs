@@ -217,7 +217,7 @@ lpm skills sync --check
 ```
 
 In a workspace, these commands work on the workspace root, where the policy lives.
-`link` and `unlink` refuse a change while a newer LPM CLI's record of the links is in place. They also refuse to write `package.json` if the file changed after the preview.
+`link` and `unlink` refuse a change while a newer LPM CLI's record of the links is in place. They also refuse to write `package.json`, or the global policy file with `--global`, if the file changed after the preview.
 If your `skills.other-packages` setting is off, they save the policy and warn that nothing was linked for you.
 
 ### `deps`: list dependency skills
@@ -359,7 +359,7 @@ A preview with `--dry-run --json` lists the skills whose links the change affect
 }
 ```
 
-Each `skills` entry has the same fields as in `deps`. An `unlink` preview has `removed` and `denied` instead of `added`.
+Each `skills` entry has the same fields as in `deps`. An `unlink` preview has `removed` and `denied` instead of `added`. A `link --global` preview adds `fetches` when applying the change [fetches LPM.dev skills](#dependency-skills-of-global-packages).
 
 An applied change reports the policy entries and the [`dependency_skills` object](/docs/packages/dependency-skills#when-lpm-cli-reconciles-the-links) of an install:
 
@@ -393,13 +393,32 @@ An applied change reports the policy entries and the [`dependency_skills` object
 
 ```bash
 lpm skills deps --global
+lpm skills link --global '#agent-browser' --dry-run
 lpm skills link --global '#agent-browser'
 lpm skills unlink --global '#agent-browser' --yes
+lpm skills sync --global
 lpm skills sync --global --check
 ```
 
-`--global` (`-g`) works on the policy for your global packages in `~/.lpm/global/skills.json`. Links go into `~/.agents/skills` and, when `~/.claude` exists, `~/.claude/skills`. Every global package needs an `allow` entry, including `@lpm.dev/*` packages.
-Messages name the targets under `~/` and the policy keys as they appear in the file, such as `allow`. When `unlink` empties the policy, LPM CLI removes the file.
+`--global` (`-g`) works on the policy for your global packages in `~/.lpm/global/skills.json`. Links go into `~/.agents/skills` and, when `~/.claude` exists, `~/.claude/skills`. These folders can be links that you made, such as `~/.claude` linked to a dotfiles repository. Every global package needs an `allow` entry, including `@lpm.dev/*` packages.
+Messages name the targets under `~/` and the policy keys as they appear in the file, such as `allow`. `deps --global` names each link under `~/`, such as `~/.agents/skills/agent-browser`. When `unlink` empties the policy, LPM CLI removes the file.
+
+LPM CLI fetches the reviewed skills of an `@lpm.dev/*` global package from the LPM.dev Registry only when the global policy has `allow` entries, as [Global packages](/docs/packages/dependency-skills#lpmdev-global-packages) describes. `link --global` fetches them after you confirm the change, and `sync --global` fetches them before it reconciles. A dry run fetches nothing. It lists each set that applying the change fetches:
+
+```json
+{
+  "success": true,
+  "dry_run": true,
+  "action": "link",
+  "skills": [],
+  "fetches": [{ "package": "@lpm.dev/acme.cli", "version": "1.0.0" }],
+  "added": ["#@lpm.dev/acme.cli"]
+}
+```
+
+`sync --global --check` fetches nothing. It reports each set that `sync --global` fetches as a difference, and exits with status `1`.
+
+If LPM CLI cannot read the global manifest, for example because a newer LPM CLI wrote it, these commands fail and leave the links as they are.
 See [Global packages](/docs/packages/dependency-skills#global-packages).
 
 ## Standalone sources and agent targets
@@ -462,8 +481,10 @@ Links are the default. `--copy` creates copies, and Windows can fall back to cop
 Earlier releases put global Codex skills in `$CODEX_HOME/skills`, by default `~/.codex/skills`. Codex now reads `~/.agents/skills`. Records in the old folder stay valid:
 
 - The next `lpm skills update` or `enable` of such a skill moves its entry to `~/.agents/skills` and removes the old entry in the same transaction.
+- The move needs a free `~/.agents/skills/<name>`. If another skill is there, the command stops and the old entry stays.
+- A copy in the old folder whose files someone edited stays where it is. The plan names it `keep edited copy in Codex's old folder`.
 - `remove` and `disable` act on the entry where it is.
-- `lpm skills doctor` marks the target `old codex folder` and names the `lpm skills update --global <name>` command that moves it.
+- `lpm skills doctor` marks the target `old codex folder`, counts it as healthy, and names the `lpm skills update --global <name>` command that moves it.
 - The external inventory reads both folders and lists a skill once.
 
 Agent-specific frontmatter restricts compatible targets.
@@ -473,7 +494,7 @@ Enabling a disabled target checks the current stored content before restoring it
 Warning-level security findings require confirmation. Blocking findings prevent installation and updates.
 Previews can show blocked candidates without applying them. See [Security scan rules](/docs/reference/ai-agent-skills#security-scan-rules).
 
-If a dependency skill is linked at the target entry of a managed skill that `lpm skills add` installs, `add` stops and names the `lpm skills unlink '#<package>:skill(<name>)'` command to run first.
+If a dependency skill is linked at the target entry of a managed skill that `lpm skills add` installs, `add` stops and names the `lpm skills unlink '#<package>:skill(<name>)'` command to run first. For a global managed skill over the link of a global package, it names `lpm skills unlink --global '#<package>:skill(<name>)'`.
 
 ## Update, disable, enable, and remove
 
@@ -500,6 +521,7 @@ These commands require skill names or `--all`. `--all` takes precedence over nam
 `update` rejects `--agent` because enabled targets share the updated content.
 
 If an external file replaces a managed target, mutation stops before replacement.
+If an entry appears at a target while LPM CLI places a managed skill there, LPM CLI leaves the entry alone, rolls the change back, and fails.
 Use `doctor` to inspect its path and ownership before moving files.
 If managed content is missing, `update` can restore it from the original source.
 
@@ -533,8 +555,8 @@ lpm skills doctor --global
 ```
 
 For `list`, `view`, and `doctor`, `--global` adds global locations to the project inventory, including the dependency skills of global packages.
-Project managed names take precedence over matching global names.
-`list --agent` filters managed, dependency, and external entries. For dependency entries, `codex` selects `.agents/skills` links and `claude-code` selects `.claude/skills` links. Package entries remain unless `--kind` excludes them.
+Project managed names take precedence over matching global names. For dependency skills, `view --global` shows the global copy first: if a global package and the project both link a skill with that name, it shows the global one.
+`list --agent` filters managed, dependency, and external entries. For dependency entries, it selects the links in that agent's folder from the [agent table](#storage-and-compatibility): the project folder for the project's links, and the global folder for the links of global packages. For example, `codex` selects links in `.agents/skills` and `~/.agents/skills`, and `pi` selects links in `.pi/skills` and `~/.pi/agent/skills`. Package entries remain unless `--kind` excludes them.
 The external inventory does not list the links that LPM CLI made for dependency skills.
 
 Managed and external `view` results include source, security, context, and target details.
@@ -543,11 +565,11 @@ Dependency `view` reports the package and version, what the skill pre-approves, 
 
 | Command | JSON for dependency skills |
 | --- | --- |
-| `list --json` | `counts.dependency`, and `skills.dependency` entries with `name`, `scope` (`project` or `global`), `package`, `version`, `permission`, and `links`. |
+| `list --json` | `counts.dependency`, and `skills.dependency` entries with `name`, `scope` (`project` or `global`), `package`, `version`, `permission`, and `links`. Global links are named under `~/`. |
 | `view --json` | `kind: "dependency"`, `scope`, `name`, `package`, `version`, `permission`, `digest`, `description`, `copy`, `links`, and `healthy`. `healthy` is `false` when the copy changed or a link is missing. |
 | `doctor --json` | `dependency_skills` with `healthy` and `issues`. With `--global`, also `global_dependency_skills`. The top-level `healthy` is `false` when either object lists an issue. |
 
-`doctor` reports each difference between the dependency skill links and the policy, as [`lpm skills sync --check`](#sync-reconcile-without-installing) does.
+`doctor` reports each difference between the dependency skill links and the policy, as [`lpm skills sync --check`](#sync-reconcile-without-installing) does. With `--global`, the differences include the LPM.dev skill sets that [`sync --global` fetches](#dependency-skills-of-global-packages).
 
 `doctor` can exit successfully while its report contains unhealthy targets.
 For a CI health gate, inspect the JSON field:
@@ -635,7 +657,7 @@ my-package/
 | Result | Examples | Effect on `validate` |
 | --- | --- | --- |
 | Valid | A directory that passes every rule | Listed. |
-| Problem | A structural problem, a blocking scan finding, a link, a folder name that installs ignore, a folder without a regular `SKILL.md`, or a directory after the first 32 | Fails. |
+| Problem | A structural problem, a blocking scan finding, a `SKILL.md` that declares `hooks`, a link, a folder name that installs ignore, a folder without a regular `SKILL.md`, a directory after the first 32, or a `skills/` folder with more than 4,096 entries | Fails. |
 | Warning | A scan warning | Listed. Does not fail. |
 | Not reviewed | A valid directory that is larger than the [review limits](#review-limits-for-skill-directories) | Listed. Does not fail. |
 
@@ -659,7 +681,9 @@ The LPM.dev Registry reviews each `skills/<name>/` directory whole:
 | One directory | At most 128 KiB of files |
 | All directories of one release | At most 512 KiB together |
 
-The Registry reviews directories in name order while they fit. A smaller directory after one that does not fit is still reviewed. A directory over a limit still publishes, but review never approves it, and installs hold it as `not_reviewed`. Flat `lpm-skills/*.md` files have their own limits, in the table above.
+The Registry reviews directories in name order while they fit. A smaller directory after one that does not fit is still reviewed. A directory over a limit still publishes, but review never approves it, and installs hold it as `not_reviewed`. The Registry also leaves out a directory that does not fit the skill storage of the author or organization, and the publish response warns about it. Flat `lpm-skills/*.md` files have their own limits, in the table above.
+
+A private release gets no AI review. The Registry approves its skill files and directories when they pass its checks. Installs still link a directory only while its files match the digest that the Registry recorded.
 
 ## Local dashboard
 
