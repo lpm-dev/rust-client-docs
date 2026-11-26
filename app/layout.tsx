@@ -7,7 +7,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import {
   appName,
-  appTagline,
+  homeOgImage,
   homeSeoDescription,
   homeSeoTitle,
   siteUrl,
@@ -36,20 +36,13 @@ export const metadata: Metadata = {
     title: homeSeoTitle,
     description: homeSeoDescription,
     url: siteUrl,
-    images: [
-      {
-        url: "/og/home",
-        width: 1200,
-        height: 630,
-        alt: `${appName} — ${appTagline}`,
-      },
-    ],
+    images: [homeOgImage],
   },
   twitter: {
     card: "summary_large_image",
     title: homeSeoTitle,
     description: homeSeoDescription,
-    images: ["/og/home"],
+    images: [homeOgImage],
   },
   verification: {
     other: {

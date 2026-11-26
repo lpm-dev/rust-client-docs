@@ -16,7 +16,6 @@ export async function GET(
   const { element, options } = await renderOgTemplate({
     title: page.data.title,
     description: page.data.description,
-    type: "docs",
   });
 
   return new ImageResponse(element, options);

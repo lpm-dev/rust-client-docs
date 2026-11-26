@@ -6,6 +6,20 @@ export const homeSeoDescription =
   "Install, run, audit, publish, and manage JavaScript or Swift packages with lpm's Rust CLI, npm-compatible registries, secure scripts, and dev infrastructure.";
 export const siteUrl = "https://cli.lpm.dev";
 
+/**
+ * The homepage's Open Graph card, and the card of every page that names none.
+ * Social sites cache a card by its URL, so the file name carries the first 8
+ * hex characters of the file's SHA-256, and `tests/unit/og.test.ts` fails
+ * until a new card is renamed to match.
+ */
+export const homeOgImage = {
+  url: "/og/home.e5a36f6b.jpg",
+  width: 2400,
+  height: 1260,
+  type: "image/jpeg",
+  alt: "LPM CLI: the whole toolchain, in one binary.",
+} as const;
+
 export const docsRoute = "/docs";
 export const docsImageRoute = "/og/docs";
 export const docsContentRoute = "/llms.mdx/docs";
