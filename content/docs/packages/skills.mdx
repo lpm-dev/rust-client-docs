@@ -300,9 +300,9 @@ lpm skills link
 
 `link` refuses a selector that installs ignore, such as `:root` on its own, `:scripts`, or `:malware` before `>`. It refuses the selector before it writes anything.
 
-The confirmation names the number of skills that the change lets pre-approve commands for agents. It counts a skill whose new release pre-approves other tools than before. If every selector is already in `allow`, `link` reconciles without a prompt.
+The confirmation names the number of skills that the change lets pre-approve commands for agents. It counts a skill whose new release pre-approves other tools than before. If every selector is already in `allow`, `link` reconciles without a prompt, because the policy does not change. With `--global`, it then also fetches the LPM.dev skills that it needs.
 
-Without a selector in an interactive terminal, `link` opens a picker. The picker lists the skills that direct dependencies ship and that the policy does not link yet, with each skill's description and grants. Each pick saves `#<package>:skill(<name>)`, so it links that skill and no skill that the package adds later. Outside a terminal, `link` needs a selector.
+Without a selector in an interactive terminal, `link` opens a picker. The picker lists the skills that direct dependencies ship and that the policy does not link yet, with each skill's description and grants. Each pick saves `#<package>:skill(<name>)`, so it links that skill and no skill that the package adds later. With `--global`, the picker also lists each LPM.dev global package whose reviewed skills are not on the machine yet. That pick saves `#<package>`. Outside a terminal, `link` needs a selector.
 
 ### `unlink`: stop linking skills
 
@@ -403,7 +403,7 @@ lpm skills sync --global --check
 `--global` (`-g`) works on the policy for your global packages in `~/.lpm/global/skills.json`. Links go into `~/.agents/skills` and, when `~/.claude` exists, `~/.claude/skills`. These folders can be links that you made, such as `~/.claude` linked to a dotfiles repository. Every global package needs an `allow` entry, including `@lpm.dev/*` packages.
 Messages name the targets under `~/` and the policy keys as they appear in the file, such as `allow`. `deps --global` names each link under `~/`, such as `~/.agents/skills/agent-browser`. When `unlink` empties the policy, LPM CLI removes the file.
 
-LPM CLI fetches the reviewed skills of an `@lpm.dev/*` global package from the LPM.dev Registry only when the global policy has `allow` entries, as [Global packages](/docs/packages/dependency-skills#lpmdev-global-packages) describes. `link --global` fetches them after you confirm the change, and `sync --global` fetches them before it reconciles. A dry run fetches nothing. It lists each set that applying the change fetches:
+LPM CLI fetches the reviewed skills of an `@lpm.dev/*` global package from the LPM.dev Registry only when the global policy can link them, as [LPM.dev global packages](/docs/packages/dependency-skills#lpmdev-global-packages) describes. `link --global` fetches them after you confirm the change, and `sync --global` fetches them before it reconciles. A dry run fetches nothing. It lists each set that applying the change fetches:
 
 ```json
 {
@@ -416,7 +416,7 @@ LPM CLI fetches the reviewed skills of an `@lpm.dev/*` global package from the L
 }
 ```
 
-`sync --global --check` fetches nothing. It reports each set that `sync --global` fetches as a difference, and exits with status `1`.
+`sync --global --check` fetches nothing. It reports each set that `sync --global` fetches as a difference, and exits with status `1`. When the Registry refuses a set, LPM CLI records the answer. For an hour while review runs, or for a week after a refusal, LPM CLI does not ask again, and `--check` does not report the set.
 
 If LPM CLI cannot read the global manifest, for example because a newer LPM CLI wrote it, these commands fail and leave the links as they are.
 See [Global packages](/docs/packages/dependency-skills#global-packages).
@@ -477,12 +477,16 @@ A skill that cannot be restored produces an installation warning. If its source 
 
 Global paths honor `GROK_HOME`, `XDG_CONFIG_HOME`, and `PI_CODING_AGENT_DIR` for the corresponding agents.
 Links are the default. `--copy` creates copies, and Windows can fall back to copies if symlink creation is unavailable.
+A project link names its content by a relative path. A global link names it by absolute path, so it works through an agent folder that you linked, such as `~/.claude` linked to a dotfiles repository.
+
+Two agents can read one folder, for example when `~/.claude/skills` is a link to `~/.agents/skills`. A skill added for both gets one entry. The second agent records no target of its own, and the plan says `claude-code reads it through codex's folder`. `remove` or `disable` for one agent never deletes an entry that another agent reads under another name.
 
 Earlier releases put global Codex skills in `$CODEX_HOME/skills`, by default `~/.codex/skills`. Codex now reads `~/.agents/skills`. Records in the old folder stay valid:
 
 - The next `lpm skills update` or `enable` of such a skill moves its entry to `~/.agents/skills` and removes the old entry in the same transaction.
 - The move needs a free `~/.agents/skills/<name>`. If another skill is there, the command stops and the old entry stays.
-- A copy in the old folder whose files someone edited stays where it is. The plan names it `keep edited copy in Codex's old folder`.
+- If the old folder is a link to `~/.agents/skills`, the entry is already in place, and only the record changes.
+- A copy in the old folder whose files someone edited stays where it is. The plan names it `keep edited copy in Codex's old folder`. If someone edits the copy after the preview, the update stops with `<path> was edited after preview; review the install plan again`.
 - `remove` and `disable` act on the entry where it is.
 - `lpm skills doctor` marks the target `old codex folder`, counts it as healthy, and names the `lpm skills update --global <name>` command that moves it.
 - The external inventory reads both folders and lists a skill once.
@@ -521,7 +525,7 @@ These commands require skill names or `--all`. `--all` takes precedence over nam
 `update` rejects `--agent` because enabled targets share the updated content.
 
 If an external file replaces a managed target, mutation stops before replacement.
-If an entry appears at a target while LPM CLI places a managed skill there, LPM CLI leaves the entry alone, rolls the change back, and fails.
+LPM CLI places each managed entry with a rename that never replaces an existing entry. If another tool places an entry at the target meanwhile, or changes the entry that LPM CLI replaces, LPM CLI leaves that entry alone, rolls the change back, and fails. On a file system without this kind of rename, the command fails with an error that names the cause.
 Use `doctor` to inspect its path and ownership before moving files.
 If managed content is missing, `update` can restore it from the original source.
 
@@ -557,6 +561,7 @@ lpm skills doctor --global
 For `list`, `view`, and `doctor`, `--global` adds global locations to the project inventory, including the dependency skills of global packages.
 Project managed names take precedence over matching global names. For dependency skills, `view --global` shows the global copy first: if a global package and the project both link a skill with that name, it shows the global one.
 `list --agent` filters managed, dependency, and external entries. For dependency entries, it selects the links in that agent's folder from the [agent table](#storage-and-compatibility): the project folder for the project's links, and the global folder for the links of global packages. For example, `codex` selects links in `.agents/skills` and `~/.agents/skills`, and `pi` selects links in `.pi/skills` and `~/.pi/agent/skills`. Package entries remain unless `--kind` excludes them.
+These filters and the external inventory compare agent folders by where they lead, after the links on the way. A skill in a folder that two agents share is listed for both agents and never as external.
 The external inventory does not list the links that LPM CLI made for dependency skills.
 
 Managed and external `view` results include source, security, context, and target details.
@@ -570,6 +575,8 @@ Dependency `view` reports the package and version, what the skill pre-approves, 
 | `doctor --json` | `dependency_skills` with `healthy` and `issues`. With `--global`, also `global_dependency_skills`. The top-level `healthy` is `false` when either object lists an issue. |
 
 `doctor` reports each difference between the dependency skill links and the policy, as [`lpm skills sync --check`](#sync-reconcile-without-installing) does. With `--global`, the differences include the LPM.dev skill sets that [`sync --global` fetches](#dependency-skills-of-global-packages).
+
+`doctor` marks a managed link as `broken link` when the link names its content but leads somewhere else, as a relative link written through a linked folder can. The status is unhealthy, and the next `lpm skills update` rewrites the link.
 
 `doctor` can exit successfully while its report contains unhealthy targets.
 For a CI health gate, inspect the JSON field:
@@ -696,7 +703,7 @@ The dashboard includes project and global skills. It binds only to `127.0.0.1`.
 An explicit port must be between 1 and 65535. Without `--port`, the command selects a free port.
 
 The dashboard shows content, metadata, files, context estimates, integrity, security findings, and target health.
-Package, dependency, and external entries support inspection only. Dependency entries form their own category, and the dashboard checks each copy again with the rules that installs apply.
+Package, dependency, and external entries support inspection only. Dependency entries form their own category, and the dashboard checks each copy again with the rules that installs apply. A link in a folder that several agents read shows one target row for each of those agents.
 Managed entries support reviewed enable, disable, update, and remove operations.
 `--read-only` disables mutations.
 

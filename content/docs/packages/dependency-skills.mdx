@@ -168,9 +168,9 @@ An update can be held. For example, version 2 of a package adds a command to `al
 
 | Hold of the new version | The earlier copy stays while |
 | --- | --- |
-| `needs_data`, `unreadable`, `not_reviewed` | The policy is unchanged. |
+| `needs_data`, `unreadable`, `not_reviewed` | The policy is unchanged, and its `allow` entries name the skill as specifically as the earlier copy needs. |
 | `needs_package_name`, `needs_skill_name` | The `allow` entries name the skill as specifically as the earlier copy needed. |
-| `awaiting_check` | The policy is unchanged. A copy of the installed release also stays under an edited policy that names it as specifically. A copy of another release stays only if it pre-approves nothing. |
+| `awaiting_check` | The policy is unchanged, and its `allow` entries name the skill as specifically as the earlier copy needs. A copy of the installed release also stays under an edited policy that names it as specifically. A copy of another release stays only if it pre-approves nothing. |
 | `hooks`, `blocked`, `invalid`, `name_conflict`, `malware`, `not_checkable` | Never. LPM CLI removes the earlier copy. |
 
 A kept copy stays only in the targets where its link is still intact. LPM CLI never links a kept copy into a new target. The install prints `Skill <name> from <package>@<version> is not linked: <reason>; the copy from <version> stays linked`, and JSON output sets `kept_version`.
@@ -375,25 +375,30 @@ lpm skills sync --global --check
 
 Every global package needs an `allow` entry, `@lpm.dev/*` packages included. The project's `package.json > lpm > skills` policy does not apply to global packages, and a project install never reads or changes the global links.
 
-LPM CLI reads and writes the policy only through real folders. It refuses a linked `~/.lpm` or `~/.lpm/global` folder and a linked `skills.json`. Global installs refuse the same folders. A write also refuses a policy file that changed after the preview.
+LPM CLI reads and writes the policy, the global manifest, and its record of the global links only through real folders. It refuses a linked `~/.lpm` or `~/.lpm/global` folder and a linked `skills.json`. Global installs refuse the same folders. If the policy file changed after the preview, `lpm skills link --global` and `lpm skills unlink --global` write nothing and fail with `<path> changed while its skills policy was being edited; nothing was written`.
 
 ### Where global links go
 
 `"auto"` targets are `~/.agents/skills` and, when `~/.claude` is a folder or a link to one, `~/.claude/skills`. Explicit targets are paths relative to your home folder, with the rules of project targets. The checked copies live in `~/.lpm/global/linked-skills/`, so removing a global package never removes its copy from under an agent. Each global link points at its copy by absolute path.
 
-The agent folders in your home folder can be links that you made, for example `~/.claude` linked to a dotfiles repository. Global links follow these links. A target that leads to the same folder as an earlier target gets no links of its own. For example, if `~/.claude/skills` is a link to `~/.agents/skills`, each skill gets one link, in `~/.agents/skills`, and Claude Code reads it there. LPM CLI still handles its own entries in these folders without following links.
+The agent folders in your home folder can be links that you made, for example `~/.claude` linked to a dotfiles repository. Global links follow these links, also a link to a folder that does not exist yet. A target that leads to the same folder as an earlier target gets no links of its own. For example, if `~/.claude/skills` is a link to `~/.agents/skills`, each skill gets one link, in `~/.agents/skills`, and Claude Code reads it there. This is also true before `~/.agents/skills` exists. LPM CLI still handles its own entries in these folders without following links.
+
+If an agent folder is a link to something that does not exist, LPM CLI does not link into it. The warning names the folder as `a link to something that doesn't exist`. LPM CLI removes an empty folder that it created only when it reaches the folder through real folders. An empty `skills` folder that it created inside a linked dotfiles folder stays.
 
 ### LPM.dev global packages
 
 An LPM.dev global package keeps its reviewed skills in its install folder. A flat skill links under the same `<owner>-<package>-<name>` name as in a project. LPM CLI fetches the reviewed skills of the installed version from the LPM.dev Registry when all of these conditions are true:
 
-- The global policy has at least one `allow` entry. When every `allow` entry names its packages, such as `#@lpm.dev/acme.cli`, only the named packages count.
+- The global policy can link something. It has at least one `allow` entry, and LPM CLI can read every `deny` entry.
+- No `deny` entry names the whole package or its installed version, as `#@lpm.dev/acme.cli` and `#@lpm.dev/acme.cli@1.0.0` do.
+- When every `allow` entry names its packages, such as `#@lpm.dev/acme.cli`, the package is one of them. A broader entry, such as `:lpm`, counts for every LPM.dev global package.
 - The install folder does not hold the reviewed skills of the installed version yet.
+- The LPM.dev Registry did not recently refuse the set.
 - The LPM.dev package skills setting is on.
 
 | Command | When it fetches |
 | --- | --- |
-| [`lpm skills link --global`](/docs/packages/skills#dependency-skills-of-global-packages) | After you confirm the change, at the prompt or with `--yes`. `--dry-run` fetches nothing. |
+| [`lpm skills link --global`](/docs/packages/skills#dependency-skills-of-global-packages) | After you confirm the change, at the prompt or with `--yes`. If every selector is already in `allow`, the policy does not change, and the command fetches without a prompt. `--dry-run` fetches nothing. |
 | [`lpm skills sync --global`](/docs/packages/skills#dependency-skills-of-global-packages) | Before it reconciles the links. |
 | [`lpm install -g`](/docs/packages/install#global-installs), [`lpm global update`](/docs/packages/global#dependency-skills) | After the install or update commits. |
 
@@ -415,7 +420,16 @@ lpm skills link --global '#@lpm.dev/acme.cli' --dry-run
 LPM.dev's reviewed skills for @lpm.dev/acme.cli@1.0.0 aren't on this machine yet; `lpm skills sync --global` fetches them
 ```
 
-LPM CLI writes a fetched set only while the global manifest lists the package at the same version. If the install folder is not a plain folder, LPM CLI warns and writes nothing.
+Before it writes a fetched set, LPM CLI checks the policy file again, under the lock that global installs take. If the file changed after the preview, the whole change fails, and LPM CLI writes no set and no policy. LPM CLI writes a fetched set only while the global manifest lists the package at the same version. If the install folder is not a real folder, LPM CLI warns and writes nothing.
+
+If the Registry answers that it has no reviewed skills for the version, the command warns, and LPM CLI records the answer on this machine. For a time, the global commands and the install hooks then do not ask again, and `sync --global --check` and `doctor --global` do not report the set:
+
+| Registry answer | LPM CLI asks again after |
+| --- | --- |
+| The skills are still under security review | 1 hour |
+| Review failed or rejected the skills, approved none of them, or withholds them | 1 week |
+
+The interactive picker of `lpm skills link --global` also lists the LPM.dev global packages whose reviewed skills are not on the machine yet, as `#<package>`. LPM CLI fetches them after you confirm, and links each skill that needs no more specific entry.
 
 ### When the global links change
 
