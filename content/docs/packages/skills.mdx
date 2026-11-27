@@ -1,9 +1,9 @@
 ---
 title: lpm skills
-description: "Install, inspect, update, and publish package guidance and standalone agent skills."
+description: "Install, link, inspect, update, and publish package guidance, dependency skills, and standalone agent skills."
 ---
 
-`lpm skills` manages guidance from LPM.dev Registry packages and standalone skills from GitHub or local files.
+`lpm skills` manages guidance from LPM.dev Registry packages, the skills that installed dependencies ship, and standalone skills from GitHub or local files.
 
 ```bash
 lpm skills [OPTIONS] <COMMAND>
@@ -19,6 +19,10 @@ lpm skills remove [OPTIONS] [SKILL]...
 lpm skills enable [OPTIONS] [SKILL]...
 lpm skills disable [OPTIONS] [SKILL]...
 lpm skills prune [OPTIONS]
+lpm skills deps [--global] [NAME]
+lpm skills link [--global] [--dry-run] [--yes] [SELECTOR]...
+lpm skills unlink [--global] [--dry-run] [--yes] (<SELECTOR>... | --all)
+lpm skills sync [--global] [--check]
 ```
 
 ## Quickstart
@@ -32,6 +36,11 @@ lpm skills add @lpm.dev/owner.package --yes
 lpm skills add ./team-skills --skill release-notes --agent codex --project --dry-run
 lpm skills add ./team-skills --skill release-notes --agent codex --project --yes
 
+# Link the skills that an installed dependency ships
+lpm skills deps
+lpm skills link '#agent-browser' --dry-run
+lpm skills link '#agent-browser' --yes
+
 # Inspect the result
 lpm skills list
 lpm skills dashboard
@@ -42,28 +51,33 @@ lpm skills dashboard
 | Command | Purpose |
 | --- | --- |
 | `add` (`install`) | Install a package skill set or selected standalone skills. |
-| `list` (`ls`) | List package, managed, and external skills. |
+| `list` (`ls`) | List package, managed, dependency, and external skills. |
 | `view` | Show details for one selector. |
 | `dashboard` (`ui`) | Inspect skills and manage standalone skills in a local browser. |
-| `validate` | Check the package's authored `lpm-skills/*.md` files. |
+| `validate` | Check the package's authored `lpm-skills/*.md` files and `skills/<name>/` directories. |
 | `clean` | Remove intact package skill sets. |
-| `doctor` | Diagnose managed targets and broken external links. |
+| `doctor` | Diagnose managed targets, broken external links, and dependency skill links. |
 | `update` | Read original sources again and refresh managed skills. |
 | `disable` / `enable` | Remove or restore recorded agent targets. |
 | `remove` (`rm`) | Remove managed targets and unused managed content. |
 | `prune` | Remove orphaned managed links and stale records. |
+| `deps` | List the skills that installed dependencies ship and their status. |
+| `link` | Allow dependency skills in `package.json` and link them for agents. |
+| `unlink` | Stop linking dependency skills. |
+| `sync` | Link dependency skills as the policy allows, without an install. |
 
 | Kind | Owner and location |
 | --- | --- |
 | `package` | LPM CLI installs a package's guidance under `.lpm/skills/<owner.package>/`. |
 | `managed` | LPM CLI stores standalone content separately and links or copies it into selected agent directories. |
+| `dependency` | LPM CLI copies a skill that an installed dependency ships to `.lpm/linked-skills/` and links it into agent directories, as the project's policy allows. See [Dependency skills](/docs/packages/dependency-skills). |
 | `external` | An agent directory contains skills that LPM CLI does not manage. |
 
 Project commands act on the nearest directory with a `package.json`, as [lpm install](/docs/packages/install#project-discovery) does.
 From a subdirectory, the command prints the directory it chose. Without a `package.json` above it, the command uses the current directory. A local source path that you pass to `lpm skills add` is relative to the current directory.
 
-Package skills do not create agent links or change editor configuration.
-Standalone mutations do not change package skill sets or external skills.
+LPM CLI links the reviewed package skills of direct `@lpm.dev/*` dependencies for agents as dependency skills. It does not change editor configuration.
+Standalone mutations do not change package skill sets, dependency skills, or external skills.
 See [AI agent skills](/docs/reference/ai-agent-skills) for the ownership model.
 
 ## Examples
@@ -77,18 +91,21 @@ lpm skills update release-notes --dry-run
 lpm skills update release-notes --yes
 lpm skills disable release-notes --agent cursor --yes
 lpm skills clean --dry-run
+lpm skills deps agent-browser
+lpm skills unlink '#agent-browser' --yes
+lpm skills sync --check
 ```
 
-### A task in `lpm.json`
+### Project configuration and tasks
 
-Neither [`lpm.json`](/docs/reference/lpm-json) nor `package.json > lpm` has dedicated skill configuration.
-An uncached task can check authored package skills:
+`package.json > lpm > skills` holds the project's [dependency skills policy](/docs/packages/dependency-skills#the-policy). [`lpm.json`](/docs/reference/lpm-json) has no skill configuration.
+An uncached task can check authored package skills and the dependency skill links:
 
 ```json title="lpm.json"
 {
   "tasks": {
     "skills-check": {
-      "command": "lpm skills validate",
+      "command": "lpm skills validate && lpm skills sync --check",
       "cache": false
     }
   }
@@ -97,11 +114,10 @@ An uncached task can check authored package skills:
 
 ```bash
 lpm run skills-check
-lpm run skills-check -- --json
 ```
 
-Extra arguments apply to that run. See [lpm run](/docs/dev/run).
-Automatic package skill installation uses a separate global preference, described below.
+See [lpm run](/docs/dev/run).
+Automatic package skills and dependency skill links also follow your personal settings, described below.
 
 ## Package skills
 
@@ -115,9 +131,10 @@ lpm skills add @lpm.dev/owner.package@1.0.0 --dry-run
 lpm skills add @lpm.dev/owner.package@1.0.0 --yes
 ```
 
-`--list` and `--dry-run` read the Registry without installing files.
+`--list` and `--dry-run` read the Registry without installing files. They name each skill that review [approved with a warning](/docs/packages/dependency-skills#skills-approved-with-a-warning) and the risks it found, in `review_warning` in JSON.
 Package mode rejects `--skill`, `--agent`, `--project`, `--global`, `--copy`, and `--full-depth`.
 The package's approved skills form one installed set.
+With the LPM.dev package skills setting on, `lpm skills add` also links the set's skills for agents, as an install does. JSON output reports the links in `dependency_skills`.
 
 Private guidance requires publisher access.
 Stored sessions can recover from expired credentials, including concealed access denials.
@@ -151,19 +168,22 @@ JSON output lists these messages in `warnings`.
 After a `--no-skills` upgrade, an enabled online installation refreshes stale guidance even if package files are current.
 If direct aliases select several versions of one package, the shared guidance directory uses the highest selected version.
 
+An enabled installation also links the reviewed skills of these packages for agents, as [dependency skills](/docs/packages/dependency-skills#lpmdev-package-skills). A flat skill named `usage` in `@lpm.dev/acme.ui-kit` links as `acme-ui-kit-usage`.
+
 ```bash
 lpm config lpm-skills --set false
 lpm install --skills
 lpm install --no-skills
 ```
 
-The global key is `auto-install-lpm-skills` in `${LPM_HOME:-~/.lpm}/config.toml`.
-Its default is `true`. The legacy `noSkills` preference applies only if the current key is absent.
+The setting is `lpm-dev-packages` in the `[skills]` table of `${LPM_HOME:-~/.lpm}/config.toml`. Its default is `true`.
+If it is absent, LPM CLI reads the legacy `auto-install-lpm-skills` key, and then the legacy `noSkills` key. The next write of the setting moves the value to `[skills]` and removes the legacy keys.
 
-`--skills` and `--no-skills` override the preference for one installation.
+`--skills` and `--no-skills` override your settings for one installation.
+`--skills` turns on LPM.dev package skills and the links of npm and other package skills. `--no-skills` skips package skills, the restore of managed skills, and dependency skill links.
 They also apply to [lpm add](/docs/packages/add) and [lpm ci](/docs/packages/install#frozen-lockfile-and-ci).
-The preference does not remove existing files or affect explicit skill commands.
-See [lpm config](/docs/infra/config#focused-settings).
+Turning the setting off keeps the files in `.lpm/skills/`, removes the agent links that LPM CLI made for these skills, and does not affect explicit skill commands.
+See [lpm config](/docs/infra/config#skill-settings).
 
 An installation does not remove a package's skill directory when the package stops being a dependency.
 [lpm uninstall](/docs/packages/uninstall) removes an intact set after the last direct dependency or alias on the package goes.
@@ -176,12 +196,232 @@ lpm skills clean --dry-run
 lpm skills clean --yes
 ```
 
-`clean` removes only sets whose files and digests match their ownership manifest.
+`clean` removes only sets whose files and digests match their ownership manifest. It also removes the agent links that LPM CLI made for the removed sets.
 It preserves Markdown files directly under `.lpm/skills/`, modified or untracked content, invalid manifests, symlinks, managed standalone content, and agent targets.
 A dry run does not create a lock file or project directories.
 
 Interactive cleanup defaults to **No**. Unattended cleanup requires `--yes`. Without it, cleanup removes nothing and fails with [`confirmation_required`](/docs/reference/exit-codes#confirmation-required).
 Run [lpm install](/docs/packages/install) to restore removed sets.
+
+## Dependency skills
+
+Packages can ship skills as `skills/<name>/SKILL.md` directories. `deps`, `link`, `unlink`, and `sync` list these skills, edit the policy in `package.json > lpm > skills`, and reconcile the agent links.
+[Dependency skills](/docs/packages/dependency-skills) explains the policy, the selectors, how specifically an entry must name a skill, and why LPM CLI holds a skill.
+
+```bash
+lpm skills deps
+lpm skills link '#agent-browser' --dry-run
+lpm skills link '#agent-browser' --yes
+lpm skills unlink '#agent-browser' --yes
+lpm skills sync --check
+```
+
+In a workspace, these commands work on the workspace root, where the policy lives.
+`link` and `unlink` refuse a change while a newer LPM CLI's record of the links is in place. They also refuse to write `package.json`, or the global policy file with `--global`, if the file changed after the preview.
+If your `skills.other-packages` setting is off, they save the policy and warn that nothing was linked for you.
+
+### `deps`: list dependency skills
+
+```bash
+lpm skills deps
+lpm skills deps agent-browser
+lpm skills deps --json
+```
+
+`deps` lists every skill that installed dependencies ship, allowed or not. `NAME` keeps the skills of one package, or the skills with one name.
+Each row shows the skill, the package and version, the status, and a note. The note lists the links of a linked skill, the reason for a held skill, or the entry that links a skill that is not allowed yet, with what it pre-approves.
+
+| Status | Meaning |
+| --- | --- |
+| `linked` | LPM CLI linked this version for agents. |
+| `allowed` | The policy allows it. The next install or `lpm skills sync` links it. |
+| `not allowed` | No `allow` entry matches it. JSON spells it `not_allowed`. |
+| `denied` | A `deny` entry matches it. |
+| `held` | The policy allows it, but LPM CLI does not link it. JSON `reason` names the [hold](/docs/packages/dependency-skills#held-skills). |
+
+`deps` also warns about problems in the policy, packages whose skills LPM CLI could not read, and settings that you turned off. It ends with a `lpm skills link` command for the first skill that can link. It never asks Socket.
+
+```json
+{
+  "success": true,
+  "project": "/home/me/my-app",
+  "enabled": true,
+  "policy": { "allow": [], "deny": [], "targets": [".agents/skills"] },
+  "problems": [],
+  "unlisted": [],
+  "count": 1,
+  "skills": [
+    {
+      "skill": "agent-browser",
+      "package": "agent-browser",
+      "version": "2.1.0",
+      "status": "not_allowed",
+      "change": null,
+      "reason": null,
+      "detail": null,
+      "description": "Drive a browser from the command line.",
+      "hidden": false,
+      "allowed_tools": ["Bash(agent-browser:*)"],
+      "permission": "broad",
+      "warnings": 0,
+      "review_warning": null,
+      "suggested_selector": "#agent-browser:skill(agent-browser)",
+      "links": []
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `project` | The project root. With `--global`, the output has `global: true` instead. |
+| `enabled` | Whether your `skills.other-packages` setting is on. |
+| `policy` | The `allow` and `deny` entries as written, and the target folders that the policy selects now. |
+| `problems` | Why LPM CLI cannot read parts of the policy. |
+| `unlisted` | `{ "package", "detail" }` for each package whose skills LPM CLI could not read. |
+| `skills[].change` | What the next reconcile does: `link`, `update`, `keep`, `hold`, `unlink`, or `null`. |
+| `skills[].reason` | The hold reason of a held skill. For a skill that is not allowed, the problem that keeps it out even with an `allow` entry. |
+| `skills[].permission` | `none`, `broad` for a skill that pre-approves tools or commands, or `hooks`. |
+| `skills[].allowed_tools` | The skill's `allowed-tools` entries. |
+| `skills[].warnings` | The number of scan warnings. |
+| `skills[].review_warning` | For an LPM.dev skill that review [approved with a warning](/docs/packages/dependency-skills#skills-approved-with-a-warning), the risks it found, each with `severity`, `category`, and `description`. The list is empty when the review named no risk. `null` otherwise. |
+| `skills[].hidden` | The frontmatter asks agents not to list the skill. |
+| `skills[].suggested_selector` | The narrowest `allow` entry that links the skill, or `null` when nothing can link it. |
+| `skills[].links` | The target entries that LPM CLI linked. |
+
+### `link`: allow skills
+
+```bash
+lpm skills link '#agent-browser' --dry-run
+lpm skills link '#agent-browser'
+lpm skills link '#db-tools:skill(migrations)' --yes
+lpm skills link
+```
+
+`link` adds each selector to `allow`, in its canonical form, and then reconciles the links. It first previews the change: each entry that it adds, and each skill that the change links, updates, or holds, with what the skill pre-approves. Then it asks for confirmation, writes `package.json`, and reconciles inside the project's install transaction.
+
+`link` refuses a selector that installs ignore, such as `:root` on its own, `:scripts`, or `:malware` before `>`. It refuses the selector before it writes anything.
+
+The confirmation names the number of skills that the change lets pre-approve commands for agents. It counts a skill whose new release pre-approves other tools than before. If every selector is already in `allow`, `link` reconciles without a prompt, because the policy does not change. With `--global`, it then also fetches the LPM.dev skills that it needs.
+
+Without a selector in an interactive terminal, `link` opens a picker. The picker lists the skills that direct dependencies ship and that the policy does not link yet, with each skill's description and grants. Each pick saves `#<package>:skill(<name>)`, so it links that skill and no skill that the package adds later. With `--global`, the picker also lists each LPM.dev global package whose reviewed skills are not on the machine yet. That pick saves `#<package>`. Outside a terminal, `link` needs a selector.
+
+### `unlink`: stop linking skills
+
+```bash
+lpm skills unlink '#agent-browser' --dry-run
+lpm skills unlink '#agent-browser' --yes
+lpm skills unlink '#@lpm.dev/acme.ui-kit' --yes
+lpm skills unlink --all --yes
+```
+
+`unlink` removes each `allow` entry that is equal to a selector. It adds the selector to `deny` when the selector is not an `allow` entry, or when the skill still links without a `deny` entry. For example, another `allow` entry can still match the skill, now or after a hold clears. LPM CLI also adds the `deny` entry when it could not read a package that the selector can match.
+
+The decision ignores your personal skill settings, because teammates share `package.json`.
+
+`--all` removes every `allow` entry and keeps the `deny` entries. It denies each package whose skills still link, such as an `@lpm.dev/*` dependency whose reviewed skills link without an entry.
+
+### `sync`: reconcile without installing
+
+```bash
+lpm skills sync
+lpm skills sync --check
+lpm skills sync --check --json
+```
+
+`sync` plans and applies the links now, even when they look current, without an install. With the [Socket check](/docs/packages/dependency-skills#optional-socket-check) on, it asks Socket at once instead of waiting for a retry.
+
+`--check` changes nothing. It prints each difference between the links and the policy, and exits with status `1` when it finds one:
+
+```text
+.agents/skills/agent-browser is missing or isn't LPM's link
+```
+
+```json
+{
+  "success": false,
+  "in_sync": false,
+  "differences": [".agents/skills/agent-browser is missing or isn't LPM's link"]
+}
+```
+
+A target entry that something else holds is not a difference, because `sync` cannot change it. A link in a folder that is no longer a target is a difference.
+
+### JSON output of `link`, `unlink`, and `sync`
+
+A preview with `--dry-run --json` lists the skills whose links the change affects:
+
+```json
+{
+  "success": true,
+  "dry_run": true,
+  "action": "link",
+  "skills": [{ "skill": "agent-browser", "status": "allowed", "change": "link" }],
+  "added": ["#agent-browser:skill(agent-browser)"]
+}
+```
+
+Each `skills` entry has the same fields as in `deps`. An `unlink` preview has `removed` and `denied` instead of `added`. A `link --global` preview adds `fetches` when applying the change [fetches LPM.dev skills](#dependency-skills-of-global-packages).
+
+An applied change reports the policy entries and the [`dependency_skills` object](/docs/packages/dependency-skills#when-lpm-cli-reconciles-the-links) of an install:
+
+```json
+{
+  "success": true,
+  "policy_changes": ["#agent-browser:skill(agent-browser)"],
+  "denied": [],
+  "dependency_skills": {
+    "linked": [
+      {
+        "skill": "agent-browser",
+        "package": "agent-browser",
+        "version": "2.1.0",
+        "targets": [".agents/skills"]
+      }
+    ],
+    "updated": [],
+    "removed": [],
+    "held": [],
+    "unchanged": 0
+  }
+}
+```
+
+`policy_changes` lists the `allow` entries that `link` added or `unlink` removed. `denied` lists the `deny` entries that `unlink` added. `sync` reports empty lists. Warnings appear in `warnings`.
+
+`link` and `unlink` ask before they change the policy. With `--json` or outside a terminal, they need `--yes`. Without it, they change nothing and fail with [`confirmation_required`](/docs/reference/exit-codes#confirmation-required).
+
+### Dependency skills of global packages
+
+```bash
+lpm skills deps --global
+lpm skills link --global '#agent-browser' --dry-run
+lpm skills link --global '#agent-browser'
+lpm skills unlink --global '#agent-browser' --yes
+lpm skills sync --global
+lpm skills sync --global --check
+```
+
+`--global` (`-g`) works on the policy for your global packages in `~/.lpm/global/skills.json`. Links go into `~/.agents/skills` and, when `~/.claude` exists, `~/.claude/skills`. These folders can be links that you made, such as `~/.claude` linked to a dotfiles repository. Every global package needs an `allow` entry, including `@lpm.dev/*` packages.
+Messages name the targets under `~/` and the policy keys as they appear in the file, such as `allow`. `deps --global` names each link under `~/`, such as `~/.agents/skills/agent-browser`. When `unlink` empties the policy, LPM CLI removes the file.
+
+LPM CLI fetches the reviewed skills of an `@lpm.dev/*` global package from the LPM.dev Registry only when the global policy can link them, as [LPM.dev global packages](/docs/packages/dependency-skills#lpmdev-global-packages) describes. `link --global` fetches them after you confirm the change, and `sync --global` fetches them before it reconciles. A dry run fetches nothing. It lists each set that applying the change fetches:
+
+```json
+{
+  "success": true,
+  "dry_run": true,
+  "action": "link",
+  "skills": [],
+  "fetches": [{ "package": "@lpm.dev/acme.cli", "version": "1.0.0" }],
+  "added": ["#@lpm.dev/acme.cli"]
+}
+```
+
+`sync --global --check` fetches nothing. It reports each set that `sync --global` fetches as a difference, and exits with status `1`. When the Registry refuses a set, LPM CLI records the answer. For an hour while review runs, or for a week after a refusal, LPM CLI does not ask again, and `--check` does not report the set.
+
+If LPM CLI cannot read the global manifest, for example because a newer LPM CLI wrote it, these commands fail and leave the links as they are.
+See [Global packages](/docs/packages/dependency-skills#global-packages).
 
 ## Standalone sources and agent targets
 
@@ -229,7 +469,7 @@ A skill that cannot be restored produces an installation warning. If its source 
 
 | Agent | Project directory | Default global directory |
 | --- | --- | --- |
-| `codex` | `.agents/skills/` | `~/.codex/skills/` |
+| `codex` | `.agents/skills/` | `~/.agents/skills/` |
 | `claude-code` | `.claude/skills/` | `~/.claude/skills/` |
 | `cursor` | `.cursor/skills/` | `~/.cursor/skills/` |
 | `grok` | `.grok/skills/` | `~/.grok/skills/` |
@@ -237,15 +477,30 @@ A skill that cannot be restored produces an installation warning. If its source 
 | `pi` | `.pi/skills/` | `~/.pi/agent/skills/` |
 | `kimi` | `.kimi/skills/` | `~/.kimi/skills/` |
 
-Global paths honor `CODEX_HOME`, `GROK_HOME`, `XDG_CONFIG_HOME`, and `PI_CODING_AGENT_DIR` for the corresponding agents.
+Global paths honor `GROK_HOME`, `XDG_CONFIG_HOME`, and `PI_CODING_AGENT_DIR` for the corresponding agents.
 Links are the default. `--copy` creates copies, and Windows can fall back to copies if symlink creation is unavailable.
+A project link names its content by a relative path. A global link names it by absolute path, so it works through an agent folder that you linked, such as `~/.claude` linked to a dotfiles repository.
+
+Two agents can read one folder, for example when `~/.claude/skills` is a link to `~/.agents/skills`. A skill added for both gets one entry. The second agent records no target of its own, and the plan says `claude-code reads it through codex's folder`. `remove` or `disable` for one agent never deletes an entry that another agent reads under another name.
+
+Earlier releases put global Codex skills in `$CODEX_HOME/skills`, by default `~/.codex/skills`. Codex now reads `~/.agents/skills`. Records in the old folder stay valid:
+
+- The next `lpm skills update` or `enable` of such a skill moves its entry to `~/.agents/skills` and removes the old entry in the same transaction.
+- The move needs a free `~/.agents/skills/<name>`. If another skill is there, the command stops and the old entry stays.
+- If the old folder is a link to `~/.agents/skills`, the entry is already in place, and only the record changes.
+- A copy in the old folder whose files someone edited stays where it is. The plan names it `keep edited copy in Codex's old folder`. If someone edits the copy after the preview, the update stops with `<path> was edited after preview; review the install plan again`.
+- `remove` and `disable` act on the entry where it is.
+- `lpm skills doctor` marks the target `old codex folder`, counts it as healthy, and names the `lpm skills update --global <name>` command that moves it.
+- The external inventory reads both folders and lists a skill once.
 
 Agent-specific frontmatter restricts compatible targets.
 Re-adding a skill checks all enabled targets that will receive its new content, including retained targets.
 Enabling a disabled target checks the current stored content before restoring it.
 
 Warning-level security findings require confirmation. Blocking findings prevent installation and updates.
-Previews can show blocked candidates without applying them.
+Previews can show blocked candidates without applying them. See [Security scan rules](/docs/reference/ai-agent-skills#security-scan-rules).
+
+If a dependency skill is linked at the target entry of a managed skill that `lpm skills add` installs, `add` stops and names the `lpm skills unlink '#<package>:skill(<name>)'` command to run first. For a global managed skill over the link of a global package, it names `lpm skills unlink --global '#<package>:skill(<name>)'`.
 
 ## Update, disable, enable, and remove
 
@@ -272,6 +527,7 @@ These commands require skill names or `--all`. `--all` takes precedence over nam
 `update` rejects `--agent` because enabled targets share the updated content.
 
 If an external file replaces a managed target, mutation stops before replacement.
+LPM CLI places each managed entry with a rename that never replaces an existing entry. If another tool places an entry at the target meanwhile, or changes the entry that LPM CLI replaces, LPM CLI leaves that entry alone, rolls the change back, and fails. On a file system without this kind of rename, the command fails with an error that names the cause.
 Use `doctor` to inspect its path and ownership before moving files.
 If managed content is missing, `update` can restore it from the original source.
 
@@ -297,17 +553,32 @@ Then add it again from a trusted source.
 lpm skills list --global
 lpm skills list --kind package
 lpm skills list --kind managed --agent codex
+lpm skills list --kind dependency --global
 lpm skills view release-notes --global
 lpm skills view owner.package/usage
+lpm skills view agent-browser
 lpm skills doctor --global
 ```
 
-For `list`, `view`, and `doctor`, `--global` adds global locations to the project inventory.
-Project managed names take precedence over matching global names.
-`list --agent` filters managed and external entries. Package entries remain unless `--kind` excludes them.
+For `list`, `view`, and `doctor`, `--global` adds global locations to the project inventory, including the dependency skills of global packages.
+Project managed names take precedence over matching global names. For dependency skills, `view --global` shows the global copy first: if a global package and the project both link a skill with that name, it shows the global one.
+`list --agent` filters managed, dependency, and external entries. For dependency entries, it selects the links in that agent's folder from the [agent table](#storage-and-compatibility): the project folder for the project's links, and the global folder for the links of global packages. For example, `codex` selects links in `.agents/skills` and `~/.agents/skills`, and `pi` selects links in `.pi/skills` and `~/.pi/agent/skills`. Package entries remain unless `--kind` excludes them.
+These filters and the external inventory compare agent folders by where they lead, after the links on the way. A skill in a folder that two agents share is listed for both agents and never as external.
+The external inventory does not list the links that LPM CLI made for dependency skills.
 
 Managed and external `view` results include source, security, context, and target details.
 Package `view` reports names, paths, and sizes. The dashboard provides full package content and metadata.
+Dependency `view` reports the package and version, what the skill pre-approves, its description, its links, and the path of its checked copy. It checks the copy again with the rules that installs apply.
+
+| Command | JSON for dependency skills |
+| --- | --- |
+| `list --json` | `counts.dependency`, and `skills.dependency` entries with `name`, `scope` (`project` or `global`), `package`, `version`, `permission`, and `links`. Global links are named under `~/`. |
+| `view --json` | `kind: "dependency"`, `scope`, `name`, `package`, `version`, `permission`, `digest`, `description`, `copy`, `links`, `healthy`, and `review_warning`, as in `deps`. `healthy` is `false` when the copy changed or a link is missing. |
+| `doctor --json` | `dependency_skills` with `healthy` and `issues`. With `--global`, also `global_dependency_skills`. The top-level `healthy` is `false` when either object lists an issue. |
+
+`doctor` reports each difference between the dependency skill links and the policy, as [`lpm skills sync --check`](#sync-reconcile-without-installing) does. With `--global`, the differences include the LPM.dev skill sets that [`sync --global` fetches](#dependency-skills-of-global-packages).
+
+`doctor` marks a managed link as `broken link` when the link names its content but leads somewhere else, as a relative link written through a linked folder can. The status is unhealthy, and the next `lpm skills update` rewrites the link.
 
 `doctor` can exit successfully while its report contains unhealthy targets.
 For a CI health gate, inspect the JSON field:
@@ -356,10 +627,11 @@ lpm publish
 | Name | Lowercase letters, numbers, and hyphens, starting and ending with a letter or number. Unique within the package. |
 | Description | 10–500 characters. |
 | Body | At least 100 characters. |
-| Security | No security findings, including warnings. |
+| Security | No blocking findings, and no warnings except the five that [publish with a warning](/docs/reference/ai-agent-skills#security-scan-rules). |
 
 Quote numeric-looking names and versions to retain string values.
 Folded and literal YAML descriptions are supported.
+`lpm skills validate` lists the five warnings that publish, in `security_warnings` in JSON. `lpm publish` to the LPM.dev Registry shows them, and its JSON result lists them in the target's `warnings`.
 
 LPM.dev Registry checks uploaded skills with the same validator, so a skill that passes `lpm skills validate` also passes the upload check. Registry security review happens after upload.
 Markdown files left directly in `.lpm/skills/` by earlier releases fail validation with a message to move them to `lpm-skills/`.
@@ -373,6 +645,55 @@ The optional skill `version` describes its guidance independently of the package
 An older value remains visible after a later package release.
 See the [package-skill authoring guide](https://github.com/lpm-dev/lpm-guide).
 
+### Publish skill directories
+
+A package can also ship skills in the standard Agent Skills layout: `skills/<name>/SKILL.md` directories at the published root. Projects that install the package link them as [dependency skills](/docs/packages/dependency-skills), as their policy allows. For an `@lpm.dev/*` package, the LPM.dev Registry reviews each directory, and installs link a directory only after review approves its files.
+
+```text
+my-package/
+├── package.json
+└── skills/
+    └── db-migrations/
+        ├── SKILL.md
+        └── references/
+            └── commands.md
+```
+
+`lpm publish` packs `skills/` like other package files. If `package.json > files` lists what to publish, it must include `skills/`.
+
+`lpm skills validate` checks these directories with the [rules that installs apply](/docs/packages/dependency-skills#skill-directory-rules):
+
+| Result | Examples | Effect on `validate` |
+| --- | --- | --- |
+| Valid | A directory that passes every rule | Listed. |
+| Problem | A structural problem, a blocking scan finding, a `SKILL.md` that declares `hooks`, a link, a folder name that installs ignore, a folder without a regular `SKILL.md`, a directory after the first 32, or a `skills/` folder with more than 4,096 entries | Fails. |
+| Warning | A scan warning | Listed. Does not fail. |
+| Not reviewed | A valid directory that is larger than the [review limits](#review-limits-for-skill-directories) | Listed. Does not fail. |
+
+`lpm publish` does not stop for these results. When it publishes to the LPM.dev Registry, it warns about each problem, because review does not approve such a directory as it is, and about each directory over the review limits. JSON output lists these messages in the LPM.dev target's `warnings`.
+
+| `validate --json` field | Contents |
+| --- | --- |
+| `skill_directories` | The valid directories, as `skills/<name>/`. |
+| `skill_directory_problems` | The problems. Any entry makes `success` `false`. |
+| `skill_directory_warnings` | The scan warnings in the directories. |
+| `skill_directories_unreviewed` | The valid directories that review will not approve, each with the reason. |
+| `security_findings` | Findings in `lpm-skills/*.md` that stop the publish. |
+| `security_warnings` | Warnings in `lpm-skills/*.md` that publish with the files. |
+
+### Review limits for skill directories
+
+The LPM.dev Registry reviews each `skills/<name>/` directory whole:
+
+| Limit | Value |
+| --- | --- |
+| One directory | At most 128 KiB of files |
+| All directories of one release | At most 512 KiB together |
+
+The Registry reviews directories in name order while they fit. A smaller directory after one that does not fit is still reviewed. A directory over a limit still publishes, but review never approves it, and installs hold it as `not_reviewed`. The Registry also leaves out a directory that does not fit the skill storage of the author or organization, and the publish response warns about it. Flat `lpm-skills/*.md` files have their own limits, in the table above.
+
+A private release gets no AI review. The Registry approves its skill files and directories when they pass its checks. Installs still link a directory only while its files match the digest that the Registry recorded.
+
 ## Local dashboard
 
 ```bash
@@ -384,7 +705,7 @@ The dashboard includes project and global skills. It binds only to `127.0.0.1`.
 An explicit port must be between 1 and 65535. Without `--port`, the command selects a free port.
 
 The dashboard shows content, metadata, files, context estimates, integrity, security findings, and target health.
-Package and external entries support inspection only.
+Package, dependency, and external entries support inspection only. Dependency entries form their own category, and the dashboard checks each copy again with the rules that installs apply. A link in a folder that several agents read shows one target row for each of those agents.
 Managed entries support reviewed enable, disable, update, and remove operations.
 `--read-only` disables mutations.
 
@@ -410,8 +731,8 @@ Keep the command running while you use the dashboard. Press `Ctrl+C` to stop it.
 | `add` | `--copy` | Copy files to agent targets. |
 | `add` | `--list` | Discover and preview a source. |
 | `add` | `--full-depth` | Search outside standard layouts. |
-| `list` | `--kind <KIND>` | Select `package`, `managed`, or `external`. |
-| `list` | `--agent <AGENT>` | Filter managed and external entries. |
+| `list` | `--kind <KIND>` | Select `package`, `managed`, `dependency`, or `external`. |
+| `list` | `--agent <AGENT>` | Filter managed, dependency, and external entries. |
 | `list`, `view`, `doctor` | `--global` | Include global locations. |
 | `update`, `remove`, `enable`, `disable` | `--all` | Select all managed names in the chosen scope. |
 | `remove`, `enable`, `disable` | `--agent <AGENT>` | Restrict recorded targets. Repeat for several agents. |
@@ -421,13 +742,22 @@ Keep the command running while you use the dashboard. Press `Ctrl+C` to stop it.
 | `dashboard` | `--no-open` | Print the URL without opening a browser. |
 | `dashboard` | `--port <PORT>` | Bind the requested loopback port. |
 | `dashboard` | `--read-only` | Disable dashboard mutations. |
+| `deps` | `[NAME]` | Show only the skills of one package, or the skills with one name. |
+| `link` | `[SELECTOR]...` | Selectors to add to `allow`. Without one, open the picker in a terminal. |
+| `unlink` | `<SELECTOR>...` | Selectors to stop linking. Required unless `--all` is present. |
+| `unlink` | `--all` | Remove every `allow` entry, keep the `deny` entries, and deny the packages that still link on their own. |
+| `sync` | `--check` | Report differences and exit with status `1` when the links do not match. Change nothing. |
+| `deps`, `link`, `unlink`, `sync` | `-g`, `--global` | Use the policy and links of your global packages. |
+| `link`, `unlink` | `--dry-run` | Preview the policy change and the links it changes. |
+| `link`, `unlink` | `-y`, `--yes` | Confirm the policy change without a prompt. |
 
 See [Global flags](/docs/commands#global-flags) for Registry and authentication overrides.
 
 ## See also
 
 - [AI agent skills](/docs/reference/ai-agent-skills) — ownership, lifecycle, and security.
+- [Dependency skills](/docs/packages/dependency-skills) — the policy, selectors, and holds for the skills that dependencies ship.
 - [lpm install](/docs/packages/install) — automatic package skill installation.
 - [lpm publish](/docs/packages/publish) — publish package guidance.
-- [lpm config](/docs/infra/config) — automatic installation preferences.
+- [lpm config](/docs/infra/config#skill-settings) — personal skill settings.
 - [MCP servers](/docs/reference/mcp-servers) — agent tool integrations.

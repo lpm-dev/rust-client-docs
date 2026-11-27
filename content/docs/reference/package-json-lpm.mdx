@@ -1,6 +1,6 @@
 ---
 title: package.json — "lpm" key
-description: Configure dependency layout, peer checks, lifecycle scripts, trust, and version policy in package.json.
+description: Configure dependency layout, peer checks, lifecycle scripts, trust, version policy, and dependency skills in package.json.
 ---
 
 The `lpm` object in `package.json` holds shared package-management configuration. It works with npm, private registries, and LPM.dev Registry.
@@ -32,7 +32,7 @@ There is no single precedence order for the whole `lpm` object.
 
 | File | Purpose |
 | --- | --- |
-| `package.json > lpm` | Dependency layout, resolution policy, lifecycle trust, and sandbox requests. |
+| `package.json > lpm` | Dependency layout, resolution policy, lifecycle trust, sandbox requests, and the dependency skills policy. |
 | [`lpm.json`](/docs/reference/lpm-json) | Runtimes, development services, environments, tasks, and publishing. |
 | [`lpm.toml`](/docs/reference/lpm-toml) | Project defaults for save policy, workspace execution, and related CLI behavior. |
 | [`~/.lpm/config.toml`](/docs/reference/config-toml) | User defaults and machine security policy. |
@@ -71,6 +71,7 @@ All fields are optional. Defaults below apply when no higher-priority configurat
 | [`patchedDependencies`](#patcheddependencies) | Package-to-patch object | Empty. |
 | [`peerDependencyRules`](#peerdependencyrules) | Peer-rule object | Empty. |
 | [`scripts`](#the-lpmscripts-block) | Lifecycle and sandbox configuration | See field table. |
+| [`skills`](#skills) | Dependency skills policy | No dependency skills link, except reviewed LPM.dev package skills. |
 | [`source`](#source) | Relative path string | Automatic source-file selection. |
 
 ### `linker`
@@ -491,6 +492,35 @@ Changes to requested access require another approval through [`lpm approve-scrip
 Manage scope trust with [`lpm trust lifecycle-scope`](/docs/packages/trust#lpm-trust-lifecycle-scope).
 An added scope requires signed `trust-scope-widen` authorization. Removal also removes that local authorization.
 For individual packages, prefer [version and integrity bindings](#trusteddependencies).
+
+### `skills`
+
+```json
+{
+  "lpm": {
+    "skills": {
+      "allow": ["#agent-browser", "#db-tools:skill(migrations)"],
+      "deny": ["#db-tools:skill(drop-tables)"],
+      "targets": "auto"
+    }
+  }
+}
+```
+
+This object decides which [Agent Skills of installed dependencies](/docs/packages/dependency-skills) LPM CLI links into agent folders after each install.
+
+| Field | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `allow` | Selector array, at most 256 | Empty | Links the skills that an entry matches. |
+| `deny` | Selector array, at most 256 | Empty | Keeps out the skills that an entry matches, even when an `allow` entry matches. |
+| `targets` | `"auto"` or an array of up to 16 project-relative paths | `"auto"` | `"auto"` selects `.agents/skills` and, when `.claude/` exists, `.claude/skills`. Each path must end in a `skills` folder and stay outside `.git`, `.lpm`, and `node_modules`. |
+
+Entries use the [`lpm query` selector language](/docs/packages/query#selectors), up to 1,024 bytes each. A skill that pre-approves tools or commands needs an entry that names it, as in `#pkg:skill(name)`. A skill with scan warnings needs an entry that names its package.
+
+Only the workspace root's `skills` applies. In a member manifest, installs report it and ignore it.
+An unknown key, an unreadable `deny` entry, or a `skills` value that is not an object links nothing. Every install warns until you fix it. An invalid `allow` entry is ignored with a warning.
+Editing this object does not change the install hash, so the next install does not resolve dependencies again.
+[`lpm skills link`](/docs/packages/skills#link-allow-skills) and [`lpm skills unlink`](/docs/packages/skills#unlink-stop-linking-skills) edit it for you.
 
 ### `source`
 

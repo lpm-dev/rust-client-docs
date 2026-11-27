@@ -138,7 +138,7 @@ Frozen installs reject package arguments, `--force`, a missing lockfile, and cha
 This configuration includes dependency sections, overrides, catalogs, patches, peer rules, and `autoInstallPeers`.
 Frozen installs make these checks even when nothing changed since the last install. A CI job that restores `node_modules` from a cache passes or fails them the same way a fresh clone does.
 
-An unchanged single-package install answers from a quick up-to-date check, in CI too. With `--json`, it prints `schema_version`, `success`, `up_to_date`, and `duration_ms`, plus `timing` with `--timing`. Workspaces, Swift packages, projects with LPM.dev packages, non-registry dependencies, root lifecycle scripts, policy extensions, install-time source analysis, strict peer dependencies, or LPM skills that aren't installed yet answer from the full install, whose output also has `warnings`, `counts`, `peer_conflicts`, `peer_issues`, and `security`.
+An unchanged single-package install answers from a quick up-to-date check, in CI too. With `--json`, it prints `schema_version`, `success`, `up_to_date`, and `duration_ms`, plus `timing` with `--timing`. Workspaces, Swift packages, projects with LPM.dev packages, non-registry dependencies, root lifecycle scripts, policy extensions, install-time source analysis, strict peer dependencies, LPM skills that aren't installed yet, or dependency skill links that do not match the policy answer from the full install, whose output also has `warnings`, `counts`, `peer_conflicts`, `peer_issues`, and `security`.
 
 `lpm.lock` records the overrides and patches that its resolution used. A fresh clone of a project with overrides or patches therefore installs from the committed lockfile, without local state from an earlier install.
 
@@ -441,7 +441,7 @@ lpm install -g foo --replace-bin serve
 `--replace-bin` transfers the existing command name to the new package.
 
 Global installs reject workspace flags, `-D`, `--yes`, omission flags, catalog flags, frozen flags, `--offline`, `--force`, `--skills`, `--timing`, and audit-after-install flags.
-`--no-skills` and `--no-security-summary` have no effect on global installs.
+`--no-security-summary` has no effect on global installs. `--no-skills` leaves the [dependency skill links of global packages](/docs/packages/dependency-skills#global-packages) as they are.
 
 After [`lpm approve-scripts --global`](/docs/packages/approve-scripts#global-approvals), reinstall the affected global package to run its approved scripts.
 See [Global packages](/docs/packages/global).
@@ -777,6 +777,34 @@ The summary includes severity counts and every Critical finding.
 JSON output includes `audit_summary`. If a required vulnerability lookup fails, the summary is omitted and the install still succeeds.
 An unchanged project can skip this audit. Run the separate audit command to inspect an existing installation.
 
+## Dependency skills
+
+Installed packages can ship Agent Skills as `skills/<name>/SKILL.md` directories. After each install, LPM CLI links the skills that `package.json > lpm > skills` allows into `.agents/skills/` and, when the project has `.claude/`, `.claude/skills/`:
+
+```json title="package.json"
+{
+  "lpm": {
+    "skills": {
+      "allow": ["#agent-browser"]
+    }
+  }
+}
+```
+
+```bash
+lpm install
+lpm install --no-skills
+lpm skills deps
+```
+
+Install output prints a line for each skill that it links, updates, removes, or holds. JSON output adds a `dependency_skills` object with `linked`, `updated`, `removed`, `held`, and `unchanged`, and adds skill warnings to `warnings`.
+`lpm install <package>` points out the skills that the new package ships and the project does not link yet, with the `lpm skills link` command for each.
+Dependency skills never fail an install. A problem becomes a warning, and the next install tries again.
+
+`--no-skills` leaves the links as they are for one run. `--prod` and other omission flags remove the links of skills from the dependencies that they leave out.
+In a workspace, only the root's policy applies, and the links live at the root.
+See [Dependency skills](/docs/packages/dependency-skills) for the policy, selectors, held skills, and the optional Socket check.
+
 ## LPM.dev Registry integrations
 
 ### Package-published LPM.dev skills
@@ -791,8 +819,10 @@ lpm config lpm-skills --set false
 lpm install @lpm.dev/owner.package --skills
 ```
 
-The flags override user configuration for one run. Disabling automatic extraction does not remove existing skill files.
-Use [`lpm skills clean`](/docs/packages/skills) to remove them.
+With the setting on, the install also links these skills for agents, without a policy entry. A flat skill named `usage` in `@lpm.dev/acme.ui-kit` links as `acme-ui-kit-usage`. See [LPM.dev package skills](/docs/packages/dependency-skills#lpmdev-package-skills).
+
+The flags override user configuration for one run. Disabling automatic extraction does not remove existing skill files, but it removes the agent links that LPM CLI made for them.
+Use [`lpm skills clean`](/docs/packages/skills) to remove the files.
 
 Skills never fail an install. If a release's skills are still under review, did not pass review, cannot be fetched, or would replace locally edited files, the install warns and keeps the skills already in `.lpm/skills/`. JSON output lists the messages in `warnings`.
 
@@ -1013,8 +1043,8 @@ Security exceptions remain subject to [approval requirements](#guarded-weakeners
 
 | Flag | Effect |
 | --- | --- |
-| `--skills` | Enable automatic LPM.dev package skills for this run |
-| `--no-skills` | Skip automatic LPM.dev package skills and the restore of recorded agent skills for this run |
+| `--skills` | Turn on automatic LPM.dev package skills and the links of npm and other package skills for this run |
+| `--no-skills` | Skip automatic LPM.dev package skills, the restore of recorded agent skills, and dependency skill links for this run |
 | `--no-security-summary` | Skip the post-install source scan, Registry enrichment, and human report |
 | `--audit-after-install` | Add an informational audit summary |
 | `--no-audit-after-install` | Skip that audit, overriding environment and user configuration |

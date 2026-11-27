@@ -71,8 +71,6 @@ lpm run build --all --workspace-concurrency 2
 | `engine-strict` | Boolean | `true` | Enforce supported project and dependency engine requirements. False changes failures to warnings. |
 | `strict-peer-dependencies` | Boolean | `false` | Fail on missing required peers, incompatible peer versions, and peer conflicts. |
 | `auto-install-peers` | Boolean | `true` | Install missing non-optional peers at the project root. |
-| `auto-install-lpm-skills` | Boolean | `true` | Reconcile package skills from installed `@lpm.dev/*` packages. |
-| `noSkills` | Boolean | `false` | Legacy inverse of automatic skill installation. The canonical key takes precedence. |
 | `install-time-source-analysis` | Boolean | `false` | Analyze package source during extraction and for the install summary. |
 | `fetch-lpm-security-insights` | Boolean | `true` | Use LPM.dev Registry security and lifecycle data for its packages. |
 | `audit-after-install` | Boolean | `false` | Add an audit summary after a successful install. Findings do not fail installation. |
@@ -81,10 +79,6 @@ lpm run build --all --workspace-concurrency 2
 `engine-strict` uses the workspace-root project value before this file. `--no-engine-strict` overrides both.
 Peer settings use the project value before this file. Explicit strict-peer flags override both sources.
 
-Automatic package skills resolve from `--skills` or `--no-skills`, the canonical user key, inverted `noSkills`, then `true`.
-The configuration command removes the legacy key when it writes the canonical setting.
-Disabling automatic skills does not delete existing skills or affect explicit [`lpm skills add`](/docs/packages/skills).
-
 Source analysis and Registry insights are independent.
 Re-enabling source analysis fills missing or outdated analysis caches from existing package bytes.
 [`lpm audit`](/docs/packages/audit) can still analyze packages while install-time analysis is disabled.
@@ -92,6 +86,31 @@ Re-enabling source analysis fills missing or outdated analysis caches from exist
 Audit-after-install resolves from its CLI flags, a valid `LPM_AUDIT_AFTER_INSTALL` value, this file, then `false`.
 An invalid environment value falls back to this file.
 `noSecuritySummary` combines with its CLI flag: either true value hides the summary.
+
+### Agent skills
+
+```toml title="~/.lpm/config.toml"
+[skills]
+lpm-dev-packages = true
+other-packages = true
+security-provider = "none"
+```
+
+| Key | Accepted value | Default | Behavior |
+| --- | --- | --- | --- |
+| `skills.lpm-dev-packages` | Boolean | `true` | Fetch the reviewed skills of `@lpm.dev/*` dependencies and link them for agents. |
+| `skills.other-packages` | Boolean | `true` | Link the skills of npm and other dependencies that a project's `package.json > lpm > skills` policy allows. |
+| `skills.security-provider` | `"none"`, `"socket"` | `"none"` | Ask Socket about npm packages before their skills link. |
+| `auto-install-lpm-skills` | Boolean | `true` | Legacy name of `skills.lpm-dev-packages`. Read only while the new key is absent. |
+| `noSkills` | Boolean | `false` | Legacy inverse of `skills.lpm-dev-packages`. Read only while both keys above are absent. |
+
+The LPM.dev setting resolves from `--skills` or `--no-skills`, `skills.lpm-dev-packages`, `auto-install-lpm-skills`, inverted `noSkills`, then `true`.
+`--skills` also turns on `skills.other-packages` for one run, and `--no-skills` skips all skill work for one run.
+The configuration commands remove both legacy keys when they write the LPM.dev setting.
+Turning a setting off removes the agent links that LPM CLI made for that kind of skill. It does not delete files in `.lpm/skills/` or affect explicit [`lpm skills add`](/docs/packages/skills).
+An invalid value, such as a `skills` key that is not a table, stops dependency skill linking. Each install warns until you fix it.
+Boolean keys also accept the strings `true`, `false`, `yes`, `no`, `on`, `off`, `1`, `0`, `enabled`, and `disabled`.
+See [skill settings](/docs/infra/config#skill-settings) and [Dependency skills](/docs/packages/dependency-skills).
 
 ### Lifecycle scripts and sandbox
 

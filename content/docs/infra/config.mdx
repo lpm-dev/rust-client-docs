@@ -98,15 +98,54 @@ Omit `--set` to select a value in an interactive terminal. JSON mode and non-int
 | `release-age` | `default`, `off`, `0`, or a duration | Set the cooldown for new package releases |
 | `release-age-policy` | `direct`, `strict` | Apply the cooldown to direct or all dependencies |
 | `source-analysis` | `true`, `false` | Control package source analysis during install |
+| `skills` | Interactive editor only | Manage the three [skill settings](#skill-settings) |
+| `lpm-skills` | `true`, `false` | Fetch the reviewed skills of `@lpm.dev/*` packages and link them for agents |
+| `npm-skills` | `true`, `false` | Link the skills of npm and other packages that a project's policy allows |
 | `lpm-dev` | Interactive editor only | Manage both LPM.dev Registry package preferences |
-| `lpm-skills` | `true`, `false` | Control automatic skills from `@lpm.dev/*` packages |
 | `lpm-insights` | `true`, `false` | Control install-summary enrichment for `@lpm.dev/*` packages |
 
-The `lpm-dev` editor manages `lpm-skills` and `lpm-insights` together. It does not accept `--set` or `--json`.
+The `skills` and `lpm-dev` editors do not accept `--set` or `--json`. The `lpm-dev` editor manages `lpm-skills` and `lpm-insights` together.
 
 The interactive `triage` editor lists the advisor providers that it detects. Cloud advisors receive lifecycle script text, while Ollama keeps the text local.
 
 If the triage editor offers to change script policy, it saves that change with the advisor choice. Cancellation leaves both saved values unchanged.
+
+## Skill settings
+
+Three personal settings in the `[skills]` table control the agent skills that installs fetch and link:
+
+```bash
+lpm config skills
+lpm config lpm-skills --set false
+lpm config npm-skills --set false
+lpm config set skills.security-provider socket
+lpm config get skills.other-packages
+lpm config delete skills.lpm-dev-packages
+```
+
+| Setting | Key | Values | Default | Effect |
+| --- | --- | --- | --- | --- |
+| LPM.dev package skills | `skills.lpm-dev-packages` | Boolean | `true` | Installs fetch the reviewed skills of `@lpm.dev/*` dependencies and link them for agents. When off, installs keep the fetched files and remove the links that LPM CLI made for them. |
+| npm and other package skills | `skills.other-packages` | Boolean | `true` | Installs link the skills of npm and other dependencies that the project's `package.json > lpm > skills` policy allows. When off, installs remove the links that LPM CLI made for them. |
+| Socket security check | `skills.security-provider` | `none`, `socket` | `none` | With `socket`, LPM CLI asks Socket about npm packages before their skills link. See [the Socket check](/docs/packages/dependency-skills#optional-socket-check). |
+
+`lpm config skills` shows the three settings as toggles and needs an interactive terminal. If you turn the Socket check on without a Socket token, it warns and names `lpm login --socket`. The guided `lpm config` menu opens it as **Skill settings**, next to a separate **LPM.dev security insights** entry.
+
+`lpm config set`, `get`, and `delete` accept the dotted keys. `lpm config set skills <value>` fails, because one value cannot replace the table.
+
+Earlier releases saved the LPM.dev setting as `auto-install-lpm-skills`, or as the inverted `noSkills`. LPM CLI still reads them while `skills.lpm-dev-packages` is absent. Any write of the setting saves `skills.lpm-dev-packages` and removes both legacy keys. `lpm config set auto-install-lpm-skills <value>` writes the new key, `get` reads the new key once it exists, and `delete` removes the new key and both legacy keys. `lpm config list` shows `skills.lpm-dev-packages`, `skills.other-packages`, and `skills.security-provider`, with a source that names a legacy key when LPM CLI read one.
+
+`lpm config lpm-skills --set <value> --json` returns `skills.lpm-dev-packages` and, for older scripts, `auto-install-lpm-skills`:
+
+```json
+{
+  "success": true,
+  "skills.lpm-dev-packages": false,
+  "auto-install-lpm-skills": false
+}
+```
+
+The project policy decides which dependency skills link. These settings only turn the kinds on or off for you. See [Dependency skills](/docs/packages/dependency-skills).
 
 ## Common generic keys
 
@@ -143,7 +182,7 @@ These aliases update one field in the related TOML table. They keep the other fi
 
 Use the focused `sandbox`, `sigstore`, and `firewall` commands in new scripts. The focused forms make the nested field clear.
 
-The generic action rejects `policy`, `tunnel`, and every dotted key, including `sandbox.mode`. It does not change the file after this error. Edit `~/.lpm/config.toml` directly when you must change an unsupported nested value.
+The generic action rejects `policy`, `tunnel`, and every other dotted key, including `sandbox.mode`. The [skill settings](#skill-settings) are the exception. It does not change the file after this error. Edit `~/.lpm/config.toml` directly when you must change an unsupported nested value.
 
 The generic action also rejects `minimum-release-age-exclude` because this key requires an array. Use `lpm config release-age-exclude add <selector>` instead.
 
@@ -309,7 +348,7 @@ lpm config lpm-skills --set false
 lpm config lpm-insights --set false
 ```
 
-Disabling package skills keeps existing `.lpm/skills/` files. Disabling insights does not disable local source analysis or explicit audits.
+Disabling package skills keeps existing `.lpm/skills/` files and removes the agent links that LPM CLI made for them. Disabling insights does not disable local source analysis or explicit audits.
 
 ## Security-sensitive changes
 
@@ -403,7 +442,7 @@ If the key is not saved, the command returns the same envelope with a null value
 
 The command exits successfully for both states. Use `found` to determine if the configuration file contains the key.
 
-The bare guided editor and `lpm config lpm-dev` do not support JSON mode.
+The bare guided editor, `lpm config skills`, and `lpm config lpm-dev` do not support JSON mode.
 
 ## Reset or recover the configuration
 

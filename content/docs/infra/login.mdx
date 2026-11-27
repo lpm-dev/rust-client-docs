@@ -6,9 +6,9 @@ description: "Sign in to package registries, inspect credentials, and clear or r
 Use these commands to authenticate private installs and publishing, check your account, or remove saved credentials.
 
 ```bash
-lpm login [--npm | --github | --gitlab | --login-registry <URL>] [--token <TOKEN>] [--save-env-token]
+lpm login [--npm | --github | --gitlab | --login-registry <URL> | --socket] [--token <TOKEN>] [--save-env-token]
 lpm whoami
-lpm logout [--npm] [--github] [--gitlab] [--logout-registry <URL>] [--all] [--revoke]
+lpm logout [--npm] [--github] [--gitlab] [--socket] [--logout-registry <URL>] [--all] [--revoke]
 ```
 
 Public package installs do not require login. LPM CLI supports npm, LPM.dev Registry, and private registries through [registry configuration](/docs/registries).
@@ -42,6 +42,7 @@ Saved logins belong to the LPM home: `~/.lpm`, or the directory that [`LPM_HOME`
 | GitHub Packages | `lpm login --github` | Use an environment token, `gh`, or a saved fallback. |
 | GitLab Packages | `lpm login --gitlab` | Use an environment token, `glab`, or a saved fallback. |
 | Custom npm-compatible registry | `lpm login --login-registry <URL>` | Save a token scoped to that registry URL and path. |
+| Socket | `lpm login --socket` | Save a Socket API token for the optional check of dependency skills. |
 
 Choose one login target. Explicit tokens require a third-party target; plain browser login rejects `--token`.
 
@@ -187,6 +188,29 @@ lpm login --login-registry https://npm.example.com/team/
 
 JSON mode and non-interactive shells require `--token`. Storage does not verify the token with the remote registry.
 
+## Store a Socket token
+
+The optional [Socket check](/docs/packages/dependency-skills#optional-socket-check) asks Socket about npm packages before their skills link for agents. It needs a Socket organization token with the `packages:list` scope:
+
+```bash
+lpm login --socket
+lpm login --socket --token <TOKEN> --json
+```
+
+LPM CLI confirms the token with Socket's API, stores it with your other credentials, and sets `skills.security-provider` to `socket`. It also ends a wait after a failed Socket request. In an interactive terminal, omit `--token` to use masked input. JSON mode and non-interactive shells require `--token`.
+
+```json
+{
+  "success": true,
+  "provider": "socket",
+  "organization": "acme",
+  "storage_backend": "keychain",
+  "storage_degraded": false
+}
+```
+
+In CI, set `SOCKET_CLI_API_TOKEN` instead and turn the check on with `lpm config set skills.security-provider socket`. `lpm login --socket` refuses to run while `LPM_SOCKET_API_URL` is set, because LPM CLI sends the stored token only to Socket's own API.
+
 ## Use credentials in CI
 
 Browser login is not a token-import workflow. Give protected package commands the appropriate environment credential:
@@ -243,12 +267,15 @@ lpm logout
 lpm logout --npm
 lpm logout --github --gitlab
 lpm logout --logout-registry https://npm.example.com/team/
+lpm logout --socket
 lpm logout --all
 ```
 
 Plain logout clears the saved session for the selected LPM-compatible registry. Third-party flags clear their selected saved credentials; you can combine them.
 
-`--all` clears that LPM-compatible session and supported third-party and custom credentials. It does not select every saved browser-registry session.
+`--all` clears that LPM-compatible session, supported third-party and custom credentials, and the Socket token. It does not select every saved browser-registry session.
+
+`--socket` removes the stored Socket token and, when the Socket check is on, turns it off. `--all` does the same.
 
 GitHub and GitLab logout removes only fallbacks saved by LPM CLI. It does not sign out of `gh` or `glab`.
 
