@@ -257,7 +257,7 @@ If LPM CLI cannot read a package's `skills` folder, it keeps the copies that the
 
 ## LPM.dev package skills
 
-With the LPM.dev package skills setting on, which is the default, an install fetches the reviewed skills of each direct `@lpm.dev/*` dependency into `.lpm/skills/<owner.package>/` and links them for agents. These skills need no `allow` entry. Review by the LPM.dev Registry takes the place of the local scan, so scan warnings do not need a package-naming entry and scan findings do not hold the skill.
+With the LPM.dev package skills setting on, which is the default, an install fetches the reviewed skills of each direct `@lpm.dev/*` dependency into `.lpm/skills/<owner.package>/` and links them for agents. These skills need no `allow` entry. Review by the LPM.dev Registry takes the place of the local scan, so scan warnings do not need a package-naming entry and scan findings do not hold the skill. A warning from the review does need one, as [Skills approved with a warning](#skills-approved-with-a-warning) describes.
 
 | Skill in the package | Links as |
 | --- | --- |
@@ -269,6 +269,18 @@ The flat-skill name prevents generic names such as `usage` from two packages fro
 The other rules still apply. A skill that pre-approves tools or commands needs an `allow` entry that names it, such as `#@lpm.dev/acme.ui-kit:skill(acme-ui-kit-usage)`. A skill with `hooks` never links.
 
 Reviewed skills link without an entry for the `@lpm.dev/*` packages that a project or member manifest declares in `dependencies`, `devDependencies`, or `optionalDependencies`, aliases included. They also link for a package that [`lpm add`](/docs/packages/add) or `lpm skills add` delivered. A transitive LPM.dev package, a package that only another package installs as a peer, or a package left out by `--prod` links only through an `allow` entry. The skills of members' LPM.dev dependencies link at the workspace root.
+
+### Skills approved with a warning
+
+The LPM.dev Registry approves a skill with a warning when its review finds a risk that is not an attack. Such a skill does not link on its own. It links only through an `allow` entry that names its package, such as `#@lpm.dev/acme.ui-kit`. A broader entry, such as `:lpm`, is not enough. Until then, LPM CLI holds the skill as `needs_package_name`, with the detail ``LPM.dev review warned about it; allow `#@lpm.dev/acme.ui-kit` to link it``.
+
+`lpm skills deps` names the risks that the review found, at most three on one line:
+
+```text
+acme-ui-kit-usage from @lpm.dev/acme.ui-kit@1.0.0: LPM.dev review warned about it: high insecure-patterns, Pipes a download to a shell
+```
+
+`lpm skills deps --json` lists every risk in `review_warning`, each with `severity`, `category`, and `description`. The list is empty when the review named no risk. `lpm skills view` and the preview of `lpm skills add @lpm.dev/<package>` show the risks too. LPM CLI keeps the warning in its [review record](#review-records), so it also applies offline. The same rule applies to [global packages](#lpmdev-global-packages).
 
 ### Review records
 
@@ -387,7 +399,7 @@ If an agent folder is a link to something that does not exist, LPM CLI does not 
 
 ### LPM.dev global packages
 
-An LPM.dev global package keeps its reviewed skills in its install folder. A flat skill links under the same `<owner>-<package>-<name>` name as in a project. LPM CLI fetches the reviewed skills of the installed version from the LPM.dev Registry when all of these conditions are true:
+An LPM.dev global package keeps its reviewed skills in its install folder. A flat skill links under the same `<owner>-<package>-<name>` name as in a project, and a skill that review [approved with a warning](#skills-approved-with-a-warning) needs an `allow` entry that names its package, as in a project. LPM CLI fetches the reviewed skills of the installed version from the LPM.dev Registry when all of these conditions are true:
 
 - The global policy can link something. It has at least one `allow` entry, and LPM CLI can read every `deny` entry.
 - No `deny` entry names the whole package or its installed version, as `#@lpm.dev/acme.cli` and `#@lpm.dev/acme.cli@1.0.0` do.
